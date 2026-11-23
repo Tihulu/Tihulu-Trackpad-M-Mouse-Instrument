@@ -1,0 +1,69 @@
+#if os(macOS)
+import Foundation
+import NoSpeakerCore
+
+public enum TouchScale: String, CaseIterable, Identifiable, Sendable {
+    case chromatic = "Chromatic"
+    case major = "Major"
+    case minor = "Minor"
+    case pentatonic = "Pentatonic"
+
+    public var id: String { rawValue }
+
+    var intervals: [Int] {
+        switch self {
+        case .chromatic: return Array(0...24)
+        case .major: return [0,2,4,5,7,9,11,12,14,16,17,19,21,23,24]
+        case .minor: return [0,2,3,5,7,8,10,12,14,15,17,19,20,22,24]
+        case .pentatonic: return [0,2,4,7,9,12,14,16,19,21,24]
+        }
+    }
+}
+
+public final class TouchInstrumentService: @unchecked Sendable {
+    private let driver: HapticTrackpadDriver
+    private let lock = NSLock()
+    private var enabled = false
+    private var baseMIDINote = 67
+    private var scale: TouchScale = .pentatonic
+    private var masterLevel = 0.8
+
+    public init(driver: HapticTrackpadDriver) { self.driver = driver }
+
+    public func start(baseMIDINote: Int, scale: TouchScale, masterLevel: Double) throws {
+        lock.lock()
+        self.enabled = true
+        self.baseMIDINote = baseMIDINote
+        self.scale = scale
+        self.masterLevel = masterLevel
+        lock.unlock()
+        try driver.startTouch { [weak self] contact in self?.handle(contact) }
+    }
+
+    public func stop() {
+        lock.lock(); enabled = false; lock.unlock()
+        driver.stopTouch()
+    }
+
+    private func handle(_ contact: TrackpadContact) {
+        lock.lock()
+        let active = enabled
+        let root = baseMIDINote
+        let chosenScale = scale
+        let levelScale = masterLevel
+        lock.unlock()
+        guard active, contact.isDown else { return }
+        let intervals = chosenScale.intervals
+        let normalizedX = min(0.9999, max(0, Double(contact.x)))
+        let index = min(intervals.count - 1, Int(normalizedX * Double(intervals.count)))
+        let midi = min(127, max(0, root + intervals[index]))
+        guard let baseFrequency = try? MusicTheory.frequency(midi: midi) else { return }
+        let vibratoDepth = 0.05 + 0.45 * Double(min(1, max(0, contact.y)))
+        let phase = Date().timeIntervalSinceReferenceDate * 6 * 2 * Double.pi
+        let frequency = baseFrequency * pow(2, vibratoDepth * sin(phase) / 12)
+        let contactLevel = min(1, max(0.35, 0.3 + Double(contact.size) * 0.8)) * levelScale
+        let duration = max(1, (0.02 * frequency).rounded()) / frequency * 1_000
+        try? driver.play(.init(tones: [.init(frequencyHz: frequency)], durationMS: duration, level: contactLevel))
+    }
+}
+#endif
