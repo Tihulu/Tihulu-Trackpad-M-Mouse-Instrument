@@ -334,9 +334,13 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.unlock()
         callback?(combined)
 
-        guard isActive, config.localHapticSound,
-              config.output(for: frame.surface).sendsHaptics else { return }
-        let sounding = states.filter(\.isDown).prefix(6)
+        guard isActive, config.localHapticSound else { return }
+        // Mix selected tracks from both surfaces in a single bounded frame.
+        // A Magic Mouse gesture can drive the Mac's Force Touch motor even
+        // when the user is playing a different instrument on the trackpad.
+        let sounding = combined.filter {
+            $0.isDown && config.output(for: $0.surface).sendsHaptics
+        }.prefix(6)
         guard !sounding.isEmpty else { return }
 
         let now = ProcessInfo.processInfo.systemUptime
@@ -345,7 +349,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
         for state in sounding {
             let baseFrequency: Double
-            if config.fretless && instrument == .melodic {
+            if config.fretless && config.instrument(for: state.surface) == .melodic {
                 baseFrequency = 440.0 * pow(2.0, (state.continuousMIDI - 69.0) / 12.0)
             } else {
                 guard let frequency = try? MusicTheory.frequency(midi: state.quantizedMIDI) else { continue }
