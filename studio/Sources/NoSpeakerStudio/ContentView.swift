@@ -182,150 +182,258 @@ private struct VoiceModeView: View {
 
 private struct TouchInstrumentView: View {
     @EnvironmentObject private var studio: StudioController
+
     @State private var root = 67
     @State private var scale: TouchScale = .pentatonic
     @State private var fretless = false
+    @State private var zoneWidth = 1.0
+    @State private var pitchSpan = 24.0
+    @State private var surfaceSelection: TouchSurfaceSelection = .trackpad
+    @State private var triggerMode: TouchTriggerMode = .touch
+    @State private var pressThreshold = 0.5
+    @State private var velocityFromPressure = false
+    @State private var fixedVelocity = 100
+    @State private var pressureToExpression = true
+    @State private var localHapticSound = true
     @State private var midiOut = false
 
     private var mappedMIDINotes: [Int] {
-        scale.intervals.map { min(127, max(0, root + $0)) }
+        scale.mappedMIDINotes(root: root, zoneWidth: zoneWidth)
     }
 
     private var rootName: String {
         (try? MusicTheory.noteName(midi: root)) ?? "MIDI \(root)"
     }
 
+    private var configuration: TouchInstrumentConfiguration {
+        .init(
+            baseMIDINote: root,
+            scale: scale,
+            fretless: fretless,
+            zoneWidth: zoneWidth,
+            pitchSpanSemitones: pitchSpan,
+            surfaceSelection: surfaceSelection,
+            triggerMode: triggerMode,
+            pressThreshold: pressThreshold,
+            velocityFromPressure: velocityFromPressure,
+            fixedVelocity: fixedVelocity,
+            pressureToExpression: pressureToExpression,
+            localHapticSound: localHapticSound,
+            masterLevel: studio.masterLevel
+        )
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            PageHeader(
-                title: "Touch Instrument",
-                subtitle: "Play the physical trackpad as a haptic instrument or a MIDI controller for your DAW."
-            )
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PageHeader(
+                    title: "Touch Instrument",
+                    subtitle: "Preview touches continuously, then play the trackpad, Magic Mouse, or both as an expressive haptic/MIDI instrument."
+                )
 
-            HStack(spacing: 20) {
-                Picker("Scale", selection: $scale) {
-                    ForEach(TouchScale.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .frame(width: 210)
-                .disabled(studio.touchRunning)
-
-                Stepper("Root \(rootName)", value: $root, in: 36...84)
-                    .frame(width: 190)
-                    .disabled(studio.touchRunning)
-
-                Picker("Touch Mode", selection: $fretless) {
-                    Text("Fretted").tag(false)
-                    Text("Fretless").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 190)
-                .disabled(studio.touchRunning)
-                .help(fretless
-                      ? "Fretless: continuous pitch across the two-octave range."
-                      : "Fretted: pitch is quantized to the selected scale zones.")
-
-                Toggle("MIDI Out to DAW", isOn: $midiOut)
-                    .toggleStyle(.switch)
-                    .disabled(studio.touchRunning)
-
-                Spacer()
-
-                Button(studio.touchRunning ? "Stop Touch Instrument" : "Start Touch Instrument") {
-                    if studio.touchRunning {
-                        studio.stopTouch()
-                    } else {
-                        studio.startTouch(
-                            rootMIDI: root,
-                            scale: scale,
-                            fretless: fretless,
-                            midiOut: midiOut
-                        )
+                HStack(spacing: 14) {
+                    Picker("Surface", selection: $surfaceSelection) {
+                        ForEach(TouchSurfaceSelection.allCases) { Text($0.rawValue).tag($0) }
                     }
-                }
-                .buttonStyle(.borderedProminent)
-            }
+                    .pickerStyle(.segmented)
+                    .frame(width: 300)
+                    .disabled(studio.touchRunning)
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text(fretless
-                         ? "\(rootName) · \(scale.rawValue) · Fretless"
-                         : "\(rootName) · \(scale.rawValue)")
-                        .font(.headline)
+                    Picker("Touch Mode", selection: $fretless) {
+                        Text("Fretted").tag(false)
+                        Text("Fretless").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 220)
+                    .disabled(studio.touchRunning)
 
                     Spacer()
 
-                    Text(fretless
-                         ? "Continuous pitch · scale guides"
-                         : "\(mappedMIDINotes.count) touch zones")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Toggle("MIDI Out to DAW", isOn: $midiOut)
+                        .toggleStyle(.switch)
+                        .disabled(studio.touchRunning)
+
+                    Button(studio.touchRunning ? "Stop Touch Instrument" : "Start Touch Instrument") {
+                        if studio.touchRunning {
+                            studio.stopTouch()
+                        } else {
+                            studio.startTouch(configuration: configuration, midiOut: midiOut)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
 
-                ScaleTrackpadMap(
+                HStack(spacing: 16) {
+                    Picker("Scale", selection: $scale) {
+                        ForEach(TouchScale.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .frame(width: 210)
+                    .disabled(studio.touchRunning)
+
+                    Stepper("Root \(rootName)", value: $root, in: 24...96)
+                        .frame(width: 190)
+                        .disabled(studio.touchRunning)
+
+                    if fretless {
+                        Picker("Pitch Span", selection: $pitchSpan) {
+                            Text("±2 st").tag(4.0)
+                            Text("±5 st").tag(10.0)
+                            Text("±12 st / 2 oct").tag(24.0)
+                        }
+                        .frame(width: 220)
+                        .disabled(studio.touchRunning)
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Note Width")
+                                Spacer()
+                                Text(String(format: "%.2fx", zoneWidth)).monospacedDigit()
+                            }
+                            Slider(value: $zoneWidth, in: 0.5...2.0, step: 0.05)
+                        }
+                        .frame(width: 220)
+                        .disabled(studio.touchRunning)
+                    }
+
+                    Spacer()
+
+                    Label(
+                        studio.touchPreviewRunning ? "Preview Active" : "Preview Starting…",
+                        systemImage: "eye.fill"
+                    )
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(studio.touchPreviewRunning ? Color.green : Color.secondary)
+                }
+
+                TouchSurfaceMap(
                     notes: mappedMIDINotes,
                     rootMIDI: root,
+                    fretless: fretless,
+                    pitchSpan: pitchSpan,
+                    states: studio.touchStates,
                     active: studio.touchRunning,
-                    contact: studio.touchContact,
-                    fretless: fretless
+                    surfaceSelection: surfaceSelection
                 )
-                .frame(minHeight: 300)
+                .frame(minHeight: 360)
 
-                HStack {
-                    Label("Lower pitch", systemImage: "arrow.left")
-                    Spacer()
-                    Text(fretless
-                         ? "X = continuous pitch · Y = vibrato · size = level"
-                         : "X = scale note · Y = vibrato · size = level")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Label("Higher pitch", systemImage: "arrow.right")
+                HStack(alignment: .top, spacing: 14) {
+                    GroupBox("Trigger") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Picker("Trigger", selection: $triggerMode) {
+                                ForEach(TouchTriggerMode.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+
+                            if triggerMode == .press {
+                                HStack {
+                                    Text("Press threshold")
+                                    Slider(value: $pressThreshold, in: 0.1...1.0, step: 0.05)
+                                    Text("\(Int(pressThreshold * 100))%").monospacedDigit()
+                                }
+                            } else {
+                                Text("A light surface touch can trigger a note; no physical click is required.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(6)
+                    }
+
+                    GroupBox("Velocity & Expression") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Toggle("Velocity from Pressure", isOn: $velocityFromPressure)
+                            if !velocityFromPressure {
+                                Stepper("Fixed Velocity \(fixedVelocity)", value: $fixedVelocity, in: 1...127)
+                            }
+                            Toggle("Pressure / Contact Size → Expression", isOn: $pressureToExpression)
+                        }
+                        .padding(6)
+                    }
+
+                    GroupBox("Local Output") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Toggle("Local Trackpad Sound (Haptic)", isOn: $localHapticSound)
+                            Text(localHapticSound
+                                 ? "The Force Touch motor plays locally while MIDI can also go to the DAW."
+                                 : "Controller-only mode: MIDI/preview stays active while local haptic sound is muted.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(6)
+                    }
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
 
-            if midiOut {
-                Text(fretless
-                     ? "DAW output: NoSpeaker Touch MIDI Out · monophonic note + ±12 semitone pitch bend."
-                     : "DAW output: NoSpeaker Touch MIDI Out · quantized note-on/note-off follows the selected scale.")
-                    .font(.callout)
+                if !studio.touchStates.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Live Contacts").font(.headline)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 190))], spacing: 8) {
+                            ForEach(Array(studio.touchStates.enumerated()), id: \.element.id) { index, state in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text("#\(index + 1) · \(state.surface.rawValue)").font(.caption.bold())
+                                        Spacer()
+                                        Text((try? MusicTheory.noteName(midi: state.quantizedMIDI)) ?? "MIDI \(state.quantizedMIDI)")
+                                            .font(.caption.monospaced())
+                                    }
+                                    Text("X \(Int(state.x * 100))% · Y \(Int(state.y * 100))% · Contact \(Int(state.pressure * 100))%")
+                                        .font(.caption2.monospaced())
+                                    Text("Velocity \(state.velocity) · Expression \(state.expression)")
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(9)
+                                .background(.quaternary.opacity(0.45))
+                                .clipShape(RoundedRectangle(cornerRadius: 9))
+                            }
+                        }
+                    }
+                }
+
+                Text("Preview is monitoring only. MIDI and local haptic sound are emitted only after Start Touch Instrument.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
-
-            Spacer()
+            .padding(28)
         }
-        .padding(28)
+        .task {
+            studio.startTouchPreview(configuration: configuration)
+        }
+        .onDisappear {
+            studio.stopTouchPreview()
+        }
+        .onChange(of: root) { _ in syncConfiguration() }
+        .onChange(of: scale) { _ in syncConfiguration() }
+        .onChange(of: fretless) { _ in syncConfiguration() }
+        .onChange(of: zoneWidth) { _ in syncConfiguration() }
+        .onChange(of: pitchSpan) { _ in syncConfiguration() }
+        .onChange(of: surfaceSelection) { _ in syncConfiguration() }
+        .onChange(of: triggerMode) { _ in syncConfiguration() }
+        .onChange(of: pressThreshold) { _ in syncConfiguration() }
+        .onChange(of: velocityFromPressure) { _ in syncConfiguration() }
+        .onChange(of: fixedVelocity) { _ in syncConfiguration() }
+        .onChange(of: pressureToExpression) { _ in syncConfiguration() }
+        .onChange(of: localHapticSound) { _ in syncConfiguration() }
+        .onChange(of: studio.masterLevel) { _ in syncConfiguration() }
+    }
+
+    private func syncConfiguration() {
+        studio.updateTouchConfiguration(configuration)
     }
 }
 
-private struct ScaleTrackpadMap: View {
+private struct TouchSurfaceMap: View {
     let notes: [Int]
     let rootMIDI: Int
-    let active: Bool
-    let contact: TrackpadContact
     let fretless: Bool
-
-    private func fretlessPitchLabel(normalizedX: CGFloat) -> String {
-        let span = Double(max(1, (notes.last ?? rootMIDI + 24) - rootMIDI))
-        let continuousMIDI = Double(rootMIDI) + Double(normalizedX) * span
-        let nearestMIDI = Int(continuousMIDI.rounded())
-        let cents = Int(((continuousMIDI - Double(nearestMIDI)) * 100).rounded())
-        let note = (try? MusicTheory.noteName(midi: nearestMIDI)) ?? "MIDI \(nearestMIDI)"
-        if cents == 0 { return note }
-        return "\(note) \(cents > 0 ? "+" : "")\(cents)¢"
-    }
+    let pitchSpan: Double
+    let states: [TouchPerformanceState]
+    let active: Bool
+    let surfaceSelection: TouchSurfaceSelection
 
     var body: some View {
         GeometryReader { proxy in
             let count = max(notes.count, 1)
             let segmentWidth = proxy.size.width / CGFloat(count)
-            let normalizedX = min(0.9999, max(0, CGFloat(contact.x)))
-            let normalizedY = min(1, max(0, CGFloat(contact.y)))
-            let activeIndex = contact.isDown ? min(count - 1, Int(normalizedX * CGFloat(count))) : -1
-            let contactX = min(proxy.size.width - 10, max(10, normalizedX * proxy.size.width))
-            let contactY = min(proxy.size.height - 10, max(10, (1 - normalizedY) * proxy.size.height))
-            let contactDiameter = 18 + 18 * min(1, max(0, CGFloat(contact.size)))
-            let fretlessSpan = CGFloat(max(1, (notes.last ?? rootMIDI + 24) - rootMIDI))
 
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 18)
@@ -334,123 +442,92 @@ private struct ScaleTrackpadMap: View {
                 if fretless {
                     ForEach(notes.indices, id: \.self) { index in
                         let note = notes[index]
-                        let isRootClass = (note - rootMIDI) % 12 == 0
-                        let name = (try? MusicTheory.noteName(midi: note)) ?? "\(note)"
-                        let guideX = proxy.size.width * CGFloat(note - rootMIDI) / fretlessSpan
+                        let offset = Double(note - rootMIDI)
+                        if offset >= 0, offset <= pitchSpan {
+                            let x = proxy.size.width * CGFloat(offset / max(1, pitchSpan))
+                            Rectangle()
+                                .fill(.secondary.opacity((note - rootMIDI) % 12 == 0 ? 0.42 : 0.22))
+                                .frame(width: (note - rootMIDI) % 12 == 0 ? 2 : 1, height: proxy.size.height - 24)
+                                .position(x: min(proxy.size.width - 1, max(1, x)), y: proxy.size.height / 2)
 
-                        Rectangle()
-                            .fill(.secondary.opacity(isRootClass ? 0.40 : 0.20))
-                            .frame(width: isRootClass ? 2 : 1, height: proxy.size.height - 24)
-                            .position(
-                                x: min(proxy.size.width - 1, max(1, guideX)),
-                                y: proxy.size.height / 2
-                            )
-
-                        Text(name)
-                            .font(.system(
-                                size: 10,
-                                weight: isRootClass ? .bold : .medium,
-                                design: .monospaced
-                            ))
-                            .foregroundStyle(isRootClass ? .primary : .secondary)
-                            .position(
-                                x: min(proxy.size.width - 22, max(22, guideX)),
-                                y: 18
-                            )
-                    }
-
-                    if active, contact.isDown {
-                        Rectangle()
-                            .fill(Color.accentColor.opacity(0.55))
-                            .frame(width: 2, height: proxy.size.height - 8)
-                            .position(x: contactX, y: proxy.size.height / 2)
+                            Text((try? MusicTheory.noteName(midi: note)) ?? "\(note)")
+                                .font(.caption2.monospaced().weight((note - rootMIDI) % 12 == 0 ? .bold : .regular))
+                                .position(x: min(proxy.size.width - 22, max(22, x)), y: 18)
+                        }
                     }
                 } else {
                     ForEach(notes.indices, id: \.self) { index in
                         let note = notes[index]
-                        let isRootClass = (note - rootMIDI) % 12 == 0
-                        let name = (try? MusicTheory.noteName(midi: note)) ?? "\(note)"
                         let x = segmentWidth * (CGFloat(index) + 0.5)
-
-                        if contact.isDown, index == activeIndex {
-                            Rectangle()
-                                .fill(Color.accentColor.opacity(0.16))
-                                .frame(width: max(1, segmentWidth), height: proxy.size.height - 4)
-                                .position(x: x, y: proxy.size.height / 2)
-                        }
 
                         if index > 0 {
                             Rectangle()
                                 .fill(.secondary.opacity(0.22))
-                                .frame(width: 1, height: proxy.size.height - 24)
+                                .frame(width: 1, height: proxy.size.height - 20)
                                 .position(x: segmentWidth * CGFloat(index), y: proxy.size.height / 2)
                         }
 
-                        VStack(spacing: 6) {
-                            Text(name)
-                                .font(notes.count > 18
-                                      ? .system(size: 10, weight: isRootClass ? .bold : .medium, design: .monospaced)
-                                      : .system(size: 12, weight: isRootClass ? .bold : .semibold, design: .monospaced))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.6)
-
+                        VStack(spacing: 4) {
+                            Text((try? MusicTheory.noteName(midi: note)) ?? "\(note)")
+                                .font(.caption.monospaced().weight(.semibold))
                             Text("MIDI \(note)")
                                 .font(.system(size: 8, design: .monospaced))
                                 .foregroundStyle(.secondary)
-
-                            Spacer()
-
-                            if isRootClass {
-                                Circle()
-                                    .fill(Color.accentColor)
-                                    .frame(width: 7, height: 7)
-                            }
                         }
-                        .padding(.vertical, 18)
-                        .frame(width: max(22, segmentWidth - 4), height: proxy.size.height - 8)
-                        .position(x: x, y: proxy.size.height / 2)
+                        .frame(width: max(26, segmentWidth - 4))
+                        .position(x: x, y: 28)
                     }
                 }
 
-                if active, contact.isDown {
-                    Circle()
-                        .fill(Color.accentColor.opacity(0.88))
-                        .frame(width: contactDiameter, height: contactDiameter)
-                        .overlay(Circle().stroke(.white.opacity(0.9), lineWidth: 2))
-                        .shadow(radius: 4)
-                        .position(x: contactX, y: contactY)
-                        .animation(.linear(duration: 0.035), value: contactX)
-                        .animation(.linear(duration: 0.035), value: contactY)
-                        .allowsHitTesting(false)
+                ForEach(Array(states.enumerated()), id: \.element.id) { index, state in
+                    if surfaceSelection == .both || surfaceSelection.accepts(state.surface) {
+                        let x = min(proxy.size.width - 12, max(12, CGFloat(state.x) * proxy.size.width))
+                        let y = min(proxy.size.height - 12, max(12, (1 - CGFloat(state.y)) * proxy.size.height))
+                        let diameter = 24 + 24 * CGFloat(min(1, max(0, state.pressure)))
+
+                        ZStack {
+                            Circle()
+                                .fill(state.surface == .trackpad ? Color.accentColor.opacity(0.82) : Color.cyan.opacity(0.82))
+                            Circle().stroke(.white.opacity(0.9), lineWidth: 2)
+                            Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.white)
+                        }
+                        .frame(width: diameter, height: diameter)
+                        .shadow(radius: 5)
+                        .position(x: x, y: y)
+                        .animation(.linear(duration: 0.025), value: x)
+                        .animation(.linear(duration: 0.025), value: y)
+                    }
                 }
 
-                VStack(spacing: 8) {
-                    Image(systemName: active ? "hand.point.up.left.fill" : "hand.point.up.left")
-                        .font(.system(size: 34))
-                        .foregroundStyle(.secondary)
-
-                    Text(
-                        active && contact.isDown
-                            ? (fretless
-                                ? "Live touch · \(fretlessPitchLabel(normalizedX: normalizedX))"
-                                : "Live touch · \((try? MusicTheory.noteName(midi: notes[activeIndex])) ?? "MIDI \(notes[activeIndex])")")
-                            : (active
-                                ? (fretless
-                                    ? "Fretless active · slide continuously between guide notes"
-                                    : "Play these zones on the physical trackpad")
-                                : (fretless
-                                    ? "Start Touch Instrument for continuous pitch"
-                                    : "Start Touch Instrument, then use the matching physical zones"))
-                    )
-                    .font(.caption)
+                if states.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "hand.point.up.left")
+                            .font(.system(size: 34))
+                        Text("Preview active · touch the \(surfaceSelection.rawValue.lowercased()) to see live positions")
+                            .font(.callout)
+                    }
                     .foregroundStyle(.secondary)
+                    .position(x: proxy.size.width / 2, y: proxy.size.height * 0.65)
                 }
-                .allowsHitTesting(false)
-                .position(x: proxy.size.width / 2, y: proxy.size.height * 0.72)
+
+                HStack {
+                    Label("Lower pitch", systemImage: "arrow.left")
+                    Spacer()
+                    Text(fretless
+                         ? "X = continuous pitch · Y = vibrato · contact size = optional velocity/expression"
+                         : "X = note zone · Y = vibrato · contact size = optional velocity/expression")
+                    Spacer()
+                    Label("Higher pitch", systemImage: "arrow.right")
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(12)
+                .frame(width: proxy.size.width)
+                .position(x: proxy.size.width / 2, y: proxy.size.height - 18)
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 18)
-                    .stroke(.secondary.opacity(0.22), lineWidth: 1)
+                    .stroke(.secondary.opacity(0.24), lineWidth: 1)
             )
         }
     }
