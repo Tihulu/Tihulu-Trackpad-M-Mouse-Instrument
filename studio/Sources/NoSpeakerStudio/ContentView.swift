@@ -565,7 +565,7 @@ private struct MIDIModeView: View {
                         .font(.headline)
                     Text("Route a Logic Pro, Ableton Live, hardware keyboard or other MIDI source here to play the trackpad.")
                         .foregroundStyle(.secondary)
-                    Text("Notes now sound for their real held duration. Sustain pedal (CC64) keeps released notes active until pedal-up, and incoming pitch bend changes the haptic pitch continuously.")
+                    Text("Held keys are refreshed continuously until their matching note-off arrives, matching Touch Instrument behavior. Sustain pedal (CC64) latches released notes until pedal-up. Pitch bend follows the keyboard/DAW bend range when RPN 0,0 is sent. Mod wheel (CC1) adds vibrato; CC7 volume, CC11 expression and channel pressure are also applied.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
