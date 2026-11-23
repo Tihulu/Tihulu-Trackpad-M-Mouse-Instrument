@@ -169,8 +169,6 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
 
         lock.lock()
-
-        lock.lock()
         enabled = true
         activeNotes.removeAll()
         sustainByChannel.removeAll()
