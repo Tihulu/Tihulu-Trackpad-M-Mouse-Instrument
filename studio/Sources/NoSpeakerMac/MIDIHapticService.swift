@@ -222,18 +222,37 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.unlock()
         guard canSend else { return }
 
-        let safeBaseChannel = max(0, min(15, baseChannel))
-        var desired = states.filter(\.isDown)
+        // GM percussion is always MIDI Channel 10 (zero-based 9). Pitched notes
+        // stay on the requested channel, except channel 10 is reserved whenever
+        // a drum surface is configured at the same time.
+        let anyDrums = configuration.selectedSurfaces.contains {
+            configuration.instrument(for: $0) == .drums &&
+            configuration.output(for: $0).sendsMIDI
+        }
+        let selectedBase = max(0, min(15, baseChannel))
+        let safeMelodicChannel = anyDrums && selectedBase == GMDrumPads.midiChannel
+            ? 0 : selectedBase
+
+        var desired = states.filter {
+            $0.isDown && configuration.output(for: $0.surface).sendsMIDI
+        }
         if !multiTouchEnabled {
             desired = Array(desired.prefix(1))
         }
         if configuration.fretless, midiMode == .standard {
-            // Channel-wide pitch bend cannot express independent fretless fingers.
-            desired = Array(desired.prefix(1))
+            // Melodic fretless pitch bend is channel-wide in Standard MIDI.
+            // Keep every percussion contact, but only one continuous-pitch
+            // melodic finger; they are routed to separate channels.
+            var keptMelodic = false
+            desired = desired.filter { state in
+                if configuration.instrument(for: state.surface) == .drums { return true }
+                if keptMelodic { return false }
+                keptMelodic = true
+                return true
+            }
         }
 
         let desiredKeys = Set(desired.map { TouchKey(surface: $0.surface, id: $0.contactID) })
-
         let releasedKeys = outgoingTouches.keys.filter { !desiredKeys.contains($0) }
         for key in releasedKeys {
             guard let outgoing = outgoingTouches.removeValue(forKey: key) else { continue }
@@ -245,23 +264,32 @@ public final class MIDIHapticService: @unchecked Sendable {
 
         for state in desired {
             let key = TouchKey(surface: state.surface, id: state.contactID)
+            let drums = configuration.instrument(for: state.surface) == .drums
+            let isFretlessMelody = !drums && configuration.fretless
             let channel: Int
 
             if let existing = outgoingTouches[key] {
                 channel = existing.channel
+            } else if drums {
+                channel = GMDrumPads.midiChannel
             } else if midiMode == .mpe {
+                // Lower-zone MPE member channels, skipping the GM percussion
+                // channel even when drum and pitched surfaces run together.
                 let used = Set(outgoingTouches.values.map(\.channel))
-                channel = (1...15).first(where: { !used.contains($0) }) ?? safeBaseChannel
+                guard let free = (1...15).first(where: {
+                    $0 != GMDrumPads.midiChannel && !used.contains($0)
+                }) else { continue }
+                channel = free
             } else {
-                channel = safeBaseChannel
+                channel = safeMelodicChannel
             }
 
-            if configuration.fretless {
+            if isFretlessMelody {
                 let bendRange = max(1, min(24, Int(ceil(configuration.pitchSpanSemitones / 2.0))))
-                let anchor = max(
-                    0,
-                    min(127, configuration.baseMIDINote + Int((configuration.pitchSpanSemitones / 2.0).rounded()))
-                )
+                let anchor = max(0, min(127,
+                    configuration.baseMIDINote +
+                    Int((configuration.pitchSpanSemitones / 2.0).rounded())
+                ))
 
                 if let existing = outgoingTouches[key] {
                     if existing.note != anchor || !existing.fretless {
@@ -276,13 +304,14 @@ public final class MIDIHapticService: @unchecked Sendable {
                     outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true)
                 }
 
-                let delta = max(
-                    -Double(bendRange),
-                    min(Double(bendRange), state.continuousMIDI - Double(anchor))
-                )
+                let delta = max(-Double(bendRange),
+                    min(Double(bendRange), state.continuousMIDI - Double(anchor)))
                 let bend = Int((8192.0 + (delta / Double(bendRange)) * 8191.0).rounded())
                 sendPitchBend(max(0, min(16383, bend)), channel: channel)
             } else {
+                // Drums use actual GM note numbers (kick 36, snare 38, hats
+                // 42/46 etc.). MIDI Channel 10 alone does not convert
+                // pitched notes into drum pads.
                 let note = max(0, min(127, state.quantizedMIDI))
                 if let existing = outgoingTouches[key] {
                     if existing.note != note || existing.fretless {
@@ -296,6 +325,7 @@ public final class MIDIHapticService: @unchecked Sendable {
                 }
             }
 
+            guard !drums else { continue }
             let vibrato = max(0, min(127, Int((state.vibrato * 127.0).rounded())))
             sendControlChange(controller: 1, value: vibrato, channel: channel)
 
