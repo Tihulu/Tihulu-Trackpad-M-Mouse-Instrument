@@ -1,5 +1,7 @@
 #if os(macOS)
 import SwiftUI
+import AppKit
+import CoreGraphics
 import UniformTypeIdentifiers
 import NoSpeakerCore
 import NoSpeakerMac
@@ -45,7 +47,8 @@ struct ContentView: View {
     }
 
     private var transport: some View {
-        HStack(spacing: 12) {
+        VStack(spacing: 6) {
+          HStack(spacing: 12) {
             Circle().fill(studio.engineReady ? Color.green : Color.orange).frame(width: 9, height: 9)
             Text(studio.engineStatus).font(.callout).foregroundStyle(.secondary).lineLimit(1)
             if !studio.engineReady { Button("Reconnect") { studio.reconnect() } }
@@ -71,6 +74,19 @@ struct ContentView: View {
             .keyboardShortcut(.escape, modifiers: [])
             Slider(value: $studio.masterLevel, in: 0...1) { Text("Master") }.frame(width: 130)
             Text("\(Int(studio.masterLevel * 100))%").monospacedDigit().frame(width: 38, alignment: .trailing)
+          }
+          HStack(spacing: 12) {
+              Toggle("Global Capture", isOn: Binding(
+                  get: { studio.captureArmed },
+                  set: { studio.configurePerformanceCapture(armed: $0, shortcut: studio.captureShortcut) }
+              )).toggleStyle(.switch)
+              PerformanceShortcutRecorder()
+              Spacer()
+              Label(studio.pointerCaptured ? "Pointer Captured" : "Pointer Free",
+                    systemImage: studio.pointerCaptured ? "lock.fill" : "lock.open")
+                  .font(.caption)
+              Text("Esc = Kill Switch").foregroundStyle(.red).font(.caption.bold())
+          }
         }
         .padding(12)
     }
@@ -218,8 +234,6 @@ private struct TouchInstrumentView: View {
     @State private var sustainTrackpadSensor: TrackpadSustainSensor = .contactSize
     @State private var sustainMouseEnabled = false
     @State private var sustainMouseGesture: MagicMouseSustainGesture = .touchHold
-    @State private var captureArmed = false
-    @State private var captureShortcut: PerformanceCaptureShortcut = .controlOptionM
 
     private var mappedMIDINotes: [Int] {
         scale.mappedMIDINotes(root: root, zoneWidth: zoneWidth)
@@ -547,12 +561,7 @@ private struct TouchInstrumentView: View {
                     .padding(6)
                 }
 
-                CaptureSettingsPanel(
-                    armed: $captureArmed,
-                    shortcut: $captureShortcut,
-                    captured: studio.pointerCaptured,
-                    status: studio.captureStatus
-                )
+                CaptureSettingsPanel()
 
                 if !studio.touchStates.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -618,12 +627,6 @@ private struct TouchInstrumentView: View {
         .onChange(of: magicMouseOutput) { _ in syncConfiguration() }
         .onChange(of: drumLayout) { _ in syncConfiguration() }
         .onChange(of: studio.masterLevel) { _ in syncConfiguration() }
-        .onChange(of: captureArmed) { _ in
-            studio.configurePerformanceCapture(armed: captureArmed, shortcut: captureShortcut)
-        }
-        .onChange(of: captureShortcut) { _ in
-            studio.configurePerformanceCapture(armed: captureArmed, shortcut: captureShortcut)
-        }
     }
 
     @ViewBuilder
@@ -933,8 +936,6 @@ private struct MIDIHelperView: View {
     @State private var magicMouseSustainEnabled = false
     @State private var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
 
-    @State private var captureArmed = false
-    @State private var captureShortcut: PerformanceCaptureShortcut = .controlOptionM
 
     private var assignments: MIDIHelperAssignments {
         .init(vibrato: vibratoEnabled, pitchBend: pitchBendEnabled, expression: expressionEnabled)
@@ -1077,12 +1078,7 @@ private struct MIDIHelperView: View {
                     .frame(width: 410)
                 }
 
-                CaptureSettingsPanel(
-                    armed: $captureArmed,
-                    shortcut: $captureShortcut,
-                    captured: studio.pointerCaptured,
-                    status: studio.captureStatus
-                )
+                CaptureSettingsPanel()
 
                 Text("Preview never sends MIDI. Start the Helper before playing. Esc is the emergency stop while Studio has keyboard access; a global Esc requires macOS Accessibility permission.")
                     .font(.caption)
@@ -1117,8 +1113,6 @@ private struct MIDIHelperView: View {
         .onChange(of: trackpadSustainGesture) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainEnabled) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainGesture) { _ in syncIfRunning() }
-        .onChange(of: captureArmed) { _ in syncCapture() }
-        .onChange(of: captureShortcut) { _ in syncCapture() }
     }
 
     private func startHelper() {
@@ -1144,12 +1138,6 @@ private struct MIDIHelperView: View {
         if studio.midiHelperRunning { startHelper() }
     }
 
-    private func syncCapture() {
-        studio.configurePerformanceCapture(
-            armed: captureArmed,
-            shortcut: captureShortcut
-        )
-    }
 }
 
 private struct SustainSettingsPanel: View {
@@ -1227,36 +1215,93 @@ private struct SustainSettingsPanel: View {
     }
 }
 
-private struct CaptureSettingsPanel: View {
-    @Binding var armed: Bool
-    @Binding var shortcut: PerformanceCaptureShortcut
-    let captured: Bool
-    let status: String
+private struct PerformanceShortcutRecorder: View {
+    @EnvironmentObject private var studio: StudioController
+    @State private var recording = false
+    @State private var eventMonitor: Any?
 
     var body: some View {
-        GroupBox("Performance Cursor Capture") {
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 16) {
-                    Toggle("Enable Global Capture Shortcut", isOn: $armed)
-                    Picker("Toggle Shortcut", selection: $shortcut) {
-                        ForEach(PerformanceCaptureShortcut.allCases) {
-                            Text($0.rawValue).tag($0)
-                        }
-                    }
-                    .frame(width: 190)
-                    Spacer()
-                    Label(captured ? "Cursor Captured" : "Cursor Free",
-                          systemImage: captured ? "lock.fill" : "lock.open")
-                        .foregroundStyle(captured ? Color.orange : Color.secondary)
-                }
-                Text(status)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                Text("While a performance is running, press the assigned shortcut to route the pointer exclusively to NoSpeaker and press it again to return to normal computer control. Esc immediately releases the cursor and stops all NoSpeaker playback. Requires Accessibility permission; capture affects all macOS pointer devices, not just Magic Mouse. Disabled by default.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 6) {
+            Button(recording ? "Press your key or key combination…" :
+                "Shortcut: \(studio.captureShortcut.displayName)") {
+                if recording { stopRecording() }
+                else { beginRecording() }
             }
-            .padding(6)
+            .buttonStyle(.bordered)
+            if recording { Button("Cancel") { stopRecording() } }
+        }
+        .onDisappear { stopRecording() }
+    }
+
+    private func beginRecording() {
+        studio.configurePerformanceCapture(armed: false, shortcut: studio.captureShortcut)
+        recording = true
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 {
+                // Esc remains reserved for the emergency kill switch.
+                stopRecording()
+                return nil
+            }
+            let flags = event.modifierFlags
+            var mask: UInt64 = 0
+            var prefix = ""
+            if flags.contains(.control) { mask |= CGEventFlags.maskControl.rawValue; prefix += "⌃" }
+            if flags.contains(.option) { mask |= CGEventFlags.maskAlternate.rawValue; prefix += "⌥" }
+            if flags.contains(.shift) { mask |= CGEventFlags.maskShift.rawValue; prefix += "⇧" }
+            if flags.contains(.command) { mask |= CGEventFlags.maskCommand.rawValue; prefix += "⌘" }
+            let namedKeys: [UInt16: String] = [
+                36:"Return",48:"Tab",49:"Space",51:"Delete",
+                123:"←",124:"→",125:"↓",126:"↑",
+                122:"F1",120:"F2",99:"F3",118:"F4",
+                96:"F5",97:"F6",98:"F7",100:"F8",
+                101:"F9",109:"F10",103:"F11",111:"F12"
+            ]
+            let name = namedKeys[event.keyCode] ??
+                event.charactersIgnoringModifiers?.uppercased() ?? "Key \(event.keyCode)"
+            studio.configurePerformanceCapture(
+                armed: false,
+                shortcut: PerformanceCaptureShortcut(
+                    keyCode: Int64(event.keyCode), modifiers: mask,
+                    displayName: prefix + name
+                )
+            )
+            stopRecording()
+            return nil
+        }
+    }
+
+    private func stopRecording() {
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+        recording = false
+    }
+}
+
+private struct CaptureSettingsPanel: View {
+    @EnvironmentObject private var studio: StudioController
+
+    var body: some View {
+        GroupBox("Performance Cursor Capture · Available in Every Mode") {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 12) {
+                    Toggle("Enable Global Capture", isOn: Binding(
+                        get: { studio.captureArmed },
+                        set: { studio.configurePerformanceCapture(
+                            armed: $0, shortcut: studio.captureShortcut
+                        ) }
+                    ))
+                    PerformanceShortcutRecorder()
+                    Spacer()
+                    Label(studio.pointerCaptured ? "Captured" : "Pointer Free",
+                          systemImage: studio.pointerCaptured ? "lock.fill" : "lock.open")
+                }
+                Text(studio.captureStatus)
+                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+                Text("Record any key or key combination, then enable global capture. The shortcut toggles desktop pointer suppression in Voice, Touch, MIDI, Sequencers, Audio File, Speaker and other Studio modes. Mouse capture affects all macOS pointer devices, not only Magic Mouse. Esc triggers Panic Stop. Enable Accessibility (and if requested, Input Monitoring) in macOS System Settings. OFF by default.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(6)
         }
     }
 }
