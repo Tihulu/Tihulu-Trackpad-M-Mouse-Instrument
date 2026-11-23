@@ -1509,14 +1509,64 @@ private struct SpeakerModeView: View {
 private struct DiagnosticsView: View {
     @EnvironmentObject private var studio: StudioController
     @State private var frequency = 1_000.0
+    @State private var captureReport = ""
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            PageHeader(title: "Diagnostics", subtitle: "Test the haptic path without running a musical mode.")
-            HStack { Slider(value: $frequency, in: 98...3_951); Text("\(Int(frequency)) Hz").monospacedDigit().frame(width: 70); Button("Test Tone") { studio.testTone(frequency: frequency) } }
-            HStack { Button("100 Hz → 4 kHz Sweep") { studio.sweep() }.buttonStyle(.borderedProminent); Button("Reconnect Trackpad") { studio.reconnect() } }
-            Text("Usable range follows the measurements published by the original nospeaker project. Resonance and loudness vary between trackpads.").foregroundStyle(.secondary)
-            Spacer()
-        }.padding(28)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PageHeader(
+                    title: "Diagnostics",
+                    subtitle: "Inspect the haptic engine and diagnose global performance capture without recording typed content."
+                )
+                GroupBox("Global Capture · Read-only diagnostics") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Test procedure: (1) Record a shortcut and turn on Global Capture in the top bar. (2) Refresh below. (3) Switch to another app, press your shortcut twice, and move the pointer. (4) Return and refresh. The key-down and shortcut-match counters should increase. A captured pointer should stop moving until released.")
+                            .font(.callout)
+                        HStack(spacing: 10) {
+                            Button("Refresh Snapshot") {
+                                captureReport = studio.globalCaptureDiagnosticReport()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Button("Copy Report") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(captureReport, forType: .string)
+                            }
+                            .disabled(captureReport.isEmpty)
+                            Spacer()
+                            Label("No keystroke logging", systemImage: "lock.shield")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                        }
+                        Text(captureReport.isEmpty ? "Press Refresh Snapshot to inspect capture." : captureReport)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(.quaternary.opacity(0.35))
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+                    }
+                    .padding(8)
+                }
+                GroupBox("Haptic motor diagnostics") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Slider(value: $frequency, in: 98...3_951)
+                            Text("\(Int(frequency)) Hz").monospacedDigit().frame(width: 75)
+                            Button("Test Tone") { studio.testTone(frequency: frequency) }
+                        }
+                        HStack {
+                            Button("100 Hz → 4 kHz Sweep") { studio.sweep() }
+                            Button("Reconnect Trackpad") { studio.reconnect() }
+                        }
+                        Text("The motor frequency range follows the original nospeaker measurements. Resonance and loudness vary between trackpads.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(8)
+                }
+            }
+            .padding(28)
+        }
+        .onAppear { captureReport = studio.globalCaptureDiagnosticReport() }
     }
 }
 
