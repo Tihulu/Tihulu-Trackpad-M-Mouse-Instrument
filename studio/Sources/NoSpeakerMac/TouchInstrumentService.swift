@@ -276,7 +276,6 @@ public final class TouchInstrumentService: @unchecked Sendable {
             zoneWidth: config.zoneWidth
         )
         let instrument = config.instrument(for: frame.surface)
-        let drumPads = config.drumLayout.pads
         guard !mappedNotes.isEmpty else {
             callback?([])
             return
@@ -292,8 +291,10 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
             let quantized: Int
             if instrument == .drums {
-                let padIndex = min(drumPads.count - 1, Int(x * Double(drumPads.count)))
-                quantized = drumPads[padIndex].midiNote
+                quantized = GMDrumPads.pad(
+                    forNormalizedX: x,
+                    layout: config.drumLayout
+                ).midiNote
             } else {
                 let zoneIndex = min(mappedNotes.count - 1, Int(x * Double(mappedNotes.count)))
                 quantized = mappedNotes[zoneIndex]
