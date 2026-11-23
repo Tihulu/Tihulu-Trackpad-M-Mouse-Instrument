@@ -106,7 +106,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         guard AXIsProcessTrusted() else {
             // Only request this system prompt after the user explicitly
             // enables the performance monitor, never on app launch.
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
             throw PerformanceCaptureError.permissionDenied
         }
