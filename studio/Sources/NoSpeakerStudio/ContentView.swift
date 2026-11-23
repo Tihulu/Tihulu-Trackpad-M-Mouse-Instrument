@@ -172,7 +172,12 @@ private struct TouchInstrumentView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                ScaleTrackpadMap(notes: mappedMIDINotes, rootMIDI: root, active: studio.touchRunning)
+                ScaleTrackpadMap(
+                    notes: mappedMIDINotes,
+                    rootMIDI: root,
+                    active: studio.touchRunning,
+                    contact: studio.touchContact
+                )
                     .frame(minHeight: 300)
 
                 HStack {
@@ -196,11 +201,18 @@ private struct ScaleTrackpadMap: View {
     let notes: [Int]
     let rootMIDI: Int
     let active: Bool
+    let contact: TrackpadContact
 
     var body: some View {
         GeometryReader { proxy in
             let count = max(notes.count, 1)
             let segmentWidth = proxy.size.width / CGFloat(count)
+            let normalizedX = min(0.9999, max(0, CGFloat(contact.x)))
+            let normalizedY = min(1, max(0, CGFloat(contact.y)))
+            let activeIndex = contact.isDown ? min(count - 1, Int(normalizedX * CGFloat(count))) : -1
+            let contactX = min(proxy.size.width - 10, max(10, normalizedX * proxy.size.width))
+            let contactY = min(proxy.size.height - 10, max(10, (1 - normalizedY) * proxy.size.height))
+            let contactDiameter = 18 + 18 * min(1, max(0, CGFloat(contact.size)))
 
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 18)
@@ -211,6 +223,13 @@ private struct ScaleTrackpadMap: View {
                     let isRootClass = (note - rootMIDI) % 12 == 0
                     let name = (try? MusicTheory.noteName(midi: note)) ?? "\(note)"
                     let x = segmentWidth * (CGFloat(index) + 0.5)
+
+                    if contact.isDown, index == activeIndex {
+                        Rectangle()
+                            .fill(Color.accentColor.opacity(0.16))
+                            .frame(width: max(1, segmentWidth), height: proxy.size.height - 4)
+                            .position(x: x, y: proxy.size.height / 2)
+                    }
 
                     if index > 0 {
                         Rectangle()
@@ -242,11 +261,28 @@ private struct ScaleTrackpadMap: View {
                     .position(x: x, y: proxy.size.height / 2)
                 }
 
+                if active, contact.isDown {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.88))
+                        .frame(width: contactDiameter, height: contactDiameter)
+                        .overlay(
+                            Circle()
+                                .stroke(.white.opacity(0.9), lineWidth: 2)
+                        )
+                        .shadow(radius: 4)
+                        .position(x: contactX, y: contactY)
+                        .animation(.linear(duration: 0.035), value: contactX)
+                        .animation(.linear(duration: 0.035), value: contactY)
+                        .allowsHitTesting(false)
+                }
+
                 VStack(spacing: 8) {
                     Image(systemName: active ? "hand.point.up.left.fill" : "hand.point.up.left")
                         .font(.system(size: 34))
                         .foregroundStyle(.secondary)
-                    Text(active ? "Play these zones on the physical trackpad" : "Start Touch Instrument, then use the matching physical zones")
+                    Text(active && contact.isDown
+                         ? "Live touch · \((try? MusicTheory.noteName(midi: notes[activeIndex])) ?? "MIDI \(notes[activeIndex])")"
+                         : (active ? "Play these zones on the physical trackpad" : "Start Touch Instrument, then use the matching physical zones"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
