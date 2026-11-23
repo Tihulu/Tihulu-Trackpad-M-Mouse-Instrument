@@ -35,6 +35,9 @@ final class StudioController: ObservableObject {
     @Published var captureArmed = false
     @Published var captureShortcut = StudioController.readSavedCaptureShortcut()
     @Published var captureStatus = "Cursor free · capture is OFF by default"
+    @Published var touchBarProfile = StudioController.readTouchBarProfile()
+    @Published var touchBarSustainOn = false
+    @Published var simulatedHingeAngle = 90.0
     @Published var activeMIDINotes: [ActiveMIDINote] = []
     @Published var systemAudioRunning = false
     @Published var lastMIDIMessage = "No MIDI received yet"
@@ -68,6 +71,8 @@ final class StudioController: ObservableObject {
     private var captureHotkeyArmed = false
     private var instrumentPreviewRequested = false
     private var helperPreviewRequested = false
+    private var touchBarBridge: StudioTouchBarBridge?
+    private var heldTouchBarNotes: Set<Int> = []
     private var clickedSurface: TouchSurfaceKind?
     private var trackpadClickPressure: Double?
     private var activeMIDINoteMap: [String: ActiveMIDINote] = [:]
@@ -79,8 +84,116 @@ final class StudioController: ObservableObject {
         return candidate
     }
 
+    private static func readTouchBarProfile() -> TouchBarProfile {
+        guard let data = UserDefaults.standard.data(forKey: "TIHULU.touchBarProfile"),
+              let profile = try? JSONDecoder().decode(TouchBarProfile.self, from: data)
+        else { return TouchBarProfile() }
+        return profile.normalized()
+    }
+
     init() {
         prepareEngine()
+    }
+
+    func installTouchBar() {
+        if touchBarBridge == nil {
+            let bridge = StudioTouchBarBridge()
+            bridge.controller = self
+            touchBarBridge = bridge
+        }
+        touchBarBridge?.install(profile: touchBarProfile)
+    }
+
+    func setTouchBarProfile(_ proposed: TouchBarProfile) {
+        let next = proposed.normalized()
+        guard next != touchBarProfile else { return }
+        releaseTouchBarNotes()
+        if touchBarSustainOn {
+            touchBarSustainOn = false
+            midi?.releaseHelperSustain()
+        }
+        touchBarProfile = next
+        if let data = try? JSONEncoder().encode(next) {
+            UserDefaults.standard.set(data, forKey: "TIHULU.touchBarProfile")
+        }
+        touchBarBridge?.install(profile: next)
+    }
+
+    func releaseTouchBarNotes() {
+        for note in heldTouchBarNotes {
+            midi?.sendPerformanceNote(
+                note: note, velocity: 0, isOn: false, channel: touchBarProfile.channel
+            )
+        }
+        heldTouchBarNotes.removeAll()
+    }
+
+    func touchBarKey(_ note: Int, pressed: Bool) {
+        if !midiRunning { startMIDI() }
+        guard midiRunning else { return }
+        let safeNote = max(0, min(127, note))
+        if pressed {
+            guard heldTouchBarNotes.insert(safeNote).inserted else { return }
+        } else {
+            guard heldTouchBarNotes.remove(safeNote) != nil else { return }
+        }
+        midi?.sendPerformanceNote(
+            note: safeNote,
+            velocity: touchBarProfile.noteVelocity,
+            isOn: pressed,
+            channel: touchBarProfile.channel
+        )
+    }
+
+    func touchBarValue(_ zone: TouchBarZone, normalized value: Double) {
+        if !midiRunning { startMIDI() }
+        guard midiRunning, value.isFinite else { return }
+        let safe = max(0, min(1, value))
+        let channel = touchBarProfile.channel
+        switch zone {
+        case .pitchBend, .fretless:
+            midi?.sendHelperControls(
+                x: safe, y: 0.5, contactSize: 0.5,
+                assignments: MIDIHelperAssignments(
+                    vibrato: false, pitchBend: true, expression: false
+                ),
+                channel: channel, pitchBendRange: helperPitchBendRange,
+                vibratoCC: 1, expressionCC: 11
+            )
+        case .vibrato:
+            midi?.sendControlChange(controller: 1, value: Int((safe * 127).rounded()), channel: channel)
+        case .expression:
+            midi?.sendControlChange(controller: 11, value: Int((safe * 127).rounded()), channel: channel)
+        case .filter:
+            midi?.sendControlChange(controller: 74, value: Int((safe * 127).rounded()), channel: channel)
+        case .keys, .sustain:
+            break
+        }
+    }
+
+    func touchBarSustainPressed(_ isPressed: Bool) {
+        if !midiRunning { startMIDI() }
+        guard midiRunning else { return }
+        let next = touchBarProfile.sustainMode == .toggle
+            ? (isPressed ? !touchBarSustainOn : touchBarSustainOn)
+            : isPressed
+        guard next != touchBarSustainOn else { return }
+        touchBarSustainOn = next
+        let helperHoldsSameChannel = midiHelperRunning && midiHelperSustainActive &&
+            helperTargetChannel == touchBarProfile.channel
+        midi?.setHelperSustain(next || helperHoldsSameChannel, channel: touchBarProfile.channel)
+    }
+
+    func applySimulatedHingeAngle(_ degrees: Double) {
+        simulatedHingeAngle = degrees
+        guard let value = touchBarProfile.normalizedTilt(degrees) else { return }
+        switch touchBarProfile.tiltTarget {
+        case .disabled: break
+        case .filter: touchBarValue(.filter, normalized: value)
+        case .expression: touchBarValue(.expression, normalized: value)
+        case .vibrato: touchBarValue(.vibrato, normalized: value)
+        case .pitchBend: touchBarValue(.pitchBend, normalized: value)
+        }
     }
 
     func prepareEngine() {
@@ -156,6 +269,8 @@ final class StudioController: ObservableObject {
     }
 
     func panicStop() {
+        releaseTouchBarNotes()
+        touchBarSustainOn = false
         captureMonitor?.stop()
         captureArmed = false
         captureHotkeyArmed = false
@@ -650,7 +765,10 @@ final class StudioController: ObservableObject {
             midi?.releaseHelperSustain()
             return
         }
-        midi?.setHelperSustain(snapshot.isActive, channel: helperTargetChannel)
+        midi?.setHelperSustain(
+            snapshot.isActive || (touchBarSustainOn && touchBarProfile.channel == helperTargetChannel),
+            channel: helperTargetChannel
+        )
 
         guard !active.isEmpty else {
             midi?.resetHelperControls(
