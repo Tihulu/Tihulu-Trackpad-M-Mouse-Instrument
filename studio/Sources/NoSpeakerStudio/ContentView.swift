@@ -206,6 +206,11 @@ private struct TouchInstrumentView: View {
     @State private var trackpadOutput: SurfaceOutputRoute = .trackpadHaptic
     @State private var magicMouseOutput: SurfaceOutputRoute = .midiInstrument
     @State private var drumLayout: DrumPadLayout = .standard12
+    @State private var trackpadSustainEnabled = false
+    @State private var trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold
+    @State private var trackpadSustainThreshold = 0.55
+    @State private var magicMouseSustainEnabled = false
+    @State private var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
 
     private var mappedMIDINotes: [Int] {
         scale.mappedMIDINotes(root: root, zoneWidth: zoneWidth)
@@ -244,7 +249,12 @@ private struct TouchInstrumentView: View {
             magicMouseInstrument: magicMouseInstrument,
             trackpadOutput: trackpadOutput,
             magicMouseOutput: magicMouseOutput,
-            drumLayout: drumLayout
+            drumLayout: drumLayout,
+            trackpadSustainEnabled: trackpadSustainEnabled,
+            trackpadSustainGesture: trackpadSustainGesture,
+            trackpadSustainThreshold: trackpadSustainThreshold,
+            magicMouseSustainEnabled: magicMouseSustainEnabled,
+            magicMouseSustainGesture: magicMouseSustainGesture
         )
     }
 
@@ -452,6 +462,54 @@ private struct TouchInstrumentView: View {
                     }
                 }
 
+                GroupBox("Touch Instrument Sustain · MIDI CC64") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 12) {
+                            Toggle("Trackpad Sustain", isOn: $trackpadSustainEnabled)
+                                .disabled(studio.touchRunning || !surfaceSelection.accepts(.trackpad))
+                            Picker("Trackpad Gesture", selection: $trackpadSustainGesture) {
+                                ForEach(TrackpadSustainGesture.allCases) { gesture in
+                                    Text(gesture.rawValue).tag(gesture)
+                                }
+                            }
+                            .frame(width: 240)
+                            .disabled(studio.touchRunning || !trackpadSustainEnabled)
+                            if trackpadSustainEnabled && trackpadSustainGesture == .contactThreshold {
+                                HStack {
+                                    Text("Contact threshold")
+                                    Slider(value: $trackpadSustainThreshold, in: 0.05...1, step: 0.05)
+                                        .frame(width: 170)
+                                    Text("\(Int(trackpadSustainThreshold * 100))%")
+                                }
+                                .font(.caption)
+                                .disabled(studio.touchRunning)
+                            }
+                            Spacer()
+                        }
+                        HStack(spacing: 12) {
+                            Toggle("Magic Mouse Sustain", isOn: $magicMouseSustainEnabled)
+                                .disabled(studio.touchRunning || !surfaceSelection.accepts(.magicMouse))
+                            Picker("Magic Mouse Gesture", selection: $magicMouseSustainGesture) {
+                                ForEach(MagicMouseSustainGesture.allCases) { gesture in
+                                    Text(gesture.rawValue).tag(gesture)
+                                }
+                            }
+                            .frame(width: 220)
+                            .disabled(studio.touchRunning || !magicMouseSustainEnabled)
+                            Spacer()
+                            Text(studio.touchInstrumentSustainActive
+                                 ? "Sustain ON · CC64 = 127" : "Sustain OFF · CC64 = 0")
+                                .foregroundStyle(studio.touchInstrumentSustainActive ? Color.green : Color.secondary)
+                                .font(.caption.weight(.semibold))
+                        }
+                        Text("Touch Hold / Tap Toggle need no click. Click Hold / Click Toggle require Input Controls access. Contact Threshold uses touch size, not calibrated physical force. Sustain is sent to melodic MIDI instruments, not GM drums.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(6)
+                }
+                InputCaptureControlsView()
+
                 if configuration.hasMIDIOutput {
                     GroupBox("Logic Pro / DAW MIDI Out") {
                         VStack(alignment: .leading, spacing: 8) {
@@ -559,6 +617,11 @@ private struct TouchInstrumentView: View {
         .onChange(of: trackpadOutput) { _ in syncConfiguration() }
         .onChange(of: magicMouseOutput) { _ in syncConfiguration() }
         .onChange(of: drumLayout) { _ in syncConfiguration() }
+        .onChange(of: trackpadSustainEnabled) { _ in syncConfiguration() }
+        .onChange(of: trackpadSustainGesture) { _ in syncConfiguration() }
+        .onChange(of: trackpadSustainThreshold) { _ in syncConfiguration() }
+        .onChange(of: magicMouseSustainEnabled) { _ in syncConfiguration() }
+        .onChange(of: magicMouseSustainGesture) { _ in syncConfiguration() }
         .onChange(of: studio.masterLevel) { _ in syncConfiguration() }
     }
 
