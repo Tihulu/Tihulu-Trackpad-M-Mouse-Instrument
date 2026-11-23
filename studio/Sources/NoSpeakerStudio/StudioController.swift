@@ -685,6 +685,7 @@ final class StudioController: ObservableObject {
         Input Monitoring preflight: \(yesNo(snapshot.inputMonitoringGranted))
         Event tap created: \(yesNo(snapshot.eventTapCreated))
         Event tap enabled by macOS: \(yesNo(snapshot.eventTapEnabled))
+        Dedicated capture thread: \(yesNo(snapshot.dedicatedInputThread))
         Monitor listening flag: \(yesNo(snapshot.listening))
         Shortcut armed inside monitor: \(yesNo(snapshot.shortcutArmed))
         Pointer captured: \(yesNo(snapshot.pointerCaptured))
