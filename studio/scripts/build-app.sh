@@ -59,6 +59,20 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Ad-hoc signing makes local development launches predictable. Distribution uses release-sign.sh.
-codesign --force --deep --sign - "$APP"
+# Prefer a stable local Apple Development identity so macOS TCC permissions
+# survive rebuilds. Fall back to ad-hoc signing when no development identity exists.
+SIGNING_IDENTITY="${NOSPEAKER_STUDIO_SIGNING_IDENTITY:-}"
+if [ -z "$SIGNING_IDENTITY" ]; then
+    SIGNING_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Apple Development: [^"]*\)".*/\1/p' | head -n 1)"
+fi
+
+if [ -n "$SIGNING_IDENTITY" ]; then
+    echo "==> Signing with stable identity: $SIGNING_IDENTITY"
+    codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP"
+else
+    echo "==> No Apple Development identity found; using ad-hoc signing"
+    echo "    Screen & System Audio permission may need to be granted again after rebuilds."
+    codesign --force --deep --sign - "$APP"
+fi
+
 echo "Built: $APP"
