@@ -209,6 +209,7 @@ private struct TouchInstrumentView: View {
     @State private var trackpadSustainEnabled = false
     @State private var trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold
     @State private var trackpadSustainThreshold = 0.55
+    @State private var trackpadSustainSensor: TrackpadSustainSensor = .contactSize
     @State private var magicMouseSustainEnabled = false
     @State private var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
 
@@ -253,6 +254,7 @@ private struct TouchInstrumentView: View {
             trackpadSustainEnabled: trackpadSustainEnabled,
             trackpadSustainGesture: trackpadSustainGesture,
             trackpadSustainThreshold: trackpadSustainThreshold,
+            trackpadSustainSensor: trackpadSustainSensor,
             magicMouseSustainEnabled: magicMouseSustainEnabled,
             magicMouseSustainGesture: magicMouseSustainGesture
         )
@@ -475,6 +477,13 @@ private struct TouchInstrumentView: View {
                             .frame(width: 240)
                             .disabled(studio.touchRunning || !trackpadSustainEnabled)
                             if trackpadSustainEnabled && trackpadSustainGesture == .contactThreshold {
+                                Picker("Sensor", selection: $trackpadSustainSensor) {
+                                    ForEach(TrackpadSustainSensor.allCases) {
+                                        Text($0.rawValue).tag($0)
+                                    }
+                                }
+                                .frame(width: 245)
+                                .disabled(studio.touchRunning)
                                 HStack {
                                     Text("Contact threshold")
                                     Slider(value: $trackpadSustainThreshold, in: 0.05...1, step: 0.05)
@@ -620,6 +629,7 @@ private struct TouchInstrumentView: View {
         .onChange(of: trackpadSustainEnabled) { _ in syncConfiguration() }
         .onChange(of: trackpadSustainGesture) { _ in syncConfiguration() }
         .onChange(of: trackpadSustainThreshold) { _ in syncConfiguration() }
+        .onChange(of: trackpadSustainSensor) { _ in syncConfiguration() }
         .onChange(of: magicMouseSustainEnabled) { _ in syncConfiguration() }
         .onChange(of: magicMouseSustainGesture) { _ in syncConfiguration() }
         .onChange(of: studio.masterLevel) { _ in syncConfiguration() }
@@ -982,6 +992,7 @@ private struct MIDIHelperView: View {
     @State private var trackpadSustainEnabled = false
     @State private var trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold
     @State private var trackpadSustainThreshold = 0.55
+    @State private var trackpadSustainSensor: TrackpadSustainSensor = .contactSize
     @State private var magicMouseSustainEnabled = false
     @State private var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
 
@@ -1108,6 +1119,12 @@ private struct MIDIHelperView: View {
                                 }
 
                                 if trackpadSustainEnabled && trackpadSustainGesture == .contactThreshold {
+                                    Picker("Sensor Source", selection: $trackpadSustainSensor) {
+                                        ForEach(TrackpadSustainSensor.allCases) {
+                                            Text($0.rawValue).tag($0)
+                                        }
+                                    }
+                                    .disabled(!sustainOn || !surfaceSelection.accepts(.trackpad))
                                     HStack {
                                         Text("Contact threshold")
                                             .font(.caption)
@@ -1226,6 +1243,7 @@ private struct MIDIHelperView: View {
         .onChange(of: trackpadSustainEnabled) { _ in syncIfRunning() }
         .onChange(of: trackpadSustainGesture) { _ in syncIfRunning() }
         .onChange(of: trackpadSustainThreshold) { _ in syncIfRunning() }
+        .onChange(of: trackpadSustainSensor) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainEnabled) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainGesture) { _ in syncIfRunning() }
     }
@@ -1244,7 +1262,8 @@ private struct MIDIHelperView: View {
             trackpadSustainThreshold: trackpadSustainThreshold,
             magicMouseSustainEnabled: magicMouseSustainEnabled,
             magicMouseSustainGesture: magicMouseSustainGesture,
-            trackpadSustainGesture: trackpadSustainGesture
+            trackpadSustainGesture: trackpadSustainGesture,
+            trackpadSustainSensor: trackpadSustainSensor
         )
     }
 
