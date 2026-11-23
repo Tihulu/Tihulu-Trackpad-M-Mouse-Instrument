@@ -332,9 +332,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
         if let port { CGEvent.tapEnable(tap: port, enable: false) }
         if let loop {
-            CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes) {
-                CFRunLoopStop(CFRunLoopGetCurrent())
-            }
+            CFRunLoopStop(loop)
             CFRunLoopWakeUp(loop)
         } else if !pendingThread, let port {
             CFMachPortInvalidate(port)
