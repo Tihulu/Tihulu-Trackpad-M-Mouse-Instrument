@@ -114,6 +114,9 @@ final class StudioController: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     self.pointerCaptured = false
+                    // A click-up event may have been lost while the tap timed out.
+                    // Release any synthetic sustain state instead of sticking CC64.
+                    self.handlePhysicalClick(false, pressure: 0)
                     self.captureStatus = "Input monitor recovered after timeout · cursor released · press the capture shortcut to resume"
                 }
             }
@@ -123,6 +126,7 @@ final class StudioController: ObservableObject {
                     // macOS can disable a global event tap while the haptic driver
                     // is still healthy. Never escalate that to a device panic.
                     self.captureMonitor?.stop()
+                    self.handlePhysicalClick(false, pressure: 0)
                     self.captureArmed = false
                     self.captureHotkeyArmed = false
                     self.clickedSurface = nil
@@ -661,7 +665,7 @@ final class StudioController: ObservableObject {
         guard captureHotkeyArmed || touchRunning || midiHelperRunning else { return }
         guard let monitor = captureMonitor else { return }
         do {
-            try monitor.start(shortcut: captureShortcut)
+            try monitor.start(shortcut: captureShortcut, requestPermissions: captureHotkeyArmed)
             monitor.setCaptureHotkeyEnabled(captureHotkeyArmed)
             captureStatus = captureHotkeyArmed
                 ? "Ready globally · \(captureShortcut.displayName) toggles capture · Esc stops all"
