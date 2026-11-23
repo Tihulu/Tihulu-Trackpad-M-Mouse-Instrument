@@ -84,6 +84,20 @@ If a recorded shortcut does not work outside the application:
 
 **Important:** Global Capture suppresses desktop pointer input from *all* mice/trackpads while active; the system event stream cannot safely distinguish Magic Mouse from other pointers. Keep the shortcut and emergency release accessible. On-screen Stop stops playback without closing the driver; Panic Stop intentionally requires Reconnect. If the driver still stops unexpectedly, note the mode, macOS version, which input surface was in use, and whether the input-monitor status changed. This behavior still needs physical-device acceptance testing.
 
+## Global Capture diagnostics (v0.2.2)
+
+If the recorded performance shortcut has no effect in another application, open **Diagnostics → Global Capture → Refresh Snapshot**. This is a read-only check: it never turns on capture or requests permissions, and it does not record raw keys, typed text, private recordings, user file paths or hardware IDs.
+
+1. Record a shortcut in the top bar (avoid a key combination already reserved by macOS), then enable **Global Capture**.
+2. Go to **Diagnostics** and **Refresh Snapshot**. Check Accessibility, Input Monitoring preflight, Event Tap Created/Enabled, and the active shortcut.
+3. Switch to another application (for example TextEdit), press the recorded shortcut **twice**, and move the pointer between presses. If capture is working, desktop pointer movement should be suppressed after the first press and restored after the second.
+4. Return to Diagnostics and **Refresh Snapshot** again. Check whether the key-down, shortcut-match and pointer-event counters increased, and whether macOS reported a tap timeout or disable.
+5. Click **Copy Report** and share the sanitized text in the GitHub issue for troubleshooting. Counters are per process lifetime; quit and reopen the app to reset them.
+
+**How to interpret the report:** If the event tap cannot be created, check the macOS permission and code-signing state. If key-down events increment but shortcut matches do not, try recording a different combination. If matches increment but the pointer still moves while captured, examine pointer counts and event-tap timeouts. If the pointer is successfully captured but Touch Instrument makes no notes, confirm Touch Instrument is **started** and the appropriate trackpad/Mouse surface and MIDI/haptic routes are selected: global capture only suppresses desktop cursor events, it does not automatically start musical playback.
+
+The **Input Monitoring preflight** flag is an operating-system permission hint, not conclusive proof that an event tap can filter events. The **Event Tap Enabled** and observed counters are more useful when testing. While captured, the shortcut toggles release and **Escape** triggers Panic Stop. If you lose pointer control, the ordinary keyboard emergency release is available while the event tap is running.
+
 ## Requirements and safety
 
 - macOS 13 or newer; SwiftUI native app.
