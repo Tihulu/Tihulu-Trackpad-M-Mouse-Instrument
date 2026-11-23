@@ -23,6 +23,7 @@ struct ContentView: View {
                     switch mode ?? .voice {
                     case .voice: VoiceModeView()
                     case .touch: TouchInstrumentView()
+                    case .midiHelper: MIDIHelperView()
                     case .notes: NoteSequencerView()
                     case .drums: DrumSequencerView()
                     case .midi: MIDIModeView()
@@ -92,6 +93,7 @@ struct ContentView: View {
         switch mode {
         case .voice: "text.bubble"
         case .touch: "hand.point.up.left"
+        case .midiHelper: "slider.horizontal.3"
         case .notes: "pianokeys"
         case .drums: "circle.grid.cross"
         case .midi: "cable.connector"
@@ -196,6 +198,9 @@ private struct TouchInstrumentView: View {
     @State private var pressureToExpression = true
     @State private var localHapticSound = true
     @State private var midiOut = false
+    @State private var multiTouch = true
+    @State private var midiMode: TouchMIDIMode = .standard
+    @State private var midiChannel = 1
 
     private var mappedMIDINotes: [Int] {
         scale.mappedMIDINotes(root: root, zoneWidth: zoneWidth)
@@ -253,11 +258,21 @@ private struct TouchInstrumentView: View {
                         .toggleStyle(.switch)
                         .disabled(studio.touchRunning)
 
+                    Toggle("Multi Touch", isOn: $multiTouch)
+                        .toggleStyle(.switch)
+                        .disabled(studio.touchRunning)
+
                     Button(studio.touchRunning ? "Stop Touch Instrument" : "Start Touch Instrument") {
                         if studio.touchRunning {
                             studio.stopTouch()
                         } else {
-                            studio.startTouch(configuration: configuration, midiOut: midiOut)
+                            studio.startTouch(
+                                configuration: configuration,
+                                midiOut: midiOut,
+                                midiMode: midiMode,
+                                multiTouch: multiTouch,
+                                midiChannel: midiChannel - 1
+                            )
                         }
                     }
                     .buttonStyle(.borderedProminent)
@@ -358,6 +373,36 @@ private struct TouchInstrumentView: View {
                                  : "Controller-only mode: MIDI/preview stays active while local haptic sound is muted.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                        }
+                        .padding(6)
+                    }
+                }
+
+                if midiOut {
+                    GroupBox("MIDI Output") {
+                        HStack(spacing: 18) {
+                            Picker("MIDI Mode", selection: $midiMode) {
+                                ForEach(TouchMIDIMode.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 260)
+                            .disabled(studio.touchRunning)
+
+                            Stepper("Channel \(midiChannel)", value: $midiChannel, in: 1...16)
+                                .frame(width: 150)
+                                .disabled(studio.touchRunning || midiMode == .mpe)
+
+                            if fretless && multiTouch && midiMode == .standard {
+                                Label("Fretless multi-touch needs MPE for independent pitch bends.", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            } else if midiMode == .mpe {
+                                Text("MPE uses member channels 2–16 per finger.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
                         }
                         .padding(6)
                     }
