@@ -449,6 +449,17 @@ final class StudioController: ObservableObject {
         isPlaying = true
     }
 
+    var touchSessionSummary: String {
+        guard touchRunning else { return "Melodic notes or drums; independent surface outputs" }
+        return currentTouchConfiguration.surfaceSelection.rawValue + " · " +
+            (currentTouchConfiguration.fretless ? "Fretless" : "Fretted / drums")
+    }
+
+    var helperSessionSummary: String {
+        guard midiHelperRunning else { return "Pitch bend, vibrato, expression and sustain" }
+        return helperSurfaceSelection.rawValue + " · MIDI channel " + String(helperTargetChannel + 1)
+    }
+
     func setMagicMouseOrientation(_ newOrientation: SurfaceOrientation) {
         guard magicMouseOrientation != newOrientation else { return }
         magicMouseOrientation = newOrientation
@@ -542,10 +553,9 @@ final class StudioController: ObservableObject {
     }
 
     func stopTouchPreview() {
-        // Navigation never stops a live performance. Only an explicit mode
-        // Stop or the global Panic button does that.
-        guard !touchRunning else { return }
+        // Navigation drops only the UI preview request, never a live session.
         instrumentPreviewRequested = false
+        guard !touchRunning else { return }
         midi?.releaseTouchSustain()
         touchSustainState.reset()
         touchInstrumentSustainActive = false
@@ -620,6 +630,11 @@ final class StudioController: ObservableObject {
         midi?.endAllTouchOutput()
         touchRunning = false
         touchMIDIOutEnabled = false
+        if !instrumentPreviewRequested {
+            touchStates = []
+            touchContact = TrackpadContact()
+        }
+        refreshSharedSurfaceMonitoring()
         engineStatus = touchPreviewRunning
             ? "Touch preview active · no MIDI or haptic output until Start"
             : (engineReady ? "Force Touch trackpad ready" : engineStatus)
@@ -823,13 +838,15 @@ final class StudioController: ObservableObject {
         )
         midi?.setInputHapticsEnabled(true)
         midiHelperRunning = false
+        if !helperPreviewRequested { midiHelperStates = [] }
+        refreshSharedSurfaceMonitoring()
         stopCaptureMonitorIfIdle()
-        engineStatus = touchPreviewRunning ? "MIDI Helper preview active" : "MIDI bridge active"
+        engineStatus = touchPreviewRunning ? "Surface monitoring active" : "MIDI bridge active"
     }
 
     func stopMIDIHelperPreview() {
-        guard !midiHelperRunning else { return }
         helperPreviewRequested = false
+        guard !midiHelperRunning else { return }
         midiHelperStates = []
         refreshSharedSurfaceMonitoring()
         stopCaptureMonitorIfIdle()

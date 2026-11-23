@@ -6,15 +6,115 @@ import UniformTypeIdentifiers
 import NoSpeakerCore
 import NoSpeakerMac
 
+private struct VoiceDraft {
+    var text: String = StudioController.startupGreeting
+    var selectedLanguage: VoiceLanguage = .turkish
+    var selectedVoice: String = ""
+}
+
+private struct TouchDraft {
+    var root: Int = 67
+    var scale: TouchScale = .pentatonic
+    var fretless: Bool = false
+    var zoneWidth: Double = 1.0
+    var pitchSpan: Double = 24.0
+    var surfaceSelection: TouchSurfaceSelection = .trackpad
+    var triggerMode: TouchTriggerMode = .touch
+    var pressThreshold: Double = 0.5
+    var velocityFromPressure: Bool = false
+    var fixedVelocity: Int = 100
+    var pressureToExpression: Bool = true
+    var localHapticSound: Bool = true
+    var multiTouch: Bool = true
+    var midiMode: TouchMIDIMode = .standard
+    var midiChannel: Int = 1
+    var trackpadInstrument: SurfaceInstrumentMode = .melodic
+    var magicMouseInstrument: SurfaceInstrumentMode = .melodic
+    var trackpadOutput: SurfaceOutputRoute = .trackpadHaptic
+    var magicMouseOutput: SurfaceOutputRoute = .midiInstrument
+    var drumLayout: DrumPadLayout = .standard12
+    var sustainEnabled: Bool = false
+    var sustainTrackpadEnabled: Bool = true
+    var sustainTrackpadGesture: TrackpadSustainGesture = .contactThreshold
+    var sustainTrackpadThreshold: Double = 0.55
+    var sustainTrackpadSensor: TrackpadSustainSensor = .contactSize
+    var sustainMouseEnabled: Bool = false
+    var sustainMouseGesture: MagicMouseSustainGesture = .touchHold
+}
+
+private struct HelperDraft {
+    var surfaceSelection: TouchSurfaceSelection = .trackpad
+    var sendToDAW: Bool = true
+    var localSound: Bool = false
+    var targetChannel: Int = 1
+    var pitchBendRange: Int = 12
+    var vibratoCC: Int = 1
+    var expressionCC: Int = 11
+    var vibratoEnabled: Bool = true
+    var pitchBendEnabled: Bool = true
+    var expressionEnabled: Bool = true
+    var sustainEnabled: Bool = false
+    var trackpadSustainEnabled: Bool = true
+    var trackpadSustainThreshold: Double = 0.55
+    var trackpadSustainSensor: TrackpadSustainSensor = .contactSize
+    var trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold
+    var magicMouseSustainEnabled: Bool = false
+    var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
+}
+
+private struct NoteDraft {
+    var notes: [Int?] = Array(repeating: nil, count: 16)
+    var selectedMIDI: Int = 72
+    var velocity: Double = 0.85
+    var loop: Bool = false
+}
+
+private struct DrumDraft {
+    var active: Set<String> = ["kick:0","kick:8","snare:4","snare:12","closedHat:0","closedHat:2","closedHat:4","closedHat:6","closedHat:8","closedHat:10","closedHat:12","closedHat:14"]
+    var loop: Bool = false
+}
+
 struct ContentView: View {
     @EnvironmentObject private var studio: StudioController
-    @State private var mode: StudioMode? = .voice
+    @State private var mode: StudioMode? = .performance
+    @State private var voiceDraft = VoiceDraft()
+    @State private var touchDraft = TouchDraft()
+    @State private var helperDraft = HelperDraft()
+    @State private var noteDraft = NoteDraft()
+    @State private var drumDraft = DrumDraft()
+    @State private var tapTempo = TapTempo()
+    @State private var compactTransport = false
+
+    private var navigationGroups: [(String, [StudioMode])] {
+        [
+            ("Workspace", [.performance]),
+            ("Play", [.touch, .midiHelper, .touchBar]),
+            ("Compose", [.notes, .drums, .midi]),
+            ("Sound", [.voice, .audio, .speaker]),
+            ("Support", [.diagnostics, .about])
+        ]
+    }
 
     var body: some View {
         NavigationSplitView {
-            List(StudioMode.allCases, selection: $mode) { item in
-                Label(item.rawValue, systemImage: icon(for: item)).tag(item)
+            List(selection: $mode) {
+                ForEach(navigationGroups.indices, id: \.self) { index in
+                    Section(navigationGroups[index].0) {
+                        ForEach(navigationGroups[index].1) { item in
+                            HStack {
+                                Label(item.rawValue, systemImage: icon(for: item))
+                                    .lineLimit(1)
+                                Spacer(minLength: 2)
+                                if isSessionActive(item) {
+                                    Circle().fill(Color.green).frame(width: 7, height: 7)
+                                        .accessibilityLabel("Session active")
+                                }
+                            }.tag(item)
+                        }
+                    }
+                }
             }
+            .navigationSplitViewColumnWidth(min: 205, ideal: 235, max: 280)
             .navigationTitle("TIHULU Instrument")
             .safeAreaInset(edge: .bottom) { attribution }
         } detail: {
@@ -22,13 +122,14 @@ struct ContentView: View {
                 transport
                 Divider()
                 Group {
-                    switch mode ?? .voice {
-                    case .voice: VoiceModeView()
-                    case .touch: TouchInstrumentView()
-                    case .midiHelper: MIDIHelperView()
+                    switch mode ?? .performance {
+                    case .performance: PerformanceOverview(open: { mode = $0 })
+                    case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
+                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture)
+                    case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture)
                     case .touchBar: TouchBarModeView()
-                    case .notes: NoteSequencerView()
-                    case .drums: DrumSequencerView()
+                    case .notes: NoteSequencerView(notes: $noteDraft.notes, selectedMIDI: $noteDraft.selectedMIDI, velocity: $noteDraft.velocity, loop: $noteDraft.loop)
+                    case .drums: DrumSequencerView(active: $drumDraft.active, loop: $drumDraft.loop)
                     case .midi: MIDIModeView()
                     case .audio: AudioFileModeView()
                     case .speaker: SpeakerModeView()
@@ -51,17 +152,38 @@ struct ContentView: View {
         }
     }
 
+    private func isSessionActive(_ item: StudioMode) -> Bool {
+        switch item {
+        case .touch: studio.touchRunning
+        case .midiHelper: studio.midiHelperRunning
+        case .midi: studio.midiRunning
+        case .speaker: studio.systemAudioRunning
+        case .touchBar: studio.liveHingeEnabled || studio.touchBarSustainOn
+        default: false
+        }
+    }
+
     private var transport: some View {
         VStack(spacing: 6) {
           HStack(spacing: 12) {
-            Circle().fill(studio.engineReady ? Color.green : Color.orange).frame(width: 9, height: 9)
-            Text(studio.engineStatus).font(.callout).foregroundStyle(.secondary).lineLimit(1)
-            if !studio.engineReady { Button("Reconnect") { studio.reconnect() } }
-            Spacer()
+            Button {
+                mode = .performance
+            } label: {
+                Label("Performance", systemImage: "music.note.house")
+            }
+            .help("Return to the live session overview")
             Text("BPM")
             TextField("BPM", value: $studio.bpm, format: .number.precision(.fractionLength(0)))
                 .frame(width: 58).textFieldStyle(.roundedBorder)
-            Button("Stop") { studio.stopPlayback() }.keyboardShortcut(".", modifiers: .command)
+                .onSubmit { studio.bpm = TapTempo.safeBPM(studio.bpm) }
+            Button("Tap") {
+                if let bpm = tapTempo.tap(at: ProcessInfo.processInfo.systemUptime) {
+                    studio.bpm = bpm
+                }
+            }.help("Tap repeatedly to set the pattern tempo")
+            Spacer(minLength: 4)
+            Button("Stop Playback") { studio.stopPlayback() }.keyboardShortcut(".", modifiers: .command)
+                .help("Stop file, voice or sequencer playback; independent live sessions remain active")
             Button {
                 studio.panicStop()
             } label: {
@@ -77,9 +199,24 @@ struct ContentView: View {
             }
             .buttonStyle(.borderedProminent).tint(.red)
             .keyboardShortcut(.escape, modifiers: [])
-            Slider(value: $studio.masterLevel, in: 0...1) { Text("Master") }.frame(width: 130)
+            Slider(value: $studio.masterLevel, in: 0...1) { Text("Master") }.frame(width: 110)
+                .help("Haptic level; restart playback or a capture session if its level is not updated live")
             Text("\(Int(studio.masterLevel * 100))%").monospacedDigit().frame(width: 38, alignment: .trailing)
           }
+          HStack(spacing: 8) {
+              Circle().fill(studio.engineReady ? Color.green : Color.orange).frame(width: 8, height: 8)
+              Text(studio.engineStatus).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+              if !studio.engineReady { Button("Reconnect") { studio.reconnect() } }
+              Spacer()
+              Label(studio.pointerCaptured ? "Pointer Captured" : "Pointer Free",
+                    systemImage: studio.pointerCaptured ? "lock.fill" : "lock.open")
+                  .font(.caption.weight(.semibold))
+              Button { compactTransport.toggle() } label: {
+                  Label("Capture Settings", systemImage: compactTransport ? "chevron.down" : "chevron.up")
+                      .labelStyle(.iconOnly)
+              }.help("Show or hide capture and mouse orientation controls")
+          }
+          if !compactTransport {
           HStack(spacing: 12) {
               Toggle("Global Capture", isOn: Binding(
                   get: { studio.captureArmed },
@@ -97,12 +234,10 @@ struct ContentView: View {
               .frame(width: 170)
               .help("Rotate Magic Mouse gesture axes for all instrument and helper modes")
               Spacer()
-              Label(studio.pointerCaptured ? "Pointer Captured" : "Pointer Free",
-                    systemImage: studio.pointerCaptured ? "lock.fill" : "lock.open")
-                  .font(.caption)
               Text("Esc = Kill Switch").foregroundStyle(.red).font(.caption.bold())
           }
-          if studio.touchRunning || studio.midiHelperRunning {
+          }
+          if studio.touchRunning || studio.midiHelperRunning || studio.systemAudioRunning {
               HStack(spacing: 10) {
                   Label("Sessions persist across mode changes", systemImage: "waveform.path")
                       .font(.caption)
@@ -112,6 +247,10 @@ struct ContentView: View {
                   }
                   if studio.midiHelperRunning {
                       Button("Stop MIDI Helper") { studio.stopMIDIHelper() }
+                          .buttonStyle(.bordered)
+                  }
+                  if studio.systemAudioRunning {
+                      Button("Stop System Audio") { studio.stopSystemAudio() }
                           .buttonStyle(.bordered)
                   }
                   Spacer()
@@ -137,6 +276,7 @@ struct ContentView: View {
 
     private func icon(for mode: StudioMode) -> String {
         switch mode {
+        case .performance: "music.note.house"
         case .voice: "text.bubble"
         case .touch: "hand.point.up.left"
         case .midiHelper: "slider.horizontal.3"
@@ -149,6 +289,83 @@ struct ContentView: View {
         case .diagnostics: "waveform.path.ecg"
         case .about: "info.circle"
         }
+    }
+}
+
+private struct PerformanceOverview: View {
+    @EnvironmentObject private var studio: StudioController
+    let open: (StudioMode) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                PageHeader(title: "Performance", subtitle: "Choose an instrument, keep other sessions running, and stop each source independently.")
+                GroupBox("Live sessions") {
+                    VStack(spacing: 0) {
+                        session("Touch Instrument", detail: studio.touchSessionSummary, symbol: "hand.point.up.left",
+                                active: studio.touchRunning, page: .touch, stop: { studio.stopTouch() })
+                        Divider()
+                        session("MIDI Helper", detail: studio.helperSessionSummary, symbol: "slider.horizontal.3",
+                                active: studio.midiHelperRunning, page: .midiHelper, stop: { studio.stopMIDIHelper() })
+                        Divider()
+                        session("MIDI / Logic", detail: "Virtual MIDI bridge", symbol: "cable.connector",
+                                active: studio.midiRunning, page: .midi, stop: nil)
+                        Divider()
+                        session("Trackpad Speaker", detail: "Live system audio", symbol: "speaker.wave.2",
+                                active: studio.systemAudioRunning, page: .speaker, stop: { studio.stopSystemAudio() })
+                        Divider()
+                        session("Lid Sensor", detail: studio.hingeSensorStatus, symbol: "laptopcomputer",
+                                active: studio.liveHingeEnabled, page: .touchBar, stop: { studio.enableLiveHinge(false) })
+                    }.padding(6)
+                }
+                Text("Play & compose").font(.headline)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
+                    launch("Touch Instrument", "Melody, fretless and GM drums", "hand.point.up.left", .touch)
+                    launch("MIDI Helper", "Bend, vibrato, expression and sustain", "slider.horizontal.3", .midiHelper)
+                    launch("Touch Bar & Tilt", "Custom controls and lid mapping", "pianokeys", .touchBar)
+                    launch("Note Sequencer", "Build a melodic pattern", "music.note.list", .notes)
+                    launch("Drum Sequencer", "Build a rhythmic pattern", "circle.grid.cross", .drums)
+                    launch("Voice", "Render speech on the trackpad", "text.bubble", .voice)
+                }
+                Text("Instrument Builder, Camera and Remote are planned modules; no simulated connection or live status is shown here.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(24)
+        }
+    }
+
+    private func session(_ name: String, detail: String, symbol: String, active: Bool,
+                         page: StudioMode, stop: (() -> Void)?) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol).frame(width: 25).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name).font(.headline)
+                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer()
+            Label(active ? "Active" : "Idle", systemImage: active ? "circle.fill" : "circle")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(active ? Color.green : Color.secondary)
+            Button("Open") { open(page) }
+            if active, let stop {
+                Button("Stop", action: stop).tint(.red)
+                    .accessibilityLabel("Stop " + name)
+            }
+        }.padding(.vertical, 9)
+    }
+
+    private func launch(_ name: String, _ detail: String, _ symbol: String, _ page: StudioMode) -> some View {
+        Button { open(page) } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: symbol).font(.title2).frame(width: 28)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(name).font(.headline)
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+            }.padding(12).frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+        }.buttonStyle(.plain)
     }
 }
 
@@ -165,9 +382,9 @@ private struct PageHeader: View {
 
 private struct VoiceModeView: View {
     @EnvironmentObject private var studio: StudioController
-    @State private var text = StudioController.startupGreeting
-    @State private var selectedLanguage: VoiceLanguage = .turkish
-    @State private var selectedVoice = ""
+    @Binding var text: String
+    @Binding var selectedLanguage: VoiceLanguage
+    @Binding var selectedVoice: String
     @State private var voices: [VoiceOption] = []
 
     var body: some View {
@@ -260,35 +477,36 @@ private struct VoiceModeView: View {
 
 private struct TouchInstrumentView: View {
     @EnvironmentObject private var studio: StudioController
+    @State private var showAdvanced = false
 
-    @State private var root = 67
-    @State private var scale: TouchScale = .pentatonic
-    @State private var fretless = false
-    @State private var zoneWidth = 1.0
-    @State private var pitchSpan = 24.0
-    @State private var surfaceSelection: TouchSurfaceSelection = .trackpad
-    @State private var triggerMode: TouchTriggerMode = .touch
-    @State private var pressThreshold = 0.5
-    @State private var velocityFromPressure = false
-    @State private var fixedVelocity = 100
-    @State private var pressureToExpression = true
-    @State private var localHapticSound = true
-    @State private var multiTouch = true
-    @State private var midiMode: TouchMIDIMode = .standard
-    @State private var midiChannel = 1
+    @Binding var root: Int
+    @Binding var scale: TouchScale
+    @Binding var fretless: Bool
+    @Binding var zoneWidth: Double
+    @Binding var pitchSpan: Double
+    @Binding var surfaceSelection: TouchSurfaceSelection
+    @Binding var triggerMode: TouchTriggerMode
+    @Binding var pressThreshold: Double
+    @Binding var velocityFromPressure: Bool
+    @Binding var fixedVelocity: Int
+    @Binding var pressureToExpression: Bool
+    @Binding var localHapticSound: Bool
+    @Binding var multiTouch: Bool
+    @Binding var midiMode: TouchMIDIMode
+    @Binding var midiChannel: Int
 
-    @State private var trackpadInstrument: SurfaceInstrumentMode = .melodic
-    @State private var magicMouseInstrument: SurfaceInstrumentMode = .melodic
-    @State private var trackpadOutput: SurfaceOutputRoute = .trackpadHaptic
-    @State private var magicMouseOutput: SurfaceOutputRoute = .midiInstrument
-    @State private var drumLayout: DrumPadLayout = .standard12
-    @State private var sustainEnabled = false
-    @State private var sustainTrackpadEnabled = true
-    @State private var sustainTrackpadGesture: TrackpadSustainGesture = .contactThreshold
-    @State private var sustainTrackpadThreshold = 0.55
-    @State private var sustainTrackpadSensor: TrackpadSustainSensor = .contactSize
-    @State private var sustainMouseEnabled = false
-    @State private var sustainMouseGesture: MagicMouseSustainGesture = .touchHold
+    @Binding var trackpadInstrument: SurfaceInstrumentMode
+    @Binding var magicMouseInstrument: SurfaceInstrumentMode
+    @Binding var trackpadOutput: SurfaceOutputRoute
+    @Binding var magicMouseOutput: SurfaceOutputRoute
+    @Binding var drumLayout: DrumPadLayout
+    @Binding var sustainEnabled: Bool
+    @Binding var sustainTrackpadEnabled: Bool
+    @Binding var sustainTrackpadGesture: TrackpadSustainGesture
+    @Binding var sustainTrackpadThreshold: Double
+    @Binding var sustainTrackpadSensor: TrackpadSustainSensor
+    @Binding var sustainMouseEnabled: Bool
+    @Binding var sustainMouseGesture: MagicMouseSustainGesture
 
     private var effectivePitchSpan: Double { 24.0 / zoneWidth }
 
@@ -494,6 +712,8 @@ private struct TouchInstrumentView: View {
                     )
                 }
 
+                DisclosureGroup("Advanced controls: trigger, velocity, MIDI routing and sustain", isExpanded: $showAdvanced) {
+                VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 14) {
                     GroupBox("Trigger") {
                         VStack(alignment: .leading, spacing: 10) {
@@ -613,6 +833,8 @@ private struct TouchInstrumentView: View {
                 }
 
                 CaptureSettingsPanel()
+                }
+                }
 
                 if !studio.touchStates.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -864,10 +1086,10 @@ private struct TouchSurfaceMap: View {
 
 private struct NoteSequencerView: View {
     @EnvironmentObject private var studio: StudioController
-    @State private var notes: [Int?] = Array(repeating: nil, count: 16)
-    @State private var selectedMIDI = 72
-    @State private var velocity = 0.85
-    @State private var loop = false
+    @Binding var notes: [Int?]
+    @Binding var selectedMIDI: Int
+    @Binding var velocity: Double
+    @Binding var loop: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -915,30 +1137,50 @@ private struct NoteSequencerView: View {
 
 private struct DrumSequencerView: View {
     @EnvironmentObject private var studio: StudioController
-    @State private var active: Set<String> = ["kick:0","kick:8","snare:4","snare:12","closedHat:0","closedHat:2","closedHat:4","closedHat:6","closedHat:8","closedHat:10","closedHat:12","closedHat:14"]
-    @State private var loop = false
+    @Binding var active: Set<String>
+    @Binding var loop: Bool
     private let voices: [DrumVoice] = [.kick, .snare, .closedHat, .openHat, .clap, .tom]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             PageHeader(title: "Drum Sequencer", subtitle: "Sequence haptic kick, snare, hats, clap and tom voices.")
             HStack { Toggle("Loop", isOn: $loop); Spacer(); Button("Play Pattern") { play() }.buttonStyle(.borderedProminent); Button("Clear") { active.removeAll() } }
-            ScrollView(.horizontal) {
-                VStack(alignment: .leading, spacing: 9) {
-                    ForEach(voices, id: \.self) { voice in
-                        HStack(spacing: 7) {
-                            Text(label(voice)).frame(width: 82, alignment: .leading)
-                            ForEach(0..<16, id: \.self) { step in
-                                let key = "\(voice.rawValue):\(step)"
-                                Button("\(step + 1)") { if active.contains(key) { active.remove(key) } else { active.insert(key) } }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 5) {
+                    Color.clear.frame(width: 86, height: 1)
+                    ForEach(0..<4, id: \.self) { beat in
+                        Text("Beat \(beat + 1)").font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                ForEach(voices, id: \.self) { voice in
+                    HStack(spacing: 5) {
+                        Text(label(voice)).font(.callout)
+                            .frame(width: 86, alignment: .leading)
+                        ForEach(0..<4, id: \.self) { beat in
+                            HStack(spacing: 3) {
+                                ForEach(0..<4, id: \.self) { subdivision in
+                                    let step = beat * 4 + subdivision
+                                    let key = "\(voice.rawValue):\(step)"
+                                    let enabled = active.contains(key)
+                                    Button {
+                                        if enabled { active.remove(key) } else { active.insert(key) }
+                                    } label: {
+                                        Text("\(step + 1)").font(.caption.monospacedDigit())
+                                            .frame(maxWidth: .infinity, minHeight: 29)
+                                    }
                                     .buttonStyle(.borderedProminent)
-                                    .tint(active.contains(key) ? .accentColor : .gray.opacity(0.28))
-                                    .frame(width: 38)
-                            }
+                                    .controlSize(.small)
+                                    .tint(enabled ? .accentColor : .gray.opacity(beat.isMultiple(of: 2) ? 0.35 : 0.22))
+                                    .accessibilityLabel("\(label(voice)), step \(step + 1)")
+                                    .accessibilityValue(enabled ? "On" : "Off")
+                                }
+                            }.frame(maxWidth: .infinity)
                         }
                     }
-                }.padding(.vertical, 4)
-            }
+                }
+            }.padding(.vertical, 4)
             Spacer()
         }.padding(28)
     }
@@ -963,25 +1205,25 @@ private struct DrumSequencerView: View {
 private struct MIDIHelperView: View {
     @EnvironmentObject private var studio: StudioController
 
-    @State private var surfaceSelection: TouchSurfaceSelection = .trackpad
-    @State private var sendToDAW = true
-    @State private var localSound = false
-    @State private var targetChannel = 1
-    @State private var pitchBendRange = 12
-    @State private var vibratoCC = 1
-    @State private var expressionCC = 11
+    @Binding var surfaceSelection: TouchSurfaceSelection
+    @Binding var sendToDAW: Bool
+    @Binding var localSound: Bool
+    @Binding var targetChannel: Int
+    @Binding var pitchBendRange: Int
+    @Binding var vibratoCC: Int
+    @Binding var expressionCC: Int
 
-    @State private var vibratoEnabled = true
-    @State private var pitchBendEnabled = true
-    @State private var expressionEnabled = true
-    @State private var sustainEnabled = false
+    @Binding var vibratoEnabled: Bool
+    @Binding var pitchBendEnabled: Bool
+    @Binding var expressionEnabled: Bool
+    @Binding var sustainEnabled: Bool
 
-    @State private var trackpadSustainEnabled = true
-    @State private var trackpadSustainThreshold = 0.55
-    @State private var trackpadSustainSensor: TrackpadSustainSensor = .contactSize
-    @State private var trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold
-    @State private var magicMouseSustainEnabled = false
-    @State private var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
+    @Binding var trackpadSustainEnabled: Bool
+    @Binding var trackpadSustainThreshold: Double
+    @Binding var trackpadSustainSensor: TrackpadSustainSensor
+    @Binding var trackpadSustainGesture: TrackpadSustainGesture
+    @Binding var magicMouseSustainEnabled: Bool
+    @Binding var magicMouseSustainGesture: MagicMouseSustainGesture
 
 
     private var assignments: MIDIHelperAssignments {

@@ -8,7 +8,7 @@ struct NoSpeakerStudioApp: App {
     @StateObject private var studio = StudioController()
 
     var body: some Scene {
-        WindowGroup("Tihulu Trackpad & M. Mouse Instrument") {
+        Window("Tihulu Trackpad & M. Mouse Instrument", id: "studio") {
             ContentView()
                 .environmentObject(studio)
                 .frame(minWidth: 1_080, minHeight: 700)
