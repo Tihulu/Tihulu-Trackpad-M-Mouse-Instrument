@@ -66,7 +66,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <dict>
     <key>CFBundleDisplayName</key><string>Tihulu Trackpad &amp; M. Mouse Instrument</string>
     <key>CFBundleExecutable</key><string>NoSpeakerStudio</string>
-    <key>CFBundleIdentifier</key><string>com.tihulu.nospeakerstudio</string>
+    <key>CFBundleIdentifier</key><string>com.tihulu.trackpadmmouseinstrument</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Tihulu Trackpad Instrument</string>
     <key>CFBundlePackageType</key><string>APPL</string>
