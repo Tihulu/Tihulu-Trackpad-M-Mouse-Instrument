@@ -2,15 +2,19 @@
 import Foundation
 import ScreenCaptureKit
 import CoreMedia
+import CoreGraphics
 import AudioToolbox
 import NoSpeakerCore
 
 public enum SystemAudioCaptureError: LocalizedError {
+    case permissionDenied
     case noDisplay
     case unsupportedAudioFormat
 
     public var errorDescription: String? {
         switch self {
+        case .permissionDenied:
+            return "Screen & System Audio Recording permission is not active for this build of NoSpeaker Studio. Enable it in System Settings → Privacy & Security → Screen & System Audio Recording, then fully quit and reopen NoSpeaker Studio."
         case .noDisplay: return "No display is available for system-audio capture."
         case .unsupportedAudioFormat: return "The captured system-audio format is unsupported."
         }
@@ -35,6 +39,13 @@ public final class SystemAudioHapticCapture: NSObject, SCStreamOutput, SCStreamD
         if isRunning { return }
         self.profile = profile
         self.masterLevel = masterLevel
+
+        if !CGPreflightScreenCaptureAccess() {
+            guard CGRequestScreenCaptureAccess() else {
+                throw SystemAudioCaptureError.permissionDenied
+            }
+        }
+
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first else { throw SystemAudioCaptureError.noDisplay }
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
