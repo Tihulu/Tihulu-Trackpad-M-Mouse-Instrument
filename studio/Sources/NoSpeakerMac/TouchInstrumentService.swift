@@ -238,10 +238,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         let callback = performanceHandler
         lock.unlock()
 
-        guard config.surfaceSelection.accepts(frame.surface) else {
-            callback?([])
-            return
-        }
+        guard config.surfaceSelection.accepts(frame.surface) else { return }
 
         let mappedNotes = config.scale.mappedMIDINotes(
             root: config.baseMIDINote,
@@ -291,7 +288,9 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
         lock.lock()
         latestStatesBySurface[frame.surface] = states.filter(\.isTouching)
-        let combined = TouchSurfaceKind.allCases.flatMap { latestStatesBySurface[$0] ?? [] }
+        let combined = TouchSurfaceKind.allCases
+            .filter { config.surfaceSelection.accepts($0) }
+            .flatMap { latestStatesBySurface[$0] ?? [] }
         lock.unlock()
         callback?(combined)
 
