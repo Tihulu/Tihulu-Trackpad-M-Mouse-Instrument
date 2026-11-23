@@ -433,9 +433,9 @@ final class StudioController: ObservableObject {
         let newSustainSettings = MIDIHelperSustainSettings(
             trackpadEnabled: controls.sustain && trackpadSustainEnabled,
             trackpadContactThreshold: trackpadSustainThreshold,
-            trackpadGesture: trackpadSustainGesture,
             magicMouseEnabled: controls.sustain && magicMouseSustainEnabled,
-            magicMouseGesture: magicMouseSustainGesture
+            magicMouseGesture: magicMouseSustainGesture,
+            trackpadGesture: trackpadSustainGesture
         )
         let newChannel = max(0, min(15, targetChannel))
         if midiHelperRunning &&
