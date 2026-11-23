@@ -26,6 +26,9 @@ final class StudioController: ObservableObject {
     @Published var touchStates: [TouchPerformanceState] = []
     @Published var midiHelperStates: [TouchPerformanceState] = []
     @Published var midiHelperRunning = false
+    @Published var midiHelperSustainActive = false
+    @Published var midiHelperTrackpadSustainActive = false
+    @Published var midiHelperMagicMouseSustainActive = false
     @Published var activeMIDINotes: [ActiveMIDINote] = []
     @Published var systemAudioRunning = false
     @Published var lastMIDIMessage = "No MIDI received yet"
@@ -51,6 +54,8 @@ final class StudioController: ObservableObject {
     private var helperExpressionCC = 11
     private var helperLocalSound = false
     private var helperSurfaceSelection: TouchSurfaceSelection = .trackpad
+    private var helperSustainSettings = MIDIHelperSustainSettings()
+    private var helperSustainState = MIDIHelperSustainState()
     private var activeMIDINoteMap: [String: ActiveMIDINote] = [:]
 
     init() {
@@ -85,6 +90,10 @@ final class StudioController: ObservableObject {
         touchRunning = false
         touchPreviewRunning = false
         midiHelperRunning = false
+        helperSustainState.reset()
+        midiHelperSustainActive = false
+        midiHelperTrackpadSustainActive = false
+        midiHelperMagicMouseSustainActive = false
         touchContact = TrackpadContact()
         touchStates = []
         midiHelperStates = []
@@ -312,6 +321,12 @@ final class StudioController: ObservableObject {
     }
 
     func stopMIDI() {
+        midi?.releaseHelperSustain()
+        helperSustainState.reset()
+        midiHelperSustainActive = false
+        midiHelperTrackpadSustainActive = false
+        midiHelperMagicMouseSustainActive = false
+        midiHelperRunning = false
         midi?.endAllTouchOutput()
         midi?.resetHelperGesture(
             mode: helperMode,
@@ -377,8 +392,34 @@ final class StudioController: ObservableObject {
         targetChannel: Int,
         pitchBendRange: Int,
         vibratoCC: Int = 1,
-        expressionCC: Int = 11
+        expressionCC: Int = 11,
+        trackpadSustainEnabled: Bool = false,
+        trackpadSustainThreshold: Double = 0.55,
+        magicMouseSustainEnabled: Bool = false,
+        magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
     ) {
+        let newSustainSettings = MIDIHelperSustainSettings(
+            trackpadEnabled: trackpadSustainEnabled,
+            trackpadContactThreshold: trackpadSustainThreshold,
+            magicMouseEnabled: magicMouseSustainEnabled,
+            magicMouseGesture: magicMouseSustainGesture
+        )
+        let newChannel = max(0, min(15, targetChannel))
+        if midiHelperRunning &&
+            (newSustainSettings != helperSustainSettings ||
+             newChannel != helperTargetChannel ||
+             sendToDAW != helperSendToDAW ||
+             surfaceSelection != helperSurfaceSelection) {
+            // Changing surface, channel or sustain mapping safely clears an
+            // existing CC64 latch before the new routing becomes active.
+            midi?.releaseHelperSustain()
+            helperSustainState.reset()
+            midiHelperSustainActive = false
+            midiHelperTrackpadSustainActive = false
+            midiHelperMagicMouseSustainActive = false
+        }
+
+        helperSustainSettings = newSustainSettings
         helperMode = mode
         helperSurfaceSelection = surfaceSelection
         helperSendToDAW = sendToDAW
@@ -403,6 +444,11 @@ final class StudioController: ObservableObject {
     }
 
     func stopMIDIHelper() {
+        midi?.releaseHelperSustain()
+        helperSustainState.reset()
+        midiHelperSustainActive = false
+        midiHelperTrackpadSustainActive = false
+        midiHelperMagicMouseSustainActive = false
         midi?.resetHelperGesture(
             mode: helperMode,
             channel: helperTargetChannel,
@@ -425,9 +471,26 @@ final class StudioController: ObservableObject {
 
     private func handleMIDIHelperStates(_ states: [TouchPerformanceState]) {
         midiHelperStates = states
-        guard midiHelperRunning, helperSendToDAW else { return }
+        guard midiHelperRunning else { return }
 
         let active = states.filter(\.isTouching)
+        let snapshot = helperSustainState.update(
+            trackpadContactSizes: active
+                .filter { $0.surface == .trackpad }
+                .map(\.pressure),
+            magicMouseTouching: active.contains { $0.surface == .magicMouse },
+            settings: helperSustainSettings
+        )
+        midiHelperTrackpadSustainActive = snapshot.trackpadActive
+        midiHelperMagicMouseSustainActive = snapshot.magicMouseActive
+        midiHelperSustainActive = snapshot.isActive && helperSendToDAW
+
+        guard helperSendToDAW else {
+            midi?.releaseHelperSustain()
+            return
+        }
+        midi?.setHelperSustain(snapshot.isActive, channel: helperTargetChannel)
+
         guard !active.isEmpty else {
             midi?.resetHelperGesture(
                 mode: helperMode,
