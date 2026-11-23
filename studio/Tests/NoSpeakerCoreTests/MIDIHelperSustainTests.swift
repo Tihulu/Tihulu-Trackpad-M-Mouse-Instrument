@@ -88,3 +88,57 @@ import Testing
     engine.reset()
     #expect(!engine.snapshot.isActive)
 }
+
+@Test func trackpadTouchHoldAndTapToggleWorkIndependently() {
+    var engine = MIDIHelperSustainState()
+    var config = MIDIHelperSustainSettings(trackpadEnabled: true, trackpadGesture: .touchHold)
+    #expect(engine.update(trackpadContactSizes: [0.05], magicMouseTouching: false, settings: config).isActive)
+    #expect(!engine.update(trackpadContactSizes: [], magicMouseTouching: false, settings: config).isActive)
+    config.trackpadGesture = .tapToggle
+    #expect(engine.update(trackpadContactSizes: [0.05], magicMouseTouching: false, settings: config).isActive)
+    #expect(engine.update(trackpadContactSizes: [], magicMouseTouching: false, settings: config).isActive)
+    #expect(!engine.update(trackpadContactSizes: [0.3], magicMouseTouching: false, settings: config).isActive)
+}
+
+@Test func physicalClickHoldAndToggleDoNotDependOnContactSize() {
+    var engine = MIDIHelperSustainState()
+    var config = MIDIHelperSustainSettings(
+        trackpadEnabled: true,
+        magicMouseEnabled: true,
+        magicMouseGesture: .physicalClickHold,
+        trackpadGesture: .physicalClickHold
+    )
+    #expect(!engine.update(
+        trackpadContactSizes: [0.9], magicMouseTouching: true, settings: config
+    ).isActive)
+    #expect(engine.update(
+        trackpadContactSizes: [], magicMouseTouching: false, settings: config,
+        trackpadClickDown: true
+    ).trackpadActive)
+    #expect(engine.update(
+        trackpadContactSizes: [], magicMouseTouching: false, settings: config,
+        magicMouseClickDown: true
+    ).magicMouseActive)
+    config.trackpadGesture = .physicalClickToggle
+    config.magicMouseGesture = .physicalClickToggle
+    engine.reset()
+    #expect(engine.update(
+        trackpadContactSizes: [], magicMouseTouching: false, settings: config,
+        trackpadClickDown: true, magicMouseClickDown: true
+    ).isActive)
+    #expect(engine.update(
+        trackpadContactSizes: [], magicMouseTouching: false, settings: config,
+        trackpadClickDown: false, magicMouseClickDown: false
+    ).isActive)
+    #expect(!engine.update(
+        trackpadContactSizes: [], magicMouseTouching: false, settings: config,
+        trackpadClickDown: true, magicMouseClickDown: true
+    ).isActive)
+}
+
+@Test func helperAssignmentsCanSelectAnyCombination() {
+    let blank = MIDIHelperAssignments(vibrato: false, pitchBend: false, expression: false)
+    #expect(!blank.vibrato && !blank.pitchBend && !blank.expression)
+    let hybrid = MIDIHelperAssignments.hybrid
+    #expect(hybrid.vibrato && hybrid.pitchBend && hybrid.expression)
+}
