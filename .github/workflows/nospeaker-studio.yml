@@ -1,0 +1,52 @@
+name: NoSpeaker Studio CI
+
+on:
+  push:
+    paths:
+      - 'studio/**'
+      - '.github/workflows/nospeaker-studio.yml'
+  pull_request:
+    paths:
+      - 'studio/**'
+      - '.github/workflows/nospeaker-studio.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  core-tests:
+    name: Shared core tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Verify
+        run: ./scripts/verify.sh
+
+  macos-build:
+    name: macOS build
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: studio
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode and Swift versions
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Unit tests
+        run: swift test
+      - name: Build Studio
+        run: swift build
+      - name: Build app bundle
+        run: ./scripts/build-app.sh
+      - name: Upload unsigned development app
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoSpeaker-Studio-macOS-development
+          path: studio/dist/NoSpeaker Studio.app
