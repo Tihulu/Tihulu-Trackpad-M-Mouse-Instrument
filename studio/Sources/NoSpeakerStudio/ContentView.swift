@@ -45,7 +45,10 @@ struct ContentView: View {
         )) {
             Button("OK") { studio.lastError = nil }
         } message: { Text(studio.lastError ?? "Unknown error") }
-        .onAppear { studio.installTouchBar() }
+        .onAppear {
+            studio.installTouchBar()
+            studio.playStartupGreetingOnce()
+        }
     }
 
     private var transport: some View {
@@ -162,8 +165,8 @@ private struct PageHeader: View {
 
 private struct VoiceModeView: View {
     @EnvironmentObject private var studio: StudioController
-    @State private var text = "Hello from the trackpad."
-    @State private var selectedLanguage: VoiceLanguage = .english
+    @State private var text = "KOMUTAN LOGAR, BİR CİSİM YAKLAŞIYOR EFENDİM."
+    @State private var selectedLanguage: VoiceLanguage = .turkish
     @State private var selectedVoice = ""
     @State private var voices: [VoiceOption] = []
 
@@ -217,7 +220,7 @@ private struct VoiceModeView: View {
                 if selectedLanguage == .turkish {
                     GroupBox("Additional Turkish Voices · Offline") {
                         VStack(alignment: .leading, spacing: 9) {
-                            Text("Add a local Piper model (.onnx and matching .onnx.json) to the app's Voice folder. Female and male voice models can coexist with macOS Yelda. Models are not downloaded or redistributed automatically; check each model's license.")
+                            Text("Add a local Piper model (.onnx and matching .onnx.json) to the app's Voice folder. Female and male voice models can coexist with Tihulu (the installed macOS Yelda voice). Models are not downloaded or redistributed automatically; check each model's license.")
                                 .font(.caption).foregroundStyle(.secondary)
                             HStack(spacing: 12) {
                                 Label(VoiceHapticService.piperIsInstalled()
@@ -248,7 +251,9 @@ private struct VoiceModeView: View {
     private func reloadVoices() {
         voices = VoiceHapticService.voiceOptions(language: selectedLanguage)
         if !voices.contains(where: { $0.id == selectedVoice }) {
-            selectedVoice = voices.first?.id ?? ""
+            selectedVoice = (selectedLanguage == .turkish
+                ? voices.first(where: { $0.id == "say:Yelda" })?.id
+                : nil) ?? voices.first?.id ?? ""
         }
     }
 }

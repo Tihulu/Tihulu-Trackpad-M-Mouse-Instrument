@@ -48,6 +48,10 @@ final class StudioController: ObservableObject {
 
     private var driver: HapticTrackpadDriver?
     private var playback: HapticPlaybackEngine?
+    static let startupGreeting = "KOMUTAN LOGAR, BİR CİSİM YAKLAŞIYOR EFENDİM."
+    private var startupGreetingAttempted = false
+    private var startupGreetingPlaying = false
+    private var startupGreetingTask: Task<Void, Never>?
     private var touch: TouchInstrumentService?
     private var midi: MIDIHapticService?
     private var systemAudio: SystemAudioHapticCapture?
@@ -132,6 +136,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarKey(_ note: Int, pressed: Bool) {
+        cancelStartupGreeting()
         if !midiRunning { startMIDI() }
         guard midiRunning else { return }
         let safeNote = max(0, min(127, note))
@@ -149,6 +154,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarValue(_ zone: TouchBarZone, normalized value: Double) {
+        cancelStartupGreeting()
         if !midiRunning { startMIDI() }
         guard midiRunning, value.isFinite else { return }
         let safe = max(0, min(1, value))
@@ -175,6 +181,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarSustainPressed(_ isPressed: Bool) {
+        cancelStartupGreeting()
         if !midiRunning { startMIDI() }
         guard midiRunning else { return }
         let next = touchBarProfile.sustainMode == .toggle
@@ -295,6 +302,7 @@ final class StudioController: ObservableObject {
     }
 
     func panicStop() {
+        cancelStartupGreeting()
         enableLiveHinge(false)
         releaseTouchBarNotes()
         touchBarSustainOn = false
@@ -333,12 +341,48 @@ final class StudioController: ObservableObject {
     }
 
     func reconnect() {
+        cancelStartupGreeting()
         driver?.close()
         driver = nil
         prepareEngine()
     }
 
+    /// Once per process, not on every SwiftUI appearance or reconnect.
+    /// No non-Turkish fallback and no permission requests for the greeting.
+    func playStartupGreetingOnce() {
+        guard !startupGreetingAttempted else { return }
+        startupGreetingAttempted = true
+        guard engineReady, let engine = playback else { return }
+        let message = Self.startupGreeting
+        startupGreetingTask = Task { [weak self] in
+            let events = try? await Task.detached(priority: .utility) { () throws -> [ScheduledHapticEvent] in
+                let voices = VoiceHapticService.voiceOptions(language: .turkish)
+                guard let voice = voices.first(where: { $0.id == "say:Yelda" })
+                        ?? voices.first(where: { $0.backend == .say })
+                        ?? voices.first(where: { $0.backend == .avSpeech }) else { return [] }
+                return try VoiceHapticService.render(text: message, voice: voice.id)
+            }.value
+            guard !Task.isCancelled, let self, self.engineReady,
+                  self.playback === engine, !self.isPlaying,
+                  !self.touchRunning, !self.midiRunning, !self.midiHelperRunning,
+                  !self.systemAudioRunning, let events, !events.isEmpty else { return }
+            self.startupGreetingPlaying = true
+            engine.play(events: events, masterLevel: self.masterLevel)
+        }
+    }
+
+    private func cancelStartupGreeting() {
+        startupGreetingAttempted = true
+        startupGreetingTask?.cancel()
+        startupGreetingTask = nil
+        if startupGreetingPlaying {
+            playback?.stop(closeDriver: false)
+            startupGreetingPlaying = false
+        }
+    }
+
     func speak(_ text: String, voice: String?) {
+        cancelStartupGreeting()
         guard requireEngine(), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         isPlaying = true
         let renderText = text
@@ -357,6 +401,7 @@ final class StudioController: ObservableObject {
     }
 
     func playNotes(_ steps: [NoteStep], length: Int = 16, loop: Bool = false) {
+        cancelStartupGreeting()
         guard requireEngine() else { return }
         do {
             let events = try HapticPatternRenderer.notes(.init(bpm: bpm, stepsPerBeat: 4, length: length, steps: steps))
@@ -366,6 +411,7 @@ final class StudioController: ObservableObject {
     }
 
     func playDrums(_ hits: [DrumStep], length: Int = 16, loop: Bool = false) {
+        cancelStartupGreeting()
         guard requireEngine() else { return }
         let events = HapticPatternRenderer.drums(.init(bpm: bpm, stepsPerBeat: 4, length: length, hits: hits))
         playback?.play(events: events, masterLevel: masterLevel, loop: loop)
@@ -373,17 +419,20 @@ final class StudioController: ObservableObject {
     }
 
     func stopPlayback() {
+        cancelStartupGreeting()
         playback?.stop(closeDriver: false)
         isPlaying = false
     }
 
     func testTone(frequency: Double) {
+        cancelStartupGreeting()
         guard requireEngine() else { return }
         let duration = max(2, (0.04 * frequency).rounded()) / frequency * 1_000
         playback?.play(frame: .init(tones: [.init(frequencyHz: frequency)], durationMS: duration, level: masterLevel))
     }
 
     func sweep() {
+        cancelStartupGreeting()
         guard requireEngine() else { return }
         var events: [ScheduledHapticEvent] = []
         let duration = 5.0
@@ -516,6 +565,7 @@ final class StudioController: ObservableObject {
         midiChannel: Int = 0,
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
+        cancelStartupGreeting()
         guard requireEngine(), let touch else { return }
         var configuration = configuration
         configuration.magicMouseOrientation = magicMouseOrientation
@@ -604,6 +654,7 @@ final class StudioController: ObservableObject {
     }
 
     func startMIDI() {
+        cancelStartupGreeting()
         guard requireEngine(), let midi else { return }
         do {
             try midi.start(masterLevel: masterLevel) { [weak self] message in
@@ -701,6 +752,7 @@ final class StudioController: ObservableObject {
         trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold,
         trackpadSustainSensor: TrackpadSustainSensor = .contactSize
     ) {
+        cancelStartupGreeting()
         let newSustainSettings = MIDIHelperSustainSettings(
             trackpadEnabled: trackpadSustainEnabled,
             trackpadContactThreshold: trackpadSustainThreshold,
@@ -1023,6 +1075,7 @@ final class StudioController: ObservableObject {
     }
 
     func playMIDIFile(_ url: URL) {
+        cancelStartupGreeting()
         guard requireEngine() else { return }
         do {
             let data = try Data(contentsOf: url)
@@ -1034,6 +1087,7 @@ final class StudioController: ObservableObject {
     }
 
     func playAudioFile(_ url: URL, profile: AudioHapticProfile? = nil) {
+        cancelStartupGreeting()
         guard requireEngine() else { return }
         currentFileName = url.lastPathComponent
         let selectedProfile = profile ?? activeProfile
@@ -1059,6 +1113,7 @@ final class StudioController: ObservableObject {
     }
 
     func startSystemAudio() {
+        cancelStartupGreeting()
         guard requireEngine(), let systemAudio else { return }
         Task {
             do {
