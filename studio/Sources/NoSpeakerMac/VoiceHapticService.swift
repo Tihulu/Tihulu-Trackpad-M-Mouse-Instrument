@@ -32,14 +32,38 @@ public enum VoiceLanguage: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum VoiceHapticService {
+    private static func installedVoiceRecords() -> [(name: String, locale: String)] {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+        process.arguments = ["-v", "?"]
+        process.standardOutput = pipe
+        guard (try? process.run()) != nil else { return [] }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let text = String(data: data, encoding: .utf8) ?? ""
+
+        return text.split(separator: "\n").compactMap { rawLine in
+            let spokenPart = rawLine.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? rawLine
+            let fields = spokenPart.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            guard fields.count >= 2 else { return nil }
+            let locale = String(fields.last!)
+            let name = fields.dropLast().joined(separator: " ")
+            guard !name.isEmpty else { return nil }
+            return (name, locale)
+        }
+    }
+
     public static func installedVoices() -> [String] {
-        Array(Set(AVSpeechSynthesisVoice.speechVoices().map(\.name))).sorted()
+        Array(Set(installedVoiceRecords().map(\.name))).sorted()
     }
 
     public static func installedVoices(language: VoiceLanguage) -> [String] {
-        Array(Set(
-            AVSpeechSynthesisVoice.speechVoices()
-                .filter { $0.language.lowercased().hasPrefix(language.localePrefix) }
+        let prefix = language.localePrefix.lowercased()
+        return Array(Set(
+            installedVoiceRecords()
+                .filter { $0.locale.lowercased().hasPrefix(prefix) }
                 .map(\.name)
         )).sorted()
     }
