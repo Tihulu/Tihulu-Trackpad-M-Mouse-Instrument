@@ -98,8 +98,8 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Tihulu Trackpad Instrument</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.2.2</string>
-    <key>CFBundleVersion</key><string>4</string>
+    <key>CFBundleShortVersionString</key><string>0.2.3</string>
+    <key>CFBundleVersion</key><string>5</string>
     <key>NoSpeakerBuildSHA</key><string>$BUILD_SHA</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
