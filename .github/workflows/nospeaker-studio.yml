@@ -3,10 +3,12 @@ name: NoSpeaker Studio CI
 on:
   push:
     paths:
+      - 'install-studio.sh'
       - 'studio/**'
       - '.github/workflows/nospeaker-studio.yml'
   pull_request:
     paths:
+      - 'install-studio.sh'
       - 'studio/**'
       - '.github/workflows/nospeaker-studio.yml'
 
@@ -39,6 +41,10 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
+      - name: Installer shell syntax
+        run: |
+          sh -n ../install-studio.sh
+          sh -n scripts/build-app.sh
       - name: Unit tests
         run: swift test
       - name: Build Studio
