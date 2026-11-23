@@ -42,8 +42,14 @@ paths remain available.
   the field currently exposed by NoSpeaker. It is not a verified Force
   Touch force measurement. The slider controls normalized contact size,
   not Newtons, pressure in kPa or macOS's calibrated pressure sensor.
-- True Force Touch pressure is not implemented for background Logic sessions.
-  No claim about accurate pressure/force support is made.
+- The Trackpad **Contact Threshold** mode now has two sensor-source choices:
+  **Contact Size** (default) and **Click Pressure (Experimental)**.
+  Click Pressure reads the CoreGraphics mouse-button pressure field only
+  while a physical click is attributed to the trackpad, so it requires
+  Accessibility event monitoring and a click. It may not provide calibrated
+  Force Touch force on a particular Mac; no accuracy claim is made.
+  When the pressure value is missing or invalid, sustain stays OFF rather
+  than silently treating contact size as physical force.
 - A macOS CGEvent mouse click does not reliably identify whether the click
   originated from a Magic Mouse or trackpad. NoSpeaker attributes a global
   mouse click only when **exactly one surface has an active touch**. When both
@@ -78,6 +84,8 @@ paths remain available.
 
 1. Verify both panels default to Sustain OFF; preview alone never generates MIDI.
 2. Test Trackpad Touch Hold, Tap Toggle, Contact Threshold and click modes.
+   Under Contact Threshold compare Contact Size and experimental Click Pressure;
+   verify that no pressure event means no sustain trigger.
 3. Test Magic Mouse Touch Hold, Tap Toggle and click modes. Verify two fingers
    do not trigger duplicate toggles in one touch session.
 4. Select Both and verify releasing one surface does not prematurely
