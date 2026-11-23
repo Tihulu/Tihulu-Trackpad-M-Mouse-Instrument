@@ -41,23 +41,51 @@ mkdir -p "$MACOS" "$RESOURCES"
 cp "$BIN" "$MACOS/NoSpeakerStudio"
 cp LICENSE NOTICE ATTRIBUTION.md "$RESOURCES/"
 ICON_SOURCE="Resources/TihuluTrackpadMouseIcon.svg"
-if [ -f "$ICON_SOURCE" ]; then
-    cp "$ICON_SOURCE" "$RESOURCES/TihuluTrackpadMouseIcon.svg"
-    if command -v rsvg-convert >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
-        echo "==> Rendering the approved TIHULU vector icon"
-        ICONSET="$(mktemp -d "${TMPDIR:-/tmp}/tihulu-icon.XXXXXX").iconset"
-        mkdir -p "$ICONSET"
-        rsvg-convert --width 1024 --height 1024 "$ICON_SOURCE" > "$ICONSET/icon_512x512@2x.png"
-        for spec in "16 16x16" "32 16x16@2x" "32 32x32" "64 32x32@2x" "128 128x128" "256 128x128@2x" "256 256x256" "512 256x256@2x" "512 512x512"; do
-            set -- $spec
-            sips --resampleHeightWidth "$1" "$1" "$ICONSET/icon_512x512@2x.png" --out "$ICONSET/icon_$2.png" >/dev/null
-        done
-        iconutil -c icns "$ICONSET" -o "$RESOURCES/TihuluInstrument.icns"
-        rm -rf "$ICONSET"
+[ -s "$ICON_SOURCE" ] || {
+    echo "ERROR: the approved TIHULU SVG logo is missing; refusing an unbranded app bundle." >&2
+    exit 1
+}
+cp "$ICON_SOURCE" "$RESOURCES/TihuluTrackpadMouseIcon.svg"
+
+# The release CI has librsvg, but source builds previously *silently omitted*
+# the icon when librsvg was missing (Dock then showed the blank app icon).
+# Never publish or locally install a branded app with a missing .icns.
+if ! command -v rsvg-convert >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+        echo "==> SVG renderer missing; installing Homebrew librsvg for the approved macOS icon"
+        brew install librsvg || {
+            echo "ERROR: could not install librsvg. Run 'brew install librsvg' then try again." >&2
+            exit 1
+        }
     else
-        echo "==> SVG logo bundled; install librsvg (rsvg-convert) to generate a macOS .icns during local builds."
+        echo "ERROR: rsvg-convert is required to render the approved icon." >&2
+        echo "Install Homebrew and run 'brew install librsvg', then retry the source build." >&2
+        exit 1
     fi
 fi
+command -v rsvg-convert >/dev/null 2>&1 || {
+    echo "ERROR: rsvg-convert was not found after installing librsvg." >&2
+    exit 1
+}
+command -v iconutil >/dev/null 2>&1 || {
+    echo "ERROR: macOS iconutil is required to create an .icns icon." >&2
+    exit 1
+}
+
+echo "==> Rendering and verifying the approved TIHULU vector icon"
+ICONSET="$(mktemp -d "${TMPDIR:-/tmp}/tihulu-icon.XXXXXX").iconset"
+mkdir -p "$ICONSET"
+rsvg-convert --width 1024 --height 1024 "$ICON_SOURCE" > "$ICONSET/icon_512x512@2x.png"
+for spec in "16 16x16" "32 16x16@2x" "32 32x32" "64 32x32@2x" "128 128x128" "256 128x128@2x" "256 256x256" "512 256x256@2x" "512 512x512"; do
+    set -- $spec
+    sips --resampleHeightWidth "$1" "$1" "$ICONSET/icon_512x512@2x.png" --out "$ICONSET/icon_$2.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$RESOURCES/TihuluInstrument.icns"
+rm -rf "$ICONSET"
+[ -s "$RESOURCES/TihuluInstrument.icns" ] || {
+    echo "ERROR: the macOS icon was not created; refusing an unbranded build." >&2
+    exit 1
+}
 
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -70,8 +98,8 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Tihulu Trackpad Instrument</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.2.2</string>
-    <key>CFBundleVersion</key><string>4</string>
+    <key>CFBundleShortVersionString</key><string>0.2.3</string>
+    <key>CFBundleVersion</key><string>5</string>
     <key>NoSpeakerBuildSHA</key><string>$BUILD_SHA</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>

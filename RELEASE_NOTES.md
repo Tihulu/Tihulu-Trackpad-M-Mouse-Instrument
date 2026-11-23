@@ -1,21 +1,20 @@
-# Tihulu Trackpad & M. Mouse Instrument v0.2.2
+# Tihulu Trackpad & M. Mouse Instrument v0.2.3
 
-This version adds **read-only global performance capture diagnostics** so permission, event tap, recorded shortcut and pointer capture problems can be distinguished using concrete counters.
+A focused **macOS reliability patch** based on a real macOS 26.3.1 diagnostic showing 8 successful global shortcut matches but 22 CGEvent tap timeouts, and a separate CoreMIDI client creation error (OSStatus -2).
 
-## What's new
-- **Diagnostics → Global Capture** now displays Accessibility trust and Input Monitoring preflight, event tap creation and enabled state, monitor status, capture-armed state, current pointer capture state, and the recorded shortcut.
-- Privacy-safe cumulative counters for global key-down events, pointer events, successful shortcut matches, event tap timeouts and system/user-disabled taps.
-- An in-app **Refresh Snapshot** button and **Copy Report** button with actionable next checks; capturing the report never enables input monitoring or requests additional permissions.
-- Clear instructions to test the recorded shortcut twice while another application is in focus, then inspect counter changes.
-- Additional macOS unit tests verify that diagnostic snapshots do not start an event tap or collect keystrokes.
-- Includes v0.2.1 safety fixes: event monitor interruptions no longer stop the haptic motor; captured Escape remains an emergency release; global capture key combination recording retains its enabled state.
+## Changes
 
-## Privacy
-No keystrokes, entered text, system-wide key sequences, private audio, hardware IDs or local paths are logged. Only counters and the deliberately recorded performance shortcut are included in a report. Diagnostics are local and require explicit user action to copy.
+- **Global Capture:** move the filtering CGEvent tap off SwiftUI's main run loop onto a dedicated user-interactive event thread. Preserve read-only diagnostic counters and explicit fail-open cursor release after a macOS tap disable. This targets main-thread stalls; real-hardware confirmation is still required.
+- **CoreMIDI:** keep a single process-lifetime CoreMIDI client instead of disposing the last client during every MIDI mode start/stop. Retain virtual MIDI endpoints across ordinary mode stops, keeping Logic Pro MIDI routes visible. Report actionable OSStatus -2 context.
+- **Logo:** render the approved SVG to a macOS .icns icon on every local source build. Install the renderer via Homebrew if available. If icon generation cannot complete, stop the source build instead of silently installing a blank Dock icon.
+- **Existing features:** keep Voice (local installed macOS voices), Touch Instrument, MIDI Helper, Magic Mouse and trackpad routing, sequencers, diagnostics and emergency Panic Stop as in v0.2.2.
+
+## What is not claimed
+
+We cannot reproduce the iPhone Continuity Microphone transition or private macOS MultitouchSupport hardware in GitHub Actions. CI build success is not a real-Mac pass for long-running pointer suppression, phone microphone switching, or Logic MIDI persistence.
 
 ## Install
-Download **Tihulu-Trackpad-M-Mouse-Instrument-macOS.dmg**, verify the checksum against **SHA256SUMS**, and drag the app to Applications. Or use the one-line installer in the README.
 
-The application is an **ad-hoc-signed, not Apple-notarized development build**. macOS Accessibility and Input Monitoring permissions may need to be reapproved after a signature-changing update. The tool relies on private MultitouchSupport APIs and still needs hands-on hardware acceptance. A passing CI build does not establish full hardware compatibility.
+Use the DMG from this GitHub Release or the one-line installation documented in README.md. The app is **ad-hoc-signed and not notarized**; Accessibility and Input Monitoring permissions may require review after reinstall. All documentation and interface text is in English.
 
-Original project: MIT-licensed [os6/nospeaker](https://github.com/os6/nospeaker) by Cody Collier.
+Original project attribution: MIT-licensed [os6/nospeaker](https://github.com/os6/nospeaker) by Cody Collier.
