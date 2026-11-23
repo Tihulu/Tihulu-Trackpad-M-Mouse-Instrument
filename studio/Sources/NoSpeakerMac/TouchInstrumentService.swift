@@ -194,6 +194,14 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var active = false
     private var performanceHandler: (@Sendable ([TouchPerformanceState]) -> Void)?
     private var latestStatesBySurface: [TouchSurfaceKind: [TouchPerformanceState]] = [:]
+    private var liveHapticStates: [TouchPerformanceState] = []
+    private var sustainedHapticStates: [String: TouchPerformanceState] = [:]
+    private var sustainActive = false
+    private var renderTimer: DispatchSourceTimer?
+    private let renderQueue = DispatchQueue(
+        label: "com.tihulu.nospeaker.touch-haptic-render",
+        qos: .userInteractive
+    )
 
     public init(driver: HapticTrackpadDriver) {
         self.driver = driver
@@ -226,13 +234,46 @@ public final class TouchInstrumentService: @unchecked Sendable {
     public func setActive(_ active: Bool) {
         lock.lock()
         self.active = active
+        if !active {
+            sustainActive = false
+            liveHapticStates.removeAll()
+            sustainedHapticStates.removeAll()
+        }
+        lock.unlock()
+
+        if active {
+            guard renderTimer == nil else { return }
+            let timer = DispatchSource.makeTimerSource(queue: renderQueue)
+            timer.schedule(deadline: .now(), repeating: .milliseconds(18), leeway: .milliseconds(2))
+            timer.setEventHandler { [weak self] in self?.renderHapticFrame() }
+            renderTimer = timer
+            timer.resume()
+        } else {
+            renderTimer?.cancel()
+            renderTimer = nil
+        }
+    }
+
+    /// Holds already triggered local haptic notes when sustain is active.
+    /// The output timer, not a touch callback, keeps the motor refreshed after
+    /// the last finger lifts. No playback is performed while Preview is idle.
+    public func setSustainActive(_ isOn: Bool) {
+        lock.lock()
+        sustainActive = isOn
+        if isOn {
+            for state in liveHapticStates where configuration.output(for: state.surface).sendsHaptics {
+                sustainedHapticStates[state.id] = state
+            }
+        } else {
+            sustainedHapticStates.removeAll()
+        }
         lock.unlock()
     }
 
     public func stopPreview() {
+        setActive(false)
         lock.lock()
         monitoring = false
-        active = false
         performanceHandler = nil
         latestStatesBySurface.removeAll()
         lock.unlock()
@@ -334,33 +375,51 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.unlock()
         callback?(combined)
 
-        guard isActive, config.localHapticSound else { return }
-        // Mix selected tracks from both surfaces in a single bounded frame.
-        // A Magic Mouse gesture can drive the Mac's Force Touch motor even
-        // when the user is playing a different instrument on the trackpad.
-        let sounding = combined.filter {
-            $0.isDown && config.output(for: $0.surface).sendsHaptics
-        }.prefix(6)
+        guard isActive else { return }
+        lock.lock()
+        liveHapticStates = combined.filter { $0.isDown }
+        if sustainActive {
+            for state in liveHapticStates where config.output(for: state.surface).sendsHaptics {
+                sustainedHapticStates[state.id] = state
+            }
+        }
+        lock.unlock()
+    }
+
+    private func renderHapticFrame() {
+        lock.lock()
+        let config = configuration
+        let shouldRender = active && config.localHapticSound
+        let current = liveHapticStates
+        let sustained = sustainedHapticStates
+        let isSustained = sustainActive
+        lock.unlock()
+        guard shouldRender else { return }
+
+        var byID: [String: TouchPerformanceState] =
+            isSustained ? sustained : [:]
+        for state in current where config.output(for: state.surface).sendsHaptics {
+            byID[state.id] = state
+        }
+        let sounding = byID.values.sorted { $0.id < $1.id }.prefix(6)
         guard !sounding.isEmpty else { return }
 
         let now = ProcessInfo.processInfo.systemUptime
         var tones: [HapticTone] = []
         var level = 0.0
-
         for state in sounding {
             let baseFrequency: Double
             if config.fretless && config.instrument(for: state.surface) == .melodic {
                 baseFrequency = 440.0 * pow(2.0, (state.continuousMIDI - 69.0) / 12.0)
             } else {
-                guard let frequency = try? MusicTheory.frequency(midi: state.quantizedMIDI) else { continue }
+                guard let frequency = try? MusicTheory.frequency(midi: state.quantizedMIDI) else {
+                    continue
+                }
                 baseFrequency = frequency
             }
-
-            let vibratoDepth = 0.5 * state.vibrato
-            let vibrato = vibratoDepth * sin(now * 6.0 * 2.0 * Double.pi)
-            let frequency = baseFrequency * pow(2.0, vibrato / 12.0)
-            tones.append(.init(frequencyHz: frequency))
-            level = max(level, Double(state.velocity) / 127.0)
+            let vibrato = 0.5 * state.vibrato * sin(now * 6 * 2 * Double.pi)
+            tones.append(.init(frequencyHz: baseFrequency * pow(2, vibrato / 12)))
+            level = max(level, Double(state.velocity) / 127)
         }
 
         guard !tones.isEmpty else { return }
