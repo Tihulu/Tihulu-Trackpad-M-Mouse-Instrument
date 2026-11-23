@@ -163,7 +163,7 @@ private struct VoiceModeView: View {
             }.padding(28)
         }
         .task { reloadVoices() }
-        .onChange(of: selectedLanguage) { _, _ in reloadVoices() }
+        .onChange(of: selectedLanguage) { _ in reloadVoices() }
     }
 
     private func reloadVoices() {
