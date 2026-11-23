@@ -38,6 +38,17 @@ public struct PerformanceCaptureShortcut: Codable, Hashable, Sendable {
     }
 }
 
+/// A global Escape is an emergency release only while the pointer is captured.
+/// Escape remains available to other applications when the capture shortcut is
+/// armed but the pointer is free (for example in Logic Pro's dialogs).
+public enum PerformanceCaptureSafety {
+    public static func shouldPanicOnGlobalEscape(
+        isCaptured: Bool, keyCode: Int64, isRepeat: Bool
+    ) -> Bool {
+        isCaptured && keyCode == 53 && !isRepeat
+    }
+}
+
 public enum PerformanceCaptureError: LocalizedError {
     case permissionDenied
     case tapUnavailable
@@ -45,9 +56,9 @@ public enum PerformanceCaptureError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .permissionDenied:
-            return "Performance capture requires Accessibility permission for NoSpeaker Studio. Enable it under System Settings → Privacy & Security → Accessibility, then restart Studio."
+            return "Global capture requires Accessibility access for Tihulu Trackpad & M. Mouse Instrument. Enable it in System Settings → Privacy & Security → Accessibility, then restart the app."
         case .tapUnavailable:
-            return "Could not create a safe keyboard/mouse event monitor. Mouse cursor remains available to macOS; no pointer events have been captured."
+            return "Could not start global keyboard/mouse capture. Check System Settings → Privacy & Security → Accessibility and Input Monitoring, restart the app after granting access, then try again. The cursor remains free."
         }
     }
 }
@@ -70,6 +81,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     public var onPhysicalClick: (@Sendable (Bool, Double) -> Void)?
     public var onPhysicalPressure: (@Sendable (Double) -> Void)?
     public var onMonitorFailed: (@Sendable () -> Void)?
+    public var onMonitorRecovered: (@Sendable () -> Void)?
 
     public init() {}
 
@@ -136,6 +148,9 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             callback: callback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
+            // The user explicitly enabled capture. Request Input Monitoring here,
+            // never at launch; Accessibility alone may not grant a global event tap.
+            _ = CGRequestListenEventAccess()
             throw PerformanceCaptureError.tapUnavailable
         }
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0) else {
@@ -180,7 +195,25 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         let passthrough = Unmanaged.passUnretained(event)
 
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            // Fail open immediately: never leave the pointer captured after the
+            // system disables this event tap. A timeout can be transient when the
+            // main run loop is busy rendering haptics or the SwiftUI interface.
             releasePointer()
+            if type == .tapDisabledByTimeout {
+                lock.lock()
+                let port = eventTap
+                let wasListening = listening
+                lock.unlock()
+                if wasListening, let port {
+                    CGEvent.tapEnable(tap: port, enable: true)
+                    if CGEvent.tapIsEnabled(tap: port) {
+                        onMonitorRecovered?()
+                        return passthrough
+                    }
+                }
+            }
+            // A user/system-disabled tap must not be overridden automatically.
+            // The controller disarms monitoring without closing the haptic driver.
             onMonitorFailed?()
             return passthrough
         }
@@ -191,7 +224,12 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
             // Esc is a global emergency kill switch ONLY while this monitor
             // is running. Never require the user to recover the mouse first.
-            if keyCode == 53, type == .keyDown, !repeatKey {
+            if type == .keyDown,
+               PerformanceCaptureSafety.shouldPanicOnGlobalEscape(
+                   isCaptured: isCaptured,
+                   keyCode: keyCode,
+                   isRepeat: repeatKey
+               ) {
                 releasePointer()
                 onPanic?()
                 return nil
