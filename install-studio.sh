@@ -8,11 +8,17 @@ APP_ROOT="${NOSPEAKER_STUDIO_APP_ROOT:-$HOME/Applications}"
 APP_DEST="$APP_ROOT/$APP_NAME"
 BIN_ROOT="${NOSPEAKER_STUDIO_BIN_ROOT:-$HOME/.local/bin}"
 CLI_DEST="$BIN_ROOT/tihulu-trackpad-instrument"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/nospeaker-studio.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT HUP INT TERM
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/tihulu-instrument.XXXXXX")"
+cleanup() {
+    if [ -d "$TMP/mounted" ]; then
+        hdiutil detach "$TMP/mounted" -quiet 2>/dev/null || true
+    fi
+    rm -rf "$TMP"
+}
+trap cleanup EXIT HUP INT TERM
 
 fail() {
-    printf '\nNoSpeaker Studio installer: %s\n\n' "$1" >&2
+    printf '\nTIHULU Instrument installer: %s\n\n' "$1" >&2
     exit 1
 }
 
@@ -36,8 +42,20 @@ install_app() {
     pkill -x NoSpeakerStudio 2>/dev/null || true
     sleep 0.2
 
-    rm -rf "$APP_DEST"
-    ditto "$SRC_APP" "$APP_DEST"
+    # Stage the complete app before replacing a working version.
+    STAGED="$APP_ROOT/.tihulu-instrument.staged.$"
+    BACKUP="$APP_ROOT/.tihulu-instrument.backup.$"
+    rm -rf "$STAGED" "$BACKUP"
+    ditto "$SRC_APP" "$STAGED"
+    if [ -d "$APP_DEST" ]; then
+        mv "$APP_DEST" "$BACKUP"
+    fi
+    if mv "$STAGED" "$APP_DEST"; then
+        rm -rf "$BACKUP"
+    else
+        [ ! -d "$BACKUP" ] || mv "$BACKUP" "$APP_DEST"
+        fail "Could not install the new app. The previous version was restored."
+    fi
 
     cat > "$CLI_DEST" <<EOF
 #!/bin/sh
@@ -64,6 +82,13 @@ if [ "$CHANNEL" = "release" ]; then
     RELEASE_URL="https://github.com/$REPO/releases/latest/download/Tihulu-Trackpad-M-Mouse-Instrument-macOS.dmg"
     if curl -fL --retry 2 --connect-timeout 10 "$RELEASE_URL" -o "$TMP/release.dmg" 2>/dev/null; then
         printf 'Installing the latest macOS DMG release...\n'
+        CHECKSUM_URL="https://github.com/$REPO/releases/latest/download/SHA256SUMS"
+        curl -fsSL --retry 2 --connect-timeout 10 "$CHECKSUM_URL" -o "$TMP/SHA256SUMS" \
+            || fail "The release checksum is unavailable."
+        EXPECTED="$(awk '$2 == "Tihulu-Trackpad-M-Mouse-Instrument-macOS.dmg" {print $1}' "$TMP/SHA256SUMS")"
+        ACTUAL="$(shasum -a 256 "$TMP/release.dmg" | awk '{print $1}')"
+        [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] \
+            || fail "DMG checksum mismatch: installation stopped before mounting."
         mkdir -p "$TMP/mounted"
         hdiutil attach "$TMP/release.dmg" -readonly -nobrowse -mountpoint "$TMP/mounted" -quiet \
             || fail "Cannot mount the downloaded DMG."
