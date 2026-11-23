@@ -30,14 +30,22 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
 
-    public func start(baseMIDINote: Int, scale: TouchScale, masterLevel: Double) throws {
+    public func start(
+        baseMIDINote: Int,
+        scale: TouchScale,
+        masterLevel: Double,
+        onContact: (@Sendable (TrackpadContact) -> Void)? = nil
+    ) throws {
         lock.lock()
         self.enabled = true
         self.baseMIDINote = baseMIDINote
         self.scale = scale
         self.masterLevel = masterLevel
         lock.unlock()
-        try driver.startTouch { [weak self] contact in self?.handle(contact) }
+        try driver.startTouch { [weak self] contact in
+            onContact?(contact)
+            self?.handle(contact)
+        }
     }
 
     public func stop() {
