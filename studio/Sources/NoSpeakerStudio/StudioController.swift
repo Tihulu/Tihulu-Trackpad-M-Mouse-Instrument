@@ -4,6 +4,13 @@ import SwiftUI
 import NoSpeakerCore
 import NoSpeakerMac
 
+struct ActiveMIDINote: Identifiable, Equatable {
+    var id: String { "\(channel)-\(note)" }
+    var channel: Int
+    var note: Int
+    var velocity: Int
+}
+
 @MainActor
 final class StudioController: ObservableObject {
     @Published var engineStatus = "Initializing haptic engine…"
@@ -17,6 +24,9 @@ final class StudioController: ObservableObject {
     @Published var touchPreviewRunning = false
     @Published var touchContact = TrackpadContact()
     @Published var touchStates: [TouchPerformanceState] = []
+    @Published var midiHelperStates: [TouchPerformanceState] = []
+    @Published var midiHelperRunning = false
+    @Published var activeMIDINotes: [ActiveMIDINote] = []
     @Published var systemAudioRunning = false
     @Published var lastMIDIMessage = "No MIDI received yet"
     @Published var currentFileName = "No file loaded"
@@ -29,6 +39,19 @@ final class StudioController: ObservableObject {
     private var systemAudio: SystemAudioHapticCapture?
     private var currentTouchConfiguration = TouchInstrumentConfiguration()
     private var touchMIDIOutEnabled = false
+    private var touchMIDIMode: TouchMIDIMode = .standard
+    private var touchMultiTouchEnabled = true
+    private var touchMIDIChannel = 0
+
+    private var helperMode: MIDIHelperMode = .hybrid
+    private var helperSendToDAW = true
+    private var helperTargetChannel = 0
+    private var helperPitchBendRange = 12
+    private var helperVibratoCC = 1
+    private var helperExpressionCC = 11
+    private var helperLocalSound = false
+    private var helperSurfaceSelection: TouchSurfaceSelection = .trackpad
+    private var activeMIDINoteMap: [String: ActiveMIDINote] = [:]
 
     init() {
         prepareEngine()
@@ -61,8 +84,12 @@ final class StudioController: ObservableObject {
         isPlaying = false
         touchRunning = false
         touchPreviewRunning = false
+        midiHelperRunning = false
         touchContact = TrackpadContact()
         touchStates = []
+        midiHelperStates = []
+        activeMIDINotes = []
+        activeMIDINoteMap.removeAll()
         midiRunning = false
         systemAudioRunning = false
         engineReady = false
@@ -166,7 +193,7 @@ final class StudioController: ObservableObject {
 
     func stopTouchPreview() {
         touch?.stopPreview()
-        midi?.endTouchOutput()
+        midi?.endAllTouchOutput()
         touchPreviewRunning = false
         touchRunning = false
         touchMIDIOutEnabled = false
@@ -175,10 +202,19 @@ final class StudioController: ObservableObject {
         engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
     }
 
-    func startTouch(configuration: TouchInstrumentConfiguration, midiOut: Bool) {
+    func startTouch(
+        configuration: TouchInstrumentConfiguration,
+        midiOut: Bool,
+        midiMode: TouchMIDIMode = .standard,
+        multiTouch: Bool = true,
+        midiChannel: Int = 0
+    ) {
         guard requireEngine(), let touch else { return }
         currentTouchConfiguration = configuration
         touchMIDIOutEnabled = midiOut
+        touchMIDIMode = midiMode
+        touchMultiTouchEnabled = multiTouch
+        touchMIDIChannel = max(0, min(15, midiChannel))
 
         if !touchPreviewRunning {
             startTouchPreview(configuration: configuration)
@@ -194,8 +230,8 @@ final class StudioController: ObservableObject {
         touchRunning = true
         engineStatus = midiOut
             ? (configuration.fretless
-               ? "Touch Instrument active · Fretless MIDI Out"
-               : "Touch Instrument active · MIDI Out")
+               ? "Touch Instrument active · Fretless \(midiMode.rawValue) Out"
+               : "Touch Instrument active · \(midiMode.rawValue) Out")
             : (configuration.fretless
                ? "Touch Instrument active · Fretless"
                : "Touch Instrument active")
@@ -215,7 +251,7 @@ final class StudioController: ObservableObject {
 
     func stopTouch() {
         touch?.setActive(false)
-        midi?.endTouchOutput()
+        midi?.endAllTouchOutput()
         touchRunning = false
         touchMIDIOutEnabled = false
         engineStatus = touchPreviewRunning
@@ -238,18 +274,13 @@ final class StudioController: ObservableObject {
         }
 
         guard touchRunning, touchMIDIOutEnabled else { return }
-        if let primary = states.first(where: { $0.isDown }) {
-            midi?.sendTouch(
-                continuousMIDI: primary.continuousMIDI,
-                quantizedMIDI: primary.quantizedMIDI,
-                velocity: primary.velocity,
-                isDown: true,
-                fretless: currentTouchConfiguration.fretless,
-                rootMIDI: currentTouchConfiguration.baseMIDINote
-            )
-        } else {
-            midi?.endTouchOutput()
-        }
+        midi?.sendTouchStates(
+            states,
+            configuration: currentTouchConfiguration,
+            midiMode: touchMIDIMode,
+            baseChannel: touchMIDIChannel,
+            multiTouchEnabled: touchMultiTouchEnabled
+        )
     }
 
     func startMIDI() {
@@ -257,7 +288,22 @@ final class StudioController: ObservableObject {
         do {
             try midi.start(masterLevel: masterLevel) { [weak self] message in
                 Task { @MainActor in
-                    self?.lastMIDIMessage = "Ch \(message.channel + 1) · Note \(message.note) · Velocity \(message.velocity) · \(message.isNoteOn ? "On" : "Off")"
+                    guard let self else { return }
+                    self.lastMIDIMessage = "Ch \(message.channel + 1) · Note \(message.note) · Velocity \(message.velocity) · \(message.isNoteOn ? "On" : "Off")"
+                    let key = "\(message.channel)-\(message.note)"
+                    if message.isNoteOn {
+                        self.activeMIDINoteMap[key] = .init(
+                            channel: message.channel,
+                            note: message.note,
+                            velocity: message.velocity
+                        )
+                    } else {
+                        self.activeMIDINoteMap.removeValue(forKey: key)
+                    }
+                    self.activeMIDINotes = self.activeMIDINoteMap.values.sorted {
+                        if $0.channel == $1.channel { return $0.note < $1.note }
+                        return $0.channel < $1.channel
+                    }
                 }
             }
             midiRunning = true
@@ -266,10 +312,148 @@ final class StudioController: ObservableObject {
     }
 
     func stopMIDI() {
-        midi?.endTouchOutput()
+        midi?.endAllTouchOutput()
+        midi?.resetHelperGesture(
+            mode: helperMode,
+            channel: helperTargetChannel,
+            vibratoCC: helperVibratoCC,
+            expressionCC: helperExpressionCC
+        )
         midi?.stop()
         midiRunning = false
+        activeMIDINoteMap.removeAll()
+        activeMIDINotes = []
         engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
+    }
+
+    func startMIDIHelperPreview(surfaceSelection: TouchSurfaceSelection) {
+        guard requireEngine(), let touch else { return }
+        helperSurfaceSelection = surfaceSelection
+
+        let config = TouchInstrumentConfiguration(
+            surfaceSelection: surfaceSelection,
+            velocityFromPressure: false,
+            fixedVelocity: 100,
+            pressureToExpression: true,
+            localHapticSound: false,
+            masterLevel: masterLevel
+        )
+
+        touch.stopPreview()
+        touchPreviewRunning = false
+        touchStates = []
+
+        do {
+            try touch.startPreview(configuration: config) { [weak self] states in
+                Task { @MainActor in
+                    self?.handleMIDIHelperStates(states)
+                }
+            }
+            touchPreviewRunning = true
+            engineStatus = "MIDI Helper preview active"
+        } catch {
+            fail(error)
+        }
+    }
+
+    func updateMIDIHelperSurface(_ surfaceSelection: TouchSurfaceSelection) {
+        helperSurfaceSelection = surfaceSelection
+        let config = TouchInstrumentConfiguration(
+            surfaceSelection: surfaceSelection,
+            velocityFromPressure: false,
+            fixedVelocity: 100,
+            pressureToExpression: true,
+            localHapticSound: false,
+            masterLevel: masterLevel
+        )
+        touch?.update(configuration: config)
+    }
+
+    func startMIDIHelper(
+        mode: MIDIHelperMode,
+        surfaceSelection: TouchSurfaceSelection,
+        sendToDAW: Bool,
+        localSound: Bool,
+        targetChannel: Int,
+        pitchBendRange: Int,
+        vibratoCC: Int = 1,
+        expressionCC: Int = 11
+    ) {
+        helperMode = mode
+        helperSurfaceSelection = surfaceSelection
+        helperSendToDAW = sendToDAW
+        helperLocalSound = localSound
+        helperTargetChannel = max(0, min(15, targetChannel))
+        helperPitchBendRange = max(1, min(24, pitchBendRange))
+        helperVibratoCC = max(0, min(127, vibratoCC))
+        helperExpressionCC = max(0, min(127, expressionCC))
+
+        if !touchPreviewRunning {
+            startMIDIHelperPreview(surfaceSelection: surfaceSelection)
+        } else {
+            updateMIDIHelperSurface(surfaceSelection)
+        }
+
+        if !midiRunning {
+            startMIDI()
+        }
+        midi?.setInputHapticsEnabled(localSound)
+        midiHelperRunning = true
+        engineStatus = "MIDI Helper active · \(mode.rawValue)"
+    }
+
+    func stopMIDIHelper() {
+        midi?.resetHelperGesture(
+            mode: helperMode,
+            channel: helperTargetChannel,
+            vibratoCC: helperVibratoCC,
+            expressionCC: helperExpressionCC
+        )
+        midi?.setInputHapticsEnabled(true)
+        midiHelperRunning = false
+        engineStatus = touchPreviewRunning ? "MIDI Helper preview active" : "MIDI bridge active"
+    }
+
+    func stopMIDIHelperPreview() {
+        if midiHelperRunning {
+            stopMIDIHelper()
+        }
+        touch?.stopPreview()
+        touchPreviewRunning = false
+        midiHelperStates = []
+    }
+
+    private func handleMIDIHelperStates(_ states: [TouchPerformanceState]) {
+        midiHelperStates = states
+        guard midiHelperRunning, helperSendToDAW else { return }
+
+        let active = states.filter(\.isTouching)
+        guard !active.isEmpty else {
+            midi?.resetHelperGesture(
+                mode: helperMode,
+                channel: helperTargetChannel,
+                vibratoCC: helperVibratoCC,
+                expressionCC: helperExpressionCC
+            )
+            return
+        }
+
+        // Multi-touch helper aggregation:
+        // horizontal = average bend, vertical = strongest vibrato, pressure = strongest expression.
+        let x = active.map(\.x).reduce(0, +) / Double(active.count)
+        let y = active.map(\.y).max() ?? 0
+        let pressure = active.map(\.pressure).max() ?? 0
+
+        midi?.sendHelperGesture(
+            x: x,
+            y: y,
+            pressure: pressure,
+            mode: helperMode,
+            channel: helperTargetChannel,
+            pitchBendRange: helperPitchBendRange,
+            vibratoCC: helperVibratoCC,
+            expressionCC: helperExpressionCC
+        )
     }
 
     func playMIDIFile(_ url: URL) {

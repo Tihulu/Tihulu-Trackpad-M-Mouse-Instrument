@@ -23,7 +23,7 @@ public enum HapticDriverError: LocalizedError {
     }
 }
 
-public enum TouchSurfaceKind: String, CaseIterable, Identifiable, Sendable {
+public enum TouchSurfaceKind: String, CaseIterable, Identifiable, Sendable, Hashable {
     case trackpad = "Trackpad"
     case magicMouse = "Magic Mouse"
 
