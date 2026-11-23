@@ -105,6 +105,11 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var touchOutputChannel = 0
     private var touchOutputFretless = false
 
+    // The Helper owns CC64 only while it is active. Do not send repeated
+    // CC64 messages per frame or leave a sustain latch behind on Stop/Panic.
+    private var helperSustainChannel: Int?
+    private var helperSustainOn = false
+
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
 
     deinit { stop() }
@@ -171,11 +176,14 @@ public final class MIDIHapticService: @unchecked Sendable {
         expressionByChannel.removeAll()
         channelPressureByChannel.removeAll()
         outgoingTouches.removeAll()
+        helperSustainOn = false
+        helperSustainChannel = nil
         lock.unlock()
         startRenderTimer()
     }
 
     public func stop() {
+        releaseHelperSustain()
         endAllTouchOutput()
 
         lock.lock()
@@ -193,6 +201,8 @@ public final class MIDIHapticService: @unchecked Sendable {
         expressionByChannel.removeAll()
         channelPressureByChannel.removeAll()
         outgoingTouches.removeAll()
+        helperSustainOn = false
+        helperSustainChannel = nil
         lock.unlock()
 
         renderTimer?.cancel()
@@ -347,6 +357,43 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
         outgoingTouches.removeAll()
         endTouchOutput()
+    }
+
+    /// Sends CC64 only on state transitions. When the Helper channel changes,
+    /// release sustain on the old channel before holding it on the new one.
+    public func setHelperSustain(_ active: Bool, channel: Int) {
+        let target = max(0, min(15, channel))
+
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        let previousChannel = helperSustainChannel
+        let wasActive = helperSustainOn
+        let changed = previousChannel != target
+        helperSustainOn = active && canSend
+        helperSustainChannel = active && canSend ? target : nil
+        lock.unlock()
+
+        guard canSend else { return }
+        if wasActive, let old = previousChannel, (!active || changed) {
+            sendControlChange(controller: 64, value: 0, channel: old)
+        }
+        if active && (!wasActive || changed) {
+            sendControlChange(controller: 64, value: 127, channel: target)
+        }
+    }
+
+    public func releaseHelperSustain() {
+        lock.lock()
+        let previousChannel = helperSustainChannel
+        let wasActive = helperSustainOn
+        let canSend = enabled && virtualSource != 0
+        helperSustainOn = false
+        helperSustainChannel = nil
+        lock.unlock()
+
+        if canSend, wasActive, let channel = previousChannel {
+            sendControlChange(controller: 64, value: 0, channel: channel)
+        }
     }
 
     public func sendHelperGesture(
