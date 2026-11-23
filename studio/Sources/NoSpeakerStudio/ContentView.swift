@@ -1137,8 +1137,11 @@ private struct MIDIModeView: View {
                         .font(.headline)
                     Text("Choose this as the MIDI input of a software-instrument track in your DAW.")
                         .foregroundStyle(.secondary)
-                    Text("Fretted Touch Instrument sends scale-quantized note-on/note-off. Fretless sends a monophonic note with continuous pitch bend and requests a ±12-semitone bend range via MIDI RPN.")
+                    Text("Touch Instrument routes each surface independently: melodic fretted notes, continuous-pitch MPE, or GM percussion pads (Kick 36, Snare 38, Closed Hat 42, etc.) on MIDI Channel 10. Select Trackpad, Magic Mouse, or Both and choose Trackpad Haptic / MIDI Instrument / Both for each surface.")
                         .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Text("For percussion, load a compatible drum kit in Logic Pro and align its note assignments with the GM pad layout. MIDI Channel 10 alone will not turn a piano track into a drum kit.")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .padding(6)
