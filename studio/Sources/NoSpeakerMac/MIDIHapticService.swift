@@ -41,7 +41,8 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     private struct ActiveNote {
         var velocity: Int
-        var keyDown: Bool
+        var keyDownCount: Int
+        var releasedWhileSustained: Bool
     }
 
     private let driver: HapticTrackpadDriver
@@ -60,6 +61,15 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var activeNotes: [NoteKey: ActiveNote] = [:]
     private var sustainByChannel: [Int: Bool] = [:]
     private var pitchBendByChannel: [Int: Int] = [:]
+    private var pitchBendRangeByChannel: [Int: Double] = [:]
+    private var rpnMSBByChannel: [Int: Int] = [:]
+    private var rpnLSBByChannel: [Int: Int] = [:]
+    private var bendRangeSemitonesByChannel: [Int: Int] = [:]
+    private var bendRangeCentsByChannel: [Int: Int] = [:]
+    private var modulationByChannel: [Int: Int] = [:]
+    private var volumeByChannel: [Int: Int] = [:]
+    private var expressionByChannel: [Int: Int] = [:]
+    private var channelPressureByChannel: [Int: Int] = [:]
     private var renderTimer: DispatchSourceTimer?
 
     private var touchOutputNote: Int?
@@ -121,6 +131,15 @@ public final class MIDIHapticService: @unchecked Sendable {
         activeNotes.removeAll()
         sustainByChannel.removeAll()
         pitchBendByChannel.removeAll()
+        pitchBendRangeByChannel.removeAll()
+        rpnMSBByChannel.removeAll()
+        rpnLSBByChannel.removeAll()
+        bendRangeSemitonesByChannel.removeAll()
+        bendRangeCentsByChannel.removeAll()
+        modulationByChannel.removeAll()
+        volumeByChannel.removeAll()
+        expressionByChannel.removeAll()
+        channelPressureByChannel.removeAll()
         lock.unlock()
         startRenderTimer()
     }
@@ -133,6 +152,15 @@ public final class MIDIHapticService: @unchecked Sendable {
         activeNotes.removeAll()
         sustainByChannel.removeAll()
         pitchBendByChannel.removeAll()
+        pitchBendRangeByChannel.removeAll()
+        rpnMSBByChannel.removeAll()
+        rpnLSBByChannel.removeAll()
+        bendRangeSemitonesByChannel.removeAll()
+        bendRangeCentsByChannel.removeAll()
+        modulationByChannel.removeAll()
+        volumeByChannel.removeAll()
+        expressionByChannel.removeAll()
+        channelPressureByChannel.removeAll()
         lock.unlock()
 
         renderTimer?.cancel()
@@ -208,7 +236,10 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     private func startRenderTimer() {
         let timer = DispatchSource.makeTimerSource(queue: renderQueue)
-        timer.schedule(deadline: .now(), repeating: .milliseconds(18), leeway: .milliseconds(2))
+        // Match Touch Instrument's continuously refreshed feel instead of behaving like
+        // isolated haptic taps. A short overlapping frame prevents audible gaps while a
+        // MIDI key (or sustain pedal) remains logically active.
+        timer.schedule(deadline: .now(), repeating: .milliseconds(8), leeway: .milliseconds(1))
         timer.setEventHandler { [weak self] in self?.renderActiveNotes() }
         renderTimer = timer
         timer.resume()
@@ -219,26 +250,45 @@ public final class MIDIHapticService: @unchecked Sendable {
         let active = enabled
         let notes = Array(activeNotes.prefix(6))
         let bends = pitchBendByChannel
+        let bendRanges = pitchBendRangeByChannel
+        let modulation = modulationByChannel
+        let volumes = volumeByChannel
+        let expressions = expressionByChannel
+        let pressures = channelPressureByChannel
         let levelScale = masterLevel
         lock.unlock()
         guard active, !notes.isEmpty else { return }
 
+        let now = ProcessInfo.processInfo.systemUptime
         var tones: [HapticTone] = []
         var combinedLevel = 0.0
 
         for (key, state) in notes {
             guard let frequency = try? MusicTheory.frequency(midi: key.note) else { continue }
+
             let bend14 = bends[key.channel] ?? 8192
-            let bendSemitones = (Double(bend14) - 8192.0) / 8192.0 * 2.0
-            let bentFrequency = frequency * pow(2.0, bendSemitones / 12.0)
+            let bendRange = bendRanges[key.channel] ?? 2.0
+            let bendNormalized = (Double(bend14) - 8192.0) / 8192.0
+            let bendSemitones = bendNormalized * bendRange
+
+            let modValue = Double(modulation[key.channel] ?? 0) / 127.0
+            let pressureValue = Double(pressures[key.channel] ?? 0) / 127.0
+            let vibratoDepthSemitones = 0.75 * max(modValue, pressureValue * 0.6)
+            let vibrato = vibratoDepthSemitones * sin(now * 5.5 * 2.0 * Double.pi)
+
+            let bentFrequency = frequency * pow(2.0, (bendSemitones + vibrato) / 12.0)
             tones.append(.init(frequencyHz: bentFrequency))
-            combinedLevel = max(combinedLevel, Double(state.velocity) / 127.0)
+
+            let velocityLevel = Double(state.velocity) / 127.0
+            let channelVolume = Double(volumes[key.channel] ?? 127) / 127.0
+            let expression = Double(expressions[key.channel] ?? 127) / 127.0
+            combinedLevel = max(combinedLevel, velocityLevel * channelVolume * expression)
         }
 
         guard !tones.isEmpty else { return }
         try? driver.play(.init(
             tones: tones,
-            durationMS: 20,
+            durationMS: 36,
             level: min(1, combinedLevel * levelScale)
         ))
     }
@@ -283,6 +333,10 @@ public final class MIDIHapticService: @unchecked Sendable {
             }
         case 0xB0:
             controlChange(channel: channel, controller: data1, value: data2)
+        case 0xD0:
+            lock.lock()
+            channelPressureByChannel[channel] = data1
+            lock.unlock()
         case 0xE0:
             let bend = data1 | (data2 << 7)
             lock.lock()
@@ -296,7 +350,18 @@ public final class MIDIHapticService: @unchecked Sendable {
     private func noteOn(channel: Int, note: Int, velocity: Int) {
         let key = NoteKey(channel: channel, note: note)
         lock.lock()
-        activeNotes[key] = ActiveNote(velocity: velocity, keyDown: true)
+        if var state = activeNotes[key] {
+            state.velocity = max(state.velocity, velocity)
+            state.keyDownCount += 1
+            state.releasedWhileSustained = false
+            activeNotes[key] = state
+        } else {
+            activeNotes[key] = ActiveNote(
+                velocity: velocity,
+                keyDownCount: 1,
+                releasedWhileSustained: false
+            )
+        }
         lock.unlock()
         callback?(.init(channel: channel, note: note, velocity: velocity, isNoteOn: true))
     }
@@ -304,26 +369,87 @@ public final class MIDIHapticService: @unchecked Sendable {
     private func noteOff(channel: Int, note: Int, velocity: Int) {
         let key = NoteKey(channel: channel, note: note)
         lock.lock()
-        if sustainByChannel[channel] == true, var state = activeNotes[key] {
-            state.keyDown = false
-            activeNotes[key] = state
-        } else {
-            activeNotes.removeValue(forKey: key)
+        if var state = activeNotes[key] {
+            state.keyDownCount = max(0, state.keyDownCount - 1)
+            if state.keyDownCount > 0 {
+                activeNotes[key] = state
+            } else if sustainByChannel[channel] == true {
+                state.releasedWhileSustained = true
+                activeNotes[key] = state
+            } else {
+                activeNotes.removeValue(forKey: key)
+            }
         }
         lock.unlock()
         callback?(.init(channel: channel, note: note, velocity: velocity, isNoteOn: false))
     }
 
     private func controlChange(channel: Int, controller: Int, value: Int) {
-        guard controller == 64 else { return }
-        let sustainOn = value >= 64
+        let safeValue = max(0, min(127, value))
 
         lock.lock()
-        sustainByChannel[channel] = sustainOn
-        if !sustainOn {
-            activeNotes = activeNotes.filter { key, state in
-                key.channel != channel || state.keyDown
+        switch controller {
+        case 1:
+            // Modulation wheel. Use it as vibrato depth, matching the musical role
+            // players expect from the wheel beside pitch bend.
+            modulationByChannel[channel] = safeValue
+
+        case 7:
+            volumeByChannel[channel] = safeValue
+
+        case 11:
+            expressionByChannel[channel] = safeValue
+
+        case 64:
+            let sustainOn = safeValue >= 64
+            sustainByChannel[channel] = sustainOn
+            if !sustainOn {
+                activeNotes = activeNotes.filter { key, state in
+                    key.channel != channel || state.keyDownCount > 0
+                }
             }
+
+        case 100:
+            rpnLSBByChannel[channel] = safeValue
+
+        case 101:
+            rpnMSBByChannel[channel] = safeValue
+
+        case 6:
+            // RPN 0,0 = Pitch Bend Sensitivity, MSB = semitones.
+            if rpnMSBByChannel[channel] == 0, rpnLSBByChannel[channel] == 0 {
+                bendRangeSemitonesByChannel[channel] = safeValue
+                let cents = bendRangeCentsByChannel[channel] ?? 0
+                pitchBendRangeByChannel[channel] = Double(safeValue) + Double(cents) / 100.0
+            }
+
+        case 38:
+            // RPN 0,0 Data Entry LSB = cents.
+            if rpnMSBByChannel[channel] == 0, rpnLSBByChannel[channel] == 0 {
+                bendRangeCentsByChannel[channel] = min(99, safeValue)
+                let semitones = bendRangeSemitonesByChannel[channel] ?? 2
+                pitchBendRangeByChannel[channel] = Double(semitones) + Double(min(99, safeValue)) / 100.0
+            }
+
+        case 120, 123:
+            // All Sound Off / All Notes Off.
+            activeNotes = activeNotes.filter { key, _ in key.channel != channel }
+
+        case 121:
+            // Reset All Controllers.
+            sustainByChannel[channel] = false
+            pitchBendByChannel[channel] = 8192
+            pitchBendRangeByChannel[channel] = 2.0
+            modulationByChannel[channel] = 0
+            volumeByChannel[channel] = 127
+            expressionByChannel[channel] = 127
+            channelPressureByChannel[channel] = 0
+            activeNotes = activeNotes.filter { key, state in
+                key.channel != channel || state.keyDownCount > 0
+            }
+
+        default:
+            break
         }
         lock.unlock()
     }
