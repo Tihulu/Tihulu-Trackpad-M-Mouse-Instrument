@@ -48,7 +48,7 @@ public enum TouchSurfaceSelection: String, CaseIterable, Identifiable, Sendable 
 
     public var id: String { rawValue }
 
-    func accepts(_ surface: TouchSurfaceKind) -> Bool {
+    public func accepts(_ surface: TouchSurfaceKind) -> Bool {
         switch self {
         case .trackpad: return surface == .trackpad
         case .magicMouse: return surface == .magicMouse
