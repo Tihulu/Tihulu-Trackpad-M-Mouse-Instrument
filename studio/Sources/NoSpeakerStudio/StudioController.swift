@@ -441,6 +441,13 @@ final class StudioController: ObservableObject {
 
     func startTouchPreview(configuration: TouchInstrumentConfiguration) {
         guard requireEngine() else { return }
+        // Reopening the view never overwrites an already running performance
+        // with fresh @State defaults from a newly constructed SwiftUI view.
+        if touchRunning {
+            instrumentPreviewRequested = true
+            refreshSharedSurfaceMonitoring()
+            return
+        }
         var configuration = configuration
         configuration.magicMouseOrientation = magicMouseOrientation
         currentTouchConfiguration = configuration
@@ -631,6 +638,13 @@ final class StudioController: ObservableObject {
 
     func startMIDIHelperPreview(surfaceSelection: TouchSurfaceSelection) {
         guard requireEngine() else { return }
+        // Preserve the live helper's previously chosen surface until the user
+        // explicitly changes it; navigating away/back must not re-route MIDI.
+        if midiHelperRunning {
+            helperPreviewRequested = true
+            refreshSharedSurfaceMonitoring()
+            return
+        }
         helperSurfaceSelection = surfaceSelection
         helperPreviewRequested = true
         refreshSharedSurfaceMonitoring()
