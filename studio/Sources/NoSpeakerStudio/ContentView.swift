@@ -210,6 +210,7 @@ private struct TouchInstrumentView: View {
     @State private var sustainTrackpadEnabled = true
     @State private var sustainTrackpadGesture: TrackpadSustainGesture = .contactThreshold
     @State private var sustainTrackpadThreshold = 0.55
+    @State private var sustainTrackpadSensor: TrackpadSustainSensor = .contactSize
     @State private var sustainMouseEnabled = false
     @State private var sustainMouseGesture: MagicMouseSustainGesture = .touchHold
     @State private var captureArmed = false
@@ -301,7 +302,8 @@ private struct TouchInstrumentView: View {
                                     trackpadContactThreshold: sustainTrackpadThreshold,
                                     magicMouseEnabled: sustainEnabled && sustainMouseEnabled,
                                     magicMouseGesture: sustainMouseGesture,
-                                    trackpadGesture: sustainTrackpadGesture
+                                    trackpadGesture: sustainTrackpadGesture,
+                                    trackpadSensor: sustainTrackpadSensor
                                 )
                             )
                         }
@@ -530,6 +532,7 @@ private struct TouchInstrumentView: View {
                                 trackpadEnabled: $sustainTrackpadEnabled,
                                 trackpadGesture: $sustainTrackpadGesture,
                                 trackpadThreshold: $sustainTrackpadThreshold,
+                                trackpadSensor: $sustainTrackpadSensor,
                                 magicMouseEnabled: $sustainMouseEnabled,
                                 magicMouseGesture: $sustainMouseGesture
                             )
@@ -920,6 +923,7 @@ private struct MIDIHelperView: View {
 
     @State private var trackpadSustainEnabled = true
     @State private var trackpadSustainThreshold = 0.55
+    @State private var trackpadSustainSensor: TrackpadSustainSensor = .contactSize
     @State private var trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold
     @State private var magicMouseSustainEnabled = false
     @State private var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
@@ -1038,6 +1042,7 @@ private struct MIDIHelperView: View {
                                 trackpadEnabled: $trackpadSustainEnabled,
                                 trackpadGesture: $trackpadSustainGesture,
                                 trackpadThreshold: $trackpadSustainThreshold,
+                                trackpadSensor: $trackpadSustainSensor,
                                 magicMouseEnabled: $magicMouseSustainEnabled,
                                 magicMouseGesture: $magicMouseSustainGesture
                             )
@@ -1103,6 +1108,7 @@ private struct MIDIHelperView: View {
         .onChange(of: sustainEnabled) { _ in syncIfRunning() }
         .onChange(of: trackpadSustainEnabled) { _ in syncIfRunning() }
         .onChange(of: trackpadSustainThreshold) { _ in syncIfRunning() }
+        .onChange(of: trackpadSustainSensor) { _ in syncIfRunning() }
         .onChange(of: trackpadSustainGesture) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainEnabled) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainGesture) { _ in syncIfRunning() }
@@ -1124,7 +1130,8 @@ private struct MIDIHelperView: View {
             trackpadSustainThreshold: trackpadSustainThreshold,
             magicMouseSustainEnabled: sustainEnabled && magicMouseSustainEnabled,
             magicMouseSustainGesture: magicMouseSustainGesture,
-            trackpadSustainGesture: trackpadSustainGesture
+            trackpadSustainGesture: trackpadSustainGesture,
+            trackpadSustainSensor: trackpadSustainSensor
         )
     }
 
@@ -1147,6 +1154,7 @@ private struct SustainSettingsPanel: View {
     @Binding var trackpadEnabled: Bool
     @Binding var trackpadGesture: TrackpadSustainGesture
     @Binding var trackpadThreshold: Double
+    @Binding var trackpadSensor: TrackpadSustainSensor
     @Binding var magicMouseEnabled: Bool
     @Binding var magicMouseGesture: MagicMouseSustainGesture
 
@@ -1163,8 +1171,13 @@ private struct SustainSettingsPanel: View {
                     }
                     .disabled(!surfaceSelection.accepts(.trackpad))
                     if trackpadGesture == .contactThreshold {
+                        Picker("Sensor Source", selection: $trackpadSensor) {
+                            ForEach(TrackpadSustainSensor.allCases) {
+                                Text($0.rawValue).tag($0)
+                            }
+                        }
                         HStack {
-                            Text("Contact-size threshold")
+                            Text("Sensor threshold")
                                 .font(.caption)
                             Slider(value: $trackpadThreshold, in: 0.05...1, step: 0.05)
                             Text("\(Int(trackpadThreshold * 100))%")
@@ -1173,7 +1186,9 @@ private struct SustainSettingsPanel: View {
                         }
                     }
                 }
-                Text("Sensor mode: contact-size estimate. Calibrated Force Touch pressure is not available from the current touch stream.")
+                Text(trackpadSensor == .contactSize
+                     ? "Contact Size uses the available touch-size estimate, not calibrated Force Touch pressure."
+                     : "Experimental Click Pressure reads macOS mouse-button pressure while physically clicking. A nonzero calibrated Force Touch value is not guaranteed; missing readings never activate sustain.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
