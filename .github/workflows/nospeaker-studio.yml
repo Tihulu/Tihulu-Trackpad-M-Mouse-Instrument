@@ -1,4 +1,4 @@
-name: NoSpeaker Studio CI
+name: TIHULU Trackpad Instrument CI
 
 on:
   push:
@@ -49,10 +49,19 @@ jobs:
         run: swift test
       - name: Build Studio
         run: swift build
+      - name: Install SVG icon renderer
+        run: brew install librsvg
       - name: Build app bundle in installer mode
-        run: NOSPEAKER_STUDIO_SKIP_TESTS=1 ./scripts/build-app.sh
+        run: NOSPEAKER_STUDIO_SKIP_TESTS=1 NOSPEAKER_STUDIO_BUILD_SHA="$GITHUB_SHA" ./scripts/build-app.sh
+      - name: Validate TIHULU app branding and icon
+        run: |
+          APP="dist/Tihulu Trackpad & M. Mouse Instrument.app"
+          test -s "$APP/Contents/Resources/TihuluInstrument.icns"
+          test -s "$APP/Contents/Resources/TihuluTrackpadMouseIcon.svg"
+          plutil -lint "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Contents/Info.plist"
       - name: Upload unsigned development app
         uses: actions/upload-artifact@v4
         with:
-          name: NoSpeaker-Studio-macOS-development
-          path: studio/dist/NoSpeaker Studio.app
+          name: TIHULU-Trackpad-Instrument-macOS-development
+          path: studio/dist/Tihulu Trackpad & M. Mouse Instrument.app
