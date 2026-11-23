@@ -197,13 +197,28 @@ private struct TouchInstrumentView: View {
     @State private var fixedVelocity = 100
     @State private var pressureToExpression = true
     @State private var localHapticSound = true
-    @State private var midiOut = false
     @State private var multiTouch = true
     @State private var midiMode: TouchMIDIMode = .standard
     @State private var midiChannel = 1
 
+    @State private var trackpadInstrument: SurfaceInstrumentMode = .melodic
+    @State private var magicMouseInstrument: SurfaceInstrumentMode = .melodic
+    @State private var trackpadOutput: SurfaceOutputRoute = .trackpadHaptic
+    @State private var magicMouseOutput: SurfaceOutputRoute = .midiInstrument
+    @State private var drumLayout: DrumPadLayout = .standard12
+
     private var mappedMIDINotes: [Int] {
         scale.mappedMIDINotes(root: root, zoneWidth: zoneWidth)
+    }
+
+    private var hasMelodic: Bool {
+        (surfaceSelection.accepts(.trackpad) && trackpadInstrument == .melodic) ||
+        (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument == .melodic)
+    }
+
+    private var hasDrums: Bool {
+        (surfaceSelection.accepts(.trackpad) && trackpadInstrument == .drums) ||
+        (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument == .drums)
     }
 
     private var rootName: String {
@@ -224,43 +239,44 @@ private struct TouchInstrumentView: View {
             fixedVelocity: fixedVelocity,
             pressureToExpression: pressureToExpression,
             localHapticSound: localHapticSound,
-            masterLevel: studio.masterLevel
+            masterLevel: studio.masterLevel,
+            trackpadInstrument: trackpadInstrument,
+            magicMouseInstrument: magicMouseInstrument,
+            trackpadOutput: trackpadOutput,
+            magicMouseOutput: magicMouseOutput,
+            drumLayout: drumLayout
         )
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 16) {
                 PageHeader(
                     title: "Touch Instrument",
-                    subtitle: "Preview touches continuously, then play the trackpad, Magic Mouse, or both as an expressive haptic/MIDI instrument."
+                    subtitle: "Play GM drums or melodic notes with the trackpad and Magic Mouse. Route each surface to trackpad haptics, a DAW MIDI instrument, or both."
                 )
 
                 HStack(spacing: 14) {
-                    Picker("Surface", selection: $surfaceSelection) {
+                    Picker("Active Surfaces", selection: $surfaceSelection) {
                         ForEach(TouchSurfaceSelection.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 300)
+                    .frame(width: 310)
                     .disabled(studio.touchRunning)
 
-                    Picker("Touch Mode", selection: $fretless) {
+                    Picker("Melodic Touch", selection: $fretless) {
                         Text("Fretted").tag(false)
                         Text("Fretless").tag(true)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 220)
-                    .disabled(studio.touchRunning)
-
-                    Spacer()
-
-                    Toggle("MIDI Out to DAW", isOn: $midiOut)
-                        .toggleStyle(.switch)
-                        .disabled(studio.touchRunning)
+                    .frame(width: 230)
+                    .disabled(studio.touchRunning || !hasMelodic)
 
                     Toggle("Multi Touch", isOn: $multiTouch)
                         .toggleStyle(.switch)
                         .disabled(studio.touchRunning)
+
+                    Spacer()
 
                     Button(studio.touchRunning ? "Stop Touch Instrument" : "Start Touch Instrument") {
                         if studio.touchRunning {
@@ -268,7 +284,7 @@ private struct TouchInstrumentView: View {
                         } else {
                             studio.startTouch(
                                 configuration: configuration,
-                                midiOut: midiOut,
+                                midiOut: configuration.hasMIDIOutput,
                                 midiMode: midiMode,
                                 multiTouch: multiTouch,
                                 midiChannel: midiChannel - 1
@@ -278,35 +294,91 @@ private struct TouchInstrumentView: View {
                     .buttonStyle(.borderedProminent)
                 }
 
-                HStack(spacing: 16) {
-                    Picker("Scale", selection: $scale) {
-                        ForEach(TouchScale.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    .frame(width: 210)
-                    .disabled(studio.touchRunning)
+                GroupBox("Independent Surface Instruments & Outputs") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 14) {
+                            Label("Force Touch Trackpad", systemImage: "hand.point.up.left")
+                                .frame(width: 190, alignment: .leading)
+                            Picker("Instrument", selection: $trackpadInstrument) {
+                                ForEach(SurfaceInstrumentMode.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .frame(width: 190)
+                            Picker("Output", selection: $trackpadOutput) {
+                                ForEach(SurfaceOutputRoute.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .frame(width: 200)
+                            Text(trackpadInstrument == .drums ? "GM · MIDI Ch 10" : "Melodic instrument")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
 
-                    Stepper("Root \(rootName)", value: $root, in: 24...96)
+                        Divider()
+
+                        HStack(spacing: 14) {
+                            Label("Magic Mouse", systemImage: "computermouse")
+                                .frame(width: 190, alignment: .leading)
+                            Picker("Instrument", selection: $magicMouseInstrument) {
+                                ForEach(SurfaceInstrumentMode.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .frame(width: 190)
+                            Picker("Output", selection: $magicMouseOutput) {
+                                ForEach(SurfaceOutputRoute.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .frame(width: 200)
+                            Text(magicMouseInstrument == .drums ? "GM · MIDI Ch 10" : "Melodic instrument")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+
+                        Text("Magic Mouse → Trackpad Haptic drives your Mac's Force Touch motor. Magic Mouse does not contain a NoSpeaker haptic motor. Select Magic Mouse or Both above to enable its live touch notes.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(6)
+                }
+                .disabled(studio.touchRunning)
+
+                HStack(spacing: 16) {
+                    if hasMelodic {
+                        Picker("Scale", selection: $scale) {
+                            ForEach(TouchScale.allCases) { Text($0.rawValue).tag($0) }
+                        }
                         .frame(width: 190)
                         .disabled(studio.touchRunning)
 
-                    if fretless {
-                        Picker("Pitch Span", selection: $pitchSpan) {
-                            Text("±2 st").tag(4.0)
-                            Text("±5 st").tag(10.0)
-                            Text("±12 st / 2 oct").tag(24.0)
-                        }
-                        .frame(width: 220)
-                        .disabled(studio.touchRunning)
-                    } else {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text("Note Width")
-                                Spacer()
-                                Text(String(format: "%.2fx", zoneWidth)).monospacedDigit()
+                        Stepper("Root \(rootName)", value: $root, in: 24...96)
+                            .frame(width: 170)
+                            .disabled(studio.touchRunning)
+
+                        if fretless {
+                            Picker("Pitch Span", selection: $pitchSpan) {
+                                Text("±2 st").tag(4.0)
+                                Text("±5 st").tag(10.0)
+                                Text("±12 st / 2 oct").tag(24.0)
                             }
-                            Slider(value: $zoneWidth, in: 0.5...2.0, step: 0.05)
+                            .frame(width: 190)
+                            .disabled(studio.touchRunning)
+                        } else {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Note Width")
+                                    Spacer()
+                                    Text(String(format: "%.2fx", zoneWidth)).monospacedDigit()
+                                }
+                                Slider(value: $zoneWidth, in: 0.5...2.0, step: 0.05)
+                            }
+                            .frame(width: 180)
+                            .disabled(studio.touchRunning)
                         }
-                        .frame(width: 220)
+                    }
+
+                    if hasDrums {
+                        Picker("GM Drum Pads", selection: $drumLayout) {
+                            ForEach(DrumPadLayout.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .frame(width: 170)
                         .disabled(studio.touchRunning)
                     }
 
@@ -320,16 +392,20 @@ private struct TouchInstrumentView: View {
                     .foregroundStyle(studio.touchPreviewRunning ? Color.green : Color.secondary)
                 }
 
-                TouchSurfaceMap(
-                    notes: mappedMIDINotes,
-                    rootMIDI: root,
-                    fretless: fretless,
-                    pitchSpan: pitchSpan,
-                    states: studio.touchStates,
-                    active: studio.touchRunning,
-                    surfaceSelection: surfaceSelection
-                )
-                .frame(minHeight: 360)
+                if surfaceSelection.accepts(.trackpad) {
+                    surfaceMap(
+                        surface: .trackpad,
+                        instrument: trackpadInstrument,
+                        route: trackpadOutput
+                    )
+                }
+                if surfaceSelection.accepts(.magicMouse) {
+                    surfaceMap(
+                        surface: .magicMouse,
+                        instrument: magicMouseInstrument,
+                        route: magicMouseOutput
+                    )
+                }
 
                 HStack(alignment: .top, spacing: 14) {
                     GroupBox("Trigger") {
@@ -341,12 +417,12 @@ private struct TouchInstrumentView: View {
 
                             if triggerMode == .press {
                                 HStack {
-                                    Text("Press threshold")
+                                    Text("Contact threshold")
                                     Slider(value: $pressThreshold, in: 0.1...1.0, step: 0.05)
                                     Text("\(Int(pressThreshold * 100))%").monospacedDigit()
                                 }
                             } else {
-                                Text("A light surface touch can trigger a note; no physical click is required.")
+                                Text("A light touch can trigger notes without a physical click. Recommended for Magic Mouse.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -356,21 +432,19 @@ private struct TouchInstrumentView: View {
 
                     GroupBox("Velocity & Expression") {
                         VStack(alignment: .leading, spacing: 10) {
-                            Toggle("Velocity from Pressure", isOn: $velocityFromPressure)
+                            Toggle("Velocity from Contact Size", isOn: $velocityFromPressure)
                             if !velocityFromPressure {
                                 Stepper("Fixed Velocity \(fixedVelocity)", value: $fixedVelocity, in: 1...127)
                             }
-                            Toggle("Pressure / Contact Size → Expression", isOn: $pressureToExpression)
+                            Toggle("Contact Size → Expression", isOn: $pressureToExpression)
                         }
                         .padding(6)
                     }
 
-                    GroupBox("Local Output") {
+                    GroupBox("Haptic Output") {
                         VStack(alignment: .leading, spacing: 10) {
-                            Toggle("Local Trackpad Sound (Haptic)", isOn: $localHapticSound)
-                            Text(localHapticSound
-                                 ? "The Force Touch motor plays locally while MIDI can also go to the DAW."
-                                 : "Controller-only mode: MIDI/preview stays active while local haptic sound is muted.")
+                            Toggle("Enable Local Trackpad Haptics", isOn: $localHapticSound)
+                            Text("This is a master switch. Each surface's Output selector determines whether it can drive the haptic motor.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -378,31 +452,49 @@ private struct TouchInstrumentView: View {
                     }
                 }
 
-                if midiOut {
-                    GroupBox("MIDI Output") {
-                        HStack(spacing: 18) {
-                            Picker("MIDI Mode", selection: $midiMode) {
-                                ForEach(TouchMIDIMode.allCases) { Text($0.rawValue).tag($0) }
+                if configuration.hasMIDIOutput {
+                    GroupBox("Logic Pro / DAW MIDI Out") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 14) {
+                                if hasMelodic {
+                                    Picker("Melodic MIDI Mode", selection: $midiMode) {
+                                        ForEach(TouchMIDIMode.allCases) { Text($0.rawValue).tag($0) }
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .frame(width: 260)
+                                    .disabled(studio.touchRunning)
+
+                                    Stepper("Melodic Channel \(midiChannel)", value: $midiChannel, in: 1...16)
+                                        .frame(width: 190)
+                                        .disabled(studio.touchRunning || midiMode == .mpe)
+                                }
+                                if hasDrums {
+                                    Label("Drums: GM Channel 10", systemImage: "drum")
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
                             }
-                            .pickerStyle(.segmented)
-                            .frame(width: 260)
-                            .disabled(studio.touchRunning)
 
-                            Stepper("Channel \(midiChannel)", value: $midiChannel, in: 1...16)
-                                .frame(width: 150)
-                                .disabled(studio.touchRunning || midiMode == .mpe)
-
-                            if fretless && multiTouch && midiMode == .standard {
-                                Label("Fretless multi-touch needs MPE for independent pitch bends.", systemImage: "exclamationmark.triangle.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                            } else if midiMode == .mpe {
-                                Text("MPE uses member channels 2–16 per finger.")
+                            if hasDrums {
+                                Text("Drum pads send actual GM percussion notes, not pitched scale notes. In Logic Pro, use a drum instrument/kit with matching MIDI note assignments. Channel 10 by itself does not select a drum instrument.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
-
-                            Spacer()
+                            if hasDrums && hasMelodic && midiChannel == 10 && midiMode == .standard {
+                                Text("Channel 10 is reserved for drums here. Melodic notes are automatically routed to Channel 1.")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                            if hasMelodic && fretless && multiTouch && midiMode == .standard {
+                                Text("Independent fretless multi-touch bends require MPE. Standard MIDI allows one melodic bend at a time; drums remain polyphonic on Channel 10.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if hasMelodic && midiMode == .mpe {
+                                Text("MPE member channels 2–16 are allocated per finger, excluding drum Channel 10.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .padding(6)
                     }
@@ -413,16 +505,20 @@ private struct TouchInstrumentView: View {
                         Text("Live Contacts").font(.headline)
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 190))], spacing: 8) {
                             ForEach(Array(studio.touchStates.enumerated()), id: \.element.id) { index, state in
+                                let drums = configuration.instrument(for: state.surface) == .drums
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
-                                        Text("#\(index + 1) · \(state.surface.rawValue)").font(.caption.bold())
+                                        Text("#\(index + 1) · \(state.surface.rawValue)")
+                                            .font(.caption.bold())
                                         Spacer()
-                                        Text((try? MusicTheory.noteName(midi: state.quantizedMIDI)) ?? "MIDI \(state.quantizedMIDI)")
+                                        Text(drums
+                                             ? (GMDrumPads.name(for: state.quantizedMIDI) ?? "GM Drum")
+                                             : ((try? MusicTheory.noteName(midi: state.quantizedMIDI)) ?? "MIDI \(state.quantizedMIDI)"))
                                             .font(.caption.monospaced())
                                     }
-                                    Text("X \(Int(state.x * 100))% · Y \(Int(state.y * 100))% · Contact \(Int(state.pressure * 100))%")
+                                    Text("MIDI \(state.quantizedMIDI) · X \(Int(state.x * 100))% · Y \(Int(state.y * 100))%")
                                         .font(.caption2.monospaced())
-                                    Text("Velocity \(state.velocity) · Expression \(state.expression)")
+                                    Text("Velocity \(state.velocity) · Contact \(Int(state.pressure * 100))%")
                                         .font(.caption2.monospaced())
                                         .foregroundStyle(.secondary)
                                 }
@@ -434,7 +530,7 @@ private struct TouchInstrumentView: View {
                     }
                 }
 
-                Text("Preview is monitoring only. MIDI and local haptic sound are emitted only after Start Touch Instrument.")
+                Text("Preview only monitors touches. Playing starts only after Start Touch Instrument; each surface's output route controls where its notes go.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -458,7 +554,45 @@ private struct TouchInstrumentView: View {
         .onChange(of: fixedVelocity) { _ in syncConfiguration() }
         .onChange(of: pressureToExpression) { _ in syncConfiguration() }
         .onChange(of: localHapticSound) { _ in syncConfiguration() }
+        .onChange(of: trackpadInstrument) { _ in syncConfiguration() }
+        .onChange(of: magicMouseInstrument) { _ in syncConfiguration() }
+        .onChange(of: trackpadOutput) { _ in syncConfiguration() }
+        .onChange(of: magicMouseOutput) { _ in syncConfiguration() }
+        .onChange(of: drumLayout) { _ in syncConfiguration() }
         .onChange(of: studio.masterLevel) { _ in syncConfiguration() }
+    }
+
+    @ViewBuilder
+    private func surfaceMap(
+        surface: TouchSurfaceKind,
+        instrument: SurfaceInstrumentMode,
+        route: SurfaceOutputRoute
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text(surface.rawValue)
+                    .font(.headline)
+                Text(instrument == .drums ? "GM Drum Pads" : "Melodic Note Map")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("Output: \(route.rawValue)")
+                    .font(.caption.weight(.semibold))
+            }
+
+            TouchSurfaceMap(
+                notes: mappedMIDINotes,
+                drumPads: drumLayout.pads,
+                instrument: instrument,
+                rootMIDI: root,
+                fretless: fretless,
+                pitchSpan: pitchSpan,
+                states: studio.touchStates.filter { $0.surface == surface },
+                active: studio.touchRunning,
+                surfaceSelection: surface == .trackpad ? .trackpad : .magicMouse
+            )
+            .frame(height: surfaceSelection == .both ? 240 : 340)
+        }
     }
 
     private func syncConfiguration() {
@@ -468,6 +602,8 @@ private struct TouchInstrumentView: View {
 
 private struct TouchSurfaceMap: View {
     let notes: [Int]
+    let drumPads: [DrumPad]
+    let instrument: SurfaceInstrumentMode
     let rootMIDI: Int
     let fretless: Bool
     let pitchSpan: Double
@@ -477,14 +613,38 @@ private struct TouchSurfaceMap: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let count = max(notes.count, 1)
+            let count = max(instrument == .drums ? drumPads.count : notes.count, 1)
             let segmentWidth = proxy.size.width / CGFloat(count)
 
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 18)
                     .fill(.quaternary.opacity(active ? 0.58 : 0.42))
 
-                if fretless {
+                if instrument == .drums {
+                    ForEach(drumPads.indices, id: \.self) { index in
+                        let pad = drumPads[index]
+                        let x = segmentWidth * (CGFloat(index) + 0.5)
+                        if index > 0 {
+                            Rectangle()
+                                .fill(.secondary.opacity(0.24))
+                                .frame(width: 1, height: proxy.size.height - 18)
+                                .position(x: segmentWidth * CGFloat(index),
+                                          y: proxy.size.height / 2)
+                        }
+
+                        VStack(spacing: 4) {
+                            Text(pad.name)
+                                .font(.system(size: 10, weight: .semibold))
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.65)
+                            Text("GM \(pad.midiNote)")
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(width: max(24, segmentWidth - 3))
+                        .position(x: x, y: 35)
+                    }
+                } else if fretless {
                     ForEach(notes.indices, id: \.self) { index in
                         let note = notes[index]
                         let offset = Double(note - rootMIDI)
@@ -492,11 +652,12 @@ private struct TouchSurfaceMap: View {
                             let x = proxy.size.width * CGFloat(offset / max(1, pitchSpan))
                             Rectangle()
                                 .fill(.secondary.opacity((note - rootMIDI) % 12 == 0 ? 0.42 : 0.22))
-                                .frame(width: (note - rootMIDI) % 12 == 0 ? 2 : 1, height: proxy.size.height - 24)
-                                .position(x: min(proxy.size.width - 1, max(1, x)), y: proxy.size.height / 2)
-
+                                .frame(width: (note - rootMIDI) % 12 == 0 ? 2 : 1,
+                                       height: proxy.size.height - 20)
+                                .position(x: min(proxy.size.width - 1, max(1, x)),
+                                          y: proxy.size.height / 2)
                             Text((try? MusicTheory.noteName(midi: note)) ?? "\(note)")
-                                .font(.caption2.monospaced().weight((note - rootMIDI) % 12 == 0 ? .bold : .regular))
+                                .font(.caption2.monospaced())
                                 .position(x: min(proxy.size.width - 22, max(22, x)), y: 18)
                         }
                     }
@@ -509,9 +670,9 @@ private struct TouchSurfaceMap: View {
                             Rectangle()
                                 .fill(.secondary.opacity(0.22))
                                 .frame(width: 1, height: proxy.size.height - 20)
-                                .position(x: segmentWidth * CGFloat(index), y: proxy.size.height / 2)
+                                .position(x: segmentWidth * CGFloat(index),
+                                          y: proxy.size.height / 2)
                         }
-
                         VStack(spacing: 4) {
                             Text((try? MusicTheory.noteName(midi: note)) ?? "\(note)")
                                 .font(.caption.monospaced().weight(.semibold))
@@ -525,30 +686,33 @@ private struct TouchSurfaceMap: View {
                 }
 
                 ForEach(Array(states.enumerated()), id: \.element.id) { index, state in
-                    if surfaceSelection == .both || surfaceSelection.accepts(state.surface) {
-                        let x = min(proxy.size.width - 12, max(12, CGFloat(state.x) * proxy.size.width))
-                        let y = min(proxy.size.height - 12, max(12, (1 - CGFloat(state.y)) * proxy.size.height))
-                        let diameter = 24 + 24 * CGFloat(min(1, max(0, state.pressure)))
+                    let x = min(proxy.size.width - 12,
+                                max(12, CGFloat(state.x) * proxy.size.width))
+                    let y = min(proxy.size.height - 12,
+                                max(12, (1 - CGFloat(state.y)) * proxy.size.height))
+                    let diameter = 24 + 24 * CGFloat(min(1, max(0, state.pressure)))
 
-                        ZStack {
-                            Circle()
-                                .fill(state.surface == .trackpad ? Color.accentColor.opacity(0.82) : Color.cyan.opacity(0.82))
-                            Circle().stroke(.white.opacity(0.9), lineWidth: 2)
-                            Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.white)
-                        }
-                        .frame(width: diameter, height: diameter)
-                        .shadow(radius: 5)
-                        .position(x: x, y: y)
-                        .animation(.linear(duration: 0.025), value: x)
-                        .animation(.linear(duration: 0.025), value: y)
+                    ZStack {
+                        Circle()
+                            .fill(state.surface == .trackpad
+                                  ? Color.accentColor.opacity(0.82)
+                                  : Color.cyan.opacity(0.82))
+                        Circle().stroke(.white.opacity(0.9), lineWidth: 2)
+                        Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.white)
                     }
+                    .frame(width: diameter, height: diameter)
+                    .shadow(radius: 5)
+                    .position(x: x, y: y)
+                    .animation(.linear(duration: 0.025), value: x)
+                    .animation(.linear(duration: 0.025), value: y)
                 }
 
                 if states.isEmpty {
                     VStack(spacing: 8) {
-                        Image(systemName: "hand.point.up.left")
+                        Image(systemName: surfaceSelection == .magicMouse
+                              ? "computermouse" : "hand.point.up.left")
                             .font(.system(size: 34))
-                        Text("Preview active · touch the \(surfaceSelection.rawValue.lowercased()) to see live positions")
+                        Text("Preview active · touch \(surfaceSelection.rawValue) to see positions")
                             .font(.callout)
                     }
                     .foregroundStyle(.secondary)
@@ -556,24 +720,30 @@ private struct TouchSurfaceMap: View {
                 }
 
                 HStack {
-                    Label("Lower pitch", systemImage: "arrow.left")
-                    Spacer()
-                    Text(fretless
-                         ? "X = continuous pitch · Y = vibrato · contact size = optional velocity/expression"
-                         : "X = note zone · Y = vibrato · contact size = optional velocity/expression")
-                    Spacer()
-                    Label("Higher pitch", systemImage: "arrow.right")
+                    if instrument == .drums {
+                        Text("Kick / Snare")
+                        Spacer()
+                        Text("X = GM drum pad · lift and touch to retrigger")
+                        Spacer()
+                        Text("Cymbals")
+                    } else {
+                        Label("Lower pitch", systemImage: "arrow.left")
+                        Spacer()
+                        Text(fretless
+                             ? "X = continuous pitch · Y = vibrato"
+                             : "X = note zone · Y = vibrato")
+                        Spacer()
+                        Label("Higher pitch", systemImage: "arrow.right")
+                    }
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-                .padding(12)
+                .padding(10)
                 .frame(width: proxy.size.width)
                 .position(x: proxy.size.width / 2, y: proxy.size.height - 18)
             }
-            .overlay(
-                RoundedRectangle(cornerRadius: 18)
-                    .stroke(.secondary.opacity(0.24), lineWidth: 1)
-            )
+            .overlay(RoundedRectangle(cornerRadius: 18)
+                .stroke(.secondary.opacity(0.24), lineWidth: 1))
         }
     }
 }
