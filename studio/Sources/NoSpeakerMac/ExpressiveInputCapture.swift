@@ -62,7 +62,8 @@ public final class ExpressiveInputCapture: @unchecked Sendable {
 
     public var onCaptureChanged: (@Sendable (Bool) -> Void)?
     public var onPanic: (@Sendable () -> Void)?
-    public var onPhysicalClick: (@Sendable (Bool) -> Void)?
+    public var onPhysicalClick: (@Sendable (Bool, Double) -> Void)?
+    public var onPhysicalPressure: (@Sendable (Double) -> Void)?
     public var onTapDisabled: (@Sendable () -> Void)?
 
     public init() {}
@@ -167,7 +168,12 @@ public final class ExpressiveInputCapture: @unchecked Sendable {
         }
 
         if type == .leftMouseDown || type == .leftMouseUp {
-            onPhysicalClick?(type == .leftMouseDown)
+            onPhysicalClick?(
+                type == .leftMouseDown,
+                event.getDoubleValueField(.mouseEventPressure)
+            )
+        } else if type == .leftMouseDragged {
+            onPhysicalPressure?(event.getDoubleValueField(.mouseEventPressure))
         }
 
         if active {
