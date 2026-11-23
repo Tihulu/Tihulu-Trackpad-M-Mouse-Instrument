@@ -92,3 +92,30 @@ Before calling the feature hardware-ready, verify all of these on a physical Mac
    no stuck MIDI notes after release and Panic Stop.
 
 Treat this as developer functionality until the physical checks pass.
+
+## MIDI Helper Sustain (CC64)
+
+The MIDI Helper has independent **OFF-by-default** sustain switches for both
+input surfaces. Sustain is available regardless of whether Vibrato, Pitch Bend,
+Expression or Hybrid mode is selected.
+
+- **Trackpad Contact Sustain:** uses the contact-size signal as an approximation
+  of pressure (the private touch callback does **not** provide calibrated Force
+  Touch force). Cross an adjustable threshold to send `CC64 = 127`. The
+  release threshold is slightly lower to avoid chattering near the cutoff.
+  Release or lighten contact below the threshold to send `CC64 = 0`.
+- **Magic Mouse Touch Sustain:** no pressure is assumed. Enable its own switch
+  and choose **Touch Hold** (sustain on while any finger touches the mouse)
+  or **Tap Toggle** (a fresh touch session alternates sustain ON/OFF).
+- **Both:** either surface may keep CC64 active. Releasing one surface does not
+  turn it off while the other still holds/latches sustain.
+- **Routing:** enable **Send Helper to DAW**, and set **Target Channel** to the
+  instrument's MIDI channel in Logic. The Helper sends CC64 on its virtual
+  `NoSpeaker Touch MIDI Out` source, not on the separate keyboard device.
+- **Safety:** selecting another helper channel/surface/sustain mode resets the
+  previous latch, and Stop MIDI Helper, Stop MIDI Bridge, and Panic Stop emit
+  a release on the old channel. The feature does not modify external hardware
+  keyboard pedal state.
+
+The UI shows the combined `CC64 ON / OFF` status. A Logic instrument must
+respond to MIDI sustain pedal CC64 for the note-hold behavior to be audible.
