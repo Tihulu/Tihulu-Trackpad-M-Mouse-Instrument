@@ -14,7 +14,9 @@ final class StudioController: ObservableObject {
     @Published var bpm = 120.0
     @Published var midiRunning = false
     @Published var touchRunning = false
+    @Published var touchPreviewRunning = false
     @Published var touchContact = TrackpadContact()
+    @Published var touchStates: [TouchPerformanceState] = []
     @Published var systemAudioRunning = false
     @Published var lastMIDIMessage = "No MIDI received yet"
     @Published var currentFileName = "No file loaded"
@@ -25,6 +27,8 @@ final class StudioController: ObservableObject {
     private var touch: TouchInstrumentService?
     private var midi: MIDIHapticService?
     private var systemAudio: SystemAudioHapticCapture?
+    private var currentTouchConfiguration = TouchInstrumentConfiguration()
+    private var touchMIDIOutEnabled = false
 
     init() {
         prepareEngine()
@@ -51,12 +55,14 @@ final class StudioController: ObservableObject {
 
     func panicStop() {
         playback?.stop(closeDriver: true)
-        touch?.stop()
+        touch?.stopPreview()
         midi?.stop()
         Task { await systemAudio?.stop() }
         isPlaying = false
         touchRunning = false
+        touchPreviewRunning = false
         touchContact = TrackpadContact()
+        touchStates = []
         midiRunning = false
         systemAudioRunning = false
         engineReady = false
@@ -131,49 +137,119 @@ final class StudioController: ObservableObject {
         isPlaying = true
     }
 
-    func startTouch(rootMIDI: Int, scale: TouchScale, fretless: Bool = false, midiOut: Bool = false) {
+    func startTouchPreview(configuration: TouchInstrumentConfiguration) {
         guard requireEngine(), let touch else { return }
+        currentTouchConfiguration = configuration
+
+        if touchPreviewRunning {
+            touch.update(configuration: configuration)
+            return
+        }
+
+        do {
+            try touch.startPreview(configuration: configuration) { [weak self] states in
+                Task { @MainActor in
+                    self?.handleTouchStates(states)
+                }
+            }
+            touchPreviewRunning = true
+            engineStatus = "Touch preview active · no MIDI or haptic output until Start"
+        } catch {
+            fail(error)
+        }
+    }
+
+    func updateTouchConfiguration(_ configuration: TouchInstrumentConfiguration) {
+        currentTouchConfiguration = configuration
+        touch?.update(configuration: configuration)
+    }
+
+    func stopTouchPreview() {
+        touch?.stopPreview()
+        midi?.endTouchOutput()
+        touchPreviewRunning = false
+        touchRunning = false
+        touchMIDIOutEnabled = false
+        touchStates = []
+        touchContact = TrackpadContact()
+        engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
+    }
+
+    func startTouch(configuration: TouchInstrumentConfiguration, midiOut: Bool) {
+        guard requireEngine(), let touch else { return }
+        currentTouchConfiguration = configuration
+        touchMIDIOutEnabled = midiOut
+
+        if !touchPreviewRunning {
+            startTouchPreview(configuration: configuration)
+        } else {
+            touch.update(configuration: configuration)
+        }
 
         if midiOut, !midiRunning {
             startMIDI()
         }
 
-        do {
-            try touch.start(
+        touch.setActive(true)
+        touchRunning = true
+        engineStatus = midiOut
+            ? (configuration.fretless
+               ? "Touch Instrument active · Fretless MIDI Out"
+               : "Touch Instrument active · MIDI Out")
+            : (configuration.fretless
+               ? "Touch Instrument active · Fretless"
+               : "Touch Instrument active")
+    }
+
+    func startTouch(rootMIDI: Int, scale: TouchScale, fretless: Bool = false, midiOut: Bool = false) {
+        startTouch(
+            configuration: .init(
                 baseMIDINote: rootMIDI,
                 scale: scale,
                 fretless: fretless,
                 masterLevel: masterLevel
-            ) { [weak self] performance in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.touchContact = performance.contact
-                    if midiOut {
-                        self.midi?.sendTouch(
-                            continuousMIDI: performance.continuousMIDI,
-                            quantizedMIDI: performance.quantizedMIDI,
-                            velocity: performance.velocity,
-                            isDown: performance.contact.isDown,
-                            fretless: fretless,
-                            rootMIDI: rootMIDI
-                        )
-                    }
-                }
-            }
-            touchContact = TrackpadContact()
-            touchRunning = true
-            engineStatus = midiOut
-                ? (fretless ? "Touch Instrument active · Fretless MIDI Out" : "Touch Instrument active · MIDI Out")
-                : (fretless ? "Touch Instrument active · Fretless" : "Touch Instrument active")
-        } catch { fail(error) }
+            ),
+            midiOut: midiOut
+        )
     }
 
     func stopTouch() {
-        touch?.stop()
+        touch?.setActive(false)
         midi?.endTouchOutput()
-        touchContact = TrackpadContact()
         touchRunning = false
-        engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
+        touchMIDIOutEnabled = false
+        engineStatus = touchPreviewRunning
+            ? "Touch preview active · no MIDI or haptic output until Start"
+            : (engineReady ? "Force Touch trackpad ready" : engineStatus)
+    }
+
+    private func handleTouchStates(_ states: [TouchPerformanceState]) {
+        touchStates = states
+        if let firstTrackpad = states.first(where: { $0.surface == .trackpad && $0.isTouching }) {
+            touchContact = TrackpadContact(
+                id: firstTrackpad.contactID,
+                isDown: firstTrackpad.isTouching,
+                x: Float(firstTrackpad.x),
+                y: Float(firstTrackpad.y),
+                size: Float(firstTrackpad.pressure)
+            )
+        } else {
+            touchContact = TrackpadContact()
+        }
+
+        guard touchRunning, touchMIDIOutEnabled else { return }
+        if let primary = states.first(where: { $0.isDown }) {
+            midi?.sendTouch(
+                continuousMIDI: primary.continuousMIDI,
+                quantizedMIDI: primary.quantizedMIDI,
+                velocity: primary.velocity,
+                isDown: true,
+                fretless: currentTouchConfiguration.fretless,
+                rootMIDI: currentTouchConfiguration.baseMIDINote
+            )
+        } else {
+            midi?.endTouchOutput()
+        }
     }
 
     func startMIDI() {

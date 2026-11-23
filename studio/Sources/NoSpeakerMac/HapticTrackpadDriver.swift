@@ -23,17 +23,77 @@ public enum HapticDriverError: LocalizedError {
     }
 }
 
-public struct TrackpadContact: Sendable, Equatable {
+public enum TouchSurfaceKind: String, CaseIterable, Identifiable, Sendable {
+    case trackpad = "Trackpad"
+    case magicMouse = "Magic Mouse"
+
+    public var id: String { rawValue }
+}
+
+public struct SurfaceContact: Sendable, Equatable, Identifiable {
+    public var id: Int
+    public var surface: TouchSurfaceKind
+    public var state: Int
     public var isDown: Bool
     public var x: Float
     public var y: Float
     public var size: Float
 
-    public init(isDown: Bool = false, x: Float = 0, y: Float = 0, size: Float = 0) {
+    public init(
+        id: Int,
+        surface: TouchSurfaceKind,
+        state: Int,
+        isDown: Bool,
+        x: Float,
+        y: Float,
+        size: Float
+    ) {
+        self.id = id
+        self.surface = surface
+        self.state = state
         self.isDown = isDown
         self.x = x
         self.y = y
         self.size = size
+    }
+}
+
+public struct SurfaceTouchFrame: Sendable, Equatable {
+    public var surface: TouchSurfaceKind
+    public var contacts: [SurfaceContact]
+    public var timestamp: Double
+    public var frameNumber: Int
+
+    public init(
+        surface: TouchSurfaceKind,
+        contacts: [SurfaceContact],
+        timestamp: Double,
+        frameNumber: Int
+    ) {
+        self.surface = surface
+        self.contacts = contacts
+        self.timestamp = timestamp
+        self.frameNumber = frameNumber
+    }
+}
+
+public struct TrackpadContact: Sendable, Equatable {
+    public var id: Int
+    public var isDown: Bool
+    public var x: Float
+    public var y: Float
+    public var size: Float
+
+    public init(id: Int = 0, isDown: Bool = false, x: Float = 0, y: Float = 0, size: Float = 0) {
+        self.id = id
+        self.isDown = isDown
+        self.x = x
+        self.y = y
+        self.size = size
+    }
+
+    public init(_ contact: SurfaceContact) {
+        self.init(id: contact.id, isDown: contact.isDown, x: contact.x, y: contact.y, size: contact.size)
     }
 }
 
@@ -53,39 +113,78 @@ private typealias DeviceStop = @convention(c) (UnsafeMutableRawPointer) -> Void
 private final class TouchBridge: @unchecked Sendable {
     static let shared = TouchBridge()
     private var lock = os_unfair_lock()
-    private var handler: (@Sendable (TrackpadContact) -> Void)?
+    private var handler: (@Sendable (SurfaceTouchFrame) -> Void)?
+    private var surfaceByDevice: [UInt: TouchSurfaceKind] = [:]
 
-    func setHandler(_ handler: (@Sendable (TrackpadContact) -> Void)?) {
+    func configure(
+        surfaces: [UnsafeMutableRawPointer: TouchSurfaceKind],
+        handler: (@Sendable (SurfaceTouchFrame) -> Void)?
+    ) {
         os_unfair_lock_lock(&lock)
         self.handler = handler
+        surfaceByDevice = Dictionary(uniqueKeysWithValues: surfaces.map {
+            (UInt(bitPattern: $0.key), $0.value)
+        })
         os_unfair_lock_unlock(&lock)
     }
 
-    func emit(_ contact: TrackpadContact) {
+    func clear() {
+        os_unfair_lock_lock(&lock)
+        handler = nil
+        surfaceByDevice.removeAll()
+        os_unfair_lock_unlock(&lock)
+    }
+
+    func emit(
+        device: UnsafeMutableRawPointer?,
+        data: UnsafeMutableRawPointer?,
+        count: Int32,
+        timestamp: Double,
+        frame: Int32
+    ) {
         os_unfair_lock_lock(&lock)
         let callback = handler
+        let surface = device.flatMap { surfaceByDevice[UInt(bitPattern: $0)] } ?? .trackpad
         os_unfair_lock_unlock(&lock)
-        callback?(contact)
+
+        var contacts: [SurfaceContact] = []
+        if let data, count > 0 {
+            contacts.reserveCapacity(Int(count))
+            for index in 0..<Int(count) {
+                // Canonical 96-byte MTTouch layout used by the existing upstream-derived path.
+                let record = data.advanced(by: index * 96)
+                let pathIndex = Int(record.load(fromByteOffset: 16, as: Int32.self))
+                let state = Int(record.load(fromByteOffset: 20, as: Int32.self))
+                guard (3...5).contains(state) else { continue }
+                contacts.append(.init(
+                    id: pathIndex,
+                    surface: surface,
+                    state: state,
+                    isDown: state != 5,
+                    x: record.load(fromByteOffset: 32, as: Float.self),
+                    y: record.load(fromByteOffset: 36, as: Float.self),
+                    size: record.load(fromByteOffset: 48, as: Float.self)
+                ))
+            }
+        }
+
+        callback?(.init(
+            surface: surface,
+            contacts: contacts,
+            timestamp: timestamp,
+            frameNumber: Int(frame)
+        ))
     }
 }
 
-private let trackpadFrameCallback: FrameCallback = { _, data, count, _, _ in
-    var best = TrackpadContact()
-    if let data, count > 0 {
-        for index in 0..<Int(count) {
-            // Record layout and state values intentionally mirror os6/nospeaker v1.0.
-            let record = data.advanced(by: index * 96)
-            let state = record.load(fromByteOffset: 20, as: Int32.self)
-            guard (3...5).contains(state) else { continue }
-            best = TrackpadContact(
-                isDown: true,
-                x: record.load(fromByteOffset: 32, as: Float.self),
-                y: record.load(fromByteOffset: 36, as: Float.self),
-                size: record.load(fromByteOffset: 48, as: Float.self)
-            )
-        }
-    }
-    TouchBridge.shared.emit(best)
+private let trackpadFrameCallback: FrameCallback = { device, data, count, timestamp, frame in
+    TouchBridge.shared.emit(
+        device: device,
+        data: data,
+        count: count,
+        timestamp: timestamp,
+        frame: frame
+    )
     return 0
 }
 
@@ -232,26 +331,60 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         Unmanaged<AnyObject>.fromOpaque(actuation).release()
     }
 
-    public func startTouch(handler: @escaping @Sendable (TrackpadContact) -> Void) throws {
+    public func startSurfaceMonitoring(
+        includeExternalSurfaces: Bool = true,
+        handler: @escaping @Sendable (SurfaceTouchFrame) -> Void
+    ) throws {
         if !isOpen { try open() }
         stateLock.lock()
         defer { stateLock.unlock() }
-        guard let deviceList, let getID, let registerCallback, let deviceStart else { throw HapticDriverError.symbolsUnavailable }
+        guard let deviceList, let getID, let registerCallback, let deviceStart else {
+            throw HapticDriverError.symbolsUnavailable
+        }
+
         stopTouchLocked()
-        var devices: [UnsafeMutableRawPointer] = []
+
+        var selected: [UnsafeMutableRawPointer] = []
+        var kinds: [UnsafeMutableRawPointer: TouchSurfaceKind] = [:]
+
         for index in 0..<CFArrayGetCount(deviceList) {
             guard let raw = CFArrayGetValueAtIndex(deviceList, index) else { continue }
             let device = UnsafeMutableRawPointer(mutating: raw)
             var id: UInt64 = 0
-            if getID(device, &id) == 0, id == motorDeviceID { devices.append(device) }
+            guard getID(device, &id) == 0 else { continue }
+
+            if id == motorDeviceID {
+                selected.append(device)
+                kinds[device] = .trackpad
+            } else if includeExternalSurfaces, !(deviceIsBuiltIn?(device) ?? false) {
+                selected.append(device)
+                kinds[device] = .magicMouse
+            }
         }
-        guard !devices.isEmpty else { throw HapticDriverError.noTrackpad }
-        TouchBridge.shared.setHandler(handler)
-        for device in devices {
+
+        guard !selected.isEmpty else { throw HapticDriverError.noTrackpad }
+
+        TouchBridge.shared.configure(surfaces: kinds, handler: handler)
+        for device in selected {
             registerCallback(device, trackpadFrameCallback)
             deviceStart(device, 0)
         }
-        touchDevicesInUse = devices
+        touchDevicesInUse = selected
+    }
+
+    public func startTouch(handler: @escaping @Sendable (TrackpadContact) -> Void) throws {
+        try startSurfaceMonitoring(includeExternalSurfaces: false) { frame in
+            guard frame.surface == .trackpad else { return }
+            if let first = frame.contacts.first(where: { $0.isDown }) ?? frame.contacts.first {
+                handler(TrackpadContact(first))
+            } else {
+                handler(TrackpadContact())
+            }
+        }
+    }
+
+    public func stopSurfaceMonitoring() {
+        stopTouch()
     }
 
     public func stopTouch() {
@@ -266,7 +399,7 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
             deviceStop?(device)
         }
         touchDevicesInUse.removeAll()
-        TouchBridge.shared.setHandler(nil)
+        TouchBridge.shared.clear()
     }
 }
 #endif
