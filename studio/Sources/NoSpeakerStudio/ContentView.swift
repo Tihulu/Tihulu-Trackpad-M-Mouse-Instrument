@@ -26,6 +26,7 @@ struct ContentView: View {
                     case .voice: VoiceModeView()
                     case .touch: TouchInstrumentView()
                     case .midiHelper: MIDIHelperView()
+                    case .touchBar: TouchBarModeView()
                     case .notes: NoteSequencerView()
                     case .drums: DrumSequencerView()
                     case .midi: MIDIModeView()
@@ -44,6 +45,7 @@ struct ContentView: View {
         )) {
             Button("OK") { studio.lastError = nil }
         } message: { Text(studio.lastError ?? "Unknown error") }
+        .onAppear { studio.installTouchBar() }
     }
 
     private var transport: some View {
@@ -97,6 +99,21 @@ struct ContentView: View {
                   .font(.caption)
               Text("Esc = Kill Switch").foregroundStyle(.red).font(.caption.bold())
           }
+          if studio.touchRunning || studio.midiHelperRunning {
+              HStack(spacing: 10) {
+                  Label("Sessions persist across mode changes", systemImage: "waveform.path")
+                      .font(.caption)
+                  if studio.touchRunning {
+                      Button("Stop Touch Instrument") { studio.stopTouch() }
+                          .buttonStyle(.bordered)
+                  }
+                  if studio.midiHelperRunning {
+                      Button("Stop MIDI Helper") { studio.stopMIDIHelper() }
+                          .buttonStyle(.bordered)
+                  }
+                  Spacer()
+              }
+          }
         }
         .padding(12)
     }
@@ -120,6 +137,7 @@ struct ContentView: View {
         case .voice: "text.bubble"
         case .touch: "hand.point.up.left"
         case .midiHelper: "slider.horizontal.3"
+        case .touchBar: "pianokeys"
         case .notes: "pianokeys"
         case .drums: "circle.grid.cross"
         case .midi: "cable.connector"
@@ -1513,6 +1531,226 @@ private struct SpeakerModeView: View {
             Spacer()
         }.padding(28)
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in if case .success(let url) = result { studio.playAudioFile(url) } }
+    }
+}
+
+private struct TouchBarModeView: View {
+    @EnvironmentObject private var studio: StudioController
+
+    private func setProfile(_ update: (inout TouchBarProfile) -> Void) {
+        var profile = studio.touchBarProfile
+        update(&profile)
+        studio.setTouchBarProfile(profile)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PageHeader(
+                    title: "Touch Bar & Tilt",
+                    subtitle: "Customize a native Touch Bar performance surface or use the same MIDI controls on screen while Trackpad and Magic Mouse sessions continue."
+                )
+
+                GroupBox("Touch Bar layout · Customize simultaneous zones") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Choose the zones to display in your preferred order. Native Touch Bar controls appear on supported MacBook Pro models; the on-screen strip works everywhere.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        ForEach(TouchBarZone.allCases) { zone in
+                            HStack {
+                                Toggle(zone.rawValue, isOn: Binding(
+                                    get: { studio.touchBarProfile.zones.contains(zone) },
+                                    set: { enabled in
+                                        setProfile { profile in
+                                            profile.zones.removeAll { $0 == zone }
+                                            if enabled { profile.zones.append(zone) }
+                                        }
+                                    }
+                                ))
+                                Spacer()
+                                if studio.touchBarProfile.zones.contains(zone) {
+                                    Button("↑") {
+                                        setProfile { profile in
+                                            guard let index = profile.zones.firstIndex(of: zone),
+                                                  index > 0 else { return }
+                                            profile.zones.swapAt(index, index - 1)
+                                        }
+                                    }.help("Move zone left")
+                                    Button("↓") {
+                                        setProfile { profile in
+                                            guard let index = profile.zones.firstIndex(of: zone),
+                                                  index < profile.zones.count - 1 else { return }
+                                            profile.zones.swapAt(index, index + 1)
+                                        }
+                                    }.help("Move zone right")
+                                }
+                            }
+                        }
+                        HStack {
+                            Picker("Sustain behavior", selection: Binding(
+                                get: { studio.touchBarProfile.sustainMode },
+                                set: { value in setProfile { $0.sustainMode = value } }
+                            )) {
+                                ForEach(TouchBarSustainMode.allCases) { mode in
+                                    Text(mode.rawValue).tag(mode)
+                                }
+                            }.frame(width: 220)
+                            Picker("MIDI channel", selection: Binding(
+                                get: { studio.touchBarProfile.channel },
+                                set: { value in setProfile { $0.channel = value } }
+                            )) {
+                                ForEach(0..<16, id: \.self) { channel in
+                                    Text("Channel \(channel + 1)").tag(channel)
+                                }
+                            }.frame(width: 220)
+                            Stepper("Base Note \(studio.touchBarProfile.baseNote)",
+                                    value: Binding(
+                                        get: { studio.touchBarProfile.baseNote },
+                                        set: { value in setProfile { $0.baseNote = value } }
+                                    ), in: 0...115)
+                            Spacer()
+                        }
+                    }.padding(8)
+                }
+
+                GroupBox("Live performance strip · On-screen Touch Bar") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(studio.touchBarProfile.zones) { zone in
+                            switch zone {
+                            case .keys:
+                                HStack(spacing: 4) {
+                                    Text("Piano").frame(width: 115, alignment: .leading)
+                                    ForEach(0..<8, id: \.self) { index in
+                                        TouchBarNotePad(
+                                            note: studio.touchBarProfile.baseNote + index,
+                                            label: ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G"][index]
+                                        )
+                                    }
+                                }
+                            case .sustain:
+                                HStack {
+                                    Text("Sustain").frame(width: 115, alignment: .leading)
+                                    if studio.touchBarProfile.sustainMode == .hold {
+                                        Button(studio.touchBarSustainOn ? "HOLDING" : "Press & hold") {}
+                                            .onLongPressGesture(
+                                                minimumDuration: 0,
+                                                pressing: { studio.touchBarSustainPressed($0) },
+                                                perform: {}
+                                            )
+                                    } else {
+                                        Button(studio.touchBarSustainOn ? "Sustain ON" : "Sustain OFF") {
+                                            studio.touchBarSustainPressed(true)
+                                        }
+                                    }
+                                }
+                            case .fretless, .pitchBend, .vibrato, .expression, .filter:
+                                TouchBarSliderPad(zone: zone)
+                            }
+                        }
+                        Text("Slides send live MIDI CC/bend to the same virtual MIDI output used by Logic. Keys send Note On/Off; Touch/Helper sessions remain independent.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8)
+                }
+
+                GroupBox("Screen hinge as an instrument · Calibration simulator") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Experimental design: map screen opening to filter, expression, vibrato or pitch bend. This is a manual calibration simulator; real hinge-angle sensing is not enabled until a compatible Mac reports a tested sensor.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        Picker("MIDI mapping", selection: Binding(
+                            get: { studio.touchBarProfile.tiltTarget },
+                            set: { value in setProfile { $0.tiltTarget = value } }
+                        )) {
+                            ForEach(TiltMIDITarget.allCases) { target in
+                                Text(target.rawValue).tag(target)
+                            }
+                        }.frame(width: 240)
+                        HStack {
+                            Text("Lid angle")
+                            Slider(value: Binding(
+                                get: { studio.simulatedHingeAngle },
+                                set: { studio.applySimulatedHingeAngle($0) }
+                            ), in: 5...175)
+                            Text("\(Int(studio.simulatedHingeAngle))°")
+                                .monospacedDigit().frame(width: 60)
+                        }
+                        HStack {
+                            Stepper("Closed / Min \(Int(studio.touchBarProfile.tiltMinDegrees))°",
+                                    value: Binding(
+                                        get: { studio.touchBarProfile.tiltMinDegrees },
+                                        set: { value in setProfile { $0.tiltMinDegrees = value } }
+                                    ), in: 5...170, step: 5)
+                            Stepper("Open / Max \(Int(studio.touchBarProfile.tiltMaxDegrees))°",
+                                    value: Binding(
+                                        get: { studio.touchBarProfile.tiltMaxDegrees },
+                                        set: { value in setProfile { $0.tiltMaxDegrees = value } }
+                                    ), in: 10...175, step: 5)
+                        }
+                        Button("Return MIDI to Neutral") {
+                            studio.applySimulatedHingeAngle((
+                                studio.touchBarProfile.tiltMinDegrees +
+                                studio.touchBarProfile.tiltMaxDegrees
+                            ) / 2)
+                        }
+                    }.padding(8)
+                }
+                Text("Safety: The instrument never closes the laptop lid or alters sleep settings. Physical lid-angle reporting is model-dependent and uses unsupported interfaces; do not treat this simulator as actual sensor data.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(28)
+        }
+    }
+}
+
+private struct TouchBarSliderPad: View {
+    @EnvironmentObject private var studio: StudioController
+    let zone: TouchBarZone
+    @State private var value = 0.5
+
+    var body: some View {
+        HStack {
+            Text(zone.rawValue).frame(width: 115, alignment: .leading)
+            Slider(value: $value, in: 0...1, onEditingChanged: { editing in
+                if !editing && (zone == .pitchBend || zone == .fretless) {
+                    value = 0.5
+                    studio.touchBarValue(zone, normalized: 0.5)
+                }
+            })
+            .onChange(of: value) { newValue in
+                studio.touchBarValue(zone, normalized: newValue)
+            }
+            Text("\(Int(value * 100))%").monospacedDigit().frame(width: 60)
+        }
+    }
+}
+
+private struct TouchBarNotePad: View {
+    @EnvironmentObject private var studio: StudioController
+    let note: Int
+    let label: String
+    @State private var isDown = false
+
+    var body: some View {
+        Text(label)
+            .font(.caption.bold())
+            .frame(maxWidth: .infinity, minHeight: 34)
+            .background(isDown ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.22))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    if !isDown {
+                        isDown = true
+                        studio.touchBarKey(note, pressed: true)
+                    }
+                }
+                .onEnded { _ in
+                    if isDown {
+                        isDown = false
+                        studio.touchBarKey(note, pressed: false)
+                    }
+                }
+            )
+            .onDisappear {
+                if isDown { studio.touchBarKey(note, pressed: false) }
+            }
     }
 }
 
