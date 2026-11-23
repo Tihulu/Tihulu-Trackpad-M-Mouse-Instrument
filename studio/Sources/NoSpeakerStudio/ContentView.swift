@@ -53,9 +53,21 @@ struct ContentView: View {
             TextField("BPM", value: $studio.bpm, format: .number.precision(.fractionLength(0)))
                 .frame(width: 58).textFieldStyle(.roundedBorder)
             Button("Stop") { studio.stopPlayback() }.keyboardShortcut(".", modifiers: .command)
-            Button("PANIC STOP") { studio.panicStop() }
-                .buttonStyle(.borderedProminent).tint(.red)
-                .keyboardShortcut(.escape, modifiers: [])
+            Button {
+                studio.panicStop()
+            } label: {
+                HStack(spacing: 7) {
+                    Text("PANIC STOP")
+                    Text("Esc")
+                        .font(.caption2.monospaced().weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.white.opacity(0.16))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+            }
+            .buttonStyle(.borderedProminent).tint(.red)
+            .keyboardShortcut(.escape, modifiers: [])
             Slider(value: $studio.masterLevel, in: 0...1) { Text("Master") }.frame(width: 130)
             Text("\(Int(studio.masterLevel * 100))%").monospacedDigit().frame(width: 38, alignment: .trailing)
         }
@@ -131,27 +143,121 @@ private struct TouchInstrumentView: View {
     @State private var root = 67
     @State private var scale: TouchScale = .pentatonic
 
+    private var mappedMIDINotes: [Int] {
+        scale.intervals.map { min(127, max(0, root + $0)) }
+    }
+
+    private var rootName: String {
+        (try? MusicTheory.noteName(midi: root)) ?? "MIDI \(root)"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             PageHeader(title: "Touch Instrument", subtitle: "Slide horizontally for pitch, vertically for vibrato, and use contact size for level.")
             HStack(spacing: 24) {
                 Picker("Scale", selection: $scale) { ForEach(TouchScale.allCases) { Text($0.rawValue).tag($0) } }.frame(width: 220)
-                Stepper("Root MIDI \(root)", value: $root, in: 36...84).frame(width: 180)
+                Stepper("Root \(rootName)", value: $root, in: 36...84).frame(width: 190)
                 Button(studio.touchRunning ? "Stop Touch Instrument" : "Start Touch Instrument") {
                     studio.touchRunning ? studio.stopTouch() : studio.startTouch(rootMIDI: root, scale: scale)
                 }.buttonStyle(.borderedProminent)
             }
-            ZStack {
-                RoundedRectangle(cornerRadius: 18).fill(.quaternary.opacity(0.45))
-                VStack(spacing: 10) {
-                    Image(systemName: "hand.point.up.left.fill").font(.system(size: 48))
-                    Text(studio.touchRunning ? "Touch the physical Force Touch trackpad now" : "Start the mode, then play on the physical trackpad")
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("\(rootName) · \(scale.rawValue)")
                         .font(.headline)
-                    Text("Left → low · Right → high · Up → more vibrato").foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(mappedMIDINotes.count) touch zones")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-            }.frame(minHeight: 280)
+
+                ScaleTrackpadMap(notes: mappedMIDINotes, rootMIDI: root, active: studio.touchRunning)
+                    .frame(minHeight: 300)
+
+                HStack {
+                    Label("Lower notes", systemImage: "arrow.left")
+                    Spacer()
+                    Text("Move upward anywhere for more vibrato")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Label("Higher notes", systemImage: "arrow.right")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             Spacer()
         }.padding(28)
+    }
+}
+
+private struct ScaleTrackpadMap: View {
+    let notes: [Int]
+    let rootMIDI: Int
+    let active: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let count = max(notes.count, 1)
+            let segmentWidth = proxy.size.width / CGFloat(count)
+
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(.quaternary.opacity(active ? 0.58 : 0.42))
+
+                ForEach(notes.indices, id: \.self) { index in
+                    let note = notes[index]
+                    let isRootClass = (note - rootMIDI) % 12 == 0
+                    let name = (try? MusicTheory.noteName(midi: note)) ?? "\(note)"
+                    let x = segmentWidth * (CGFloat(index) + 0.5)
+
+                    if index > 0 {
+                        Rectangle()
+                            .fill(.secondary.opacity(0.22))
+                            .frame(width: 1, height: proxy.size.height - 24)
+                            .position(x: segmentWidth * CGFloat(index), y: proxy.size.height / 2)
+                    }
+
+                    VStack(spacing: 6) {
+                        Text(name)
+                            .font(notes.count > 18 ? .system(size: 10, weight: isRootClass ? .bold : .medium, design: .monospaced) : .system(size: 12, weight: isRootClass ? .bold : .semibold, design: .monospaced))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+
+                        Text("MIDI \(note)")
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        if isRootClass {
+                            Circle()
+                                .fill(Color.accentColor)
+                                .frame(width: 7, height: 7)
+                        }
+                    }
+                    .padding(.vertical, 18)
+                    .frame(width: max(22, segmentWidth - 4), height: proxy.size.height - 8)
+                    .position(x: x, y: proxy.size.height / 2)
+                }
+
+                VStack(spacing: 8) {
+                    Image(systemName: active ? "hand.point.up.left.fill" : "hand.point.up.left")
+                        .font(.system(size: 34))
+                        .foregroundStyle(.secondary)
+                    Text(active ? "Play these zones on the physical trackpad" : "Start Touch Instrument, then use the matching physical zones")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .allowsHitTesting(false)
+                .position(x: proxy.size.width / 2, y: proxy.size.height * 0.72)
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(.secondary.opacity(0.22), lineWidth: 1)
+            )
+        }
     }
 }
 

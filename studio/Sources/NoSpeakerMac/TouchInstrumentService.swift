@@ -10,7 +10,7 @@ public enum TouchScale: String, CaseIterable, Identifiable, Sendable {
 
     public var id: String { rawValue }
 
-    var intervals: [Int] {
+    public var intervals: [Int] {
         switch self {
         case .chromatic: return Array(0...24)
         case .major: return [0,2,4,5,7,9,11,12,14,16,17,19,21,23,24]
