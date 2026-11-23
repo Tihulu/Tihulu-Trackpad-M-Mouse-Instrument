@@ -1,4 +1,4 @@
-name: Publish TIHULU macOS DMG v0.2.0
+name: Publish TIHULU macOS DMG v0.2.1
 
 on:
   push:
@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: tihulu-macos-release-v0.2.0
+  group: tihulu-macos-release-v0.2.1
   cancel-in-progress: false
 
 jobs:
@@ -73,19 +73,19 @@ jobs:
             studio/dist/Tihulu-Trackpad-M-Mouse-Instrument-macOS.dmg
             studio/dist/SHA256SUMS
 
-      - name: Publish GitHub Release v0.2.0
+      - name: Publish GitHub Release v0.2.1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if gh release view v0.2.0 >/dev/null 2>&1; then
-            echo "Release v0.2.0 already exists; leaving published assets untouched."
+          if gh release view v0.2.1 >/dev/null 2>&1; then
+            echo "Release v0.2.1 already exists; leaving published assets untouched."
             exit 0
           fi
-          gh release create v0.2.0 \
+          gh release create v0.2.1 \
             studio/dist/Tihulu-Trackpad-M-Mouse-Instrument-macOS.dmg \
             studio/dist/SHA256SUMS \
             --target "$GITHUB_SHA" \
-            --title "Tihulu Trackpad & M. Mouse Instrument v0.2.0" \
+            --title "Tihulu Trackpad & M. Mouse Instrument v0.2.1" \
             --notes-file RELEASE_NOTES.md \
             --latest

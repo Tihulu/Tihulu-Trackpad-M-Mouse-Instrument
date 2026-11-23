@@ -70,6 +70,20 @@ All modes share the same top-bar control. Press **Record Shortcut**, then any ke
 
 macOS may require Accessibility and Input Monitoring grants. Pointer interception is **session-wide**, not limited to Magic Mouse; an event tap may be disabled by macOS and should release the pointer automatically. Contact Size is *not* calibrated Force Touch pressure; experimental Click Pressure may be unavailable. System audio capture separately requires Screen Recording permission.
 
+## Troubleshooting unexpected stops and global capture
+
+**Version 0.2.1** separates macOS input-monitor interruptions from the haptic engine. If a CGEvent monitor times out, the app releases the desktop pointer and attempts to restore the monitor. If macOS explicitly disables monitoring or recovery fails, Global Capture is safely turned OFF; the Force Touch motor and other instrument modes remain available. A deliberate **PANIC STOP** still closes the driver and shows **Stopped — press Reconnect to reopen the trackpad**.
+
+If a recorded shortcut does not work outside the application:
+
+1. Install the DMG to Applications (or use the documented one-line installer); avoid switching repeatedly between differently signed copies.
+2. In **System Settings → Privacy & Security → Accessibility** and **Input Monitoring**, grant the installed **Tihulu Trackpad & M. Mouse Instrument** access when requested. Quit and reopen the app after changing permissions.
+3. In the top bar, select **Shortcut**, press the desired key with optional Command/Option/Control/Shift modifiers (like a push-to-talk shortcut recorder), then enable **Global Capture**. Escape is reserved and cannot be recorded.
+4. Test the shortcut while a different app is in focus. Press the same shortcut again to release the cursor. When captured, Escape releases the pointer and triggers the emergency stop.
+5. If macOS disables the monitor, check the status text and re-enable the capture toggle after reviewing permissions. The haptic engine should not require Reconnect for a monitor-only interruption.
+
+**Important:** Global Capture suppresses desktop pointer input from *all* mice/trackpads while active; the system event stream cannot safely distinguish Magic Mouse from other pointers. Keep the shortcut and emergency release accessible. On-screen Stop stops playback without closing the driver; Panic Stop intentionally requires Reconnect. If the driver still stops unexpectedly, note the mode, macOS version, which input surface was in use, and whether the input-monitor status changed. This behavior still needs physical-device acceptance testing.
+
 ## Requirements and safety
 
 - macOS 13 or newer; SwiftUI native app.

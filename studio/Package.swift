@@ -29,6 +29,7 @@ let package = Package(
                 .target(name: "NoSpeakerMac", condition: .when(platforms: [.macOS]))
             ]
         ),
-        .testTarget(name: "NoSpeakerCoreTests", dependencies: ["NoSpeakerCore"])
+        .testTarget(name: "NoSpeakerCoreTests", dependencies: ["NoSpeakerCore"]),
+        .testTarget(name: "NoSpeakerMacTests", dependencies: ["NoSpeakerMac"])
     ]
 )
