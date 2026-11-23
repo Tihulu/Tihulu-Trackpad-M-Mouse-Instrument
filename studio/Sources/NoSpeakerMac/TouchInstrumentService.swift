@@ -114,6 +114,7 @@ public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
     public var id: String { "\(surface.rawValue)-\(contactID)" }
     public var contactID: Int
     public var surface: TouchSurfaceKind
+    public var isTouching: Bool
     public var isDown: Bool
     public var x: Double
     public var y: Double
@@ -127,6 +128,7 @@ public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
     public init(
         contactID: Int,
         surface: TouchSurfaceKind,
+        isTouching: Bool,
         isDown: Bool,
         x: Double,
         y: Double,
@@ -139,6 +141,7 @@ public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
     ) {
         self.contactID = contactID
         self.surface = surface
+        self.isTouching = isTouching
         self.isDown = isDown
         self.x = x
         self.y = y
@@ -159,6 +162,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var monitoring = false
     private var active = false
     private var performanceHandler: (@Sendable ([TouchPerformanceState]) -> Void)?
+    private var latestStatesBySurface: [TouchSurfaceKind: [TouchPerformanceState]] = [:]
 
     public init(driver: HapticTrackpadDriver) {
         self.driver = driver
@@ -199,6 +203,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         monitoring = false
         active = false
         performanceHandler = nil
+        latestStatesBySurface.removeAll()
         lock.unlock()
         driver.stopSurfaceMonitoring()
     }
@@ -271,6 +276,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             return TouchPerformanceState(
                 contactID: contact.id,
                 surface: contact.surface,
+                isTouching: contact.isDown,
                 isDown: triggered,
                 x: x,
                 y: y,
@@ -283,7 +289,11 @@ public final class TouchInstrumentService: @unchecked Sendable {
             )
         }
 
-        callback?(states)
+        lock.lock()
+        latestStatesBySurface[frame.surface] = states.filter(\.isTouching)
+        let combined = TouchSurfaceKind.allCases.flatMap { latestStatesBySurface[$0] ?? [] }
+        lock.unlock()
+        callback?(combined)
 
         guard isActive, config.localHapticSound else { return }
         let sounding = states.filter(\.isDown).prefix(6)
