@@ -432,8 +432,8 @@ final class StudioController: ObservableObject {
     ) {
         let newSustainSettings = MIDIHelperSustainSettings(
             trackpadEnabled: controls.sustain && trackpadSustainEnabled,
-            trackpadGesture: trackpadSustainGesture,
             trackpadContactThreshold: trackpadSustainThreshold,
+            trackpadGesture: trackpadSustainGesture,
             magicMouseEnabled: controls.sustain && magicMouseSustainEnabled,
             magicMouseGesture: magicMouseSustainGesture
         )
