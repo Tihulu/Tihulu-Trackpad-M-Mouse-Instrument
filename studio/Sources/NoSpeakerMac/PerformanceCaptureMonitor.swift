@@ -52,7 +52,8 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
     public var onCaptureChanged: (@Sendable (Bool) -> Void)?
     public var onPanic: (@Sendable () -> Void)?
-    public var onPhysicalClick: (@Sendable (Bool) -> Void)?
+    public var onPhysicalClick: (@Sendable (Bool, Double) -> Void)?
+    public var onPhysicalPressure: (@Sendable (Double) -> Void)?
     public var onMonitorFailed: (@Sendable () -> Void)?
 
     public init() {}
@@ -197,8 +198,14 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             return passthrough
         }
 
-        if type == .leftMouseDown { onPhysicalClick?(true) }
-        if type == .leftMouseUp { onPhysicalClick?(false) }
+        if type == .leftMouseDown || type == .leftMouseUp {
+            onPhysicalClick?(
+                type == .leftMouseDown,
+                event.getDoubleValueField(.mouseEventPressure)
+            )
+        } else if type == .leftMouseDragged {
+            onPhysicalPressure?(event.getDoubleValueField(.mouseEventPressure))
+        }
 
         lock.lock()
         let suppress = captured
