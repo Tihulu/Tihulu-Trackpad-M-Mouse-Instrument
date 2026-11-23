@@ -1,0 +1,9 @@
+NoSpeaker Studio includes and/or is derived from work from the nospeaker project.
+
+Original project: nospeaker
+Original author: Cody Collier (os6)
+Upstream: https://github.com/os6/nospeaker
+License: MIT
+Initial compatibility baseline: nospeaker v1.0 / 64c5fbf493fab0a79382c8e101de8d80083b0d5c
+
+Downstream additions are maintained separately as NoSpeaker Studio.
