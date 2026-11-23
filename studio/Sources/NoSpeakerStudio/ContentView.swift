@@ -206,6 +206,14 @@ private struct TouchInstrumentView: View {
     @State private var trackpadOutput: SurfaceOutputRoute = .trackpadHaptic
     @State private var magicMouseOutput: SurfaceOutputRoute = .midiInstrument
     @State private var drumLayout: DrumPadLayout = .standard12
+    @State private var sustainEnabled = false
+    @State private var sustainTrackpadEnabled = true
+    @State private var sustainTrackpadGesture: TrackpadSustainGesture = .contactThreshold
+    @State private var sustainTrackpadThreshold = 0.55
+    @State private var sustainMouseEnabled = false
+    @State private var sustainMouseGesture: MagicMouseSustainGesture = .touchHold
+    @State private var captureArmed = false
+    @State private var captureShortcut: PerformanceCaptureShortcut = .controlOptionM
 
     private var mappedMIDINotes: [Int] {
         scale.mappedMIDINotes(root: root, zoneWidth: zoneWidth)
@@ -287,7 +295,14 @@ private struct TouchInstrumentView: View {
                                 midiOut: configuration.hasMIDIOutput,
                                 midiMode: midiMode,
                                 multiTouch: multiTouch,
-                                midiChannel: midiChannel - 1
+                                midiChannel: midiChannel - 1,
+                                sustainSettings: .init(
+                                    trackpadEnabled: sustainEnabled && sustainTrackpadEnabled,
+                                    trackpadContactThreshold: sustainTrackpadThreshold,
+                                    magicMouseEnabled: sustainEnabled && sustainMouseEnabled,
+                                    magicMouseGesture: sustainMouseGesture,
+                                    trackpadGesture: sustainTrackpadGesture
+                                )
                             )
                         }
                     }
@@ -500,6 +515,37 @@ private struct TouchInstrumentView: View {
                     }
                 }
 
+                GroupBox("Touch Instrument Sustain") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Enable Sustain", isOn: $sustainEnabled)
+                            .disabled(studio.touchRunning)
+                        Text("Sustain holds local haptic notes when the motor is enabled, and emits MIDI CC64 when this instrument is routed to a DAW.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if sustainEnabled {
+                            SustainSettingsPanel(
+                                surfaceSelection: surfaceSelection,
+                                playing: studio.touchRunning,
+                                active: studio.touchInstrumentSustainActive,
+                                trackpadEnabled: $sustainTrackpadEnabled,
+                                trackpadGesture: $sustainTrackpadGesture,
+                                trackpadThreshold: $sustainTrackpadThreshold,
+                                magicMouseEnabled: $sustainMouseEnabled,
+                                magicMouseGesture: $sustainMouseGesture
+                            )
+                            .disabled(studio.touchRunning)
+                        }
+                    }
+                    .padding(6)
+                }
+
+                CaptureSettingsPanel(
+                    armed: $captureArmed,
+                    shortcut: $captureShortcut,
+                    captured: studio.pointerCaptured,
+                    status: studio.captureStatus
+                )
+
                 if !studio.touchStates.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Live Contacts").font(.headline)
@@ -538,6 +584,10 @@ private struct TouchInstrumentView: View {
         }
         .task {
             studio.startTouchPreview(configuration: configuration)
+            studio.configurePerformanceCapture(
+                armed: captureArmed,
+                shortcut: captureShortcut
+            )
         }
         .onDisappear {
             studio.stopTouchPreview()
@@ -560,6 +610,12 @@ private struct TouchInstrumentView: View {
         .onChange(of: magicMouseOutput) { _ in syncConfiguration() }
         .onChange(of: drumLayout) { _ in syncConfiguration() }
         .onChange(of: studio.masterLevel) { _ in syncConfiguration() }
+        .onChange(of: captureArmed) { _ in
+            studio.configurePerformanceCapture(armed: captureArmed, shortcut: captureShortcut)
+        }
+        .onChange(of: captureShortcut) { _ in
+            studio.configurePerformanceCapture(armed: captureArmed, shortcut: captureShortcut)
+        }
     }
 
     @ViewBuilder
