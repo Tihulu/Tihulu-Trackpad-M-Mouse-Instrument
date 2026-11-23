@@ -657,6 +657,7 @@ final class StudioController: ObservableObject {
             capture.onCaptureChanged = { [weak self] captured in
                 Task { @MainActor in
                     guard let self else { return }
+                    guard self.inputControlsArmed else { return }
                     self.mouseCaptureActive = captured
                     self.inputControlsStatus = captured
                         ? "Captured · mouse motion is blocked from the desktop"
