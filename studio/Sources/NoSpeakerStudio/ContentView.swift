@@ -909,6 +909,57 @@ private struct DrumSequencerView: View {
 }
 
 
+private struct InputCaptureControlsView: View {
+    @EnvironmentObject private var studio: StudioController
+
+    var body: some View {
+        GroupBox("Input Controls · Optional Desktop Mouse Capture") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 16) {
+                    Picker("Capture Shortcut", selection: $studio.captureHotkey) {
+                        ForEach(CaptureHotkey.allCases) { key in
+                            Text("Ctrl + Option + \(key.rawValue)").tag(key)
+                        }
+                    }
+                    .frame(width: 260)
+                    .onChange(of: studio.captureHotkey) { newValue in
+                        studio.setCaptureHotkey(newValue)
+                    }
+
+                    Button(studio.inputControlsArmed
+                           ? "Disable Input Controls" : "Enable Input Controls") {
+                        if studio.inputControlsArmed {
+                            studio.disableInputControls()
+                        } else {
+                            studio.enableInputControls()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+
+                    Toggle("Capture Mouse for NoSpeaker", isOn: Binding(
+                        get: { studio.mouseCaptureActive },
+                        set: { studio.setMouseCapture($0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .disabled(!studio.inputControlsArmed)
+
+                    Spacer()
+                    Text("Esc = Panic Stop")
+                        .font(.callout.weight(.bold))
+                }
+
+                Text(studio.inputControlsStatus)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(studio.inputControlsArmed ? Color.green : Color.secondary)
+                Text("OFF by default. With macOS Accessibility permission, the shortcut toggles system pointer suppression so Magic Mouse touches play music instead of moving/clicking the desktop. Both mouse and trackpad pointer events may be suppressed while captured. Press the shortcut again to restore normal desktop input, or Esc to stop everything. Physical-click sustain also requires Input Controls. Without permission, pointer capture is not activated.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(6)
+        }
+    }
+}
+
 private struct MIDIHelperView: View {
     @EnvironmentObject private var studio: StudioController
 
