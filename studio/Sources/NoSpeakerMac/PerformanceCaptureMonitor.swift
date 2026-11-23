@@ -108,7 +108,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         lock.unlock()
     }
 
-    public func start(shortcut: PerformanceCaptureShortcut) throws {
+    public func start(shortcut: PerformanceCaptureShortcut, requestPermissions: Bool = false) throws {
         setShortcut(shortcut)
         lock.lock()
         let alreadyListening = listening
@@ -116,10 +116,12 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         if alreadyListening { return }
 
         guard AXIsProcessTrusted() else {
-            // Only request this system prompt after the user explicitly
-            // enables the performance monitor, never on app launch.
-            let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-            _ = AXIsProcessTrustedWithOptions(options)
+            // The click-sustain monitor can be started while pointer capture is
+            // OFF. Only prompt for access when the user explicitly arms capture.
+            if requestPermissions {
+                let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+                _ = AXIsProcessTrustedWithOptions(options)
+            }
             throw PerformanceCaptureError.permissionDenied
         }
 
@@ -150,7 +152,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         ) else {
             // The user explicitly enabled capture. Request Input Monitoring here,
             // never at launch; Accessibility alone may not grant a global event tap.
-            _ = CGRequestListenEventAccess()
+            if requestPermissions { _ = CGRequestListenEventAccess() }
             throw PerformanceCaptureError.tapUnavailable
         }
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0) else {
