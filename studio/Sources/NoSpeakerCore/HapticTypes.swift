@@ -64,6 +64,7 @@ public enum StudioMode: String, CaseIterable, Sendable, Identifiable, Codable {
     case notes = "Note Sequencer"
     case drums = "Drum Sequencer"
     case midiHelper = "MIDI Helper"
+    case touchBar = "Touch Bar & Tilt"
     case midi = "MIDI / Logic"
     case audio = "Audio File"
     case speaker = "Trackpad Speaker"

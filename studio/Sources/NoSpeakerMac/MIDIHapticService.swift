@@ -610,6 +610,23 @@ public final class MIDIHapticService: @unchecked Sendable {
         sendMIDI1(status: 0xB0 | safeChannel, data1: cc, data2: safeValue)
     }
 
+    /// Sends an explicit note from the Touch Bar or on-screen performance strip.
+    /// A direct note-off (not zero-velocity note-on) is sent for every release.
+    public func sendPerformanceNote(note: Int, velocity: Int, isOn: Bool, channel: Int) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        lock.unlock()
+        guard canSend else { return }
+        let safeNote = max(0, min(127, note))
+        let safeVelocity = max(0, min(127, velocity))
+        let safeChannel = max(0, min(15, channel))
+        sendMIDI1(
+            status: (isOn ? 0x90 : 0x80) | safeChannel,
+            data1: safeNote,
+            data2: isOn ? safeVelocity : 0
+        )
+    }
+
     public func sendChannelPressure(_ value: Int, channel: Int) {
         let safeValue = max(0, min(127, value))
         let safeChannel = max(0, min(15, channel))
