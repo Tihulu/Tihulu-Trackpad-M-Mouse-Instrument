@@ -913,7 +913,15 @@ private struct MIDIHelperView: View {
     @EnvironmentObject private var studio: StudioController
 
     @State private var surfaceSelection: TouchSurfaceSelection = .trackpad
-    @State private var mode: MIDIHelperMode = .hybrid
+    @State private var vibratoOn = true
+    @State private var pitchBendOn = false
+    @State private var expressionOn = false
+    @State private var sustainOn = false
+
+    private var controls: MIDIHelperControlSelection {
+        .init(vibrato: vibratoOn, pitchBend: pitchBendOn,
+              expression: expressionOn, sustain: sustainOn)
+    }
     @State private var sendToDAW = true
     @State private var localSound = false
     @State private var targetChannel = 1
@@ -921,6 +929,7 @@ private struct MIDIHelperView: View {
     @State private var vibratoCC = 1
     @State private var expressionCC = 11
     @State private var trackpadSustainEnabled = false
+    @State private var trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold
     @State private var trackpadSustainThreshold = 0.55
     @State private var magicMouseSustainEnabled = false
     @State private var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
@@ -940,12 +949,6 @@ private struct MIDIHelperView: View {
                     .pickerStyle(.segmented)
                     .frame(width: 300)
 
-                    Picker("Helper Mode", selection: $mode) {
-                        ForEach(MIDIHelperMode.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 420)
-
                     Spacer()
 
                     Button(studio.midiHelperRunning ? "Stop MIDI Helper" : "Start MIDI Helper") {
@@ -956,13 +959,34 @@ private struct MIDIHelperView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!studio.midiHelperRunning && controls.isEmpty)
                 }
+
+                GroupBox("Independent MIDI Controls · combine any switches") {
+                    HStack(spacing: 22) {
+                        Toggle("Vibrato (CC1)", isOn: $vibratoOn)
+                        Toggle("Pitch Bend", isOn: $pitchBendOn)
+                        Toggle("Expression (CC11)", isOn: $expressionOn)
+                        Toggle("Sustain (CC64)", isOn: $sustainOn)
+                        Spacer()
+                        Text(controls.isEmpty
+                             ? "Select a control"
+                             : (vibratoOn && pitchBendOn && expressionOn && sustainOn
+                                ? "All enabled · Hybrid"
+                                : "Custom control combination"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(8)
+                }
+
+                InputCaptureControlsView()
 
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 14) {
                         HelperSurfaceMap(
                             states: studio.midiHelperStates,
-                            mode: mode,
+                            controls: controls,
                             surfaceSelection: surfaceSelection,
                             active: studio.midiHelperRunning
                         )
@@ -1020,10 +1044,19 @@ private struct MIDIHelperView: View {
 
                         GroupBox("Sustain Pedal / MIDI CC64") {
                             VStack(alignment: .leading, spacing: 12) {
-                                Toggle("Trackpad Contact Sustain", isOn: $trackpadSustainEnabled)
-                                    .disabled(!surfaceSelection.accepts(.trackpad))
+                                Toggle("Trackpad Sustain", isOn: $trackpadSustainEnabled)
+                                    .disabled(!sustainOn || !surfaceSelection.accepts(.trackpad))
 
                                 if trackpadSustainEnabled {
+                                    Picker("Trackpad Gesture", selection: $trackpadSustainGesture) {
+                                        ForEach(TrackpadSustainGesture.allCases) {
+                                            Text($0.rawValue).tag($0)
+                                        }
+                                    }
+                                    .disabled(!sustainOn || !surfaceSelection.accepts(.trackpad))
+                                }
+
+                                if trackpadSustainEnabled && trackpadSustainGesture == .contactThreshold {
                                     HStack {
                                         Text("Contact threshold")
                                             .font(.caption)
@@ -1032,17 +1065,17 @@ private struct MIDIHelperView: View {
                                             .font(.caption.monospaced())
                                             .frame(width: 42)
                                     }
-                                    .disabled(!surfaceSelection.accepts(.trackpad))
+                                    .disabled(!sustainOn || !surfaceSelection.accepts(.trackpad))
                                 }
 
-                                Text("Trackpad sustain uses the available contact-size estimate, not calibrated Force Touch pressure. Releasing below the threshold sends CC64 OFF.")
+                                Text("Touch Hold / Tap Toggle use contact alone. Click Hold / Click Toggle use physical clicks (requires Input Controls). Contact Threshold uses contact size as a force proxy, not calibrated pressure.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
 
                                 Divider()
 
-                                Toggle("Magic Mouse Touch Sustain", isOn: $magicMouseSustainEnabled)
-                                    .disabled(!surfaceSelection.accepts(.magicMouse))
+                                Toggle("Magic Mouse Sustain", isOn: $magicMouseSustainEnabled)
+                                    .disabled(!sustainOn || !surfaceSelection.accepts(.magicMouse))
 
                                 if magicMouseSustainEnabled {
                                     Picker("Mouse Gesture", selection: $magicMouseSustainGesture) {
@@ -1050,12 +1083,10 @@ private struct MIDIHelperView: View {
                                             Text($0.rawValue).tag($0)
                                         }
                                     }
-                                    .disabled(!surfaceSelection.accepts(.magicMouse))
+                                    .disabled(!sustainOn || !surfaceSelection.accepts(.magicMouse))
                                 }
 
-                                Text(magicMouseSustainGesture == .touchHold
-                                     ? "Touch Hold: sustain is active while one or more fingers touch the Magic Mouse."
-                                     : "Tap Toggle: a new mouse touch session alternately enables and releases sustain.")
+                                Text("Magic Mouse: choose Touch Hold, Tap Toggle, Click Hold, or Click Toggle. No pressure reading is required.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
 
@@ -1076,13 +1107,25 @@ private struct MIDIHelperView: View {
                             .padding(6)
                         }
 
-                        GroupBox("Gesture Mapping") {
+                        GroupBox("Active Gesture Mapping") {
                             VStack(alignment: .leading, spacing: 10) {
-                                Label("Horizontal → Pitch Bend", systemImage: "arrow.left.and.right")
-                                Label("Vertical → Vibrato / Modulation", systemImage: "arrow.up.and.down")
-                                Label("Contact size → Expression", systemImage: "circle.dotted")
+                                if pitchBendOn {
+                                    Label("Horizontal → Pitch Bend", systemImage: "arrow.left.and.right")
+                                }
+                                if vibratoOn {
+                                    Label("Vertical → Vibrato / CC1", systemImage: "arrow.up.and.down")
+                                }
+                                if expressionOn {
+                                    Label("Contact size → CC11 Expression", systemImage: "circle.dotted")
+                                }
+                                if sustainOn {
+                                    Label("Trackpad / Mouse gesture → CC64 Sustain", systemImage: "pianokeys")
+                                }
+                                if controls.isEmpty {
+                                    Text("No controls selected.")
+                                }
                                 Divider()
-                                Text("Hybrid combines all three. Multiple fingers are aggregated: average horizontal bend, strongest vertical vibrato, strongest contact expression.")
+                                Text("Only selected controls send MIDI. Multiple fingers aggregate: average X, highest Y, strongest contact. Independent sustain gestures override the other axes.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -1119,7 +1162,10 @@ private struct MIDIHelperView: View {
             studio.updateMIDIHelperSurface(surfaceSelection)
             syncIfRunning()
         }
-        .onChange(of: mode) { _ in syncIfRunning() }
+        .onChange(of: vibratoOn) { _ in syncIfRunning() }
+        .onChange(of: pitchBendOn) { _ in syncIfRunning() }
+        .onChange(of: expressionOn) { _ in syncIfRunning() }
+        .onChange(of: sustainOn) { _ in syncIfRunning() }
         .onChange(of: sendToDAW) { _ in syncIfRunning() }
         .onChange(of: localSound) { _ in syncIfRunning() }
         .onChange(of: targetChannel) { _ in syncIfRunning() }
@@ -1127,6 +1173,7 @@ private struct MIDIHelperView: View {
         .onChange(of: vibratoCC) { _ in syncIfRunning() }
         .onChange(of: expressionCC) { _ in syncIfRunning() }
         .onChange(of: trackpadSustainEnabled) { _ in syncIfRunning() }
+        .onChange(of: trackpadSustainGesture) { _ in syncIfRunning() }
         .onChange(of: trackpadSustainThreshold) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainEnabled) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainGesture) { _ in syncIfRunning() }
@@ -1134,7 +1181,7 @@ private struct MIDIHelperView: View {
 
     private func startHelper() {
         studio.startMIDIHelper(
-            mode: mode,
+            controls: controls,
             surfaceSelection: surfaceSelection,
             sendToDAW: sendToDAW,
             localSound: localSound,
@@ -1145,7 +1192,8 @@ private struct MIDIHelperView: View {
             trackpadSustainEnabled: trackpadSustainEnabled,
             trackpadSustainThreshold: trackpadSustainThreshold,
             magicMouseSustainEnabled: magicMouseSustainEnabled,
-            magicMouseSustainGesture: magicMouseSustainGesture
+            magicMouseSustainGesture: magicMouseSustainGesture,
+            trackpadSustainGesture: trackpadSustainGesture
         )
     }
 
@@ -1158,7 +1206,7 @@ private struct MIDIHelperView: View {
 
 private struct HelperSurfaceMap: View {
     let states: [TouchPerformanceState]
-    let mode: MIDIHelperMode
+    let controls: MIDIHelperControlSelection
     let surfaceSelection: TouchSurfaceSelection
     let active: Bool
 
@@ -1177,13 +1225,13 @@ private struct HelperSurfaceMap: View {
                 .stroke(.secondary.opacity(0.28), lineWidth: 1)
 
                 VStack {
-                    Text(mode == .pitchBend ? "Pitch Bend" : "Vibrato")
+                    Text(controls.vibrato ? "Vibrato" : (controls.pitchBend ? "Pitch Bend" : "Sustain / Expression"))
                         .font(.headline)
-                    Text(mode == .pitchBend ? "horizontal active" : "up = more")
+                    Text(controls.vibrato ? "up = more" : (controls.pitchBend ? "horizontal active" : "touch gestures"))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    if mode == .expression || mode == .hybrid {
+                    if controls.expression {
                         Text("Contact size = Expression")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -1192,11 +1240,11 @@ private struct HelperSurfaceMap: View {
                 .padding(16)
 
                 HStack {
-                    if mode == .pitchBend || mode == .hybrid {
+                    if controls.pitchBend {
                         Label("Bend −", systemImage: "arrow.left")
                     }
                     Spacer()
-                    if mode == .pitchBend || mode == .hybrid {
+                    if controls.pitchBend {
                         Label("Bend +", systemImage: "arrow.right")
                     }
                 }
