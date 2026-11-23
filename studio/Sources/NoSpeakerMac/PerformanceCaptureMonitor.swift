@@ -48,6 +48,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     private var listening = false
     private var captured = false
     private var shortcut: PerformanceCaptureShortcut = .controlOptionM
+    private var captureHotkeyEnabled = false
 
     public var onCaptureChanged: (@Sendable (Bool) -> Void)?
     public var onPanic: (@Sendable () -> Void)?
@@ -62,6 +63,14 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return captured
+    }
+
+    public func setCaptureHotkeyEnabled(_ enabled: Bool) {
+        lock.lock()
+        captureHotkeyEnabled = enabled
+        if !enabled { captured = false }
+        lock.unlock()
+        if !enabled { onCaptureChanged?(false) }
     }
 
     public func setShortcut(_ shortcut: PerformanceCaptureShortcut) {
@@ -169,12 +178,13 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
             lock.lock()
             let currentShortcut = shortcut
+            let hotkeyEnabled = captureHotkeyEnabled
             lock.unlock()
             let flags = event.flags
             let matches = keyCode == currentShortcut.virtualKeyCode &&
                 flags.contains(.maskControl) && flags.contains(.maskAlternate) &&
                 !flags.contains(.maskCommand) && !flags.contains(.maskShift)
-            if matches {
+            if matches && hotkeyEnabled {
                 if type == .keyDown, !repeatKey {
                     lock.lock()
                     captured.toggle()
