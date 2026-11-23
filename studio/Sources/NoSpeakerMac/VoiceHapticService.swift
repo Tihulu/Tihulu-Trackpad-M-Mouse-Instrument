@@ -126,7 +126,8 @@ public enum VoiceHapticService {
         let candidates = [explicit,
             URL(fileURLWithPath: "/opt/homebrew/bin/piper"),
             URL(fileURLWithPath: "/usr/local/bin/piper"),
-            URL(fileURLWithPath: "/usr/local/opt/piper/bin/piper")
+            URL(fileURLWithPath: "/usr/local/opt/piper/bin/piper"),
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/piper")
         ].compactMap { $0 }
         return candidates.first { fileManager.isExecutableFile(atPath: $0.path) }
     }
