@@ -675,6 +675,267 @@ private struct DrumSequencerView: View {
     }
 }
 
+
+private struct MIDIHelperView: View {
+    @EnvironmentObject private var studio: StudioController
+
+    @State private var surfaceSelection: TouchSurfaceSelection = .trackpad
+    @State private var mode: MIDIHelperMode = .hybrid
+    @State private var sendToDAW = true
+    @State private var localSound = false
+    @State private var targetChannel = 1
+    @State private var pitchBendRange = 12
+    @State private var vibratoCC = 1
+    @State private var expressionCC = 11
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PageHeader(
+                    title: "MIDI Helper",
+                    subtitle: "Hold notes or chords on a keyboard/Logic instrument and add vibrato, pitch bend and expression with the trackpad, Magic Mouse, or both."
+                )
+
+                HStack(spacing: 14) {
+                    Picker("Surface", selection: $surfaceSelection) {
+                        ForEach(TouchSurfaceSelection.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 300)
+
+                    Picker("Helper Mode", selection: $mode) {
+                        ForEach(MIDIHelperMode.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 420)
+
+                    Spacer()
+
+                    Button(studio.midiHelperRunning ? "Stop MIDI Helper" : "Start MIDI Helper") {
+                        if studio.midiHelperRunning {
+                            studio.stopMIDIHelper()
+                        } else {
+                            startHelper()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HelperSurfaceMap(
+                            states: studio.midiHelperStates,
+                            mode: mode,
+                            surfaceSelection: surfaceSelection,
+                            active: studio.midiHelperRunning
+                        )
+                        .frame(minHeight: 390)
+
+                        GroupBox("Incoming Notes / Chord") {
+                            if studio.activeMIDINotes.isEmpty {
+                                Text("No incoming MIDI notes. Hold a key or chord on your external keyboard / Logic MIDI input.")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(8)
+                            } else {
+                                HStack(spacing: 10) {
+                                    ForEach(studio.activeMIDINotes) { note in
+                                        VStack(spacing: 4) {
+                                            Text((try? MusicTheory.noteName(midi: note.note)) ?? "MIDI \(note.note)")
+                                                .font(.headline.monospaced())
+                                            Text("Ch \(note.channel + 1) · V\(note.velocity)")
+                                                .font(.caption2.monospaced())
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 9)
+                                        .background(Color.accentColor.opacity(0.14))
+                                        .clipShape(RoundedRectangle(cornerRadius: 9))
+                                    }
+                                    Spacer()
+                                }
+                                .padding(6)
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        GroupBox("Routing") {
+                            VStack(alignment: .leading, spacing: 11) {
+                                Toggle("Send Helper to DAW (MIDI Out)", isOn: $sendToDAW)
+                                Toggle("Local Trackpad Sound for Incoming MIDI", isOn: $localSound)
+
+                                Stepper("Target Channel \(targetChannel)", value: $targetChannel, in: 1...16)
+
+                                Picker("Pitch Bend Range", selection: $pitchBendRange) {
+                                    Text("±2 semitones").tag(2)
+                                    Text("±5 semitones").tag(5)
+                                    Text("±12 semitones").tag(12)
+                                    Text("±24 semitones").tag(24)
+                                }
+
+                                Stepper("Vibrato CC \(vibratoCC)", value: $vibratoCC, in: 0...127)
+                                Stepper("Expression CC \(expressionCC)", value: $expressionCC, in: 0...127)
+                            }
+                            .padding(6)
+                        }
+
+                        GroupBox("Gesture Mapping") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Label("Horizontal → Pitch Bend", systemImage: "arrow.left.and.right")
+                                Label("Vertical → Vibrato / Modulation", systemImage: "arrow.up.and.down")
+                                Label("Contact size → Expression", systemImage: "circle.dotted")
+                                Divider()
+                                Text("Hybrid combines all three. Multiple fingers are aggregated: average horizontal bend, strongest vertical vibrato, strongest contact expression.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(6)
+                        }
+
+                        GroupBox("Surface Notes") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Trackpad: full X/Y multi-touch plus contact-size pressure proxy.")
+                                Text("Magic Mouse: X/Y multi-touch and contact-size proxy; it has no Force Touch haptic motor.")
+                                Text("Both: gestures from both surfaces can contribute at the same time.")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(6)
+                        }
+                    }
+                    .frame(width: 360)
+                }
+
+                Text("Preview is always visible on this page. Start MIDI Helper only enables MIDI control and optional local haptic playback.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(28)
+        }
+        .task {
+            studio.startMIDIHelperPreview(surfaceSelection: surfaceSelection)
+        }
+        .onDisappear {
+            studio.stopMIDIHelperPreview()
+        }
+        .onChange(of: surfaceSelection) { _ in
+            studio.updateMIDIHelperSurface(surfaceSelection)
+            syncIfRunning()
+        }
+        .onChange(of: mode) { _ in syncIfRunning() }
+        .onChange(of: sendToDAW) { _ in syncIfRunning() }
+        .onChange(of: localSound) { _ in syncIfRunning() }
+        .onChange(of: targetChannel) { _ in syncIfRunning() }
+        .onChange(of: pitchBendRange) { _ in syncIfRunning() }
+        .onChange(of: vibratoCC) { _ in syncIfRunning() }
+        .onChange(of: expressionCC) { _ in syncIfRunning() }
+    }
+
+    private func startHelper() {
+        studio.startMIDIHelper(
+            mode: mode,
+            surfaceSelection: surfaceSelection,
+            sendToDAW: sendToDAW,
+            localSound: localSound,
+            targetChannel: targetChannel - 1,
+            pitchBendRange: pitchBendRange,
+            vibratoCC: vibratoCC,
+            expressionCC: expressionCC
+        )
+    }
+
+    private func syncIfRunning() {
+        if studio.midiHelperRunning {
+            startHelper()
+        }
+    }
+}
+
+private struct HelperSurfaceMap: View {
+    let states: [TouchPerformanceState]
+    let mode: MIDIHelperMode
+    let surfaceSelection: TouchSurfaceSelection
+    let active: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(.quaternary.opacity(active ? 0.60 : 0.42))
+
+                Path { path in
+                    path.move(to: CGPoint(x: proxy.size.width / 2, y: 22))
+                    path.addLine(to: CGPoint(x: proxy.size.width / 2, y: proxy.size.height - 22))
+                    path.move(to: CGPoint(x: 22, y: proxy.size.height / 2))
+                    path.addLine(to: CGPoint(x: proxy.size.width - 22, y: proxy.size.height / 2))
+                }
+                .stroke(.secondary.opacity(0.28), lineWidth: 1)
+
+                VStack {
+                    Text(mode == .pitchBend ? "Pitch Bend" : "Vibrato")
+                        .font(.headline)
+                    Text(mode == .pitchBend ? "horizontal active" : "up = more")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if mode == .expression || mode == .hybrid {
+                        Text("Contact size = Expression")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(16)
+
+                HStack {
+                    if mode == .pitchBend || mode == .hybrid {
+                        Label("Bend −", systemImage: "arrow.left")
+                    }
+                    Spacer()
+                    if mode == .pitchBend || mode == .hybrid {
+                        Label("Bend +", systemImage: "arrow.right")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+
+                ForEach(Array(states.enumerated()), id: \.element.id) { index, state in
+                    let x = min(proxy.size.width - 14, max(14, CGFloat(state.x) * proxy.size.width))
+                    let y = min(proxy.size.height - 14, max(14, (1 - CGFloat(state.y)) * proxy.size.height))
+                    let diameter = 28 + CGFloat(state.pressure) * 28
+
+                    ZStack {
+                        Circle()
+                            .fill(state.surface == .trackpad ? Color.accentColor.opacity(0.86) : Color.cyan.opacity(0.86))
+                        Circle().stroke(.white.opacity(0.9), lineWidth: 2)
+                        Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.white)
+                    }
+                    .frame(width: diameter, height: diameter)
+                    .shadow(radius: 5)
+                    .position(x: x, y: y)
+                    .animation(.linear(duration: 0.025), value: x)
+                    .animation(.linear(duration: 0.025), value: y)
+                }
+
+                if states.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: surfaceSelection == .magicMouse ? "computermouse" : "hand.point.up.left")
+                            .font(.system(size: 34))
+                        Text("Preview active · touch the \(surfaceSelection.rawValue.lowercased())")
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(.secondary.opacity(0.25), lineWidth: 1)
+            )
+        }
+    }
+}
+
 private struct MIDIModeView: View {
     @EnvironmentObject private var studio: StudioController
     @State private var importing = false
