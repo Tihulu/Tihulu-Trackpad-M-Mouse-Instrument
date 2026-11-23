@@ -111,8 +111,9 @@ private struct PageHeader: View {
 private struct VoiceModeView: View {
     @EnvironmentObject private var studio: StudioController
     @State private var text = "Hello from the trackpad."
-    @State private var selectedVoice = "System Default"
-    @State private var voices = ["System Default"]
+    @State private var selectedLanguage: VoiceLanguage = .english
+    @State private var selectedVoice = ""
+    @State private var voices: [String] = []
 
     var body: some View {
         ScrollView {
@@ -120,20 +121,55 @@ private struct VoiceModeView: View {
                 PageHeader(title: "Voice", subtitle: "Type anything and render it through the trackpad using the upstream LPC/formant voice method.")
                 TextEditor(text: $text).font(.system(.body, design: .monospaced)).frame(minHeight: 180)
                     .padding(8).background(.quaternary.opacity(0.45)).clipShape(RoundedRectangle(cornerRadius: 10))
-                HStack {
-                    Picker("Voice", selection: $selectedVoice) { ForEach(voices, id: \.self) { Text($0).tag($0) } }.frame(maxWidth: 320)
+
+                HStack(spacing: 16) {
+                    Picker("Language", selection: $selectedLanguage) {
+                        ForEach(VoiceLanguage.allCases) { language in
+                            Text(language.rawValue).tag(language)
+                        }
+                    }
+                    .frame(width: 190)
+
+                    Picker("Voice", selection: $selectedVoice) {
+                        if voices.isEmpty {
+                            Text("No installed voice").tag("")
+                        } else {
+                            ForEach(voices, id: \.self) { Text($0).tag($0) }
+                        }
+                    }
+                    .frame(maxWidth: 320)
+
                     Button("Speak on Trackpad") {
-                        studio.speak(text, voice: selectedVoice == "System Default" ? nil : selectedVoice)
-                    }.buttonStyle(.borderedProminent)
+                        studio.speak(text, voice: selectedVoice.isEmpty ? nil : selectedVoice)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(voices.isEmpty)
+
                     Button("Stop") { studio.stopPlayback() }
                 }
+
+                if voices.isEmpty {
+                    Text("No \(selectedLanguage.rawValue) macOS voice is installed. Add one in System Settings → Accessibility → Spoken Content → System Voice.")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("\(selectedLanguage.rawValue) · \(voices.count) installed voice\(voices.count == 1 ? "" : "s")")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
                 Text("Speech is rendered locally with macOS `say`, analyzed locally, and sent to the haptic motor. No cloud service is required.")
                     .font(.callout).foregroundStyle(.secondary)
             }.padding(28)
         }
-        .task {
-            let installed = VoiceHapticService.installedVoices()
-            if !installed.isEmpty { voices = ["System Default"] + installed }
+        .task { reloadVoices() }
+        .onChange(of: selectedLanguage) { _ in reloadVoices() }
+    }
+
+    private func reloadVoices() {
+        voices = VoiceHapticService.installedVoices(language: selectedLanguage)
+        if !voices.contains(selectedVoice) {
+            selectedVoice = voices.first ?? ""
         }
     }
 }

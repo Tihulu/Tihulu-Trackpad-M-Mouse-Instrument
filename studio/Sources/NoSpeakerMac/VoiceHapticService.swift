@@ -15,21 +15,57 @@ public enum VoiceHapticError: LocalizedError {
     }
 }
 
+public enum VoiceLanguage: String, CaseIterable, Identifiable, Sendable {
+    case english = "English"
+    case turkish = "Turkish"
+    case german = "German"
+
+    public var id: String { rawValue }
+
+    public var localePrefix: String {
+        switch self {
+        case .english: return "en"
+        case .turkish: return "tr"
+        case .german: return "de"
+        }
+    }
+}
+
 public enum VoiceHapticService {
-    public static func installedVoices() -> [String] {
+    private static func installedVoiceRecords() -> [(name: String, locale: String)] {
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
         process.arguments = ["-v", "?"]
         process.standardOutput = pipe
         guard (try? process.run()) != nil else { return [] }
+
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         let text = String(data: data, encoding: .utf8) ?? ""
-        return text.split(separator: "\n").compactMap { line in
-            let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
-            return fields.first.map(String.init)
+
+        return text.split(separator: "\n").compactMap { rawLine in
+            let spokenPart = rawLine.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? rawLine
+            let fields = spokenPart.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            guard fields.count >= 2 else { return nil }
+            let locale = String(fields.last!)
+            let name = fields.dropLast().joined(separator: " ")
+            guard !name.isEmpty else { return nil }
+            return (name, locale)
         }
+    }
+
+    public static func installedVoices() -> [String] {
+        Array(Set(installedVoiceRecords().map(\.name))).sorted()
+    }
+
+    public static func installedVoices(language: VoiceLanguage) -> [String] {
+        let prefix = language.localePrefix.lowercased()
+        return Array(Set(
+            installedVoiceRecords()
+                .filter { $0.locale.lowercased().hasPrefix(prefix) }
+                .map(\.name)
+        )).sorted()
     }
 
     public static func render(text: String, voice: String? = nil) throws -> [ScheduledHapticEvent] {
