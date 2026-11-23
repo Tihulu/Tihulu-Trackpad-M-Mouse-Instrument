@@ -110,10 +110,26 @@ final class StudioController: ObservableObject {
             capture.onPhysicalPressure = { [weak self] pressure in
                 Task { @MainActor in self?.handlePhysicalPressure(pressure) }
             }
+            capture.onMonitorRecovered = { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.pointerCaptured = false
+                    self.captureStatus = "Input monitor recovered after timeout · cursor released · press the capture shortcut to resume"
+                }
+            }
             capture.onMonitorFailed = { [weak self] in
                 Task { @MainActor in
-                    self?.captureStatus = "Event monitor disabled · cursor restored"
-                    self?.panicStop()
+                    guard let self else { return }
+                    // macOS can disable a global event tap while the haptic driver
+                    // is still healthy. Never escalate that to a device panic.
+                    self.captureMonitor?.stop()
+                    self.captureArmed = false
+                    self.captureHotkeyArmed = false
+                    self.clickedSurface = nil
+                    self.trackpadClickPressure = nil
+                    self.pointerCaptured = false
+                    self.captureStatus = "macOS disabled input monitoring · cursor free · enable Global Capture again to retry"
+                    // Preserve Voice/Touch/MIDI/Audio playback and the live driver.
                 }
             }
             self.captureMonitor = capture
