@@ -1080,7 +1080,6 @@ private struct MIDIHelperView: View {
         }
         .task {
             studio.startMIDIHelperPreview(surfaceSelection: surfaceSelection)
-            syncCapture()
         }
         .onDisappear {
             studio.stopMIDIHelperPreview()
