@@ -7,8 +7,7 @@ APP="$APP_ROOT/Tihulu Trackpad & M. Mouse Instrument.app"
 CLI="$BIN_ROOT/tihulu-trackpad-instrument"
 
 rm -rf "$APP"
-# Clean only our legacy installed app name, if present.
-rm -rf "$APP_ROOT/NoSpeaker Studio.app"
-rm -f "$BIN_ROOT/nospeaker-studio"
+# Preserve the separate legacy NoSpeaker Studio app for user-controlled rollback.
+# Remove it manually if it is no longer needed.
 rm -f "$CLI"
 printf 'Removed Tihulu Trackpad & M. Mouse Instrument from:\n  %s\n  %s\n' "$APP" "$CLI"
