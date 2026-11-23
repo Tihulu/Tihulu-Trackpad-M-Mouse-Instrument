@@ -86,6 +86,7 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
     public var trackpadSustainEnabled: Bool
     public var trackpadSustainGesture: TrackpadSustainGesture
     public var trackpadSustainThreshold: Double
+    public var trackpadSustainSensor: TrackpadSustainSensor
     public var magicMouseSustainEnabled: Bool
     public var magicMouseSustainGesture: MagicMouseSustainGesture
 
@@ -111,6 +112,7 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         trackpadSustainEnabled: Bool = false,
         trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold,
         trackpadSustainThreshold: Double = 0.55,
+        trackpadSustainSensor: TrackpadSustainSensor = .contactSize,
         magicMouseSustainEnabled: Bool = false,
         magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
     ) {
@@ -135,6 +137,7 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         self.trackpadSustainEnabled = trackpadSustainEnabled
         self.trackpadSustainGesture = trackpadSustainGesture
         self.trackpadSustainThreshold = trackpadSustainThreshold
+        self.trackpadSustainSensor = trackpadSustainSensor
         self.magicMouseSustainEnabled = magicMouseSustainEnabled
         self.magicMouseSustainGesture = magicMouseSustainGesture
     }
