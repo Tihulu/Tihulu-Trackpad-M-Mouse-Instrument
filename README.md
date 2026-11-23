@@ -98,6 +98,14 @@ If the recorded performance shortcut has no effect in another application, open 
 
 The **Input Monitoring preflight** flag is an operating-system permission hint, not conclusive proof that an event tap can filter events. The **Event Tap Enabled** and observed counters are more useful when testing. While captured, the shortcut toggles release and **Escape** triggers Panic Stop. If you lose pointer control, the ordinary keyboard emergency release is available while the event tap is running.
 
+## Capture timeouts, Logic Pro MIDI and source-build icon (v0.2.3)
+
+If **Diagnostics** shows good Accessibility and Input Monitoring permissions and growing shortcut-match counts but frequent **event tap timeouts**, the input tap may be blocked by UI work. v0.2.3 moves the global filtering tap to a dedicated event thread, instead of the SwiftUI main run loop. Reproduce with the captured pointer active in another app, refresh diagnostics, and compare timeout counters. A pointer is intentionally released if macOS disables the tap; this remains a safety feature.
+
+If Logic Pro or the virtual MIDI bridge drops with **CoreMIDI OSStatus -2** (for example while macOS changes audio devices or uses an iPhone microphone), the app now retains one CoreMIDI client for its lifetime. It also keeps the virtual MIDI endpoints published across normal MIDI mode stops. **Restart the app** if the process was already affected by OSStatus -2 before updating. When a phone microphone is connected through Continuity, real-device MIDI routing must still be tested in Logic; audio capture and MIDI are separate subsystems.
+
+For **source installations**, a missing SVG-to-.icns renderer used to leave a generic blank icon in the Dock. Source builds now require a real icon and will attempt `brew install librsvg` when Homebrew is available. They stop with a clear error otherwise; install Homebrew/librsvg and retry, or use the prebuilt DMG from Releases (which already bundles the icon). If macOS retains a cached Dock icon, quit the app and reopen the newly installed bundle.
+
 ## Requirements and safety
 
 - macOS 13 or newer; SwiftUI native app.
