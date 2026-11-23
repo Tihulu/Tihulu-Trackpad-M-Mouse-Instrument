@@ -212,8 +212,30 @@ private struct VoiceModeView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text("Speech stays on your Mac. The app lists installed macOS say voices plus additional Enhanced/Premium AVSpeech voices when available. Turkish voice counts depend on what is actually installed in macOS; the app does not fabricate or automatically download voice models.")
+                Text("Speech stays on your Mac. The app lists installed macOS voices plus optional user-installed local Piper models. Turkish female/male options appear when compatible voice files and the Piper engine are installed.")
                     .font(.callout).foregroundStyle(.secondary)
+                if selectedLanguage == .turkish {
+                    GroupBox("Additional Turkish Voices · Offline") {
+                        VStack(alignment: .leading, spacing: 9) {
+                            Text("Add a local Piper model (.onnx and matching .onnx.json) to the app's Voice folder. Female and male voice models can coexist with macOS Yelda. Models are not downloaded or redistributed automatically; check each model's license.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            HStack(spacing: 12) {
+                                Label(VoiceHapticService.piperIsInstalled()
+                                      ? "Piper engine found" : "Piper engine not installed",
+                                      systemImage: VoiceHapticService.piperIsInstalled() ? "checkmark.circle" : "exclamationmark.triangle")
+                                    .font(.caption)
+                                Button("Open Local Voice Folder") {
+                                    let url = VoiceHapticService.piperVoiceDirectory()
+                                    try? FileManager.default.createDirectory(
+                                        at: url, withIntermediateDirectories: true
+                                    )
+                                    NSWorkspace.shared.open(url)
+                                }
+                                Button("Refresh Profiles") { reloadVoices() }
+                            }
+                        }.padding(8)
+                    }
+                }
                 Button("Refresh Installed Voices") { reloadVoices() }
                     .buttonStyle(.bordered)
                     .font(.callout).foregroundStyle(.secondary)
