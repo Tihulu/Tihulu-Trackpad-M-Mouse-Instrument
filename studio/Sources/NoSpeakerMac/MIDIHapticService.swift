@@ -34,7 +34,11 @@ public enum MIDIHapticError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .client(let status): return "CoreMIDI client creation failed (OSStatus \(status))."
+        case .client(let status):
+            if status == -2 {
+                return "CoreMIDI lost its MIDIServer connection (OSStatus -2). Restart the instrument app. The MIDI client will now be kept alive across mode switches to prevent recurrence."
+            }
+            return "CoreMIDI client creation failed (OSStatus \(status))."
         case .destination(let status): return "CoreMIDI virtual input creation failed (OSStatus \(status))."
         case .source(let status): return "CoreMIDI virtual output creation failed (OSStatus \(status))."
         case .inputPort(let status): return "CoreMIDI input port creation failed (OSStatus \(status))."
@@ -161,8 +165,34 @@ public final class MIDIHapticService: @unchecked Sendable {
             // Clean up any partial endpoints left by a previous failed start,
             // while keeping the process-wide CoreMIDI client alive.
             disposeEndpoints()
+            try createEndpoints()
         }
 
+        lock.lock()
+
+        lock.lock()
+        enabled = true
+        activeNotes.removeAll()
+        sustainByChannel.removeAll()
+        pitchBendByChannel.removeAll()
+        pitchBendRangeByChannel.removeAll()
+        rpnMSBByChannel.removeAll()
+        rpnLSBByChannel.removeAll()
+        bendRangeSemitonesByChannel.removeAll()
+        bendRangeCentsByChannel.removeAll()
+        modulationByChannel.removeAll()
+        volumeByChannel.removeAll()
+        expressionByChannel.removeAll()
+        channelPressureByChannel.removeAll()
+        outgoingTouches.removeAll()
+        helperSustainOn = false
+        helperSustainChannel = nil
+        touchSustainChannels.removeAll()
+        lock.unlock()
+        startRenderTimer()
+    }
+
+    private func createEndpoints() throws {
         var status: OSStatus = noErr
         var newDestination = MIDIEndpointRef()
         status = MIDIDestinationCreateWithProtocol(
@@ -200,26 +230,6 @@ public final class MIDIHapticService: @unchecked Sendable {
             }
         }
 
-        lock.lock()
-        enabled = true
-        activeNotes.removeAll()
-        sustainByChannel.removeAll()
-        pitchBendByChannel.removeAll()
-        pitchBendRangeByChannel.removeAll()
-        rpnMSBByChannel.removeAll()
-        rpnLSBByChannel.removeAll()
-        bendRangeSemitonesByChannel.removeAll()
-        bendRangeCentsByChannel.removeAll()
-        modulationByChannel.removeAll()
-        volumeByChannel.removeAll()
-        expressionByChannel.removeAll()
-        channelPressureByChannel.removeAll()
-        outgoingTouches.removeAll()
-        helperSustainOn = false
-        helperSustainChannel = nil
-        touchSustainChannels.removeAll()
-        lock.unlock()
-        startRenderTimer()
     }
 
     public func stop() {
