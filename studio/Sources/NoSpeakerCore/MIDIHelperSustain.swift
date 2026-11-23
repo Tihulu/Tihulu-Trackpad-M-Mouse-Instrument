@@ -1,17 +1,31 @@
 import Foundation
 
-/// Magic Mouse does not expose Force Touch pressure. A gesture can either
-/// sustain while the surface is touched or latch CC64 on each new touch session.
-public enum MagicMouseSustainGesture: String, CaseIterable, Identifiable, Sendable {
+/// Input modes are explicit: a contact is not a Force Touch pressure reading.
+/// Physical clicks are provided separately by the macOS event monitor.
+public enum TrackpadSustainGesture: String, CaseIterable, Identifiable, Sendable {
+    case contactThreshold = "Contact Threshold"
     case touchHold = "Touch Hold"
     case tapToggle = "Tap Toggle"
+    case physicalClickHold = "Physical Click Hold"
+    case physicalClickToggle = "Physical Click Toggle"
 
     public var id: String { rawValue }
 }
 
+public enum MagicMouseSustainGesture: String, CaseIterable, Identifiable, Sendable {
+    case touchHold = "Touch Hold"
+    case tapToggle = "Tap Toggle"
+    case physicalClickHold = "Physical Click Hold"
+    case physicalClickToggle = "Physical Click Toggle"
+
+    public var id: String { rawValue }
+}
+
+/// A single set of sustain choices is reusable in MIDI Helper and Touch Instrument.
 public struct MIDIHelperSustainSettings: Sendable, Equatable {
     public var trackpadEnabled: Bool
     public var trackpadContactThreshold: Double
+    public var trackpadGesture: TrackpadSustainGesture
     public var magicMouseEnabled: Bool
     public var magicMouseGesture: MagicMouseSustainGesture
 
@@ -19,12 +33,21 @@ public struct MIDIHelperSustainSettings: Sendable, Equatable {
         trackpadEnabled: Bool = false,
         trackpadContactThreshold: Double = 0.55,
         magicMouseEnabled: Bool = false,
-        magicMouseGesture: MagicMouseSustainGesture = .touchHold
+        magicMouseGesture: MagicMouseSustainGesture = .touchHold,
+        trackpadGesture: TrackpadSustainGesture = .contactThreshold
     ) {
         self.trackpadEnabled = trackpadEnabled
         self.trackpadContactThreshold = trackpadContactThreshold
+        self.trackpadGesture = trackpadGesture
         self.magicMouseEnabled = magicMouseEnabled
         self.magicMouseGesture = magicMouseGesture
+    }
+
+    public var needsPhysicalClicks: Bool {
+        (trackpadEnabled &&
+            (trackpadGesture == .physicalClickHold || trackpadGesture == .physicalClickToggle)) ||
+        (magicMouseEnabled &&
+            (magicMouseGesture == .physicalClickHold || magicMouseGesture == .physicalClickToggle))
     }
 }
 
@@ -37,17 +60,33 @@ public struct MIDIHelperSustainSnapshot: Sendable, Equatable {
         self.magicMouseActive = magicMouseActive
     }
 
-    /// If both surfaces are enabled, either may hold sustain without the other
-    /// prematurely sending CC64 OFF.
+    /// Either surface may hold sustain; lifting one never cancels the other.
     public var isActive: Bool { trackpadActive || magicMouseActive }
 }
 
-/// Pure, hardware-independent sustain logic for testing in Swift core CI.
-/// Trackpad strength is a normalized contact-*size* proxy, not a calibrated
-/// physical pressure or Force Touch reading.
+public struct MIDIHelperAssignments: Sendable, Equatable {
+    public var vibrato: Bool
+    public var pitchBend: Bool
+    public var expression: Bool
+
+    public init(vibrato: Bool = true, pitchBend: Bool = true, expression: Bool = true) {
+        self.vibrato = vibrato
+        self.pitchBend = pitchBend
+        self.expression = expression
+    }
+
+    public static var hybrid: Self { .init(vibrato: true, pitchBend: true, expression: true) }
+}
+
+/// Hardware-independent sustain logic; caller supplies independent physical
+/// click signals only when a click can be confidently assigned to a surface.
 public struct MIDIHelperSustainState: Sendable {
     private var trackpadHeld = false
+    private var trackpadWasTouching = false
+    private var trackpadWasClicking = false
+    private var trackpadLatched = false
     private var mouseWasTouching = false
+    private var mouseWasClicking = false
     private var mouseLatched = false
 
     public private(set) var snapshot = MIDIHelperSustainSnapshot()
@@ -57,22 +96,46 @@ public struct MIDIHelperSustainState: Sendable {
     public mutating func update(
         trackpadContactSizes: [Double],
         magicMouseTouching: Bool,
-        settings: MIDIHelperSustainSettings
+        settings: MIDIHelperSustainSettings,
+        trackpadClickDown: Bool = false,
+        magicMouseClickDown: Bool = false
     ) -> MIDIHelperSustainSnapshot {
         let threshold = max(0.05, min(1, settings.trackpadContactThreshold))
         let contactSize = trackpadContactSizes
             .filter { $0.isFinite }
             .map { min(1, max(0, $0)) }
             .max() ?? 0
+        let trackpadTouching = !trackpadContactSizes.isEmpty
 
-        if settings.trackpadEnabled, !trackpadContactSizes.isEmpty {
-            // Hysteresis prevents CC64 chattering near the threshold.
-            let releaseThreshold = max(0, threshold - 0.08)
-            trackpadHeld = trackpadHeld
-                ? contactSize >= releaseThreshold
-                : contactSize >= threshold
-        } else {
+        let trackpadActive: Bool
+        if !settings.trackpadEnabled {
             trackpadHeld = false
+            trackpadLatched = false
+            trackpadActive = false
+        } else {
+            switch settings.trackpadGesture {
+            case .contactThreshold:
+                let releaseThreshold = max(0, threshold - 0.08)
+                trackpadHeld = trackpadTouching && (trackpadHeld
+                    ? contactSize >= releaseThreshold : contactSize >= threshold)
+                trackpadActive = trackpadHeld
+            case .touchHold:
+                trackpadLatched = false
+                trackpadActive = trackpadTouching
+            case .tapToggle:
+                if trackpadTouching && !trackpadWasTouching {
+                    trackpadLatched.toggle()
+                }
+                trackpadActive = trackpadLatched
+            case .physicalClickHold:
+                trackpadLatched = false
+                trackpadActive = trackpadClickDown
+            case .physicalClickToggle:
+                if trackpadClickDown && !trackpadWasClicking {
+                    trackpadLatched.toggle()
+                }
+                trackpadActive = trackpadLatched
+            }
         }
 
         let mouseActive: Bool
@@ -89,21 +152,33 @@ public struct MIDIHelperSustainState: Sendable {
                     mouseLatched.toggle()
                 }
                 mouseActive = mouseLatched
+            case .physicalClickHold:
+                mouseLatched = false
+                mouseActive = magicMouseClickDown
+            case .physicalClickToggle:
+                if magicMouseClickDown && !mouseWasClicking {
+                    mouseLatched.toggle()
+                }
+                mouseActive = mouseLatched
             }
         }
 
+        trackpadWasTouching = trackpadTouching
+        trackpadWasClicking = trackpadClickDown
         mouseWasTouching = magicMouseTouching
-        snapshot = MIDIHelperSustainSnapshot(
-            trackpadActive: trackpadHeld,
-            magicMouseActive: mouseActive
-        )
+        mouseWasClicking = magicMouseClickDown
+        snapshot = .init(trackpadActive: trackpadActive, magicMouseActive: mouseActive)
         return snapshot
     }
 
     public mutating func reset() {
         trackpadHeld = false
+        trackpadWasTouching = false
+        trackpadWasClicking = false
+        trackpadLatched = false
         mouseWasTouching = false
+        mouseWasClicking = false
         mouseLatched = false
-        snapshot = MIDIHelperSustainSnapshot()
+        snapshot = .init()
     }
 }
