@@ -131,22 +131,46 @@ final class StudioController: ObservableObject {
         isPlaying = true
     }
 
-    func startTouch(rootMIDI: Int, scale: TouchScale) {
+    func startTouch(rootMIDI: Int, scale: TouchScale, fretless: Bool = false, midiOut: Bool = false) {
         guard requireEngine(), let touch else { return }
+
+        if midiOut, !midiRunning {
+            startMIDI()
+        }
+
         do {
-            try touch.start(baseMIDINote: rootMIDI, scale: scale, masterLevel: masterLevel) { [weak self] contact in
+            try touch.start(
+                baseMIDINote: rootMIDI,
+                scale: scale,
+                fretless: fretless,
+                masterLevel: masterLevel
+            ) { [weak self] performance in
                 Task { @MainActor in
-                    self?.touchContact = contact
+                    guard let self else { return }
+                    self.touchContact = performance.contact
+                    if midiOut {
+                        self.midi?.sendTouch(
+                            continuousMIDI: performance.continuousMIDI,
+                            quantizedMIDI: performance.quantizedMIDI,
+                            velocity: performance.velocity,
+                            isDown: performance.contact.isDown,
+                            fretless: fretless,
+                            rootMIDI: rootMIDI
+                        )
+                    }
                 }
             }
             touchContact = TrackpadContact()
             touchRunning = true
-            engineStatus = "Touch Instrument active"
+            engineStatus = midiOut
+                ? (fretless ? "Touch Instrument active · Fretless MIDI Out" : "Touch Instrument active · MIDI Out")
+                : (fretless ? "Touch Instrument active · Fretless" : "Touch Instrument active")
         } catch { fail(error) }
     }
 
     func stopTouch() {
         touch?.stop()
+        midi?.endTouchOutput()
         touchContact = TrackpadContact()
         touchRunning = false
         engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
@@ -161,11 +185,12 @@ final class StudioController: ObservableObject {
                 }
             }
             midiRunning = true
-            engineStatus = "NoSpeaker Haptic MIDI is available to Logic Pro and other MIDI apps"
+            engineStatus = "MIDI bridge active · Haptic MIDI In + Touch MIDI Out"
         } catch { fail(error) }
     }
 
     func stopMIDI() {
+        midi?.endTouchOutput()
         midi?.stop()
         midiRunning = false
         engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
