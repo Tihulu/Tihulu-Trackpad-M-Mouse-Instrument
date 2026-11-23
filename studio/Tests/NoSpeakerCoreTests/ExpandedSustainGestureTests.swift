@@ -59,3 +59,29 @@ import Testing
     state.reset()
     #expect(!state.snapshot.isActive)
 }
+
+@Test func clickPressureNeverPretendsContactSizeIsActualForce() {
+    var state = MIDIHelperSustainState()
+    let settings = MIDIHelperSustainSettings(
+        trackpadEnabled: true,
+        trackpadContactThreshold: 0.6,
+        trackpadGesture: .contactThreshold,
+        trackpadSensor: .clickPressure
+    )
+    #expect(!state.update(
+        trackpadContactSizes: [0.95], magicMouseTouching: false,
+        settings: settings, trackpadClickDown: false
+    ).isActive)
+    #expect(!state.update(
+        trackpadContactSizes: [0.95], magicMouseTouching: false,
+        settings: settings, trackpadClickDown: true
+    ).isActive)
+    #expect(state.update(
+        trackpadContactSizes: [0.1], magicMouseTouching: false,
+        settings: settings, trackpadClickDown: true, trackpadClickPressure: 0.8
+    ).isActive)
+    #expect(!state.update(
+        trackpadContactSizes: [0.1], magicMouseTouching: false,
+        settings: settings, trackpadClickDown: false, trackpadClickPressure: 0
+    ).isActive)
+}
