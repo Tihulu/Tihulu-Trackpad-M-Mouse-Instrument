@@ -53,9 +53,21 @@ struct ContentView: View {
             TextField("BPM", value: $studio.bpm, format: .number.precision(.fractionLength(0)))
                 .frame(width: 58).textFieldStyle(.roundedBorder)
             Button("Stop") { studio.stopPlayback() }.keyboardShortcut(".", modifiers: .command)
-            Button("PANIC STOP") { studio.panicStop() }
-                .buttonStyle(.borderedProminent).tint(.red)
-                .keyboardShortcut(.escape, modifiers: [])
+            Button {
+                studio.panicStop()
+            } label: {
+                HStack(spacing: 7) {
+                    Text("PANIC STOP")
+                    Text("Esc")
+                        .font(.caption2.monospaced().weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.white.opacity(0.16))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+            }
+            .buttonStyle(.borderedProminent).tint(.red)
+            .keyboardShortcut(.escape, modifiers: [])
             Slider(value: $studio.masterLevel, in: 0...1) { Text("Master") }.frame(width: 130)
             Text("\(Int(studio.masterLevel * 100))%").monospacedDigit().frame(width: 38, alignment: .trailing)
         }
