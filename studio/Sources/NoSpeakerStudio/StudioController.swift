@@ -29,6 +29,9 @@ final class StudioController: ObservableObject {
     @Published var midiHelperSustainActive = false
     @Published var midiHelperTrackpadSustainActive = false
     @Published var midiHelperMagicMouseSustainActive = false
+    @Published var touchInstrumentSustainActive = false
+    @Published var pointerCaptured = false
+    @Published var captureStatus = "Cursor free · capture is OFF by default"
     @Published var activeMIDINotes: [ActiveMIDINote] = []
     @Published var systemAudioRunning = false
     @Published var lastMIDIMessage = "No MIDI received yet"
@@ -46,7 +49,7 @@ final class StudioController: ObservableObject {
     private var touchMultiTouchEnabled = true
     private var touchMIDIChannel = 0
 
-    private var helperMode: MIDIHelperMode = .hybrid
+    private var helperAssignments = MIDIHelperAssignments.hybrid
     private var helperSendToDAW = true
     private var helperTargetChannel = 0
     private var helperPitchBendRange = 12
@@ -56,6 +59,12 @@ final class StudioController: ObservableObject {
     private var helperSurfaceSelection: TouchSurfaceSelection = .trackpad
     private var helperSustainSettings = MIDIHelperSustainSettings()
     private var helperSustainState = MIDIHelperSustainState()
+    private var touchSustainSettings = MIDIHelperSustainSettings()
+    private var touchSustainState = MIDIHelperSustainState()
+    private var captureMonitor: PerformanceCaptureMonitor?
+    private var captureShortcut: PerformanceCaptureShortcut = .controlOptionM
+    private var captureHotkeyArmed = false
+    private var clickedSurface: TouchSurfaceKind?
     private var activeMIDINoteMap: [String: ActiveMIDINote] = [:]
 
     init() {
@@ -71,6 +80,28 @@ final class StudioController: ObservableObject {
             self.touch = TouchInstrumentService(driver: driver)
             self.midi = MIDIHapticService(driver: driver)
             self.systemAudio = SystemAudioHapticCapture(driver: driver)
+            let capture = PerformanceCaptureMonitor()
+            capture.onCaptureChanged = { [weak self] captured in
+                Task { @MainActor in
+                    self?.pointerCaptured = captured
+                    self?.captureStatus = captured
+                        ? "Cursor captured · press the shortcut again or Esc"
+                        : "Cursor free · performance monitor ready"
+                }
+            }
+            capture.onPanic = { [weak self] in
+                Task { @MainActor in self?.panicStop() }
+            }
+            capture.onPhysicalClick = { [weak self] down in
+                Task { @MainActor in self?.handlePhysicalClick(down) }
+            }
+            capture.onMonitorFailed = { [weak self] in
+                Task { @MainActor in
+                    self?.captureStatus = "Event monitor disabled · cursor restored"
+                    self?.panicStop()
+                }
+            }
+            self.captureMonitor = capture
             engineReady = true
             engineStatus = driver.isBuiltIn ? "Built-in Force Touch trackpad ready" : "External Force Touch trackpad ready"
             lastError = nil
@@ -82,6 +113,8 @@ final class StudioController: ObservableObject {
     }
 
     func panicStop() {
+        captureMonitor?.stop()
+        clickedSurface = nil
         playback?.stop(closeDriver: true)
         touch?.stopPreview()
         midi?.stop()
@@ -91,6 +124,8 @@ final class StudioController: ObservableObject {
         touchPreviewRunning = false
         midiHelperRunning = false
         helperSustainState.reset()
+        touchSustainState.reset()
+        touchInstrumentSustainActive = false
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
         midiHelperMagicMouseSustainActive = false
@@ -101,6 +136,8 @@ final class StudioController: ObservableObject {
         activeMIDINoteMap.removeAll()
         midiRunning = false
         systemAudioRunning = false
+        pointerCaptured = false
+        captureStatus = "Stopped · cursor released"
         engineReady = false
         engineStatus = "Stopped — press Reconnect to reopen the trackpad"
     }
@@ -201,6 +238,9 @@ final class StudioController: ObservableObject {
     }
 
     func stopTouchPreview() {
+        midi?.releaseTouchSustain()
+        touchSustainState.reset()
+        touchInstrumentSustainActive = false
         touch?.stopPreview()
         midi?.endAllTouchOutput()
         touchPreviewRunning = false
@@ -209,6 +249,7 @@ final class StudioController: ObservableObject {
         touchStates = []
         touchContact = TrackpadContact()
         engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
+        stopCaptureMonitorIfIdle()
     }
 
     func startTouch(
@@ -216,7 +257,8 @@ final class StudioController: ObservableObject {
         midiOut: Bool,
         midiMode: TouchMIDIMode = .standard,
         multiTouch: Bool = true,
-        midiChannel: Int = 0
+        midiChannel: Int = 0,
+        sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
         guard requireEngine(), let touch else { return }
         currentTouchConfiguration = configuration
@@ -224,6 +266,8 @@ final class StudioController: ObservableObject {
         touchMIDIMode = midiMode
         touchMultiTouchEnabled = multiTouch
         touchMIDIChannel = max(0, min(15, midiChannel))
+        touchSustainSettings = sustainSettings
+        touchSustainState.reset()
 
         if !touchPreviewRunning {
             startTouchPreview(configuration: configuration)
@@ -237,6 +281,7 @@ final class StudioController: ObservableObject {
 
         touch.setActive(true)
         touchRunning = true
+        startPerformanceEventMonitor()
         engineStatus = midiOut
             ? (configuration.fretless
                ? "Touch Instrument active · Fretless \(midiMode.rawValue) Out"
@@ -259,6 +304,9 @@ final class StudioController: ObservableObject {
     }
 
     func stopTouch() {
+        midi?.releaseTouchSustain()
+        touchSustainState.reset()
+        touchInstrumentSustainActive = false
         touch?.setActive(false)
         midi?.endAllTouchOutput()
         touchRunning = false
@@ -266,6 +314,7 @@ final class StudioController: ObservableObject {
         engineStatus = touchPreviewRunning
             ? "Touch preview active · no MIDI or haptic output until Start"
             : (engineReady ? "Force Touch trackpad ready" : engineStatus)
+        stopCaptureMonitorIfIdle()
     }
 
     private func handleTouchStates(_ states: [TouchPerformanceState]) {
@@ -282,14 +331,17 @@ final class StudioController: ObservableObject {
             touchContact = TrackpadContact()
         }
 
-        guard touchRunning, touchMIDIOutEnabled else { return }
-        midi?.sendTouchStates(
-            states,
-            configuration: currentTouchConfiguration,
-            midiMode: touchMIDIMode,
-            baseChannel: touchMIDIChannel,
-            multiTouchEnabled: touchMultiTouchEnabled
-        )
+        guard touchRunning else { return }
+        if touchMIDIOutEnabled {
+            midi?.sendTouchStates(
+                states,
+                configuration: currentTouchConfiguration,
+                midiMode: touchMIDIMode,
+                baseChannel: touchMIDIChannel,
+                multiTouchEnabled: touchMultiTouchEnabled
+            )
+        }
+        updateTouchSustain(states)
     }
 
     func startMIDI() {
@@ -321,6 +373,10 @@ final class StudioController: ObservableObject {
     }
 
     func stopMIDI() {
+        captureMonitor?.releasePointer()
+        midi?.releaseTouchSustain()
+        touchSustainState.reset()
+        touchInstrumentSustainActive = false
         midi?.releaseHelperSustain()
         helperSustainState.reset()
         midiHelperSustainActive = false
@@ -328,14 +384,15 @@ final class StudioController: ObservableObject {
         midiHelperMagicMouseSustainActive = false
         midiHelperRunning = false
         midi?.endAllTouchOutput()
-        midi?.resetHelperGesture(
-            mode: helperMode,
+        midi?.resetHelperControls(
+            assignments: helperAssignments,
             channel: helperTargetChannel,
             vibratoCC: helperVibratoCC,
             expressionCC: helperExpressionCC
         )
         midi?.stop()
         midiRunning = false
+        stopCaptureMonitorIfIdle()
         activeMIDINoteMap.removeAll()
         activeMIDINotes = []
         engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
@@ -385,7 +442,7 @@ final class StudioController: ObservableObject {
     }
 
     func startMIDIHelper(
-        mode: MIDIHelperMode,
+        assignments: MIDIHelperAssignments,
         surfaceSelection: TouchSurfaceSelection,
         sendToDAW: Bool,
         localSound: Bool,
@@ -396,20 +453,29 @@ final class StudioController: ObservableObject {
         trackpadSustainEnabled: Bool = false,
         trackpadSustainThreshold: Double = 0.55,
         magicMouseSustainEnabled: Bool = false,
-        magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
+        magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold,
+        trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold
     ) {
         let newSustainSettings = MIDIHelperSustainSettings(
             trackpadEnabled: trackpadSustainEnabled,
             trackpadContactThreshold: trackpadSustainThreshold,
             magicMouseEnabled: magicMouseSustainEnabled,
-            magicMouseGesture: magicMouseSustainGesture
+            magicMouseGesture: magicMouseSustainGesture,
+            trackpadGesture: trackpadSustainGesture
         )
         let newChannel = max(0, min(15, targetChannel))
         if midiHelperRunning &&
             (newSustainSettings != helperSustainSettings ||
+             assignments != helperAssignments ||
              newChannel != helperTargetChannel ||
              sendToDAW != helperSendToDAW ||
              surfaceSelection != helperSurfaceSelection) {
+            midi?.resetHelperControls(
+                assignments: helperAssignments,
+                channel: helperTargetChannel,
+                vibratoCC: helperVibratoCC,
+                expressionCC: helperExpressionCC
+            )
             // Changing surface, channel or sustain mapping safely clears an
             // existing CC64 latch before the new routing becomes active.
             midi?.releaseHelperSustain()
@@ -420,7 +486,7 @@ final class StudioController: ObservableObject {
         }
 
         helperSustainSettings = newSustainSettings
-        helperMode = mode
+        helperAssignments = assignments
         helperSurfaceSelection = surfaceSelection
         helperSendToDAW = sendToDAW
         helperLocalSound = localSound
@@ -440,7 +506,8 @@ final class StudioController: ObservableObject {
         }
         midi?.setInputHapticsEnabled(localSound)
         midiHelperRunning = true
-        engineStatus = "MIDI Helper active · \(mode.rawValue)"
+        startPerformanceEventMonitor()
+        engineStatus = "MIDI Helper active · expressive CC mapping"
     }
 
     func stopMIDIHelper() {
@@ -449,14 +516,15 @@ final class StudioController: ObservableObject {
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
         midiHelperMagicMouseSustainActive = false
-        midi?.resetHelperGesture(
-            mode: helperMode,
+        midi?.resetHelperControls(
+            assignments: helperAssignments,
             channel: helperTargetChannel,
             vibratoCC: helperVibratoCC,
             expressionCC: helperExpressionCC
         )
         midi?.setInputHapticsEnabled(true)
         midiHelperRunning = false
+        stopCaptureMonitorIfIdle()
         engineStatus = touchPreviewRunning ? "MIDI Helper preview active" : "MIDI bridge active"
     }
 
@@ -467,6 +535,7 @@ final class StudioController: ObservableObject {
         touch?.stopPreview()
         touchPreviewRunning = false
         midiHelperStates = []
+        stopCaptureMonitorIfIdle()
     }
 
     private func handleMIDIHelperStates(_ states: [TouchPerformanceState]) {
@@ -479,7 +548,9 @@ final class StudioController: ObservableObject {
                 .filter { $0.surface == .trackpad }
                 .map(\.pressure),
             magicMouseTouching: active.contains { $0.surface == .magicMouse },
-            settings: helperSustainSettings
+            settings: helperSustainSettings,
+            trackpadClickDown: clickedSurface == .trackpad,
+            magicMouseClickDown: clickedSurface == .magicMouse
         )
         midiHelperTrackpadSustainActive = snapshot.trackpadActive
         midiHelperMagicMouseSustainActive = snapshot.magicMouseActive
@@ -492,8 +563,8 @@ final class StudioController: ObservableObject {
         midi?.setHelperSustain(snapshot.isActive, channel: helperTargetChannel)
 
         guard !active.isEmpty else {
-            midi?.resetHelperGesture(
-                mode: helperMode,
+            midi?.resetHelperControls(
+                assignments: helperAssignments,
                 channel: helperTargetChannel,
                 vibratoCC: helperVibratoCC,
                 expressionCC: helperExpressionCC
@@ -507,16 +578,102 @@ final class StudioController: ObservableObject {
         let y = active.map(\.y).max() ?? 0
         let pressure = active.map(\.pressure).max() ?? 0
 
-        midi?.sendHelperGesture(
+        midi?.sendHelperControls(
             x: x,
             y: y,
-            pressure: pressure,
-            mode: helperMode,
+            contactSize: pressure,
+            assignments: helperAssignments,
             channel: helperTargetChannel,
             pitchBendRange: helperPitchBendRange,
             vibratoCC: helperVibratoCC,
             expressionCC: helperExpressionCC
         )
+    }
+
+    func configurePerformanceCapture(
+        armed: Bool,
+        shortcut: PerformanceCaptureShortcut
+    ) {
+        captureHotkeyArmed = armed
+        captureShortcut = shortcut
+        captureMonitor?.setShortcut(shortcut)
+        captureMonitor?.setCaptureHotkeyEnabled(armed)
+        if touchRunning || midiHelperRunning {
+            startPerformanceEventMonitor()
+        }
+        if !armed { pointerCaptured = false }
+    }
+
+    private func startPerformanceEventMonitor() {
+        guard touchRunning || midiHelperRunning else { return }
+        guard let monitor = captureMonitor else { return }
+        do {
+            try monitor.start(shortcut: captureShortcut)
+            monitor.setCaptureHotkeyEnabled(captureHotkeyArmed)
+            captureStatus = captureHotkeyArmed
+                ? "Cursor free · press \(captureShortcut.rawValue) to capture"
+                : "Cursor free · capture hotkey not armed"
+        } catch {
+            // Never block normal MIDI/haptic performance when macOS denies
+            // input capture. Physical click modes need this permission.
+            captureStatus = "Global input unavailable · Accessibility permission needed"
+            if captureHotkeyArmed { lastError = error.localizedDescription }
+            pointerCaptured = false
+        }
+    }
+
+    private func stopCaptureMonitorIfIdle() {
+        if !touchRunning && !midiHelperRunning {
+            captureMonitor?.stop()
+            clickedSurface = nil
+            pointerCaptured = false
+            captureStatus = "Cursor free · no active performance"
+        }
+    }
+
+    private func handlePhysicalClick(_ down: Bool) {
+        if down {
+            let currentStates = midiHelperRunning ? midiHelperStates : touchStates
+            let touchedSurfaces = Set(
+                currentStates.filter(\.isTouching).map(\.surface)
+            )
+            // Global CGEvent click does not identify its physical source.
+            // Only assign it if exactly one surface has an active contact.
+            clickedSurface = touchedSurfaces.count == 1 ? touchedSurfaces.first : nil
+        } else {
+            clickedSurface = nil
+        }
+        if midiHelperRunning {
+            handleMIDIHelperStates(midiHelperStates)
+        } else if touchRunning {
+            updateTouchSustain(touchStates)
+        }
+    }
+
+    private func updateTouchSustain(_ states: [TouchPerformanceState]) {
+        let active = states.filter(\.isTouching)
+        let snapshot = touchSustainState.update(
+            trackpadContactSizes: active
+                .filter { $0.surface == .trackpad }
+                .map(\.pressure),
+            magicMouseTouching: active.contains { $0.surface == .magicMouse },
+            settings: touchSustainSettings,
+            trackpadClickDown: clickedSurface == .trackpad,
+            magicMouseClickDown: clickedSurface == .magicMouse
+        )
+        let hapticsEnabled = currentTouchConfiguration.localHapticSound &&
+            currentTouchConfiguration.selectedSurfaces.contains {
+                currentTouchConfiguration.output(for: $0).sendsHaptics
+            }
+        touchInstrumentSustainActive = snapshot.isActive &&
+            (touchMIDIOutEnabled || hapticsEnabled)
+        touch?.setSustainActive(snapshot.isActive && hapticsEnabled)
+        if touchMIDIOutEnabled {
+            midi?.setTouchSustain(
+                snapshot.isActive,
+                baseChannel: touchMIDIChannel
+            )
+        }
     }
 
     func playMIDIFile(_ url: URL) {

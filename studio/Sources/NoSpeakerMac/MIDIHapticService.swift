@@ -109,6 +109,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     // CC64 messages per frame or leave a sustain latch behind on Stop/Panic.
     private var helperSustainChannel: Int?
     private var helperSustainOn = false
+    private var touchSustainChannels: Set<Int> = []
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
 
@@ -178,12 +179,14 @@ public final class MIDIHapticService: @unchecked Sendable {
         outgoingTouches.removeAll()
         helperSustainOn = false
         helperSustainChannel = nil
+        touchSustainChannels.removeAll()
         lock.unlock()
         startRenderTimer()
     }
 
     public func stop() {
         releaseHelperSustain()
+        releaseTouchSustain()
         endAllTouchOutput()
 
         lock.lock()
@@ -203,6 +206,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         outgoingTouches.removeAll()
         helperSustainOn = false
         helperSustainChannel = nil
+        touchSustainChannels.removeAll()
         lock.unlock()
 
         renderTimer?.cancel()
@@ -394,6 +398,96 @@ public final class MIDIHapticService: @unchecked Sendable {
         if canSend, wasActive, let channel = previousChannel {
             sendControlChange(controller: 64, value: 0, channel: channel)
         }
+    }
+
+    /// CC64 output for Touch Instrument, independent from the MIDI Helper latch.
+    /// Retains channels after finger lift so sustained MPE notes can be released.
+    public func setTouchSustain(_ active: Bool, baseChannel: Int) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        let previous = touchSustainChannels
+        let currentNoteChannels = Set(outgoingTouches.values.map(\.channel))
+        let fallback = max(0, min(15, baseChannel))
+        let targets = active && canSend
+            ? previous.union(currentNoteChannels.isEmpty && previous.isEmpty
+                ? Set([fallback]) : currentNoteChannels)
+            : Set<Int>()
+        touchSustainChannels = targets
+        lock.unlock()
+
+        guard canSend else { return }
+        for channel in previous.subtracting(targets) {
+            sendControlChange(controller: 64, value: 0, channel: channel)
+        }
+        for channel in targets.subtracting(previous) {
+            sendControlChange(controller: 64, value: 127, channel: channel)
+        }
+    }
+
+    public func releaseTouchSustain() {
+        lock.lock()
+        let channels = touchSustainChannels
+        let canSend = enabled && virtualSource != 0
+        touchSustainChannels.removeAll()
+        lock.unlock()
+        if canSend {
+            for channel in channels {
+                sendControlChange(controller: 64, value: 0, channel: channel)
+            }
+        }
+    }
+
+    public func sendHelperControls(
+        x: Double,
+        y: Double,
+        contactSize: Double,
+        assignments: MIDIHelperAssignments,
+        channel: Int,
+        pitchBendRange: Int,
+        vibratoCC: Int,
+        expressionCC: Int
+    ) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        lock.unlock()
+        guard canSend else { return }
+        let safeChannel = max(0, min(15, channel))
+        let safeX = min(1, max(0, x))
+        let safeY = min(1, max(0, y))
+        let safeSize = min(1, max(0, contactSize))
+
+        if assignments.pitchBend {
+            let normalized = (safeX - 0.5) * 2.0
+            let bend = Int((8192 + normalized * 8191.0).rounded())
+            sendPitchBendRange(semitones: max(1, min(24, pitchBendRange)), channel: safeChannel)
+            sendPitchBend(max(0, min(16383, bend)), channel: safeChannel)
+        }
+        if assignments.vibrato {
+            sendControlChange(
+                controller: vibratoCC,
+                value: Int((safeY * 127).rounded()),
+                channel: safeChannel
+            )
+        }
+        if assignments.expression {
+            sendControlChange(
+                controller: expressionCC,
+                value: Int((safeSize * 127).rounded()),
+                channel: safeChannel
+            )
+        }
+    }
+
+    public func resetHelperControls(
+        assignments: MIDIHelperAssignments,
+        channel: Int,
+        vibratoCC: Int,
+        expressionCC: Int
+    ) {
+        let safeChannel = max(0, min(15, channel))
+        if assignments.pitchBend { sendPitchBend(8192, channel: safeChannel) }
+        if assignments.vibrato { sendControlChange(controller: vibratoCC, value: 0, channel: safeChannel) }
+        if assignments.expression { sendControlChange(controller: expressionCC, value: 127, channel: safeChannel) }
     }
 
     public func sendHelperGesture(
