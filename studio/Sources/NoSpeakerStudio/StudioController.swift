@@ -561,6 +561,145 @@ final class StudioController: ObservableObject {
         )
     }
 
+    private func updateTouchInstrumentSustain(_ states: [TouchPerformanceState]) {
+        let config = currentTouchConfiguration
+        let settings = MIDIHelperSustainSettings(
+            trackpadEnabled: config.trackpadSustainEnabled &&
+                config.surfaceSelection.accepts(.trackpad),
+            trackpadContactThreshold: config.trackpadSustainThreshold,
+            magicMouseEnabled: config.magicMouseSustainEnabled &&
+                config.surfaceSelection.accepts(.magicMouse),
+            magicMouseGesture: config.magicMouseSustainGesture,
+            trackpadGesture: config.trackpadSustainGesture
+        )
+        let active = states.filter(\.isTouching)
+        let snapshot = touchSustainState.update(
+            trackpadContactSizes: active.filter { $0.surface == .trackpad }.map(\.pressure),
+            magicMouseTouching: active.contains { $0.surface == .magicMouse },
+            settings: settings,
+            trackpadClickDown: physicalTrackpadDown,
+            magicMouseClickDown: physicalMouseDown
+        )
+        touchInstrumentSustainActive = snapshot.isActive
+        if touchRunning && touchMIDIOutEnabled {
+            midi?.setTouchSustain(
+                snapshot.isActive,
+                configuration: config,
+                midiMode: touchMIDIMode,
+                baseChannel: touchMIDIChannel
+            )
+        }
+    }
+
+    /// CGEventTap click events are not tagged with a reliable Magic Mouse vs
+    /// Trackpad identity. Attribute them only when exactly one surface has an
+    /// active finger, or when the input view has selected exactly one surface.
+    /// When both are touched, ignore ambiguous clicks rather than misroute CC64.
+    private func handlePhysicalClick(_ down: Bool) {
+        if down {
+            let states = midiHelperRunning ? midiHelperStates : touchStates
+            let touched = Set(states.filter(\.isTouching).map(\.surface))
+            let surface: TouchSurfaceKind?
+            if touched.count == 1 {
+                surface = touched.first
+            } else if touched.isEmpty {
+                let selection = midiHelperRunning
+                    ? helperSurfaceSelection : currentTouchConfiguration.surfaceSelection
+                switch selection {
+                case .trackpad: surface = .trackpad
+                case .magicMouse: surface = .magicMouse
+                case .both: surface = nil
+                }
+            } else {
+                surface = nil
+            }
+            lastClickSurface = surface
+            if surface == .trackpad { physicalTrackpadDown = true }
+            if surface == .magicMouse { physicalMouseDown = true }
+        } else {
+            if lastClickSurface == .trackpad { physicalTrackpadDown = false }
+            if lastClickSurface == .magicMouse { physicalMouseDown = false }
+            lastClickSurface = nil
+        }
+
+        if midiHelperRunning {
+            handleMIDIHelperStates(midiHelperStates)
+        } else if touchRunning {
+            updateTouchInstrumentSustain(touchStates)
+        }
+    }
+
+    func enableInputControls() {
+        if inputCapture == nil {
+            let capture = ExpressiveInputCapture()
+            capture.onCaptureChanged = { [weak self] captured in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.mouseCaptureActive = captured
+                    self.inputControlsStatus = captured
+                        ? "Captured · mouse motion is blocked from the desktop"
+                        : "Armed · mouse is controlling the desktop"
+                }
+            }
+            capture.onPhysicalClick = { [weak self] down in
+                Task { @MainActor in self?.handlePhysicalClick(down) }
+            }
+            capture.onPanic = { [weak self] in
+                Task { @MainActor in self?.panicStop() }
+            }
+            capture.onTapDisabled = { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.panicStop()
+                    self.inputControlsStatus = "Event tap disabled by macOS · Panic Stop"
+                }
+            }
+            inputCapture = capture
+        }
+
+        guard let inputCapture else { return }
+        inputCapture.setHotkey(captureHotkey)
+        do {
+            try inputCapture.install()
+            inputControlsArmed = true
+            mouseCaptureActive = false
+            inputControlsStatus = "Armed · press \(captureHotkey.displayText) to capture/release pointer"
+        } catch {
+            inputControlsArmed = false
+            mouseCaptureActive = false
+            lastError = error.localizedDescription
+            inputControlsStatus = error.localizedDescription
+        }
+    }
+
+    func disableInputControls() {
+        inputCapture?.stop()
+        inputControlsArmed = false
+        mouseCaptureActive = false
+        physicalTrackpadDown = false
+        physicalMouseDown = false
+        lastClickSurface = nil
+        inputControlsStatus = "Off · mouse controls the desktop normally"
+        if midiHelperRunning {
+            handleMIDIHelperStates(midiHelperStates)
+        } else if touchRunning {
+            updateTouchInstrumentSustain(touchStates)
+        }
+    }
+
+    func setCaptureHotkey(_ key: CaptureHotkey) {
+        captureHotkey = key
+        inputCapture?.setHotkey(key)
+        if inputControlsArmed {
+            inputControlsStatus = "Armed · press \(key.displayText) to capture/release pointer"
+        }
+    }
+
+    func setMouseCapture(_ captured: Bool) {
+        guard inputControlsArmed else { return }
+        inputCapture?.setCaptured(captured)
+    }
+
     func playMIDIFile(_ url: URL) {
         guard requireEngine() else { return }
         do {
