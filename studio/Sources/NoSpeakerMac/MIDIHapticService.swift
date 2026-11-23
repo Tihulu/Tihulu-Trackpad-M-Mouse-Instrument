@@ -109,6 +109,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     // CC64 messages per frame or leave a sustain latch behind on Stop/Panic.
     private var helperSustainChannel: Int?
     private var helperSustainOn = false
+    private var touchSustainChannels = Set<Int>()
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
 
@@ -178,11 +179,13 @@ public final class MIDIHapticService: @unchecked Sendable {
         outgoingTouches.removeAll()
         helperSustainOn = false
         helperSustainChannel = nil
+        touchSustainChannels.removeAll()
         lock.unlock()
         startRenderTimer()
     }
 
     public func stop() {
+        releaseTouchSustain()
         releaseHelperSustain()
         endAllTouchOutput()
 
@@ -203,6 +206,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         outgoingTouches.removeAll()
         helperSustainOn = false
         helperSustainChannel = nil
+        touchSustainChannels.removeAll()
         lock.unlock()
 
         renderTimer?.cancel()
@@ -361,6 +365,68 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     /// Sends CC64 only on state transitions. When the Helper channel changes,
     /// release sustain on the old channel before holding it on the new one.
+    /// Independent Touch Instrument sustain is sent before any finger note-off,
+    /// allowing the receiving software instrument to hold released notes.
+    /// Channel 10 is not sustained automatically for GM percussion.
+    public func setTouchSustain(
+        _ active: Bool,
+        configuration: TouchInstrumentConfiguration,
+        midiMode: TouchMIDIMode,
+        baseChannel: Int
+    ) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        let previous = touchSustainChannels
+        lock.unlock()
+        guard canSend else { return }
+
+        let melodicSurface = configuration.selectedSurfaces.contains {
+            configuration.instrument(for: $0) == .melodic &&
+            configuration.output(for: $0).sendsMIDI
+        }
+        var target = Set<Int>()
+        if active && melodicSurface {
+            if midiMode == .mpe {
+                // Sustain on MPE member channels carrying notes; do not target
+                // GM drum Channel 10 or unrelated DAW tracks.
+                target = Set(outgoingTouches.values
+                    .filter { $0.channel != GMDrumPads.midiChannel }
+                    .map(\.channel))
+            } else {
+                let requested = max(0, min(15, baseChannel))
+                let hasDrums = configuration.selectedSurfaces.contains {
+                    configuration.instrument(for: $0) == .drums &&
+                    configuration.output(for: $0).sendsMIDI
+                }
+                target.insert(hasDrums && requested == GMDrumPads.midiChannel
+                              ? 0 : requested)
+            }
+        }
+
+        for channel in previous.subtracting(target) {
+            sendControlChange(controller: 64, value: 0, channel: channel)
+        }
+        for channel in target.subtracting(previous) {
+            sendControlChange(controller: 64, value: 127, channel: channel)
+        }
+        lock.lock()
+        touchSustainChannels = target
+        lock.unlock()
+    }
+
+    public func releaseTouchSustain() {
+        lock.lock()
+        let channels = touchSustainChannels
+        touchSustainChannels.removeAll()
+        let canSend = enabled && virtualSource != 0
+        lock.unlock()
+        if canSend {
+            for channel in channels {
+                sendControlChange(controller: 64, value: 0, channel: channel)
+            }
+        }
+    }
+
     public func setHelperSustain(_ active: Bool, channel: Int) {
         let target = max(0, min(15, channel))
 
@@ -400,7 +466,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         x: Double,
         y: Double,
         pressure: Double,
-        mode: MIDIHelperMode,
+        controls: MIDIHelperControlSelection,
         channel: Int,
         pitchBendRange: Int,
         vibratoCC: Int = 1,
@@ -416,44 +482,33 @@ public final class MIDIHapticService: @unchecked Sendable {
         let safeY = min(1, max(0, y))
         let safePressure = min(1, max(0, pressure))
 
-        if mode == .pitchBend || mode == .hybrid {
-            let normalized = (safeX - 0.5) * 2.0
-            let bend = Int((8192.0 + normalized * 8191.0).rounded())
+        if controls.pitchBend {
+            let bend = Int((8192.0 + ((safeX - 0.5) * 2) * 8191.0).rounded())
             sendPitchBendRange(semitones: max(1, min(24, pitchBendRange)), channel: safeChannel)
             sendPitchBend(max(0, min(16383, bend)), channel: safeChannel)
         }
-
-        if mode == .vibrato || mode == .hybrid {
-            sendControlChange(
-                controller: max(0, min(127, vibratoCC)),
-                value: Int((safeY * 127.0).rounded()),
-                channel: safeChannel
-            )
+        if controls.vibrato {
+            sendControlChange(controller: vibratoCC, value: Int((safeY * 127).rounded()), channel: safeChannel)
         }
-
-        if mode == .expression || mode == .hybrid {
-            sendControlChange(
-                controller: max(0, min(127, expressionCC)),
-                value: Int((safePressure * 127.0).rounded()),
-                channel: safeChannel
-            )
+        if controls.expression {
+            sendControlChange(controller: expressionCC, value: Int((safePressure * 127).rounded()), channel: safeChannel)
         }
     }
 
     public func resetHelperGesture(
-        mode: MIDIHelperMode,
+        controls: MIDIHelperControlSelection,
         channel: Int,
         vibratoCC: Int = 1,
         expressionCC: Int = 11
     ) {
         let safeChannel = max(0, min(15, channel))
-        if mode == .pitchBend || mode == .hybrid {
+        if controls.pitchBend {
             sendPitchBend(8192, channel: safeChannel)
         }
-        if mode == .vibrato || mode == .hybrid {
+        if controls.vibrato {
             sendControlChange(controller: vibratoCC, value: 0, channel: safeChannel)
         }
-        if mode == .expression || mode == .hybrid {
+        if controls.expression {
             sendControlChange(controller: expressionCC, value: 127, channel: safeChannel)
         }
     }
