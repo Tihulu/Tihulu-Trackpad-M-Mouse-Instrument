@@ -10,6 +10,22 @@ public struct LiveMIDIMessage: Sendable, Equatable {
     public var isNoteOn: Bool
 }
 
+public enum TouchMIDIMode: String, CaseIterable, Identifiable, Sendable {
+    case standard = "Standard MIDI"
+    case mpe = "MPE"
+
+    public var id: String { rawValue }
+}
+
+public enum MIDIHelperMode: String, CaseIterable, Identifiable, Sendable {
+    case vibrato = "Vibrato"
+    case pitchBend = "Pitch Bend"
+    case expression = "Expression"
+    case hybrid = "Hybrid"
+
+    public var id: String { rawValue }
+}
+
 public enum MIDIHapticError: LocalizedError {
     case client(OSStatus)
     case destination(OSStatus)
@@ -45,6 +61,17 @@ public final class MIDIHapticService: @unchecked Sendable {
         var releasedWhileSustained: Bool
     }
 
+    private struct TouchKey: Hashable {
+        let surface: TouchSurfaceKind
+        let id: Int
+    }
+
+    private struct OutgoingTouch {
+        var note: Int
+        var channel: Int
+        var fretless: Bool
+    }
+
     private let driver: HapticTrackpadDriver
     private let lock = NSLock()
     private let renderQueue = DispatchQueue(label: "com.tihulu.nospeaker.midi-render", qos: .userInteractive)
@@ -71,7 +98,9 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var expressionByChannel: [Int: Int] = [:]
     private var channelPressureByChannel: [Int: Int] = [:]
     private var renderTimer: DispatchSourceTimer?
+    private var inputHapticsEnabled = true
 
+    private var outgoingTouches: [TouchKey: OutgoingTouch] = [:]
     private var touchOutputNote: Int?
     private var touchOutputChannel = 0
     private var touchOutputFretless = false
@@ -84,6 +113,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         stop()
         self.masterLevel = masterLevel
         self.callback = onMessage
+        self.inputHapticsEnabled = true
 
         var newClient = MIDIClientRef()
         var status = MIDIClientCreateWithBlock("NoSpeaker Studio" as CFString, &newClient) { _ in }
@@ -140,12 +170,13 @@ public final class MIDIHapticService: @unchecked Sendable {
         volumeByChannel.removeAll()
         expressionByChannel.removeAll()
         channelPressureByChannel.removeAll()
+        outgoingTouches.removeAll()
         lock.unlock()
         startRenderTimer()
     }
 
     public func stop() {
-        endTouchOutput()
+        endAllTouchOutput()
 
         lock.lock()
         enabled = false
@@ -161,6 +192,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         volumeByChannel.removeAll()
         expressionByChannel.removeAll()
         channelPressureByChannel.removeAll()
+        outgoingTouches.removeAll()
         lock.unlock()
 
         renderTimer?.cancel()
@@ -170,6 +202,195 @@ public final class MIDIHapticService: @unchecked Sendable {
         if virtualSource != 0 { MIDIEndpointDispose(virtualSource); virtualSource = 0 }
         if inputPort != 0 { MIDIPortDispose(inputPort); inputPort = 0 }
         if client != 0 { MIDIClientDispose(client); client = 0 }
+    }
+
+    public func setInputHapticsEnabled(_ enabled: Bool) {
+        lock.lock()
+        inputHapticsEnabled = enabled
+        lock.unlock()
+    }
+
+    public func sendTouchStates(
+        _ states: [TouchPerformanceState],
+        configuration: TouchInstrumentConfiguration,
+        midiMode: TouchMIDIMode,
+        baseChannel: Int = 0,
+        multiTouchEnabled: Bool = true
+    ) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        lock.unlock()
+        guard canSend else { return }
+
+        let safeBaseChannel = max(0, min(15, baseChannel))
+        var desired = states.filter(\.isDown)
+        if !multiTouchEnabled {
+            desired = Array(desired.prefix(1))
+        }
+        if configuration.fretless, midiMode == .standard {
+            // Channel-wide pitch bend cannot express independent fretless fingers.
+            desired = Array(desired.prefix(1))
+        }
+
+        let desiredKeys = Set(desired.map { TouchKey(surface: $0.surface, id: $0.contactID) })
+
+        for (key, outgoing) in outgoingTouches where !desiredKeys.contains(key) {
+            sendMIDI1(status: 0x80 | outgoing.channel, data1: outgoing.note, data2: 0)
+            if outgoing.fretless {
+                sendPitchBend(8192, channel: outgoing.channel)
+            }
+            outgoingTouches.removeValue(forKey: key)
+        }
+
+        for state in desired {
+            let key = TouchKey(surface: state.surface, id: state.contactID)
+            let channel: Int
+
+            if let existing = outgoingTouches[key] {
+                channel = existing.channel
+            } else if midiMode == .mpe {
+                let used = Set(outgoingTouches.values.map(\.channel))
+                channel = (1...15).first(where: { !used.contains($0) }) ?? safeBaseChannel
+            } else {
+                channel = safeBaseChannel
+            }
+
+            if configuration.fretless {
+                let bendRange = max(1, min(24, Int(ceil(configuration.pitchSpanSemitones / 2.0))))
+                let anchor = max(
+                    0,
+                    min(127, configuration.baseMIDINote + Int((configuration.pitchSpanSemitones / 2.0).rounded()))
+                )
+
+                if let existing = outgoingTouches[key] {
+                    if existing.note != anchor || !existing.fretless {
+                        sendMIDI1(status: 0x80 | existing.channel, data1: existing.note, data2: 0)
+                        sendPitchBendRange(semitones: bendRange, channel: channel)
+                        sendMIDI1(status: 0x90 | channel, data1: anchor, data2: state.velocity)
+                        outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true)
+                    }
+                } else {
+                    sendPitchBendRange(semitones: bendRange, channel: channel)
+                    sendMIDI1(status: 0x90 | channel, data1: anchor, data2: state.velocity)
+                    outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true)
+                }
+
+                let delta = max(
+                    -Double(bendRange),
+                    min(Double(bendRange), state.continuousMIDI - Double(anchor))
+                )
+                let bend = Int((8192.0 + (delta / Double(bendRange)) * 8191.0).rounded())
+                sendPitchBend(max(0, min(16383, bend)), channel: channel)
+            } else {
+                let note = max(0, min(127, state.quantizedMIDI))
+                if let existing = outgoingTouches[key] {
+                    if existing.note != note || existing.fretless {
+                        sendMIDI1(status: 0x80 | existing.channel, data1: existing.note, data2: 0)
+                        sendMIDI1(status: 0x90 | channel, data1: note, data2: state.velocity)
+                        outgoingTouches[key] = .init(note: note, channel: channel, fretless: false)
+                    }
+                } else {
+                    sendMIDI1(status: 0x90 | channel, data1: note, data2: state.velocity)
+                    outgoingTouches[key] = .init(note: note, channel: channel, fretless: false)
+                }
+            }
+
+            let vibrato = max(0, min(127, Int((state.vibrato * 127.0).rounded())))
+            sendControlChange(controller: 1, value: vibrato, channel: channel)
+
+            if configuration.pressureToExpression {
+                sendControlChange(controller: 11, value: state.expression, channel: channel)
+                if midiMode == .mpe {
+                    sendChannelPressure(state.expression, channel: channel)
+                }
+            }
+        }
+    }
+
+    public func endAllTouchOutput() {
+        for (_, outgoing) in outgoingTouches {
+            sendMIDI1(status: 0x80 | outgoing.channel, data1: outgoing.note, data2: 0)
+            if outgoing.fretless {
+                sendPitchBend(8192, channel: outgoing.channel)
+            }
+        }
+        outgoingTouches.removeAll()
+        endTouchOutput()
+    }
+
+    public func sendHelperGesture(
+        x: Double,
+        y: Double,
+        pressure: Double,
+        mode: MIDIHelperMode,
+        channel: Int,
+        pitchBendRange: Int,
+        vibratoCC: Int = 1,
+        expressionCC: Int = 11
+    ) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        lock.unlock()
+        guard canSend else { return }
+
+        let safeChannel = max(0, min(15, channel))
+        let safeX = min(1, max(0, x))
+        let safeY = min(1, max(0, y))
+        let safePressure = min(1, max(0, pressure))
+
+        if mode == .pitchBend || mode == .hybrid {
+            let normalized = (safeX - 0.5) * 2.0
+            let bend = Int((8192.0 + normalized * 8191.0).rounded())
+            sendPitchBendRange(semitones: max(1, min(24, pitchBendRange)), channel: safeChannel)
+            sendPitchBend(max(0, min(16383, bend)), channel: safeChannel)
+        }
+
+        if mode == .vibrato || mode == .hybrid {
+            sendControlChange(
+                controller: max(0, min(127, vibratoCC)),
+                value: Int((safeY * 127.0).rounded()),
+                channel: safeChannel
+            )
+        }
+
+        if mode == .expression || mode == .hybrid {
+            sendControlChange(
+                controller: max(0, min(127, expressionCC)),
+                value: Int((safePressure * 127.0).rounded()),
+                channel: safeChannel
+            )
+        }
+    }
+
+    public func resetHelperGesture(
+        mode: MIDIHelperMode,
+        channel: Int,
+        vibratoCC: Int = 1,
+        expressionCC: Int = 11
+    ) {
+        let safeChannel = max(0, min(15, channel))
+        if mode == .pitchBend || mode == .hybrid {
+            sendPitchBend(8192, channel: safeChannel)
+        }
+        if mode == .vibrato || mode == .hybrid {
+            sendControlChange(controller: vibratoCC, value: 0, channel: safeChannel)
+        }
+        if mode == .expression || mode == .hybrid {
+            sendControlChange(controller: expressionCC, value: 127, channel: safeChannel)
+        }
+    }
+
+    public func sendControlChange(controller: Int, value: Int, channel: Int) {
+        let cc = max(0, min(127, controller))
+        let safeValue = max(0, min(127, value))
+        let safeChannel = max(0, min(15, channel))
+        sendMIDI1(status: 0xB0 | safeChannel, data1: cc, data2: safeValue)
+    }
+
+    public func sendChannelPressure(_ value: Int, channel: Int) {
+        let safeValue = max(0, min(127, value))
+        let safeChannel = max(0, min(15, channel))
+        sendMIDI1(status: 0xD0 | safeChannel, data1: safeValue, data2: 0)
     }
 
     /// Sends Touch Instrument performance data to the DAW virtual MIDI output.
@@ -248,6 +469,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     private func renderActiveNotes() {
         lock.lock()
         let active = enabled
+        let hapticsEnabled = inputHapticsEnabled
         let notes = Array(activeNotes.prefix(6))
         let bends = pitchBendByChannel
         let bendRanges = pitchBendRangeByChannel
@@ -257,7 +479,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         let pressures = channelPressureByChannel
         let levelScale = masterLevel
         lock.unlock()
-        guard active, !notes.isEmpty else { return }
+        guard active, hapticsEnabled, !notes.isEmpty else { return }
 
         let now = ProcessInfo.processInfo.systemUptime
         var tones: [HapticTone] = []
