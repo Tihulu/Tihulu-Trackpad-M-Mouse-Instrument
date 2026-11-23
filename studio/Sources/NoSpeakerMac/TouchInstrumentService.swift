@@ -83,6 +83,11 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
     public var trackpadOutput: SurfaceOutputRoute
     public var magicMouseOutput: SurfaceOutputRoute
     public var drumLayout: DrumPadLayout
+    public var trackpadSustainEnabled: Bool
+    public var trackpadSustainGesture: TrackpadSustainGesture
+    public var trackpadSustainThreshold: Double
+    public var magicMouseSustainEnabled: Bool
+    public var magicMouseSustainGesture: MagicMouseSustainGesture
 
     public init(
         baseMIDINote: Int = 67,
@@ -102,7 +107,12 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         magicMouseInstrument: SurfaceInstrumentMode = .melodic,
         trackpadOutput: SurfaceOutputRoute = .trackpadHaptic,
         magicMouseOutput: SurfaceOutputRoute = .midiInstrument,
-        drumLayout: DrumPadLayout = .standard12
+        drumLayout: DrumPadLayout = .standard12,
+        trackpadSustainEnabled: Bool = false,
+        trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold,
+        trackpadSustainThreshold: Double = 0.55,
+        magicMouseSustainEnabled: Bool = false,
+        magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
     ) {
         self.baseMIDINote = baseMIDINote
         self.scale = scale
@@ -122,6 +132,11 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         self.trackpadOutput = trackpadOutput
         self.magicMouseOutput = magicMouseOutput
         self.drumLayout = drumLayout
+        self.trackpadSustainEnabled = trackpadSustainEnabled
+        self.trackpadSustainGesture = trackpadSustainGesture
+        self.trackpadSustainThreshold = trackpadSustainThreshold
+        self.magicMouseSustainEnabled = magicMouseSustainEnabled
+        self.magicMouseSustainGesture = magicMouseSustainGesture
     }
 
     public func instrument(for surface: TouchSurfaceKind) -> SurfaceInstrumentMode {
