@@ -14,6 +14,7 @@ final class StudioController: ObservableObject {
     @Published var bpm = 120.0
     @Published var midiRunning = false
     @Published var touchRunning = false
+    @Published var touchContact = TrackpadContact()
     @Published var systemAudioRunning = false
     @Published var lastMIDIMessage = "No MIDI received yet"
     @Published var currentFileName = "No file loaded"
@@ -55,6 +56,7 @@ final class StudioController: ObservableObject {
         Task { await systemAudio?.stop() }
         isPlaying = false
         touchRunning = false
+        touchContact = TrackpadContact()
         midiRunning = false
         systemAudioRunning = false
         engineReady = false
@@ -132,7 +134,12 @@ final class StudioController: ObservableObject {
     func startTouch(rootMIDI: Int, scale: TouchScale) {
         guard requireEngine(), let touch else { return }
         do {
-            try touch.start(baseMIDINote: rootMIDI, scale: scale, masterLevel: masterLevel)
+            try touch.start(baseMIDINote: rootMIDI, scale: scale, masterLevel: masterLevel) { [weak self] contact in
+                Task { @MainActor in
+                    self?.touchContact = contact
+                }
+            }
+            touchContact = TrackpadContact()
             touchRunning = true
             engineStatus = "Touch Instrument active"
         } catch { fail(error) }
@@ -140,6 +147,7 @@ final class StudioController: ObservableObject {
 
     func stopTouch() {
         touch?.stop()
+        touchContact = TrackpadContact()
         touchRunning = false
         engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
     }
