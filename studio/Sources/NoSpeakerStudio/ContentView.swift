@@ -207,10 +207,16 @@ private struct TouchInstrumentView: View {
                     .frame(width: 190)
                     .disabled(studio.touchRunning)
 
-                Toggle("Fretless", isOn: $fretless)
-                    .toggleStyle(.switch)
-                    .disabled(studio.touchRunning)
-                    .help("Continuous pitch across the two-octave range. Scale notes remain visible as guides.")
+                Picker("Touch Mode", selection: $fretless) {
+                    Text("Fretted").tag(false)
+                    Text("Fretless").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 190)
+                .disabled(studio.touchRunning)
+                .help(fretless
+                      ? "Fretless: continuous pitch across the two-octave range."
+                      : "Fretted: pitch is quantized to the selected scale zones.")
 
                 Toggle("MIDI Out to DAW", isOn: $midiOut)
                     .toggleStyle(.switch)
