@@ -1738,6 +1738,11 @@ private struct TouchBarSliderPad: View {
         HStack {
             Text(zone.rawValue).frame(width: 115, alignment: .leading)
             Slider(value: $value, in: 0...1, onEditingChanged: { editing in
+                if zone == .fretless {
+                    // Fretless keyboard is a playable base note with a
+                    // continuously changing pitch bend, not an inert slider.
+                    studio.touchBarKey(studio.touchBarProfile.baseNote, pressed: editing)
+                }
                 if !editing && (zone == .pitchBend || zone == .fretless) {
                     value = 0.5
                     studio.touchBarValue(zone, normalized: 0.5)
