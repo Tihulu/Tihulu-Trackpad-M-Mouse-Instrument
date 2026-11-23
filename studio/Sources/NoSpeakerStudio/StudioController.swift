@@ -64,6 +64,7 @@ final class StudioController: ObservableObject {
     private var touchSustainState = MIDIHelperSustainState()
     private var inputCapture: ExpressiveInputCapture?
     private var physicalTrackpadDown = false
+    private var physicalTrackpadPressure: Double?
     private var physicalMouseDown = false
     private var lastClickSurface: TouchSurfaceKind?
     private var activeMIDINoteMap: [String: ActiveMIDINote] = [:]
@@ -107,6 +108,7 @@ final class StudioController: ObservableObject {
         touchSustainState.reset()
         touchInstrumentSustainActive = false
         physicalTrackpadDown = false
+        physicalTrackpadPressure = nil
         physicalMouseDown = false
         lastClickSurface = nil
         helperSustainState.reset()
@@ -428,14 +430,16 @@ final class StudioController: ObservableObject {
         trackpadSustainThreshold: Double = 0.55,
         magicMouseSustainEnabled: Bool = false,
         magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold,
-        trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold
+        trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold,
+        trackpadSustainSensor: TrackpadSustainSensor = .contactSize
     ) {
         let newSustainSettings = MIDIHelperSustainSettings(
             trackpadEnabled: controls.sustain && trackpadSustainEnabled,
             trackpadContactThreshold: trackpadSustainThreshold,
             magicMouseEnabled: controls.sustain && magicMouseSustainEnabled,
             magicMouseGesture: magicMouseSustainGesture,
-            trackpadGesture: trackpadSustainGesture
+            trackpadGesture: trackpadSustainGesture,
+            trackpadSensor: trackpadSustainSensor
         )
         let newChannel = max(0, min(15, targetChannel))
         if midiHelperRunning &&
@@ -521,7 +525,8 @@ final class StudioController: ObservableObject {
             magicMouseTouching: active.contains { $0.surface == .magicMouse },
             settings: helperSustainSettings,
             trackpadClickDown: physicalTrackpadDown,
-            magicMouseClickDown: physicalMouseDown
+            magicMouseClickDown: physicalMouseDown,
+            trackpadClickPressure: physicalTrackpadPressure
         )
         midiHelperTrackpadSustainActive = snapshot.trackpadActive
         midiHelperMagicMouseSustainActive = snapshot.magicMouseActive
@@ -570,7 +575,8 @@ final class StudioController: ObservableObject {
             magicMouseEnabled: config.magicMouseSustainEnabled &&
                 config.surfaceSelection.accepts(.magicMouse),
             magicMouseGesture: config.magicMouseSustainGesture,
-            trackpadGesture: config.trackpadSustainGesture
+            trackpadGesture: config.trackpadSustainGesture,
+            trackpadSensor: config.trackpadSustainSensor
         )
         let active = states.filter(\.isTouching)
         let snapshot = touchSustainState.update(
@@ -595,7 +601,7 @@ final class StudioController: ObservableObject {
     /// Trackpad identity. Attribute them only when exactly one surface has an
     /// active finger, or when the input view has selected exactly one surface.
     /// When both are touched, ignore ambiguous clicks rather than misroute CC64.
-    private func handlePhysicalClick(_ down: Bool) {
+    private func handlePhysicalClick(_ down: Bool, pressure: Double) {
         if down {
             let states = midiHelperRunning ? midiHelperStates : touchStates
             let touched = Set(states.filter(\.isTouching).map(\.surface))
@@ -614,14 +620,30 @@ final class StudioController: ObservableObject {
                 surface = nil
             }
             lastClickSurface = surface
-            if surface == .trackpad { physicalTrackpadDown = true }
+            if surface == .trackpad {
+                physicalTrackpadDown = true
+                physicalTrackpadPressure = pressure
+            }
             if surface == .magicMouse { physicalMouseDown = true }
         } else {
-            if lastClickSurface == .trackpad { physicalTrackpadDown = false }
+            if lastClickSurface == .trackpad {
+                physicalTrackpadDown = false
+                physicalTrackpadPressure = nil
+            }
             if lastClickSurface == .magicMouse { physicalMouseDown = false }
             lastClickSurface = nil
         }
 
+        if midiHelperRunning {
+            handleMIDIHelperStates(midiHelperStates)
+        } else if touchRunning {
+            updateTouchInstrumentSustain(touchStates)
+        }
+    }
+
+    private func handlePhysicalPressure(_ pressure: Double) {
+        guard lastClickSurface == .trackpad && physicalTrackpadDown else { return }
+        physicalTrackpadPressure = pressure
         if midiHelperRunning {
             handleMIDIHelperStates(midiHelperStates)
         } else if touchRunning {
@@ -641,8 +663,11 @@ final class StudioController: ObservableObject {
                         : "Armed · mouse is controlling the desktop"
                 }
             }
-            capture.onPhysicalClick = { [weak self] down in
-                Task { @MainActor in self?.handlePhysicalClick(down) }
+            capture.onPhysicalClick = { [weak self] down, pressure in
+                Task { @MainActor in self?.handlePhysicalClick(down, pressure: pressure) }
+            }
+            capture.onPhysicalPressure = { [weak self] pressure in
+                Task { @MainActor in self?.handlePhysicalPressure(pressure) }
             }
             capture.onPanic = { [weak self] in
                 Task { @MainActor in self?.panicStop() }
