@@ -78,6 +78,11 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
     public var pressureToExpression: Bool
     public var localHapticSound: Bool
     public var masterLevel: Double
+    public var trackpadInstrument: SurfaceInstrumentMode
+    public var magicMouseInstrument: SurfaceInstrumentMode
+    public var trackpadOutput: SurfaceOutputRoute
+    public var magicMouseOutput: SurfaceOutputRoute
+    public var drumLayout: DrumPadLayout
 
     public init(
         baseMIDINote: Int = 67,
@@ -92,7 +97,12 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         fixedVelocity: Int = 100,
         pressureToExpression: Bool = true,
         localHapticSound: Bool = true,
-        masterLevel: Double = 0.8
+        masterLevel: Double = 0.8,
+        trackpadInstrument: SurfaceInstrumentMode = .melodic,
+        magicMouseInstrument: SurfaceInstrumentMode = .melodic,
+        trackpadOutput: SurfaceOutputRoute = .both,
+        magicMouseOutput: SurfaceOutputRoute = .midiInstrument,
+        drumLayout: DrumPadLayout = .standard12
     ) {
         self.baseMIDINote = baseMIDINote
         self.scale = scale
@@ -107,6 +117,27 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         self.pressureToExpression = pressureToExpression
         self.localHapticSound = localHapticSound
         self.masterLevel = masterLevel
+        self.trackpadInstrument = trackpadInstrument
+        self.magicMouseInstrument = magicMouseInstrument
+        self.trackpadOutput = trackpadOutput
+        self.magicMouseOutput = magicMouseOutput
+        self.drumLayout = drumLayout
+    }
+
+    public func instrument(for surface: TouchSurfaceKind) -> SurfaceInstrumentMode {
+        surface == .trackpad ? trackpadInstrument : magicMouseInstrument
+    }
+
+    public func output(for surface: TouchSurfaceKind) -> SurfaceOutputRoute {
+        surface == .trackpad ? trackpadOutput : magicMouseOutput
+    }
+
+    public var selectedSurfaces: [TouchSurfaceKind] {
+        TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) }
+    }
+
+    public var hasMIDIOutput: Bool {
+        selectedSurfaces.contains { output(for: $0).sendsMIDI }
     }
 }
 
@@ -244,6 +275,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
             root: config.baseMIDINote,
             zoneWidth: config.zoneWidth
         )
+        let instrument = config.instrument(for: frame.surface)
+        let drumPads = config.drumLayout.pads
         guard !mappedNotes.isEmpty else {
             callback?([])
             return
@@ -257,8 +290,14 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 config.triggerMode == .touch || pressure >= config.pressThreshold
             )
 
-            let zoneIndex = min(mappedNotes.count - 1, Int(x * Double(mappedNotes.count)))
-            let quantized = mappedNotes[zoneIndex]
+            let quantized: Int
+            if instrument == .drums {
+                let padIndex = min(drumPads.count - 1, Int(x * Double(drumPads.count)))
+                quantized = drumPads[padIndex].midiNote
+            } else {
+                let zoneIndex = min(mappedNotes.count - 1, Int(x * Double(mappedNotes.count)))
+                quantized = mappedNotes[zoneIndex]
+            }
             let continuous = min(
                 127,
                 max(0, Double(config.baseMIDINote) + x * max(1, config.pitchSpanSemitones))
@@ -294,7 +333,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.unlock()
         callback?(combined)
 
-        guard isActive, config.localHapticSound else { return }
+        guard isActive, config.localHapticSound,
+              config.output(for: frame.surface).sendsHaptics else { return }
         let sounding = states.filter(\.isDown).prefix(6)
         guard !sounding.isEmpty else { return }
 
@@ -304,7 +344,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
         for state in sounding {
             let baseFrequency: Double
-            if config.fretless {
+            if config.fretless && instrument == .melodic {
                 baseFrequency = 440.0 * pow(2.0, (state.continuousMIDI - 69.0) / 12.0)
             } else {
                 guard let frequency = try? MusicTheory.frequency(midi: state.quantizedMIDI) else { continue }
