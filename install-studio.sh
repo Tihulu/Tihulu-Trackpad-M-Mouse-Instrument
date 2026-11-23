@@ -29,6 +29,13 @@ mkdir -p "$APP_ROOT" "$BIN_ROOT"
 install_app() {
     SRC_APP="$1"
     [ -d "$SRC_APP" ] || fail "The app bundle was not found after preparation."
+
+    # A running macOS process keeps executing the old mapped binary even after the
+    # app bundle on disk is replaced. Stop it first so reopening always launches
+    # the freshly installed build.
+    pkill -x NoSpeakerStudio 2>/dev/null || true
+    sleep 0.2
+
     rm -rf "$APP_DEST"
     ditto "$SRC_APP" "$APP_DEST"
 
@@ -38,8 +45,12 @@ exec "$APP_DEST/Contents/MacOS/NoSpeakerStudio" "\$@"
 EOF
     chmod +x "$CLI_DEST"
 
-    printf '\nInstalled NoSpeaker Studio:\n  App: %s\n  CLI: %s\n\n' "$APP_DEST" "$CLI_DEST"
-    printf 'Open it now with:\n  open "%s"\n\n' "$APP_DEST"
+    INSTALLED_SHA="$(/usr/libexec/PlistBuddy -c 'Print :NoSpeakerBuildSHA' "$APP_DEST/Contents/Info.plist" 2>/dev/null || true)"
+    printf '\nInstalled NoSpeaker Studio:\n  App: %s\n  CLI: %s\n' "$APP_DEST" "$CLI_DEST"
+    if [ -n "$INSTALLED_SHA" ]; then
+        printf '  Build: %s\n' "$INSTALLED_SHA"
+    fi
+    printf '\nOpen it now with:\n  open "%s"\n\n' "$APP_DEST"
 }
 
 printf 'NoSpeaker Studio installer\n'
@@ -65,9 +76,14 @@ if ! xcode-select -p >/dev/null 2>&1 || ! command -v swift >/dev/null 2>&1; then
     fail "Apple Command Line Tools are required for the source-build fallback. Install them with: xcode-select --install"
 fi
 
-ARCHIVE_URL="https://github.com/$REPO/archive/refs/heads/$REF.tar.gz"
+COMMIT_JSON="$(curl -fsSL --retry 2 --connect-timeout 10 "https://api.github.com/repos/$REPO/commits/$REF" 2>/dev/null || true)"
+SOURCE_SHA="$(printf '%s\n' "$COMMIT_JSON" | sed -n 's/^[[:space:]]*"sha":[[:space:]]*"\([0-9a-f][0-9a-f]*\)".*/\1/p' | head -n 1)"
+[ "${#SOURCE_SHA}" -eq 40 ] || fail "Could not resolve source ref '$REF' to an exact Git commit."
+
+printf 'Resolved source ref %s -> %s\n' "$REF" "$SOURCE_SHA"
+ARCHIVE_URL="https://codeload.github.com/$REPO/tar.gz/$SOURCE_SHA"
 if ! curl -fL --retry 2 --connect-timeout 10 "$ARCHIVE_URL" -o "$TMP/source.tar.gz"; then
-    fail "Could not download source ref '$REF' from GitHub."
+    fail "Could not download exact source commit '$SOURCE_SHA' from GitHub."
 fi
 
 mkdir -p "$TMP/source"
@@ -78,7 +94,7 @@ SOURCE_ROOT="$(find "$TMP/source" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 
 (
     cd "$SOURCE_ROOT/studio"
-    NOSPEAKER_STUDIO_SKIP_TESTS=1 ./scripts/build-app.sh
+    NOSPEAKER_STUDIO_SKIP_TESTS=1 NOSPEAKER_STUDIO_BUILD_SHA="$SOURCE_SHA" ./scripts/build-app.sh
 )
 
 install_app "$SOURCE_ROOT/studio/dist/$APP_NAME"

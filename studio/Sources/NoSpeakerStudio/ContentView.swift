@@ -79,7 +79,13 @@ struct ContentView: View {
             Divider()
             Text("Based on os6/nospeaker").font(.caption).foregroundStyle(.secondary)
             Text("Original project by Cody Collier · MIT").font(.caption2).foregroundStyle(.tertiary)
+            Text("Build \(buildLabel)").font(.caption2.monospaced()).foregroundStyle(.tertiary)
         }.padding(12)
+    }
+
+    private var buildLabel: String {
+        let sha = Bundle.main.object(forInfoDictionaryKey: "NoSpeakerBuildSHA") as? String ?? "unknown"
+        return String(sha.prefix(12))
     }
 
     private func icon(for mode: StudioMode) -> String {

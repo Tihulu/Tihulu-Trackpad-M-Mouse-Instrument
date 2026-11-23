@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 command -v swift >/dev/null 2>&1 || { echo "Swift is required. Install Xcode or Apple Command Line Tools." >&2; exit 1; }
 command -v codesign >/dev/null 2>&1 || { echo "codesign is required." >&2; exit 1; }
 
+BUILD_SHA="${NOSPEAKER_STUDIO_BUILD_SHA:-unknown}"
+
 if [ "${NOSPEAKER_STUDIO_SKIP_TESTS:-0}" = "1" ]; then
     echo "==> Tests skipped for installer build"
 else
@@ -39,7 +41,7 @@ mkdir -p "$MACOS" "$RESOURCES"
 cp "$BIN" "$MACOS/NoSpeakerStudio"
 cp LICENSE NOTICE ATTRIBUTION.md "$RESOURCES/"
 
-cat > "$CONTENTS/Info.plist" <<'PLIST'
+cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -52,6 +54,7 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>
+    <key>NoSpeakerBuildSHA</key><string>$BUILD_SHA</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>NoSpeaker Studio downstream work; based on nospeaker by Cody Collier (MIT).</string>
