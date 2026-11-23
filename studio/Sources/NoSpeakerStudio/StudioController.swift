@@ -81,6 +81,11 @@ final class StudioController: ObservableObject {
     }
 
     func prepareEngine() {
+        // A reconnect replaces the device and input monitor. Stop the previous
+        // dedicated event thread before replacing its owner, so no stale
+        // filtering tap can survive and interfere with desktop pointer input.
+        captureMonitor?.stop()
+        captureMonitor = nil
         do {
             let driver = try HapticTrackpadDriver()
             try driver.open()
