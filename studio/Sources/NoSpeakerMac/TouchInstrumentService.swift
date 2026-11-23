@@ -100,7 +100,7 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         masterLevel: Double = 0.8,
         trackpadInstrument: SurfaceInstrumentMode = .melodic,
         magicMouseInstrument: SurfaceInstrumentMode = .melodic,
-        trackpadOutput: SurfaceOutputRoute = .both,
+        trackpadOutput: SurfaceOutputRoute = .trackpadHaptic,
         magicMouseOutput: SurfaceOutputRoute = .midiInstrument,
         drumLayout: DrumPadLayout = .standard12
     ) {
