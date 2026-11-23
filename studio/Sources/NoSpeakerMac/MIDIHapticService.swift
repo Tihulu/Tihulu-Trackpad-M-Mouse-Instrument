@@ -234,12 +234,13 @@ public final class MIDIHapticService: @unchecked Sendable {
 
         let desiredKeys = Set(desired.map { TouchKey(surface: $0.surface, id: $0.contactID) })
 
-        for (key, outgoing) in outgoingTouches where !desiredKeys.contains(key) {
+        let releasedKeys = outgoingTouches.keys.filter { !desiredKeys.contains($0) }
+        for key in releasedKeys {
+            guard let outgoing = outgoingTouches.removeValue(forKey: key) else { continue }
             sendMIDI1(status: 0x80 | outgoing.channel, data1: outgoing.note, data2: 0)
             if outgoing.fretless {
                 sendPitchBend(8192, channel: outgoing.channel)
             }
-            outgoingTouches.removeValue(forKey: key)
         }
 
         for state in desired {
