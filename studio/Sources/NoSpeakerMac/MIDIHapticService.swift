@@ -42,6 +42,32 @@ public enum MIDIHapticError: LocalizedError {
     }
 }
 
+/// CoreMIDI's on-demand MIDIServer may tear down its IPC channel when the
+/// process disposes its last MIDI client. After that, subsequent creation can
+/// return OSStatus -2 until process restart. Keep exactly one client alive for
+/// the lifetime of the app, including across MIDI mode switches and reconnects.
+private final class MIDIProcessClient: @unchecked Sendable {
+    static let shared = MIDIProcessClient()
+    private let lock = NSLock()
+    private var retainedClient = MIDIClientRef()
+
+    func acquire() throws -> MIDIClientRef {
+        lock.lock()
+        defer { lock.unlock() }
+        if retainedClient != 0 { return retainedClient }
+        var newClient = MIDIClientRef()
+        let status = MIDIClientCreateWithBlock(
+            "Tihulu Trackpad & M. Mouse Instrument" as CFString, &newClient
+        ) { _ in }
+        guard status == noErr else { throw MIDIHapticError.client(status) }
+        retainedClient = newClient
+        return newClient
+    }
+
+    // Deliberately not disposed while this process lives. CoreMIDI automatically
+    // releases the client at process exit; mode stops only dispose endpoints.
+}
+
 /// Bidirectional CoreMIDI bridge for Logic Pro and other DAWs.
 ///
 /// - "NoSpeaker Haptic MIDI In": DAW/controller -> NoSpeaker haptic playback.
@@ -113,19 +139,31 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
 
-    deinit { stop() }
+    deinit {
+        stop()
+        disposeEndpoints()
+    }
 
     public func start(masterLevel: Double, onMessage: (@Sendable (LiveMIDIMessage) -> Void)? = nil) throws {
-        stop()
+        lock.lock()
+        let alreadyActive = enabled && destination != 0 && virtualSource != 0 && inputPort != 0
         self.masterLevel = masterLevel
         self.callback = onMessage
         self.inputHapticsEnabled = true
+        lock.unlock()
+        if alreadyActive { return }
 
-        var newClient = MIDIClientRef()
-        var status = MIDIClientCreateWithBlock("NoSpeaker Studio" as CFString, &newClient) { _ in }
-        guard status == noErr else { throw MIDIHapticError.client(status) }
-        client = newClient
+        // Soft-stop note/controller state without closing the virtual MIDI
+        // endpoints. Logic retains the same endpoints across mode switches.
+        stop()
+        if client == 0 { client = try MIDIProcessClient.shared.acquire() }
+        if destination == 0 || virtualSource == 0 || inputPort == 0 {
+            // Clean up any partial endpoints left by a previous failed start,
+            // while keeping the process-wide CoreMIDI client alive.
+            disposeEndpoints()
+        }
 
+        var status: OSStatus = noErr
         var newDestination = MIDIEndpointRef()
         status = MIDIDestinationCreateWithProtocol(
             client,
@@ -212,10 +250,15 @@ public final class MIDIHapticService: @unchecked Sendable {
         renderTimer?.cancel()
         renderTimer = nil
 
+        // Intentionally retain the virtual MIDI graph until the service is
+        // destroyed. Teardown here would disconnect Logic on each mode switch.
+    }
+
+    private func disposeEndpoints() {
         if destination != 0 { MIDIEndpointDispose(destination); destination = 0 }
         if virtualSource != 0 { MIDIEndpointDispose(virtualSource); virtualSource = 0 }
         if inputPort != 0 { MIDIPortDispose(inputPort); inputPort = 0 }
-        if client != 0 { MIDIClientDispose(client); client = 0 }
+        // The shared process MIDI client is never disposed by a mode.
     }
 
     public func setInputHapticsEnabled(_ enabled: Bool) {
