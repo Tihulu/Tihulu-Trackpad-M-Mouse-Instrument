@@ -119,3 +119,91 @@ Expression or Hybrid mode is selected.
 
 The UI shows the combined `CC64 ON / OFF` status. A Logic instrument must
 respond to MIDI sustain pedal CC64 for the note-hold behavior to be audible.
+
+## Expressive Controls v2 — Sustain, Gesture Selection and Mouse Capture
+
+The **MIDI Helper** no longer forces an exclusive Vibrato, Bend, Expression
+or Hybrid mode. Four independent checkboxes now allow any combination:
+
+- **Vibrato (CC1)** — vertical movement
+- **Pitch Bend** — horizontal movement
+- **Expression (CC11)** — contact-size estimate
+- **Sustain (CC64)** — the separately chosen Trackpad/Mouse gesture
+
+For example, **only Sustain** checked emits no vibrato, bend or expression.
+Checking all four produces a Hybrid-like combination. All are OFF by
+default except Vibrato, to preserve a useful starting configuration.
+
+### Trackpad and Magic Mouse Sustain
+
+Both MIDI Helper and Touch Instrument have separately enabled sustain
+controls. Available Trackpad gestures are: **Touch Hold**, **Tap Toggle**,
+**Click Hold**, **Click Toggle**, and **Contact Threshold**.
+Magic Mouse gestures are Touch Hold, Tap Toggle, Click Hold and Click
+Toggle. Magic Mouse has **no Force Touch sensor**.
+
+For Contact Threshold, the sensor selector offers:
+- **Contact Size (default)** from the private touch frame; this is not
+  calibrated physical force.
+- **Click Pressure (Experimental)** from CoreGraphics mouse-button
+  pressure. It requires an actual physical click and may not be
+  continuously available or distinguish Force Touch strength on a given
+  system. If no click-pressure reading is available, the sustain trigger
+  remains OFF instead of falling back to contact size.
+
+Click gestures require **Enable Input Controls** and macOS Accessibility
+permission. Because macOS generic click events are not reliably tagged
+with which pointing device originated them, NoSpeaker attributes a click
+only when exactly one surface has live contact, or one surface is chosen.
+If both are concurrently touched, ambiguous clicks are ignored instead
+of applying CC64 to the wrong instrument.
+
+### Keyboard Capture and Emergency Exit
+
+Default mode is **OFF** — the mouse operates the desktop normally.
+
+1. Select a capture hotkey: **Control + Option + F6/F7/F8/F9** (F8 by
+   default). Some keyboards also require the Fn key for function keys.
+2. Choose **Enable Input Controls**. If the OS denies Accessibility,
+   the event tap is not installed; allow Studio in System Settings →
+   Privacy & Security → Accessibility, then retry.
+3. Press the shortcut or turn **Capture Mouse for NoSpeaker** ON.
+   While captured, mouse motion, drag, buttons and scrolling are
+   suppressed from normal desktop apps. The touch frame receiver still
+   drives NoSpeaker. **This is a session-wide pointer capture**, not
+   reliable per-device suppression; the trackpad pointer may be affected.
+4. Press the shortcut again to return to desktop use. Press **Esc**
+   while input controls are armed for **Panic Stop**: disable capture,
+   release CC64 and MIDI notes, close haptics and stop ongoing playback.
+   With input controls disabled, Esc remains the app-focused panic shortcut.
+
+Capture never starts automatically, does not run as a background daemon,
+and is removed on process exit or crash. A macOS event-tap disable event
+also triggers panic/uncapture rather than silently keeping control.
+
+### Touch Instrument sustain scope
+
+Touch Instrument sends sustain **MIDI CC64** for melodic DAW instruments
+on the relevant MIDI channels, including MPE member channels. GM drum
+Channel 10 is excluded. The current Force Touch local haptic engine
+still follows physical finger frames and is not a sampled/instrument
+voice engine with independent acoustic release tails. Sustain does not
+turn a hardware haptic motor into a conventional keyboard sustain pedal.
+
+### Hardware acceptance checklist
+
+These changes compile and have pure logic tests, but require physical Mac
+tests before describing the feature as hardware validated:
+- Test Trackpad Touch Hold, Tap Toggle, Click Hold, Click Toggle.
+- Compare Contact Size and experimental Click Pressure sensors, recording
+  whether meaningful nonzero click pressure is available.
+- Test Magic Mouse Touch Hold, Tap Toggle, Click Hold, Click Toggle.
+- With both surfaces enabled, verify CC64 does not release early.
+- In Logic, verify **Sustain only** emits CC64 with no unrelated CC1,
+  pitch-bend or CC11 traffic.
+- Arm capture, verify assigned hotkey freezes/releases desktop pointer,
+  and Escape always restores the pointer and silences MIDI/haptics.
+- Verify complete recovery after killing the app while capture is active.
+
+**Do not mark Magic Mouse, Force Touch pressure, or global input capture
+as hardware PASS based on GitHub CI alone.**
