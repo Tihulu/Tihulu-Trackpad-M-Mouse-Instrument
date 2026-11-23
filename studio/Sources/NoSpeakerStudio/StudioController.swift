@@ -38,6 +38,8 @@ final class StudioController: ObservableObject {
     @Published var touchBarProfile = StudioController.readTouchBarProfile()
     @Published var touchBarSustainOn = false
     @Published var simulatedHingeAngle = 90.0
+    @Published var liveHingeEnabled = false
+    @Published var hingeSensorStatus = "Hardware sensor OFF · manual simulator available"
     @Published var activeMIDINotes: [ActiveMIDINote] = []
     @Published var systemAudioRunning = false
     @Published var lastMIDIMessage = "No MIDI received yet"
@@ -72,6 +74,7 @@ final class StudioController: ObservableObject {
     private var instrumentPreviewRequested = false
     private var helperPreviewRequested = false
     private var touchBarBridge: StudioTouchBarBridge?
+    private var hingeSensor: MacBookHingeAngleSource?
     private var heldTouchBarNotes: Set<Int> = []
     private var clickedSurface: TouchSurfaceKind?
     private var trackpadClickPressure: Double?
@@ -184,6 +187,29 @@ final class StudioController: ObservableObject {
         midi?.setHelperSustain(next || helperHoldsSameChannel, channel: touchBarProfile.channel)
     }
 
+    func enableLiveHinge(_ enable: Bool) {
+        if !enable {
+            hingeSensor?.stop()
+            hingeSensor = nil
+            liveHingeEnabled = false
+            hingeSensorStatus = "Hardware sensor OFF · manual simulator available"
+            return
+        }
+        guard !liveHingeEnabled else { return }
+        let sensor = MacBookHingeAngleSource()
+        sensor.onAngle = { [weak self] degrees in
+            self?.applySimulatedHingeAngle(degrees)
+        }
+        if sensor.start() {
+            hingeSensor = sensor
+            liveHingeEnabled = true
+            hingeSensorStatus = "Live hardware angle sensor active · MIDI mappings enabled"
+        } else {
+            hingeSensorStatus = sensor.status
+            liveHingeEnabled = false
+        }
+    }
+
     func applySimulatedHingeAngle(_ degrees: Double) {
         simulatedHingeAngle = degrees
         guard let value = touchBarProfile.normalizedTilt(degrees) else { return }
@@ -269,6 +295,7 @@ final class StudioController: ObservableObject {
     }
 
     func panicStop() {
+        enableLiveHinge(false)
         releaseTouchBarNotes()
         touchBarSustainOn = false
         captureMonitor?.stop()

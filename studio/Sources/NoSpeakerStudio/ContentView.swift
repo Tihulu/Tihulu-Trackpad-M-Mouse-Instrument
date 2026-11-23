@@ -1675,8 +1675,15 @@ private struct TouchBarModeView: View {
 
                 GroupBox("Screen hinge as an instrument · Calibration simulator") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Experimental design: map screen opening to filter, expression, vibrato or pitch bend. This is a manual calibration simulator; real hinge-angle sensing is not enabled until a compatible Mac reports a tested sensor.")
+                        Text("Map screen opening to filter, expression, vibrato or pitch bend. Live hardware detection is experimental, manual-only and may be unsupported on Touch Bar MacBooks; use the simulator if no compatible sensor is available.")
                             .font(.callout).foregroundStyle(.secondary)
+                        Toggle("Enable Live Hinge Angle Sensor (Experimental)", isOn: Binding(
+                            get: { studio.liveHingeEnabled },
+                            set: { studio.enableLiveHinge($0) }
+                        ))
+                        Text(studio.hingeSensorStatus)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
                         Picker("MIDI mapping", selection: Binding(
                             get: { studio.touchBarProfile.tiltTarget },
                             set: { value in setProfile { $0.tiltTarget = value } }
@@ -1691,6 +1698,7 @@ private struct TouchBarModeView: View {
                                 get: { studio.simulatedHingeAngle },
                                 set: { studio.applySimulatedHingeAngle($0) }
                             ), in: 5...175)
+                            .disabled(studio.liveHingeEnabled)
                             Text("\(Int(studio.simulatedHingeAngle))°")
                                 .monospacedDigit().frame(width: 60)
                         }
@@ -1714,7 +1722,7 @@ private struct TouchBarModeView: View {
                         }
                     }.padding(8)
                 }
-                Text("Safety: The instrument never closes the laptop lid or alters sleep settings. Physical lid-angle reporting is model-dependent and uses unsupported interfaces; do not treat this simulator as actual sensor data.")
+                Text("Safety: Hinge sensor is explicitly opt-in and uses a read-only, undocumented HID report on compatible MacBooks. An unavailable sensor never starts monitoring. The app does not move the display, modify sleep settings, or send any telemetry.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(28)
         }
