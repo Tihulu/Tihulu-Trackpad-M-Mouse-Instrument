@@ -165,7 +165,7 @@ private struct PageHeader: View {
 
 private struct VoiceModeView: View {
     @EnvironmentObject private var studio: StudioController
-    @State private var text = "KOMUTAN LOGAR, BİR CİSİM YAKLAŞIYOR EFENDİM."
+    @State private var text = StudioController.startupGreeting
     @State private var selectedLanguage: VoiceLanguage = .turkish
     @State private var selectedVoice = ""
     @State private var voices: [VoiceOption] = []

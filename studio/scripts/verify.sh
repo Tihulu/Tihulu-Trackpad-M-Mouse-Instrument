@@ -28,6 +28,11 @@ for root in roots:
         try: s=p.read_text(encoding='utf-8')
         except UnicodeDecodeError: continue
         for n,line in enumerate(s.splitlines(),1):
+            # One explicitly approved Turkish audio string is localized data,
+            # not a Turkish UI label, source comment or documentation sentence.
+            if (p == Path('Sources/NoSpeakerStudio/StudioController.swift')
+                    and line.strip() == 'static let startupGreeting = "KOMUTAN LOGAR, BİR CİSİM YAKLAŞIYOR EFENDİM."'):
+                continue
             if any(ch in bad_chars for ch in line): found.append((p,n,line))
 if found:
     for p,n,line in found: print(f'{p}:{n}:{line}')

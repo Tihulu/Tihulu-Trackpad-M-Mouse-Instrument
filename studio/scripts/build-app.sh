@@ -7,6 +7,22 @@ command -v swift >/dev/null 2>&1 || { echo "Swift is required. Install Xcode or 
 command -v codesign >/dev/null 2>&1 || { echo "codesign is required." >&2; exit 1; }
 
 BUILD_SHA="${NOSPEAKER_STUDIO_BUILD_SHA:-unknown}"
+BUILD_CHANNEL="${TIHULU_BUILD_CHANNEL:-stable}"
+case "$BUILD_CHANNEL" in
+    stable)
+        BUNDLE_ID="com.tihulu.trackpadmmouseinstrument"
+        DISPLAY_NAME="Tihulu Trackpad &amp; M. Mouse Instrument"
+        APP_VERSION="0.2.3"
+        BUILD_VERSION="5"
+        ;;
+    preview)
+        BUNDLE_ID="com.tihulu.trackpadmmouseinstrument.preview"
+        DISPLAY_NAME="Tihulu Trackpad &amp; M. Mouse Instrument Preview"
+        APP_VERSION="0.3.0"
+        BUILD_VERSION="6"
+        ;;
+    *) echo "Invalid TIHULU_BUILD_CHANNEL" >&2; exit 1 ;;
+esac
 
 if [ "${NOSPEAKER_STUDIO_SKIP_TESTS:-0}" = "1" ]; then
     echo "==> Tests skipped for installer build"
@@ -92,14 +108,15 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleDisplayName</key><string>Tihulu Trackpad &amp; M. Mouse Instrument</string>
+    <key>CFBundleDisplayName</key><string>$DISPLAY_NAME</string>
     <key>CFBundleExecutable</key><string>NoSpeakerStudio</string>
-    <key>CFBundleIdentifier</key><string>com.tihulu.trackpadmmouseinstrument</string>
+    <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Tihulu Trackpad Instrument</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.2.3</string>
-    <key>CFBundleVersion</key><string>5</string>
+    <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
+    <key>CFBundleVersion</key><string>$BUILD_VERSION</string>
+    <key>TIHULUBuildChannel</key><string>$BUILD_CHANNEL</string>
     <key>NoSpeakerBuildSHA</key><string>$BUILD_SHA</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
