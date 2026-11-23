@@ -32,7 +32,7 @@ BIN_DIR=$(swift build -c release --show-bin-path)
 BIN="$BIN_DIR/NoSpeakerStudio"
 [ -x "$BIN" ] || { echo "Release binary not found at $BIN" >&2; exit 1; }
 
-APP="dist/NoSpeaker Studio.app"
+APP="dist/Tihulu Trackpad & M. Mouse Instrument.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
@@ -40,24 +40,43 @@ rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"
 cp "$BIN" "$MACOS/NoSpeakerStudio"
 cp LICENSE NOTICE ATTRIBUTION.md "$RESOURCES/"
+ICON_SOURCE="Resources/TihuluTrackpadMouseIcon.svg"
+if [ -f "$ICON_SOURCE" ]; then
+    cp "$ICON_SOURCE" "$RESOURCES/TihuluTrackpadMouseIcon.svg"
+    if command -v rsvg-convert >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
+        echo "==> Rendering the approved TIHULU vector icon"
+        ICONSET="$(mktemp -d "${TMPDIR:-/tmp}/tihulu-icon.XXXXXX").iconset"
+        mkdir -p "$ICONSET"
+        rsvg-convert --width 1024 --height 1024 "$ICON_SOURCE" > "$ICONSET/icon_512x512@2x.png"
+        for spec in "16 16x16" "32 16x16@2x" "32 32x32" "64 32x32@2x" "128 128x128" "256 128x128@2x" "256 256x256" "512 256x256@2x" "512 512x512"; do
+            set -- $spec
+            sips --resampleHeightWidth "$1" "$1" "$ICONSET/icon_512x512@2x.png" --out "$ICONSET/icon_$2.png" >/dev/null
+        done
+        iconutil -c icns "$ICONSET" -o "$RESOURCES/TihuluInstrument.icns"
+        rm -rf "$ICONSET"
+    else
+        echo "==> SVG logo bundled; install librsvg (rsvg-convert) to generate a macOS .icns during local builds."
+    fi
+fi
 
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleDisplayName</key><string>NoSpeaker Studio</string>
+    <key>CFBundleDisplayName</key><string>Tihulu Trackpad &amp; M. Mouse Instrument</string>
     <key>CFBundleExecutable</key><string>NoSpeakerStudio</string>
-    <key>CFBundleIdentifier</key><string>com.tihulu.nospeakerstudio</string>
+    <key>CFBundleIdentifier</key><string>com.tihulu.trackpadmmouseinstrument</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-    <key>CFBundleName</key><string>NoSpeaker Studio</string>
+    <key>CFBundleName</key><string>Tihulu Trackpad Instrument</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>0.2.0</string>
+    <key>CFBundleVersion</key><string>2</string>
     <key>NoSpeakerBuildSHA</key><string>$BUILD_SHA</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSHumanReadableCopyright</key><string>NoSpeaker Studio downstream work; based on nospeaker by Cody Collier (MIT).</string>
+    <key>CFBundleIconFile</key><string>TihuluInstrument.icns</string>
+    <key>NSHumanReadableCopyright</key><string>TIHULU downstream work; based on nospeaker by Cody Collier (MIT).</string>
 </dict>
 </plist>
 PLIST

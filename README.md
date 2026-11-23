@@ -1,152 +1,96 @@
-```text
-────────────────────────  a90.com presents  ─────────────────────────
+# Tihulu Trackpad & M. Mouse Instrument
 
-    _   __ ____      _____  ____   ______ ___     __ __  ______ ____
-   / | / // __ \    / ___/ / __ \ / ____//   |   / //_/ / ____// __ \
-  /  |/ // / / /    \__ \ / /_/ // __/  / /| |  / ,<   / __/  / /_/ /
- / /|  // /_/ /    ___/ // ____// /___ / ___ | / /| | / /___ / _, _/
-/_/ |_/ \____/    /____//_/    /_____//_/  |_|/_/ |_|/_____//_/ |_|
+**Turn a Force Touch trackpad and a Magic Mouse into expressive musical controllers for macOS and Logic Pro.**
 
-─  haptic voice synthesis  ─────────────────────────────  trackpad  ─
+![TIHULU Trackpad & M. Mouse Instrument icon](studio/Resources/TihuluTrackpadMouseIcon.svg)
+
+A native SwiftUI haptic music workstation with live surface maps, multi-touch MIDI/MPE, a drum-pad controller, Voice, sequencers and optional system-audio-to-trackpad playback. The app name and macOS icon are **Tihulu Trackpad & M. Mouse Instrument**.
+
+> Based on [os6/nospeaker](https://github.com/os6/nospeaker) by **Cody Collier** under the MIT license. We retain the original attribution and upstream source. TIHULU additions are downstream work, not an endorsement by the upstream author.
+
+## Install
+
+**Download a macOS DMG** from [Releases](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/releases/latest) and drag **Tihulu Trackpad & M. Mouse Instrument.app** into Applications.
+
+**One-line install** (latest published DMG, with source-build fallback if unavailable):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/main/install-studio.sh | sh
 ```
 
-**Mute your Mac. Your trackpad will still talk.**
+Open after installation:
 
-There's no speaker in a MacBook trackpad, just a small haptic motor that taps the glass so you feel a click.
-NO SPEAKER drives that motor up to 4,000 times a second, fast enough to make sound you can hear, and turns it
-into a voice. It talks, sings, raps, and becomes an instrument under your finger.
-
-One command. About a minute and a half. No speakers used.
-
-<!-- demo video: drag an .mp4 here in GitHub's editor -->
-
-## 01 / before you start
-
-```text
-[ mute your mac ]        it still talks; that's the point
-[ put it on a table ]    on your lap it's much quieter
-[ hands off the glass ]  until it asks you to touch it
+```bash
+open "$HOME/Applications/Tihulu Trackpad & M. Mouse Instrument.app"
 ```
 
-**Space** skips a part. **q** or **Ctrl-C** goes to the end.
+To build the current `main` revision instead of installing a release:
 
-## 02 / run it
-
-`[ one line ]`
-
-```sh
-curl -fsSL a90.com/nospeaker | sh
+```bash
+TIHULU_INSTRUMENT_CHANNEL=source sh -c 'curl -fsSL https://raw.githubusercontent.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/main/install-studio.sh | sh'
 ```
 
-Downloads the latest release to `~/.local/bin/nospeaker` and starts the show. `a90.com/nospeaker` points
-to [play.sh](play.sh) in this repo, so you can read what it runs first.
+The source-build fallback requires Xcode or Apple Command Line Tools. The local icon renderer additionally uses `librsvg` (`brew install librsvg`); published DMGs already contain the rendered icon. The installer never requires `sudo` and installs into `~/Applications`.
 
-`[ download ]`
+To uninstall:
 
-Grab `nospeaker.zip` from the [latest release](https://github.com/os6/nospeaker/releases/latest),
-unzip it and run `./nospeaker` in Terminal. Signed with a Developer ID and notarized by Apple.
-
-`[ from source ]`
-
-Needs Xcode or the Command Line Tools (`xcode-select --install`). Builds one program for Apple Silicon
-and Intel Macs.
-
-```sh
-git clone https://github.com/os6/nospeaker
-cd nospeaker
-./build.sh
-./nospeaker
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/main/uninstall-studio.sh | sh
 ```
 
-## 03 / play with it
+## Features
 
-```text
-./nospeaker "hello there"            say anything
-./nospeaker --voice Daniel "hello"   in another macOS voice
-./nospeaker --sweep                  a rising tone, 100 Hz to 4 kHz
+| Mode | What it does |
+| --- | --- |
+| **Voice** | English, Turkish and German speech sent to the Force Touch haptic motor. Lists installed macOS `say` and additional Apple Speech enhanced/premium voices when available. Local voice generation. |
+| **Touch Instrument** | Fretted (scale-quantized) or Fretless (continuous pitch) controller, live finger map even before starting, configurable scale/root/zone width. **Fretted and Fretless size use the same 0.50×–2.00× range**. Touch or press triggers, fixed/size-derived velocity, multi-touch and optional local haptic sound. |
+| **Independent surfaces** | Trackpad and Magic Mouse can each play **Melodic** or **GM Drums** and route output to the trackpad haptic motor, Logic MIDI, or both. |
+| **Expressive MIDI** | CoreMIDI in/out, held notes, MIDI sustain CC64, pitch bend, mod wheel CC1, expression CC11, channel volume CC7, aftertouch, MPE finger channels, and GM drum pads on **MIDI channel 10**. |
+| **MIDI Helper** | Independently combine Vibrato, Pitch Bend, Expression and Sustain checkboxes; use Trackpad/Magic Mouse/Both while playing chords on a separate keyboard; route CC64 on a chosen MIDI channel. |
+| **Sustain** | Switchable Trackpad Touch Hold, Tap Toggle, Click Hold, Click Toggle, or Contact Threshold (Contact Size vs experimental Click Pressure). Magic Mouse Touch/Click Hold or Toggle. Local haptic and MIDI sustain in Touch Instrument. |
+| **Global Capture** | Record a user-defined key or key combination. Opt-in keyboard shortcut captures/releases the system pointer **in every mode**; Esc is an emergency release/Panic Stop. |
+| **Sequencers** | Note and drum step sequencers with adjustable tempo. |
+| **Audio File** | Drag/drop audio, locally analyze melody/rhythm/voice/full mix for haptic playback. |
+| **Trackpad Speaker** | Audio-file haptics and optional ScreenCaptureKit system audio conversion; **not** a virtual audio output driver. |
+| **Diagnostics** | Frequency test, sweep, device reconnect, hard stop. |
 
---dark                               white on black
---plain                              no visuals, plain text
+## Logic Pro setup
+
+1. Open **Touch Instrument**; select **Trackpad**, **Magic Mouse** or **Both** and choose `MIDI Instrument` or `Both` output.
+2. In Logic Pro, enable the NoSpeaker virtual CoreMIDI source as input to a Software Instrument track.
+3. For fretless independent multi-finger pitch, choose **MPE** and an MPE-compatible instrument.
+4. For percussion, select the **Drums** surface map and a General MIDI-compatible drum kit. GM notes (Kick 36, Snare 38, Closed Hat 42, etc.) are sent on channel 10. Channel 10 alone does not select a drum kit.
+5. For live expression alongside an external keyboard, open **MIDI Helper**, enable your desired CC mappings and set its target MIDI channel to your Logic instrument.
+
+See [Logic & Magic Mouse guide](studio/LOGIC_DRUMS_MAGIC_MOUSE.md) and [Expressive Controls guide](studio/EXPRESSIVE_CONTROLS.md).
+
+## Global capture and permissions
+
+All modes share the same top-bar control. Press **Record Shortcut**, then any key or modifier combination (except reserved Esc), and enable **Global Performance Capture**. The shortcut toggles pointer interception while the app is running; **Esc** stops all outputs and releases the pointer. Your shortcut is stored locally; capture is OFF on launch.
+
+macOS may require Accessibility and Input Monitoring grants. Pointer interception is **session-wide**, not limited to Magic Mouse; an event tap may be disabled by macOS and should release the pointer automatically. Contact Size is *not* calibrated Force Touch pressure; experimental Click Pressure may be unavailable. System audio capture separately requires Screen Recording permission.
+
+## Requirements and safety
+
+- macOS 13 or newer; SwiftUI native app.
+- A Force Touch trackpad for local haptic output; Magic Mouse gesture support depends on macOS private multitouch support.
+- Logic Pro or another DAW is optional, only required for software-instrument audio.
+- Haptic output stays within the source project's conservative motor bounds. Emergency Panic Stop is available.
+- Private `MultitouchSupport` APIs can change across macOS versions; Mac hardware acceptance is **not** implied by a passing CI build.
+- The first public DMG may be **ad-hoc signed and not notarized** until Developer ID and Apple notarization credentials are configured. Gatekeeper may require a manual review/open; do not bypass security warnings blindly.
+
+## Build / verify
+
+```bash
+git clone https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument.git
+cd Tihulu-Trackpad-M-Mouse-Instrument/studio
+./scripts/verify.sh
+./scripts/build-app.sh
+open "dist/Tihulu Trackpad & M. Mouse Instrument.app"
 ```
 
-## 04 / needs
+On macOS with Homebrew, `brew install librsvg` enables icon rendering from the supplied **true path-based SVG**. GitHub Actions builds the macOS DMG on an Apple runner; code signing/notarization requires your own Apple developer credentials.
 
-A Force Touch trackpad (built into MacBooks from 2015 on, or a Magic Trackpad 2 or newer), and macOS 12 or
-later on Apple Silicon, or macOS 13 or later on Intel. Without a Force Touch trackpad, it says so and exits.
+## Upstream credit
 
-```text
-tested on
-
-MacBook Pro (Mac17,10)   M5 Max   macOS 27.2.1   everything works
-```
-
-Not tested yet: Intel Macs, a Magic Trackpad, and older versions of macOS. MultitouchSupport is private, so
-older systems may lack the functions it uses, and loudness differs between trackpads. If you try it on another
-Mac, open an issue with your model, your macOS version and how it sounded.
-
-## 05 / how it works
-
-```text
-say ──▶ formants ──▶ two tones ──▶ motor ──▶ glass
-        per 10 ms    F1 + F2       haptics   sound
-```
-
-**Why you can hear it.** The trackpad has no speaker, but the motor moves the glass. Driven back and forth
-hundreds or thousands of times a second, the glass vibrates fast enough to make sound you can hear. It's quiet
-because the motor is built for short taps, not for sound.
-
-**The motor.** `MultitouchSupport` is the private framework macOS uses for the trackpad. Its function
-`MTActuationCreateFromDictionary` takes a description of a vibration, a list of sine tones with a frequency,
-a strength and a length each, and `MTActuationActuate` plays it on the motor. Apple's public haptics API only
-offers three fixed taps.
-
-**The range.** Measured with the MacBook's own microphone, every semitone from 98 Hz to 3,951 Hz: how loud it
-is over a quiet room, and how much of the sound is the note itself.
-
-```text
-│                                      ###
-│                          #+#     +++#####        #
-│                         +#+#+   .+++#####       .#
-│              .       ++++#+#+   .+++#####    # #.# #
-│   ++        +. . #..+++++#+#++++.+++#####+ #####.###          .#
-│   +++#.     +...+#..+++++#+#++++.+++#####+ #####.####+        .#
-│  ++++#...   +...+#..+++++#+#++++.+++#####+.#####.####+        .#
-│ .++++#...++++...+#..+++++#+#++++.+++#####+.#####.####+  +#    .#
-│..++++#...++++...+#..+++++#+#++++.+++#####+.#####.####+#.+#  .#.#
-│..++++#...++++...+#..+++++#+#++++.+++#####+.#####.####+#.+#+..#.#
-└─────────────────────────────────────────────────────────────────
-      131         262         523         1047        2093    3951
-   public notes stop at 600 Hz ─┘
-
-across: every semitone, in Hz · up: loudness, +16 to +34 dB
-# clean note   + fair   . mostly buzz
-```
-
-It's loud from about 100 Hz to 4 kHz, with a few dead spots where the glass resonates. Its loudest, cleanest
-notes are around 1 kHz, which covers the most important part of a voice.
-
-**The voice.** macOS's own voice speaks the line into memory. Every 10 ms, linear prediction finds the voice's
-two strongest resonances (formants), its loudness and its pitch. The motor plays those two resonances as tones,
-restarted on every beat of the pitch, so they buzz like a voice instead of whistling. Hiss sounds (s, f, t)
-become quick bursts of high tones. Two resonances beat three: in a blind test they were clearer, and louder,
-because the motor's strength is split fewer ways.
-
-It sounds robotic, and it's much easier to follow when you can read along, which is why the show types every
-line as it speaks.
-
-**The code.** One Swift file, [nospeaker.swift](nospeaker.swift), with no dependencies.
-
-## 06 / caveats
-
-- **Is it safe?** It never drives the motor past its normal maximum strength. Going past it is possible and
-  louder, but the driver starts to stall, so nospeaker doesn't.
-- MultitouchSupport is private and undocumented, so a macOS update could break this.
-
-The MultitouchSupport function names were learned from the open-source Tactile project. Everything else was
-measured on a MacBook.
-
-```text
-──────────────────────  thanks for listening  ───────────────────────
-```
-
-Made by [Cody Collier](https://x.com/codycollier) · [a90.com](https://a90.com) · [MIT license](LICENSE)
+Original `nospeaker` v1.0, Cody Collier · [MIT license](LICENSE), upstream [os6/nospeaker](https://github.com/os6/nospeaker). See [studio/ATTRIBUTION.md](studio/ATTRIBUTION.md), [studio/NOTICE](studio/NOTICE) and [studio/LICENSE](studio/LICENSE).

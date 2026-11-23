@@ -3,23 +3,38 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
-/// Global capture toggle shortcuts, active only while a Studio performance
-/// session runs. Escape remains reserved for emergency stop.
-public enum PerformanceCaptureShortcut: String, CaseIterable, Identifiable, Sendable {
-    case controlOptionM = "⌃⌥M"
-    case controlOptionK = "⌃⌥K"
-    case controlOptionP = "⌃⌥P"
-    case controlOptionT = "⌃⌥T"
+/// User-recorded hardware keycode + exact combination of common modifiers.
+/// A regular key, function key, or Command/Shift/Option/Control combination
+/// can be recorded. Escape is always reserved for Panic Stop.
+public struct PerformanceCaptureShortcut: Codable, Hashable, Sendable {
+    public var keyCode: Int64
+    public var modifiers: UInt64
+    public var displayName: String
 
-    public var id: String { rawValue }
+    public init(keyCode: Int64, modifiers: UInt64, displayName: String) {
+        self.keyCode = keyCode
+        self.modifiers = modifiers & Self.allowedModifiers
+        self.displayName = displayName
+    }
 
-    var virtualKeyCode: Int64 {
-        switch self {
-        case .controlOptionM: return 46
-        case .controlOptionK: return 40
-        case .controlOptionP: return 35
-        case .controlOptionT: return 17
-        }
+    public static var allowedModifiers: UInt64 {
+        CGEventFlags.maskShift.rawValue
+            | CGEventFlags.maskControl.rawValue
+            | CGEventFlags.maskAlternate.rawValue
+            | CGEventFlags.maskCommand.rawValue
+    }
+
+    public static let defaultShortcut = PerformanceCaptureShortcut(
+        keyCode: 46,
+        modifiers: CGEventFlags.maskControl.rawValue | CGEventFlags.maskAlternate.rawValue,
+        displayName: "⌃⌥M"
+    )
+
+    public var isValid: Bool { keyCode != 53 && keyCode >= 0 && !displayName.isEmpty }
+
+    public func matches(_ event: CGEvent) -> Bool {
+        event.getIntegerValueField(.keyboardEventKeycode) == keyCode &&
+        (event.flags.rawValue & Self.allowedModifiers) == modifiers
     }
 }
 
@@ -47,7 +62,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     private var runLoopSource: CFRunLoopSource?
     private var listening = false
     private var captured = false
-    private var shortcut: PerformanceCaptureShortcut = .controlOptionM
+    private var shortcut: PerformanceCaptureShortcut = .defaultShortcut
     private var captureHotkeyEnabled = false
 
     public var onCaptureChanged: (@Sendable (Bool) -> Void)?
@@ -75,6 +90,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     }
 
     public func setShortcut(_ shortcut: PerformanceCaptureShortcut) {
+        guard shortcut.isValid else { return }
         lock.lock()
         self.shortcut = shortcut
         lock.unlock()
@@ -88,6 +104,10 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         if alreadyListening { return }
 
         guard AXIsProcessTrusted() else {
+            // Only request this system prompt after the user explicitly
+            // enables the performance monitor, never on app launch.
+            let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
             throw PerformanceCaptureError.permissionDenied
         }
 
@@ -181,10 +201,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             let currentShortcut = shortcut
             let hotkeyEnabled = captureHotkeyEnabled
             lock.unlock()
-            let flags = event.flags
-            let matches = keyCode == currentShortcut.virtualKeyCode &&
-                flags.contains(.maskControl) && flags.contains(.maskAlternate) &&
-                !flags.contains(.maskCommand) && !flags.contains(.maskShift)
+            let matches = currentShortcut.matches(event)
             if matches && hotkeyEnabled {
                 if type == .keyDown, !repeatKey {
                     lock.lock()

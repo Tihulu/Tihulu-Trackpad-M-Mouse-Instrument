@@ -31,6 +31,8 @@ final class StudioController: ObservableObject {
     @Published var midiHelperMagicMouseSustainActive = false
     @Published var touchInstrumentSustainActive = false
     @Published var pointerCaptured = false
+    @Published var captureArmed = false
+    @Published var captureShortcut = StudioController.readSavedCaptureShortcut()
     @Published var captureStatus = "Cursor free · capture is OFF by default"
     @Published var activeMIDINotes: [ActiveMIDINote] = []
     @Published var systemAudioRunning = false
@@ -62,11 +64,17 @@ final class StudioController: ObservableObject {
     private var touchSustainSettings = MIDIHelperSustainSettings()
     private var touchSustainState = MIDIHelperSustainState()
     private var captureMonitor: PerformanceCaptureMonitor?
-    private var captureShortcut: PerformanceCaptureShortcut = .controlOptionM
     private var captureHotkeyArmed = false
     private var clickedSurface: TouchSurfaceKind?
     private var trackpadClickPressure: Double?
     private var activeMIDINoteMap: [String: ActiveMIDINote] = [:]
+
+    private static func readSavedCaptureShortcut() -> PerformanceCaptureShortcut {
+        guard let data = UserDefaults.standard.data(forKey: "TIHULU.captureShortcut"),
+              let candidate = try? JSONDecoder().decode(PerformanceCaptureShortcut.self, from: data),
+              candidate.isValid else { return .defaultShortcut }
+        return candidate
+    }
 
     init() {
         prepareEngine()
@@ -84,10 +92,13 @@ final class StudioController: ObservableObject {
             let capture = PerformanceCaptureMonitor()
             capture.onCaptureChanged = { [weak self] captured in
                 Task { @MainActor in
-                    self?.pointerCaptured = captured
-                    self?.captureStatus = captured
-                        ? "Cursor captured · press the shortcut again or Esc"
-                        : "Cursor free · performance monitor ready"
+                    guard let self else { return }
+                    self.pointerCaptured = captured
+                    if self.captureArmed || self.touchRunning || self.midiHelperRunning {
+                        self.captureStatus = captured
+                            ? "Cursor captured · press the shortcut again or Esc"
+                            : "Cursor free · event monitor active"
+                    }
                 }
             }
             capture.onPanic = { [weak self] in
@@ -118,6 +129,8 @@ final class StudioController: ObservableObject {
 
     func panicStop() {
         captureMonitor?.stop()
+        captureArmed = false
+        captureHotkeyArmed = false
         clickedSurface = nil
         trackpadClickPressure = nil
         playback?.stop(closeDriver: true)
@@ -602,41 +615,60 @@ final class StudioController: ObservableObject {
         armed: Bool,
         shortcut: PerformanceCaptureShortcut
     ) {
-        captureHotkeyArmed = armed
+        guard shortcut.isValid else {
+            lastError = "Escape is reserved for Panic Stop. Choose another key or key combination."
+            return
+        }
         captureShortcut = shortcut
+        captureArmed = armed
+        captureHotkeyArmed = armed
+        if let data = try? JSONEncoder().encode(shortcut) {
+            UserDefaults.standard.set(data, forKey: "TIHULU.captureShortcut")
+        }
         captureMonitor?.setShortcut(shortcut)
         captureMonitor?.setCaptureHotkeyEnabled(armed)
-        if touchRunning || midiHelperRunning {
+        if armed || touchRunning || midiHelperRunning {
             startPerformanceEventMonitor()
+        } else {
+            stopCaptureMonitorIfIdle()
         }
-        if !armed { pointerCaptured = false }
+        if !armed {
+            captureMonitor?.releasePointer()
+            pointerCaptured = false
+        }
     }
 
     private func startPerformanceEventMonitor() {
-        guard touchRunning || midiHelperRunning else { return }
+        // A user-armed shortcut remains available in Voice, MIDI,
+        // Sequencers, Audio File, Speaker and Diagnostics, even before
+        // a Touch/Helper performance starts. OFF remains the default.
+        guard captureHotkeyArmed || touchRunning || midiHelperRunning else { return }
         guard let monitor = captureMonitor else { return }
         do {
             try monitor.start(shortcut: captureShortcut)
             monitor.setCaptureHotkeyEnabled(captureHotkeyArmed)
             captureStatus = captureHotkeyArmed
-                ? "Cursor free · press \(captureShortcut.rawValue) to capture"
-                : "Cursor free · capture hotkey not armed"
+                ? "Ready globally · \(captureShortcut.displayName) toggles capture · Esc stops all"
+                : "Cursor free · physical-click monitor active"
         } catch {
-            // Never block normal MIDI/haptic performance when macOS denies
-            // input capture. Physical click modes need this permission.
-            captureStatus = "Global input unavailable · Accessibility permission needed"
-            if captureHotkeyArmed { lastError = error.localizedDescription }
+            captureStatus = "Global capture unavailable · check Accessibility and Input Monitoring permissions"
+            if captureHotkeyArmed {
+                lastError = error.localizedDescription
+                captureArmed = false
+                captureHotkeyArmed = false
+                captureMonitor?.setCaptureHotkeyEnabled(false)
+            }
             pointerCaptured = false
         }
     }
 
     private func stopCaptureMonitorIfIdle() {
-        if !touchRunning && !midiHelperRunning {
+        if !captureHotkeyArmed && !touchRunning && !midiHelperRunning {
             captureMonitor?.stop()
             clickedSurface = nil
             trackpadClickPressure = nil
             pointerCaptured = false
-            captureStatus = "Cursor free · no active performance"
+            captureStatus = "Cursor free · global capture OFF"
         }
     }
 
