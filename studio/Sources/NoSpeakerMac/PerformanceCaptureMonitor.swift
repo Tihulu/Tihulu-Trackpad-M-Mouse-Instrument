@@ -70,6 +70,7 @@ public struct PerformanceCaptureDiagnosticSnapshot: Sendable {
     public let inputMonitoringGranted: Bool
     public let eventTapCreated: Bool
     public let eventTapEnabled: Bool
+    public let dedicatedInputThread: Bool
     public let listening: Bool
     public let shortcutArmed: Bool
     public let pointerCaptured: Bool
@@ -89,7 +90,14 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     private let lock = NSLock()
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var inputRunLoop: CFRunLoop?
+    private var inputThread: Thread?
+    private var inputGeneration: UInt64 = 0
     private var listening = false
+
+    private final class StartGate: @unchecked Sendable {
+        let ready = DispatchSemaphore(value: 0)
+    }
     private var captured = false
     private var shortcut: PerformanceCaptureShortcut = .defaultShortcut
     private var captureHotkeyEnabled = false
@@ -106,6 +114,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         let port = eventTap
         let result = (
             listening: listening,
+            dedicatedInputThread: inputRunLoop != nil,
             shortcutArmed: captureHotkeyEnabled,
             pointerCaptured: captured,
             keyDownEvents: keyDownEvents,
@@ -121,6 +130,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             inputMonitoringGranted: CGPreflightListenEventAccess(),
             eventTapCreated: port != nil,
             eventTapEnabled: port.map { CGEvent.tapIsEnabled(tap: $0) } ?? false,
+            dedicatedInputThread: result.dedicatedInputThread,
             listening: result.listening,
             shortcutArmed: result.shortcutArmed,
             pointerCaptured: result.pointerCaptured,
@@ -226,31 +236,109 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             throw PerformanceCaptureError.tapUnavailable
         }
 
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, CFRunLoopMode.commonModes)
-        CGEvent.tapEnable(tap: port, enable: true)
+        // A filtering tap must not share SwiftUI's main run loop: when UI,
+        // system-audio processing or macOS Continuity work stalls that loop,
+        // macOS disables the tap, immediately releasing a captured cursor.
+        // The background thread only performs event filtering; AppKit UI
+        // callbacks are dispatched asynchronously by the StudioController.
+        let gate = StartGate()
         lock.lock()
+        inputGeneration &+= 1
+        let generation = inputGeneration
         eventTap = port
         runLoopSource = source
-        listening = true
+        listening = false
         captured = false
-        lastEventTapStatus = "Started"
+        let thread = Thread { [self] in
+            runEventTapLoop(generation: generation, gate: gate)
+        }
+        thread.name = "TIHULU Global Input Capture"
+        thread.qualityOfService = .userInteractive
+        inputThread = thread
         lock.unlock()
+        thread.start()
+
+        // This is a one-time startup handshake, never a per-event wait.
+        guard gate.ready.wait(timeout: .now() + .seconds(3)) == .success else {
+            markEventTapStatus("Dedicated event tap thread failed to start")
+            stop()
+            throw PerformanceCaptureError.tapUnavailable
+        }
+        lock.lock()
+        let started = listening && inputGeneration == generation
+        lock.unlock()
+        guard started && CGEvent.tapIsEnabled(tap: port) else {
+            markEventTapStatus("Dedicated event tap was not enabled")
+            stop()
+            throw PerformanceCaptureError.tapUnavailable
+        }
         onCaptureChanged?(false)
+    }
+
+    private func runEventTapLoop(generation: UInt64, gate: StartGate) {
+        lock.lock()
+        let valid = generation == inputGeneration
+        let port = valid ? eventTap : nil
+        let source = valid ? runLoopSource : nil
+        lock.unlock()
+        guard let port, let source else {
+            gate.ready.signal()
+            return
+        }
+
+        let loop = CFRunLoopGetCurrent()
+        CFRunLoopAddSource(loop, source, CFRunLoopMode.commonModes)
+        CGEvent.tapEnable(tap: port, enable: true)
+        lock.lock()
+        let shouldRun = generation == inputGeneration
+        if shouldRun {
+            inputRunLoop = loop
+            listening = true
+            lastEventTapStatus = "Started on dedicated event thread"
+        }
+        lock.unlock()
+        gate.ready.signal()
+        if shouldRun { CFRunLoopRun() }
+
+        CGEvent.tapEnable(tap: port, enable: false)
+        CFRunLoopRemoveSource(loop, source, CFRunLoopMode.commonModes)
+        CFMachPortInvalidate(port)
+        lock.lock()
+        if generation == inputGeneration {
+            inputRunLoop = nil
+            inputThread = nil
+            eventTap = nil
+            runLoopSource = nil
+            listening = false
+            captured = false
+        }
+        lock.unlock()
     }
 
     public func stop() {
         lock.lock()
+        inputGeneration &+= 1
         let port = eventTap
-        let source = runLoopSource
+        let loop = inputRunLoop
+        let pendingThread = inputThread != nil
         eventTap = nil
         runLoopSource = nil
+        inputRunLoop = nil
+        inputThread = nil
         listening = false
         captured = false
         // Retain the last failure reason for diagnosis; do not erase it.
         lock.unlock()
 
-        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, CFRunLoopMode.commonModes) }
-        if let port { CGEvent.tapEnable(tap: port, enable: false); CFMachPortInvalidate(port) }
+        if let port { CGEvent.tapEnable(tap: port, enable: false) }
+        if let loop {
+            CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes) {
+                CFRunLoopStop(CFRunLoopGetCurrent())
+            }
+            CFRunLoopWakeUp(loop)
+        } else if !pendingThread, let port {
+            CFMachPortInvalidate(port)
+        }
         onCaptureChanged?(false)
     }
 
@@ -276,7 +364,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             lock.unlock()
             // Fail open immediately: never leave the pointer captured after the
             // system disables this event tap. A timeout can be transient when the
-            // main run loop is busy rendering haptics or the SwiftUI interface.
+            // macOS or other system services temporarily delay event delivery.
             releasePointer()
             if type == .tapDisabledByTimeout {
                 lock.lock()
