@@ -661,7 +661,13 @@ final class StudioController: ObservableObject {
             trackpadClickDown: clickedSurface == .trackpad,
             magicMouseClickDown: clickedSurface == .magicMouse
         )
-        touchInstrumentSustainActive = snapshot.isActive && touchMIDIOutEnabled
+        let hapticsEnabled = currentTouchConfiguration.localHapticSound &&
+            currentTouchConfiguration.selectedSurfaces.contains {
+                currentTouchConfiguration.output(for: $0).sendsHaptics
+            }
+        touchInstrumentSustainActive = snapshot.isActive &&
+            (touchMIDIOutEnabled || hapticsEnabled)
+        touch?.setSustainActive(snapshot.isActive && hapticsEnabled)
         if touchMIDIOutEnabled {
             midi?.setTouchSustain(
                 snapshot.isActive,
