@@ -631,6 +631,76 @@ final class StudioController: ObservableObject {
         )
     }
 
+    /// Read-only report for the Diagnostics panel. Never records key contents,
+    /// typed text, device identifiers, user paths, or private recordings.
+    func globalCaptureDiagnosticReport() -> String {
+        let os = ProcessInfo.processInfo.operatingSystemVersionString
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development"
+        let build = Bundle.main.infoDictionary?["NoSpeakerBuildSHA"] as? String ?? "unknown"
+        guard let snapshot = captureMonitor?.diagnosticSnapshot() else {
+            return """
+            TIHULU Global Capture Diagnostics
+            App version: \(version), build: \(build)
+            macOS: \(os)
+            Capture monitor: NOT INITIALIZED
+            Haptic engine ready: \(engineReady)
+            Last engine status: \(engineStatus)
+            Action: Check the engine error in the top bar and use Reconnect.
+            """
+        }
+
+        func yesNo(_ yes: Bool) -> String { yes ? "YES" : "NO" }
+
+        let suggestion: String
+        if !snapshot.accessibilityGranted {
+            suggestion = "Accessibility permission not granted. Enable this installed app in Privacy & Security > Accessibility, then quit and reopen."
+        } else if !snapshot.inputMonitoringGranted && !snapshot.eventTapEnabled {
+            suggestion = "Input Monitoring preflight is not granted and the event tap is inactive. Inspect Privacy & Security > Input Monitoring, quit and reopen."
+        } else if captureArmed && !snapshot.eventTapCreated {
+            suggestion = "Capture is armed, but no event tap exists. Disable and re-enable Global Capture; inspect the status and macOS permissions."
+        } else if captureArmed && !snapshot.eventTapEnabled {
+            suggestion = "Capture is armed, but macOS reports the event tap disabled. Re-enable Global Capture; check the timeout/disable counters."
+        } else if !captureArmed {
+            suggestion = "Global Capture is OFF. Arm it, refresh this report, switch to another app, press the recorded shortcut twice, then refresh again."
+        } else if snapshot.shortcutMatches == 0 {
+            suggestion = "Tap is enabled but no shortcut match has been observed since app start. Press the recorded combination in another app and compare Key downs / Shortcut matches."
+        } else {
+            suggestion = "Shortcut matches are observed. If the cursor still moves when captured, compare pointer counts and Pointer captured while using another app."
+        }
+
+        return """
+        TIHULU Global Capture Diagnostics (read-only)
+        App version: \(version)
+        Build: \(build)
+        macOS: \(os)
+        Haptic engine ready: \(yesNo(engineReady))
+        Global Capture toggle: \(yesNo(captureArmed))
+        Recorded shortcut: \(captureShortcut.displayName)
+        Accessibility trusted: \(yesNo(snapshot.accessibilityGranted))
+        Input Monitoring preflight: \(yesNo(snapshot.inputMonitoringGranted))
+        Event tap created: \(yesNo(snapshot.eventTapCreated))
+        Event tap enabled by macOS: \(yesNo(snapshot.eventTapEnabled))
+        Monitor listening flag: \(yesNo(snapshot.listening))
+        Shortcut armed inside monitor: \(yesNo(snapshot.shortcutArmed))
+        Pointer captured: \(yesNo(snapshot.pointerCaptured))
+        Key-down events observed: \(snapshot.keyDownEvents)
+        Pointer events observed: \(snapshot.pointerEvents)
+        Matched shortcuts: \(snapshot.shortcutMatches)
+        Event tap timeouts: \(snapshot.tapTimeouts)
+        Event tap disabled by system/user: \(snapshot.tapDisabledByUserInput)
+        Last event tap status: \(snapshot.lastEventTapStatus)
+        Current capture status: \(captureStatus)
+        Touch instrument running: \(yesNo(touchRunning))
+        Touch preview running: \(yesNo(touchPreviewRunning))
+        MIDI helper running: \(yesNo(midiHelperRunning))
+        Suggested next check: \(suggestion)
+
+        Note: Counts start when this app process launches. The Input Monitoring
+        preflight is an OS permission hint, not proof that a filtering event tap
+        is operational. Raw keystrokes and typed text are NEVER saved here.
+        """
+    }
+
     func configurePerformanceCapture(
         armed: Bool,
         shortcut: PerformanceCaptureShortcut

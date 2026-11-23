@@ -78,6 +78,16 @@ Drop a short WAV and MP3. Test all four conversion profiles.
 6. Grant/revoke Accessibility and Input Monitoring separately on the installed application and check fail-open behavior. Expect manual macOS permission checks and restart when permissions change.
 7. Run haptic playback and Logic MIDI while the capture monitor is enabled; verify monitor errors never silence a still-functional driver. Check repeated stop/reconnect cycles do not leave the pointer suppressed.
 
+## Gate J — Global capture diagnostic counter test (v0.2.2)
+
+1. With Global Capture disabled, open Diagnostics and refresh. Confirm no new OS permission prompt is shown and the event tap is not started solely by taking a snapshot.
+2. Enable Global Capture and refresh. Record the Accessibility trust, Input Monitoring preflight, Event Tap Created and Event Tap Enabled fields.
+3. Switch to TextEdit (outside the instrument app), press the recorded shortcut once, attempt pointer movement, press the shortcut again, and return to Diagnostics. Confirm the **Matched shortcuts** counter rose by two and the cursor was suppressed only between presses.
+4. If Key-down events increase but Matched shortcuts remains unchanged, reproduce with another shortcut combination. Record the discrepancy; do not mark a successful global capture.
+5. Check that Pointer events increase while moving the pointer, and that the report accurately identifies any timeout, OS disable or incomplete permission state.
+6. Copy the report and verify it contains no typed text, individual keypress history, private recordings, user paths or device serial numbers.
+7. Verify every mode retains the same capture shortcut; inspect MIDI/Touch Instrument separately because cursor suppression alone does not start an instrument.
+
 ## Release decision
 
 Record PASS/FAIL for every gate. Any private-framework crash, inability to panic-stop, or level-control regression blocks release.
