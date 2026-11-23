@@ -38,6 +38,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         switch zone {
         case .keys:
             let item = NSCustomTouchBarItem(identifier: identifier)
+            item.customizationLabel = "Fretted Piano"
             let labels = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G"]
             let piano = NSSegmentedControl(
                 labels: labels,
@@ -50,6 +51,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             return item
         case .sustain:
             let item = NSCustomTouchBarItem(identifier: identifier)
+            item.customizationLabel = "Sustain"
             if profile.sustainMode == .hold {
                 let button = HoldSustainButton(title: "Sustain Hold", target: nil, action: nil)
                 button.onPress = { [weak self] pressed in
@@ -64,8 +66,30 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
                 )
             }
             return item
-        case .fretless, .pitchBend, .vibrato, .expression, .filter:
+        case .fretless:
+            let item = NSCustomTouchBarItem(identifier: identifier)
+            item.customizationLabel = "Fretless Piano"
+            let slider = FretlessTouchSlider(
+                value: 0.5, minValue: 0, maxValue: 1,
+                target: self, action: #selector(sliderChanged(_:))
+            )
+            slider.tag = 2
+            slider.isContinuous = true
+            slider.onPress = { [weak self, weak slider] pressed in
+                guard let self else { return }
+                let note = self.profile.baseNote
+                self.controller?.touchBarKey(note, pressed: pressed)
+                if !pressed {
+                    // Neutralize pitch bend and let go of the note on release.
+                    self.controller?.touchBarValue(.fretless, normalized: 0.5)
+                    slider?.doubleValue = 0.5
+                }
+            }
+            item.view = slider
+            return item
+        case .pitchBend, .vibrato, .expression, .filter:
             let item = NSSliderTouchBarItem(identifier: identifier)
+            item.customizationLabel = zone.rawValue
             item.label = zone.rawValue
             item.slider.minValue = 0
             item.slider.maxValue = 1
@@ -112,6 +136,16 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     @objc private func sustainToggled(_ sender: NSButton) {
         controller?.touchBarSustainPressed(true)
         sender.title = controller?.touchBarSustainOn == true ? "Sustain ON" : "Sustain Toggle"
+    }
+}
+
+@MainActor
+private final class FretlessTouchSlider: NSSlider {
+    var onPress: ((Bool) -> Void)?
+    override func mouseDown(with event: NSEvent) {
+        onPress?(true)
+        super.mouseDown(with: event)
+        onPress?(false)
     }
 }
 
