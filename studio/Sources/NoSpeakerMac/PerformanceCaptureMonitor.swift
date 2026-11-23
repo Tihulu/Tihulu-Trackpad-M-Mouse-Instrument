@@ -113,7 +113,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             throw PerformanceCaptureError.tapUnavailable
         }
 
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes)
         CGEvent.tapEnable(tap: port, enable: true)
         lock.lock()
         eventTap = port
@@ -134,7 +134,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         captured = false
         lock.unlock()
 
-        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes) }
         if let port { CGEvent.tapEnable(tap: port, enable: false); CFMachPortInvalidate(port) }
         onCaptureChanged?(false)
     }
