@@ -1209,6 +1209,7 @@ private struct SustainSettingsPanel: View {
 private struct PerformanceShortcutRecorder: View {
     @EnvironmentObject private var studio: StudioController
     @State private var recording = false
+    @State private var previouslyArmed = false
     @State private var eventMonitor: Any?
 
     var body: some View {
@@ -1225,6 +1226,7 @@ private struct PerformanceShortcutRecorder: View {
     }
 
     private func beginRecording() {
+        previouslyArmed = studio.captureArmed
         studio.configurePerformanceCapture(armed: false, shortcut: studio.captureShortcut)
         recording = true
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -1250,23 +1252,30 @@ private struct PerformanceShortcutRecorder: View {
             let name = namedKeys[event.keyCode] ??
                 event.charactersIgnoringModifiers?.uppercased() ?? "Key \(event.keyCode)"
             studio.configurePerformanceCapture(
-                armed: false,
+                armed: previouslyArmed,
                 shortcut: PerformanceCaptureShortcut(
                     keyCode: Int64(event.keyCode), modifiers: mask,
                     displayName: prefix + name
                 )
             )
-            stopRecording()
+            stopRecording(restoreCapture: false)
             return nil
         }
     }
 
-    private func stopRecording() {
+    private func stopRecording(restoreCapture: Bool = true) {
+        guard recording else { return }
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
             self.eventMonitor = nil
         }
         recording = false
+        // Cancel/Esc or leaving the panel must not silently forget an
+        // already-enabled shortcut. Recording a replacement retains its state.
+        if restoreCapture && previouslyArmed {
+            studio.configurePerformanceCapture(armed: true, shortcut: studio.captureShortcut)
+        }
+        previouslyArmed = false
     }
 }
 
