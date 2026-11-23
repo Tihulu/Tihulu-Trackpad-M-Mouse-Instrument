@@ -82,3 +82,7 @@ The live system-audio path is a capture-and-convert feature. It is deliberately 
 ## Safety and cancellation
 
 `HapticSafetyPolicy` clamps frequencies, amplitudes, frame duration, tone count and overall level. The UI's Panic Stop cancels playback tasks, stops touch/MIDI/system-audio modes, and closes the actuator. Reconnect is explicit.
+
+## Experimental optional hinge angle source
+
+`MacBookHingeAngleSource.swift` samples a read-only IOKit HID feature report only after the user enables the experimental mode. The source is rejected when the HID signature or report is invalid; no sensor is activated during launch. At most 10 readings/second map through the calibrated TouchBarProfile. An unavailable hardware source falls back to on-screen manual angle input. The private HID behavior is based on research from [samhenrigold/LidAngleSensor](https://github.com/samhenrigold/LidAngleSensor) (Apache-2.0) and requires hardware validation.

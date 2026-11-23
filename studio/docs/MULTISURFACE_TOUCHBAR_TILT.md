@@ -28,9 +28,9 @@ Use **Touch Bar & Tilt** to select zones, reorder them, choose MIDI channel and 
 
 ## Lid angle / hinge mapping
 
-The **Screen hinge as an instrument** panel has a *manual angle simulator*. Its calibration maps an angle to CC74, CC11, CC1 or pitch bend. It does **not** claim to measure the real lid angle. No Apple-supported public API gives a reliable lid angle on every Mac. On some models a private IOKit HID interface exists; it is unverified and intentionally disabled until explicit hardware probing with a supported Mac and a fail-closed sensor adapter.
+The **Screen hinge as an instrument** panel has both a *manual angle simulator* and an opt-in **Live Hinge Angle Sensor (Experimental)** switch. When explicitly enabled, the app looks only for the Apple HID sensor signature reported by the open-source LidAngleSensor project, validates the feature report, and samples angle updates while active. It maps a calibrated 5°–175° reading to CC74, CC11, CC1 or pitch bend. If the sensor is absent or unsupported, no device is retained, monitoring stays OFF, and the manual simulator remains available. No Apple-supported public API provides a reliable lid angle on every Mac; a true-hardware PASS requires real-device validation.
 
-Possible future expressive presets (not yet implemented):
+Ideas for future expressive presets (not yet implemented):
 - Open the screen gently to swell filter cutoff or expression, with a 50°–135° calibrated range
 - Slow incline for crescendo / tempo nudge
 - Short hinge motion for vibrato depth, with dead zone and smoothing
@@ -45,10 +45,14 @@ Never operate a lid near closed positions where macOS may sleep. Do not automate
 3. Rotate Mouse Axis while touching and confirm vertical controls change in the specified direction; restore Horizontal.
 4. On a Touch Bar-equipped Mac, reorder three zones (Vibrato, Sustain, Pitch Bend) and verify all appear and affect the intended Logic channel. Confirm hold and toggle both release CC64.
 5. On a Touch Bar-less Mac, use the on-screen strip and validate note-on/note-off and slider control.
-6. Test hinge simulator in all mappings, with MIDI destination active; report actual hinge hardware support as **not tested** until a compatible adapter is implemented.
+6. Test hinge simulator in all mappings, then explicitly enable Live Hinge Angle Sensor. If the Mac exposes a usable sensor, confirm actual angle updates and MIDI targets. On unsupported Macs confirm an explicit unavailability message, no automatic polling, and continued simulator operation. Do not claim hardware compatibility without a reproduced test.
 7. Confirm Global Capture's emergency release remains available throughout the tests, even when another app is in front.
 8. Log any CoreMIDI OSStatus -2, macOS event-tap timeout, or physical touch preview interruption and block stability claims until tested.
 
 ## Rollback
 
 The stable v0.2.2 DMG remains available from Releases. This feature is developed in an unmerged branch until macOS Swift CI and hands-on hardware QA establish a compatible build.
+
+## Hinge sensor attribution
+
+The optional HID probe uses the sensor identification and feature-report mapping documented by [LidAngleSensor by Sam Gold](https://github.com/samhenrigold/LidAngleSensor), Apache-2.0. The adapter is an independently simplified, read-only implementation and does not copy the upstream application's UI or audio engine. Device-specific compatibility claims are not inherited from that project. Review its license and research before redistribution of derived code.

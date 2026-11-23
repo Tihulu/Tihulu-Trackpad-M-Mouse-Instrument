@@ -108,7 +108,7 @@ For **source installations**, a missing SVG-to-.icns renderer used to leave a ge
 
 ## Experimental multi-surface, Touch Bar, lid-angle and Turkish voices
 
-The **feature/multisurface-orientation-touchbar** development branch adds persistent independent Trackpad/Magic Mouse instrument/helper sessions, a global horizontal/vertical Magic Mouse orientation switch, customizable native/on-screen Touch Bar MIDI zones and an explicitly manual lid-angle MIDI simulator. The real hinge sensor remains **unverified** and is not used automatically. See [Multi-surface and Touch Bar guide](studio/docs/MULTISURFACE_TOUCHBAR_TILT.md).
+The **feature/multisurface-orientation-touchbar** development branch adds persistent independent Trackpad/Magic Mouse instrument/helper sessions, a global horizontal/vertical Magic Mouse orientation switch, customizable native/on-screen Touch Bar MIDI zones and an explicitly manual lid-angle MIDI simulator. The opt-in real hinge HID sensor probe is **unverified on the user's Mac** and disabled by default; a manual simulator remains available if the device is unsupported. See [Multi-surface and Touch Bar guide](studio/docs/MULTISURFACE_TOUCHBAR_TILT.md).
 
 For Turkish voice profiles beyond the macOS-provided voices, opt-in local Piper ONNX voice discovery is included. The app does not download or redistribute unlicensed model files. See [Additional Turkish voice profiles](studio/docs/VOICE_PROFILES_TR.md).
 
