@@ -106,6 +106,14 @@ If Logic Pro or the virtual MIDI bridge drops with **CoreMIDI OSStatus -2** (for
 
 For **source installations**, a missing SVG-to-.icns renderer used to leave a generic blank icon in the Dock. Source builds now require a real icon and will attempt `brew install librsvg` when Homebrew is available. They stop with a clear error otherwise; install Homebrew/librsvg and retry, or use the prebuilt DMG from Releases (which already bundles the icon). If macOS retains a cached Dock icon, quit the app and reopen the newly installed bundle.
 
+## Experimental multi-surface, Touch Bar, lid-angle and Turkish voices
+
+The **feature/multisurface-orientation-touchbar** development branch adds persistent independent Trackpad/Magic Mouse instrument/helper sessions, a global horizontal/vertical Magic Mouse orientation switch, customizable native/on-screen Touch Bar MIDI zones and an explicitly manual lid-angle MIDI simulator. The real hinge sensor remains **unverified** and is not used automatically. See [Multi-surface and Touch Bar guide](studio/docs/MULTISURFACE_TOUCHBAR_TILT.md).
+
+For Turkish voice profiles beyond the macOS-provided voices, opt-in local Piper ONNX voice discovery is included. The app does not download or redistribute unlicensed model files. See [Additional Turkish voice profiles](studio/docs/VOICE_PROFILES_TR.md).
+
+These are **development features pending macOS CI and physical Mac acceptance**; do not mistake them for a completed stable DMG release.
+
 ## Requirements and safety
 
 - macOS 13 or newer; SwiftUI native app.
