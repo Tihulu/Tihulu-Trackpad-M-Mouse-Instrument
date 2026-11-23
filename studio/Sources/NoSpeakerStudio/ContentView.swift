@@ -13,7 +13,7 @@ struct ContentView: View {
             List(StudioMode.allCases, selection: $mode) { item in
                 Label(item.rawValue, systemImage: icon(for: item)).tag(item)
             }
-            .navigationTitle("NoSpeaker Studio")
+            .navigationTitle("TIHULU Instrument")
             .safeAreaInset(edge: .bottom) { attribution }
         } detail: {
             VStack(spacing: 0) {
@@ -36,7 +36,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .alert("NoSpeaker Studio", isPresented: Binding(
+        .alert("Tihulu Trackpad & M. Mouse Instrument", isPresented: Binding(
             get: { studio.lastError != nil },
             set: { if !$0 { studio.lastError = nil } }
         )) {
@@ -121,7 +121,7 @@ private struct VoiceModeView: View {
     @State private var text = "Hello from the trackpad."
     @State private var selectedLanguage: VoiceLanguage = .english
     @State private var selectedVoice = ""
-    @State private var voices: [String] = []
+    @State private var voices: [VoiceOption] = []
 
     var body: some View {
         ScrollView {
@@ -142,10 +142,12 @@ private struct VoiceModeView: View {
                         if voices.isEmpty {
                             Text("No installed voice").tag("")
                         } else {
-                            ForEach(voices, id: \.self) { Text($0).tag($0) }
+                            ForEach(voices) { option in
+                                Text(option.title).tag(option.id)
+                            }
                         }
                     }
-                    .frame(maxWidth: 320)
+                    .frame(maxWidth: 440)
 
                     Button("Speak on Trackpad") {
                         studio.speak(text, voice: selectedVoice.isEmpty ? nil : selectedVoice)
@@ -157,16 +159,19 @@ private struct VoiceModeView: View {
                 }
 
                 if voices.isEmpty {
-                    Text("No \(selectedLanguage.rawValue) macOS voice is installed. Add one in System Settings → Accessibility → Spoken Content → System Voice.")
+                    Text("No \(selectedLanguage.rawValue) voice is installed. Open System Settings → Accessibility → Spoken Content (or Read & Speak) → System Voice → Manage Voices to add languages and Enhanced/Premium voices.")
                         .font(.callout)
                         .foregroundStyle(.orange)
                 } else {
-                    Text("\(selectedLanguage.rawValue) · \(voices.count) installed voice\(voices.count == 1 ? "" : "s")")
+                    Text("\(selectedLanguage.rawValue) · \(voices.count) available voice option\(voices.count == 1 ? "" : "s") (macOS say + Apple AVSpeech)")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
 
-                Text("Speech is rendered locally with macOS `say`, analyzed locally, and sent to the haptic motor. No cloud service is required.")
+                Text("Speech stays on your Mac. The app lists installed macOS say voices plus additional Enhanced/Premium AVSpeech voices when available. Turkish voice counts depend on what is actually installed in macOS; the app does not fabricate or automatically download voice models.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Button("Refresh Installed Voices") { reloadVoices() }
+                    .buttonStyle(.bordered)
                     .font(.callout).foregroundStyle(.secondary)
             }.padding(28)
         }
@@ -175,9 +180,9 @@ private struct VoiceModeView: View {
     }
 
     private func reloadVoices() {
-        voices = VoiceHapticService.installedVoices(language: selectedLanguage)
-        if !voices.contains(selectedVoice) {
-            selectedVoice = voices.first ?? ""
+        voices = VoiceHapticService.voiceOptions(language: selectedLanguage)
+        if !voices.contains(where: { $0.id == selectedVoice }) {
+            selectedVoice = voices.first?.id ?? ""
         }
     }
 }
@@ -1474,10 +1479,10 @@ private struct AboutView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                PageHeader(title: "About NoSpeaker Studio", subtitle: "A native macOS haptic-audio workstation built from the nospeaker experiment.")
+                PageHeader(title: "About Tihulu Trackpad & M. Mouse Instrument", subtitle: "A native macOS expressive trackpad, Magic Mouse and haptic MIDI workstation.")
                 GroupBox("Upstream credit") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("NoSpeaker Studio is based on nospeaker by Cody Collier (os6).").font(.headline)
+                        Text("Tihulu Trackpad & M. Mouse Instrument is based on nospeaker by Cody Collier (os6).").font(.headline)
                         Text("Upstream: https://github.com/os6/nospeaker")
                         Text("Initial compatibility baseline: nospeaker v1.0 · 64c5fbf493fab0a79382c8e101de8d80083b0d5c")
                         Text("License: MIT")
