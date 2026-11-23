@@ -15,21 +15,33 @@ public enum VoiceHapticError: LocalizedError {
     }
 }
 
+public enum VoiceLanguage: String, CaseIterable, Identifiable, Sendable {
+    case english = "English"
+    case turkish = "Turkish"
+    case german = "German"
+
+    public var id: String { rawValue }
+
+    public var localePrefix: String {
+        switch self {
+        case .english: return "en"
+        case .turkish: return "tr"
+        case .german: return "de"
+        }
+    }
+}
+
 public enum VoiceHapticService {
     public static func installedVoices() -> [String] {
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
-        process.arguments = ["-v", "?"]
-        process.standardOutput = pipe
-        guard (try? process.run()) != nil else { return [] }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let text = String(data: data, encoding: .utf8) ?? ""
-        return text.split(separator: "\n").compactMap { line in
-            let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
-            return fields.first.map(String.init)
-        }
+        Array(Set(AVSpeechSynthesisVoice.speechVoices().map(\.name))).sorted()
+    }
+
+    public static func installedVoices(language: VoiceLanguage) -> [String] {
+        Array(Set(
+            AVSpeechSynthesisVoice.speechVoices()
+                .filter { $0.language.lowercased().hasPrefix(language.localePrefix) }
+                .map(\.name)
+        )).sorted()
     }
 
     public static func render(text: String, voice: String? = nil) throws -> [ScheduledHapticEvent] {
