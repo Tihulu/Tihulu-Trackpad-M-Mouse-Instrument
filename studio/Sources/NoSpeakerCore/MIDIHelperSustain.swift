@@ -12,6 +12,15 @@ public enum TrackpadSustainGesture: String, CaseIterable, Identifiable, Sendable
     public var id: String { rawValue }
 }
 
+/// Explicit sensor source for the Trackpad Contact Threshold sustain mode.
+/// CoreGraphics click pressure is experimental and requires a physical click.
+public enum TrackpadSustainSensor: String, CaseIterable, Identifiable, Sendable {
+    case contactSize = "Contact Size"
+    case clickPressure = "Click Pressure (Experimental)"
+
+    public var id: String { rawValue }
+}
+
 public enum MagicMouseSustainGesture: String, CaseIterable, Identifiable, Sendable {
     case touchHold = "Touch Hold"
     case tapToggle = "Tap Toggle"
@@ -26,6 +35,7 @@ public struct MIDIHelperSustainSettings: Sendable, Equatable {
     public var trackpadEnabled: Bool
     public var trackpadContactThreshold: Double
     public var trackpadGesture: TrackpadSustainGesture
+    public var trackpadSensor: TrackpadSustainSensor
     public var magicMouseEnabled: Bool
     public var magicMouseGesture: MagicMouseSustainGesture
 
@@ -34,11 +44,13 @@ public struct MIDIHelperSustainSettings: Sendable, Equatable {
         trackpadContactThreshold: Double = 0.55,
         magicMouseEnabled: Bool = false,
         magicMouseGesture: MagicMouseSustainGesture = .touchHold,
-        trackpadGesture: TrackpadSustainGesture = .contactThreshold
+        trackpadGesture: TrackpadSustainGesture = .contactThreshold,
+        trackpadSensor: TrackpadSustainSensor = .contactSize
     ) {
         self.trackpadEnabled = trackpadEnabled
         self.trackpadContactThreshold = trackpadContactThreshold
         self.trackpadGesture = trackpadGesture
+        self.trackpadSensor = trackpadSensor
         self.magicMouseEnabled = magicMouseEnabled
         self.magicMouseGesture = magicMouseGesture
     }
@@ -98,7 +110,8 @@ public struct MIDIHelperSustainState: Sendable {
         magicMouseTouching: Bool,
         settings: MIDIHelperSustainSettings,
         trackpadClickDown: Bool = false,
-        magicMouseClickDown: Bool = false
+        magicMouseClickDown: Bool = false,
+        trackpadClickPressure: Double? = nil
     ) -> MIDIHelperSustainSnapshot {
         let threshold = max(0.05, min(1, settings.trackpadContactThreshold))
         let contactSize = trackpadContactSizes
@@ -115,9 +128,24 @@ public struct MIDIHelperSustainState: Sendable {
         } else {
             switch settings.trackpadGesture {
             case .contactThreshold:
-                let releaseThreshold = max(0, threshold - 0.08)
-                trackpadHeld = trackpadTouching && (trackpadHeld
-                    ? contactSize >= releaseThreshold : contactSize >= threshold)
+                let sensorValue: Double?
+                switch settings.trackpadSensor {
+                case .contactSize:
+                    sensorValue = trackpadTouching ? contactSize : nil
+                case .clickPressure:
+                    // CGEvent mouse-button pressure is not calibrated Force
+                    // Touch force. Missing values do not fall back to size.
+                    sensorValue = trackpadClickDown ? trackpadClickPressure : nil
+                }
+                if let value = sensorValue, value.isFinite {
+                    let normalized = max(0, min(1, value))
+                    let releaseThreshold = max(0, threshold - 0.08)
+                    trackpadHeld = trackpadHeld
+                        ? normalized >= releaseThreshold
+                        : normalized >= threshold
+                } else {
+                    trackpadHeld = false
+                }
                 trackpadActive = trackpadHeld
             case .touchHold:
                 trackpadLatched = false
