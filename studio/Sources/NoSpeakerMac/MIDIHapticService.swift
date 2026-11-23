@@ -389,9 +389,9 @@ public final class MIDIHapticService: @unchecked Sendable {
             if midiMode == .mpe {
                 // Sustain on MPE member channels carrying notes; do not target
                 // GM drum Channel 10 or unrelated DAW tracks.
-                target = Set(outgoingTouches.values
+                target = previous.union(Set(outgoingTouches.values
                     .filter { $0.channel != GMDrumPads.midiChannel }
-                    .map(\.channel))
+                    .map(\.channel)))
             } else {
                 let requested = max(0, min(15, baseChannel))
                 let hasDrums = configuration.selectedSurfaces.contains {
