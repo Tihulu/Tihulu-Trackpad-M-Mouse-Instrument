@@ -235,6 +235,8 @@ private struct TouchInstrumentView: View {
     @State private var sustainMouseEnabled = false
     @State private var sustainMouseGesture: MagicMouseSustainGesture = .touchHold
 
+    private var effectivePitchSpan: Double { 24.0 / zoneWidth }
+
     private var mappedMIDINotes: [Int] {
         scale.mappedMIDINotes(root: root, zoneWidth: zoneWidth)
     }
@@ -259,7 +261,7 @@ private struct TouchInstrumentView: View {
             scale: scale,
             fretless: fretless,
             zoneWidth: zoneWidth,
-            pitchSpanSemitones: pitchSpan,
+            pitchSpanSemitones: effectivePitchSpan,
             surfaceSelection: surfaceSelection,
             triggerMode: triggerMode,
             pressThreshold: pressThreshold,
@@ -388,26 +390,20 @@ private struct TouchInstrumentView: View {
                             .frame(width: 170)
                             .disabled(studio.touchRunning)
 
-                        if fretless {
-                            Picker("Pitch Span", selection: $pitchSpan) {
-                                Text("±2 st").tag(4.0)
-                                Text("±5 st").tag(10.0)
-                                Text("±12 st / 2 oct").tag(24.0)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(fretless ? "Pitch Size" : "Note Width")
+                                Spacer()
+                                Text(String(format: "%.2fx", zoneWidth)).monospacedDigit()
                             }
-                            .frame(width: 190)
-                            .disabled(studio.touchRunning)
-                        } else {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text("Note Width")
-                                    Spacer()
-                                    Text(String(format: "%.2fx", zoneWidth)).monospacedDigit()
-                                }
-                                Slider(value: $zoneWidth, in: 0.5...2.0, step: 0.05)
+                            Slider(value: $zoneWidth, in: 0.5...2.0, step: 0.05)
+                            if fretless {
+                                Text(String(format: "%.1f semitones across surface", effectivePitchSpan))
+                                    .font(.caption2).foregroundStyle(.secondary)
                             }
-                            .frame(width: 180)
-                            .disabled(studio.touchRunning)
                         }
+                        .frame(width: 215)
+                        .disabled(studio.touchRunning)
                     }
 
                     if hasDrums {
@@ -601,10 +597,6 @@ private struct TouchInstrumentView: View {
         }
         .task {
             studio.startTouchPreview(configuration: configuration)
-            studio.configurePerformanceCapture(
-                armed: captureArmed,
-                shortcut: captureShortcut
-            )
         }
         .onDisappear {
             studio.stopTouchPreview()
@@ -653,7 +645,7 @@ private struct TouchInstrumentView: View {
                 instrument: instrument,
                 rootMIDI: root,
                 fretless: fretless,
-                pitchSpan: pitchSpan,
+                pitchSpan: effectivePitchSpan,
                 states: studio.touchStates.filter { $0.surface == surface },
                 active: studio.touchRunning,
                 surfaceSelection: surface == .trackpad ? .trackpad : .magicMouse
