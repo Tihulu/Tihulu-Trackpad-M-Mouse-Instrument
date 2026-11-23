@@ -151,9 +151,12 @@ public enum VoiceHapticService {
                 if name.localizedCaseInsensitiveContains("dfki") ||
                     name.localizedCaseInsensitiveContains("fahrettin") {
                     gender = " · Male"
-                } else if name.localizedCaseInsensitiveContains("fettah") {
+                } else if name.localizedCaseInsensitiveContains("ilkiz") ||
+                            name.localizedCaseInsensitiveContains("female") {
                     gender = " · Female"
                 } else {
+                    // Voice-gender metadata can conflict between model catalogs;
+                    // do not label an unknown model by an inferred gender.
                     gender = ""
                 }
                 return VoiceOption(
