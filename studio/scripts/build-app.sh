@@ -6,11 +6,26 @@ cd "$(dirname "$0")/.."
 command -v swift >/dev/null 2>&1 || { echo "Swift is required. Install Xcode or Apple Command Line Tools." >&2; exit 1; }
 command -v codesign >/dev/null 2>&1 || { echo "codesign is required." >&2; exit 1; }
 
-echo "==> Tests"
-swift test
+if [ "${NOSPEAKER_STUDIO_SKIP_TESTS:-0}" = "1" ]; then
+    echo "==> Tests skipped for installer build"
+else
+    echo "==> Tests"
+    swift test
+fi
 
 echo "==> Release build"
-swift build -c release
+if ! swift build -c release; then
+    echo >&2
+    echo "NoSpeaker Studio release build failed." >&2
+    echo "Developer directory: $(xcode-select -p 2>/dev/null || echo unavailable)" >&2
+    echo "SDK path: $(xcrun --sdk macosx --show-sdk-path 2>/dev/null || echo unavailable)" >&2
+    echo >&2
+    echo "If Command Line Tools are incomplete, install/update Xcode or reinstall the tools:" >&2
+    echo "  xcode-select --install" >&2
+    echo >&2
+    exit 1
+fi
+
 BIN_DIR=$(swift build -c release --show-bin-path)
 BIN="$BIN_DIR/NoSpeakerStudio"
 [ -x "$BIN" ] || { echo "Release binary not found at $BIN" >&2; exit 1; }

@@ -78,7 +78,7 @@ SOURCE_ROOT="$(find "$TMP/source" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 
 (
     cd "$SOURCE_ROOT/studio"
-    ./scripts/build-app.sh
+    NOSPEAKER_STUDIO_SKIP_TESTS=1 ./scripts/build-app.sh
 )
 
 install_app "$SOURCE_ROOT/studio/dist/$APP_NAME"
