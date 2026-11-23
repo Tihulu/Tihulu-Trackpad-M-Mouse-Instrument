@@ -93,6 +93,34 @@ public enum HapticPatternRenderer {
         }.sorted { $0.time < $1.time }
     }
 
+    /// Touch pads reuse the sequencer's six established voices. Additional
+    /// GM pads have distinct, conservative haptic profiles rather than
+    /// treating a percussion note number as an equal-tempered pitch.
+    public static func drumFrame(midiNote: Int, velocity: Double) -> HapticFrame? {
+        let level = min(max(velocity, 0), 1)
+        switch midiNote {
+        case 36: return drumFrame(.kick, velocity: level)
+        case 38: return drumFrame(.snare, velocity: level)
+        case 42: return drumFrame(.closedHat, velocity: level)
+        case 46: return drumFrame(.openHat, velocity: level)
+        case 39: return drumFrame(.clap, velocity: level)
+        case 47: return drumFrame(.tom, velocity: level)
+        case 37: return .init(tones: [.init(frequencyHz: 1100), .init(frequencyHz: 2400, amplitude: 0.4)], durationMS: 15, level: level)
+        case 45: return .init(tones: [.init(frequencyHz: 165)], durationMS: 90, level: level)
+        case 50: return .init(tones: [.init(frequencyHz: 320)], durationMS: 65, level: level)
+        case 49: return .init(tones: [.init(frequencyHz: 2800), .init(frequencyHz: 3900, amplitude: 0.7)], durationMS: 105, level: level * 0.75)
+        case 51: return .init(tones: [.init(frequencyHz: 2100), .init(frequencyHz: 3400, amplitude: 0.5)], durationMS: 90, level: level * 0.7)
+        case 56: return .init(tones: [.init(frequencyHz: 560), .init(frequencyHz: 845, amplitude: 0.8)], durationMS: 55, level: level)
+        case 35: return .init(tones: [.init(frequencyHz: 100), .init(frequencyHz: 180, amplitude: 0.35)], durationMS: 85, level: level)
+        case 40: return .init(tones: [.init(frequencyHz: 500, amplitude: 0.4), .init(frequencyHz: 2200)], durationMS: 50, level: level)
+        case 44: return .init(tones: [.init(frequencyHz: 3100)], durationMS: 24, level: level * 0.7)
+        case 54: return .init(tones: [.init(frequencyHz: 1750, amplitude: 0.5), .init(frequencyHz: 3600)], durationMS: 45, level: level * 0.75)
+        default:
+            guard let voice = MIDIDrumMap.voice(for: midiNote) else { return nil }
+            return drumFrame(voice, velocity: level)
+        }
+    }
+
     public static func drumFrame(_ voice: DrumVoice, velocity: Double) -> HapticFrame {
         let level = min(max(velocity, 0), 1)
         switch voice {

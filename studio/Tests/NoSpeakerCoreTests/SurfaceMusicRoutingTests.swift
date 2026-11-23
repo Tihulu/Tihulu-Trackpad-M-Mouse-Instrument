@@ -33,3 +33,20 @@ import Testing
     #expect(SurfaceOutputRoute.both.sendsMIDI)
     #expect(SurfaceOutputRoute.both.sendsHaptics)
 }
+
+@Test func touchDrumsReuseSequencerAndHaveDistinctSafeProfiles() throws {
+    let pairs: [(Int, DrumVoice)] = [(36, .kick), (38, .snare), (42, .closedHat), (46, .openHat), (39, .clap), (47, .tom)]
+    for (note, voice) in pairs {
+        #expect(HapticPatternRenderer.drumFrame(midiNote: note, velocity: 0.8) == HapticPatternRenderer.drumFrame(voice, velocity: 0.8))
+    }
+    let frames = try GMDrumPads.standard.map { pad in
+        try #require(HapticPatternRenderer.drumFrame(midiNote: pad.midiNote, velocity: 0.8))
+    }
+    for (index, frame) in frames.enumerated() {
+        #expect(HapticSafetyPolicy().clamp(frame) == frame)
+        for other in frames.dropFirst(index + 1) {
+            #expect(frame != other)
+        }
+    }
+    #expect(HapticPatternRenderer.drumFrame(midiNote: 0, velocity: 0.8) == nil)
+}

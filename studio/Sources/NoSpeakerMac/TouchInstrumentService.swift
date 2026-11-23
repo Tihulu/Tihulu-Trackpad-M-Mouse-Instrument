@@ -200,6 +200,10 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var liveHapticStates: [TouchPerformanceState] = []
     private var sustainedHapticStates: [String: TouchPerformanceState] = [:]
     private var sustainActive = false
+    private var activeDrumContacts: Set<String> = []
+    private var pendingDrumHits: [HapticFrame] = []
+    // Accessed only on the serial render queue.
+    private var drumPriorityUntil = 0.0
     private var renderTimer: DispatchSourceTimer?
     private let renderQueue = DispatchQueue(
         label: "com.tihulu.nospeaker.touch-haptic-render",
@@ -241,6 +245,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
             sustainActive = false
             liveHapticStates.removeAll()
             sustainedHapticStates.removeAll()
+            activeDrumContacts.removeAll()
+            pendingDrumHits.removeAll()
         }
         lock.unlock()
 
@@ -264,7 +270,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.lock()
         sustainActive = isOn
         if isOn {
-            for state in liveHapticStates where configuration.output(for: state.surface).sendsHaptics {
+            for state in liveHapticStates where configuration.output(for: state.surface).sendsHaptics && configuration.instrument(for: state.surface) == .melodic {
                 sustainedHapticStates[state.id] = state
             }
         } else {
@@ -383,9 +389,27 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
         guard isActive else { return }
         lock.lock()
+        // A preview is never a percussion trigger. Only a new active contact
+        // queues a hit; holding/sliding a finger does not retrigger each tick.
+        guard active else { lock.unlock(); return }
+        let liveConfig = configuration
         liveHapticStates = combined.filter { $0.isDown }
+        let drums = liveHapticStates.filter {
+            liveConfig.localHapticSound &&
+            liveConfig.output(for: $0.surface).sendsHaptics &&
+            liveConfig.instrument(for: $0.surface) == .drums
+        }
+        for state in drums where !activeDrumContacts.contains(state.id) {
+            if pendingDrumHits.count < 16,
+               let hit = HapticPatternRenderer.drumFrame(
+                   midiNote: state.quantizedMIDI, velocity: Double(state.velocity) / 127
+               ) {
+                pendingDrumHits.append(hit)
+            }
+        }
+        activeDrumContacts = Set(drums.map(\.id))
         if sustainActive {
-            for state in liveHapticStates where config.output(for: state.surface).sendsHaptics {
+            for state in liveHapticStates where liveConfig.output(for: state.surface).sendsHaptics && liveConfig.instrument(for: state.surface) == .melodic {
                 sustainedHapticStates[state.id] = state
             }
         }
@@ -399,18 +423,38 @@ public final class TouchInstrumentService: @unchecked Sendable {
         let current = liveHapticStates
         let sustained = sustainedHapticStates
         let isSustained = sustainActive
+        let hits = pendingDrumHits
+        pendingDrumHits.removeAll(keepingCapacity: true)
         lock.unlock()
         guard shouldRender else { return }
 
+        let now = ProcessInfo.processInfo.systemUptime
+        if !hits.isEmpty {
+            for hit in hits {
+                lock.lock()
+                let stillActive = active && configuration.localHapticSound
+                lock.unlock()
+                guard stillActive else { return }
+                try? driver.play(hit, masterLevel: config.masterLevel)
+            }
+            drumPriorityUntil = now + (hits.map(\.durationMS).max() ?? 0) / 1000
+            return
+        }
+        // The motor is shared; give a one-shot drum its nominal duration
+        // before refreshing a continuous melodic voice.
+        guard now >= drumPriorityUntil else { return }
+
         var byID: [String: TouchPerformanceState] =
-            isSustained ? sustained : [:]
-        for state in current where config.output(for: state.surface).sendsHaptics {
+            isSustained ? sustained.filter {
+                config.output(for: $0.value.surface).sendsHaptics &&
+                config.instrument(for: $0.value.surface) == .melodic
+            } : [:]
+        for state in current where config.output(for: state.surface).sendsHaptics && config.instrument(for: state.surface) == .melodic {
             byID[state.id] = state
         }
         let sounding = byID.values.sorted { $0.id < $1.id }.prefix(6)
         guard !sounding.isEmpty else { return }
 
-        let now = ProcessInfo.processInfo.systemUptime
         var tones: [HapticTone] = []
         var level = 0.0
         for state in sounding {

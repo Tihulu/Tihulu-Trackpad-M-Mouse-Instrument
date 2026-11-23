@@ -52,6 +52,8 @@ jobs:
       - name: Install SVG icon renderer
         run: brew install librsvg
       - name: Build app bundle in installer mode
+        env:
+          TIHULU_BUILD_CHANNEL: ${{ github.ref == 'refs/heads/main' && 'stable' || 'preview' }}
         run: NOSPEAKER_STUDIO_SKIP_TESTS=1 NOSPEAKER_STUDIO_BUILD_SHA="$GITHUB_SHA" ./scripts/build-app.sh
       - name: Validate TIHULU app branding and icon
         run: |
@@ -65,3 +67,26 @@ jobs:
         with:
           name: TIHULU-Trackpad-Instrument-macOS-development
           path: studio/dist/Tihulu Trackpad & M. Mouse Instrument.app
+      - name: Package isolated preview DMG
+        if: github.ref != 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          APP="dist/Tihulu Trackpad & M. Mouse Instrument.app"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist" | grep -Fx 'com.tihulu.trackpadmmouseinstrument.preview'
+          /usr/libexec/PlistBuddy -c 'Print :TIHULUBuildChannel' "$APP/Contents/Info.plist" | grep -Fx 'preview'
+          codesign --verify --deep --verbose=2 "$APP"
+          mkdir -p dist/preview-dmg-staging
+          ditto "$APP" "dist/preview-dmg-staging/Tihulu Trackpad & M. Mouse Instrument Preview.app"
+          ln -s /Applications dist/preview-dmg-staging/Applications
+          hdiutil create -volname "TIHULU 0.3.0 Preview" -srcfolder dist/preview-dmg-staging -format UDZO -ov dist/Tihulu-0.3.0-preview.dmg
+          cd dist
+          shasum -a 256 Tihulu-0.3.0-preview.dmg > PREVIEW-SHA256SUMS
+      - name: Upload preview DMG without publishing a release
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: TIHULU-0.3.0-preview-DMG
+          path: |
+            studio/dist/Tihulu-0.3.0-preview.dmg
+            studio/dist/PREVIEW-SHA256SUMS
+          if-no-files-found: error

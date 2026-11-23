@@ -254,7 +254,8 @@ public enum VoiceHapticService {
         let prefix = language.localePrefix.lowercased()
         let say = installedVoiceRecords().filter { $0.locale.lowercased().hasPrefix(prefix) }
         var options: [VoiceOption] = say.map {
-            VoiceOption(id: "say:" + $0.name, title: $0.name + " · macOS say",
+            VoiceOption(id: "say:" + $0.name,
+                        title: (language == .turkish && $0.name.lowercased() == "yelda" ? "Tihulu" : $0.name) + " · macOS say",
                         language: $0.locale, backend: .say)
         }
         let existingNames = Set(say.map { $0.name.lowercased() })
@@ -273,7 +274,7 @@ public enum VoiceHapticService {
             if !existingNames.contains(av.name.lowercased()) || av.quality != .default {
                 options.append(VoiceOption(
                     id: "av:" + av.identifier,
-                    title: av.name + qualityLabel + " · Apple Speech",
+                    title: (language == .turkish && av.name.lowercased() == "yelda" ? "Tihulu" : av.name) + qualityLabel + " · Apple Speech",
                     language: av.language,
                     backend: .avSpeech
                 ))
