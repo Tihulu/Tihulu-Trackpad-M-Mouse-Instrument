@@ -83,6 +83,7 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
     public var trackpadOutput: SurfaceOutputRoute
     public var magicMouseOutput: SurfaceOutputRoute
     public var drumLayout: DrumPadLayout
+    public var magicMouseOrientation: SurfaceOrientation
 
     public init(
         baseMIDINote: Int = 67,
@@ -102,7 +103,8 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         magicMouseInstrument: SurfaceInstrumentMode = .melodic,
         trackpadOutput: SurfaceOutputRoute = .trackpadHaptic,
         magicMouseOutput: SurfaceOutputRoute = .midiInstrument,
-        drumLayout: DrumPadLayout = .standard12
+        drumLayout: DrumPadLayout = .standard12,
+        magicMouseOrientation: SurfaceOrientation = .horizontal
     ) {
         self.baseMIDINote = baseMIDINote
         self.scale = scale
@@ -122,6 +124,7 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         self.trackpadOutput = trackpadOutput
         self.magicMouseOutput = magicMouseOutput
         self.drumLayout = drumLayout
+        self.magicMouseOrientation = magicMouseOrientation
     }
 
     public func instrument(for surface: TouchSurfaceKind) -> SurfaceInstrumentMode {
@@ -323,8 +326,11 @@ public final class TouchInstrumentService: @unchecked Sendable {
         }
 
         let states = frame.contacts.map { contact -> TouchPerformanceState in
-            let x = min(0.9999, max(0, Double(contact.x)))
-            let y = min(1, max(0, Double(contact.y)))
+            let rawX = min(0.9999, max(0, Double(contact.x)))
+            let rawY = min(1, max(0, Double(contact.y)))
+            let (x, y) = contact.surface == .magicMouse
+                ? config.magicMouseOrientation.transformed(x: rawX, y: rawY)
+                : (rawX, rawY)
             let pressure = min(1, max(0, Double(contact.size)))
             let triggered = contact.isDown && (
                 config.triggerMode == .touch || pressure >= config.pressThreshold

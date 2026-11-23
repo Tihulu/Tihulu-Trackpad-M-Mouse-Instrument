@@ -81,6 +81,16 @@ struct ContentView: View {
                   set: { studio.configurePerformanceCapture(armed: $0, shortcut: studio.captureShortcut) }
               )).toggleStyle(.switch)
               PerformanceShortcutRecorder()
+              Picker("Mouse Axis", selection: Binding(
+                  get: { studio.magicMouseOrientation },
+                  set: { studio.setMagicMouseOrientation($0) }
+              )) {
+                  ForEach(SurfaceOrientation.allCases) { orientation in
+                      Text(orientation.rawValue).tag(orientation)
+                  }
+              }
+              .frame(width: 170)
+              .help("Rotate Magic Mouse gesture axes for all instrument and helper modes")
               Spacer()
               Label(studio.pointerCaptured ? "Pointer Captured" : "Pointer Free",
                     systemImage: studio.pointerCaptured ? "lock.fill" : "lock.open")

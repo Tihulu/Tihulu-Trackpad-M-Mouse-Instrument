@@ -23,6 +23,7 @@ final class StudioController: ObservableObject {
     @Published var touchRunning = false
     @Published var touchPreviewRunning = false
     @Published var touchContact = TrackpadContact()
+    @Published var magicMouseOrientation = SurfaceOrientation(rawValue: UserDefaults.standard.string(forKey: "TIHULU.magicMouseOrientation") ?? "") ?? .horizontal
     @Published var touchStates: [TouchPerformanceState] = []
     @Published var midiHelperStates: [TouchPerformanceState] = []
     @Published var midiHelperRunning = false
@@ -253,8 +254,19 @@ final class StudioController: ObservableObject {
         isPlaying = true
     }
 
+    func setMagicMouseOrientation(_ newOrientation: SurfaceOrientation) {
+        guard magicMouseOrientation != newOrientation else { return }
+        magicMouseOrientation = newOrientation
+        UserDefaults.standard.set(newOrientation.rawValue, forKey: "TIHULU.magicMouseOrientation")
+        var updated = currentTouchConfiguration
+        updated.magicMouseOrientation = newOrientation
+        updateTouchConfiguration(updated)
+    }
+
     func startTouchPreview(configuration: TouchInstrumentConfiguration) {
         guard requireEngine(), let touch else { return }
+        var configuration = configuration
+        configuration.magicMouseOrientation = magicMouseOrientation
         currentTouchConfiguration = configuration
 
         if touchPreviewRunning {
@@ -276,6 +288,8 @@ final class StudioController: ObservableObject {
     }
 
     func updateTouchConfiguration(_ configuration: TouchInstrumentConfiguration) {
+        var configuration = configuration
+        configuration.magicMouseOrientation = magicMouseOrientation
         currentTouchConfiguration = configuration
         touch?.update(configuration: configuration)
     }
@@ -304,6 +318,8 @@ final class StudioController: ObservableObject {
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
         guard requireEngine(), let touch else { return }
+        var configuration = configuration
+        configuration.magicMouseOrientation = magicMouseOrientation
         currentTouchConfiguration = configuration
         touchMIDIOutEnabled = midiOut
         touchMIDIMode = midiMode
@@ -451,7 +467,8 @@ final class StudioController: ObservableObject {
             fixedVelocity: 100,
             pressureToExpression: true,
             localHapticSound: false,
-            masterLevel: masterLevel
+            masterLevel: masterLevel,
+            magicMouseOrientation: magicMouseOrientation
         )
 
         touch.stopPreview()
@@ -479,7 +496,8 @@ final class StudioController: ObservableObject {
             fixedVelocity: 100,
             pressureToExpression: true,
             localHapticSound: false,
-            masterLevel: masterLevel
+            masterLevel: masterLevel,
+            magicMouseOrientation: magicMouseOrientation
         )
         touch?.update(configuration: config)
     }
