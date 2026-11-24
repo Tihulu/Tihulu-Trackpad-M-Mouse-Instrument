@@ -139,14 +139,18 @@ public final class RemoteLoopbackTransport: @unchecked Sendable {
 
     /// Host must consume invitation via R1 before accepting; acknowledge each
     /// processed frame only after R1 accepts it. A false result closes the peer.
-    public func acknowledge(_ id: UUID, accepted: Bool) {
+    public func acknowledge(_ id: UUID, accepted: Bool, capabilities: RemoteCapabilities? = nil) {
         queue.async { [self] in
             guard var peer = peers[id], peer.awaitingHost else { return }
             guard accepted else { close(id); return }
             let message: String
             if peer.gate.phase == .awaitingHost {
                 guard peer.gate.admit(now: ProcessInfo.processInfo.systemUptime) else { close(id); return }
+                guard capabilities == nil else { close(id); return }
                 message = "admitted"
+            } else if let capabilities {
+                guard let payload = try? capabilities.encoded(), let json = String(data: payload, encoding: .utf8) else { close(id); return }
+                message = json
             } else {
                 message = "accepted"
             }

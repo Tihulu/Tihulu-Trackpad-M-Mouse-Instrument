@@ -425,6 +425,7 @@ final class StudioController: ObservableObject {
         for action in result.actions {
             switch action {
             case .acknowledge(let id, let accepted): transport.acknowledge(id, accepted: accepted)
+            case .capabilities(let id, let capabilities): transport.acknowledge(id, accepted: true, capabilities: capabilities)
             case .revoke(let id): transport.revoke(id)
             case .stop: transport.stop()
             }
