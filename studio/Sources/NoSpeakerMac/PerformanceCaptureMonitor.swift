@@ -30,7 +30,11 @@ public struct PerformanceCaptureShortcut: Codable, Hashable, Sendable {
         displayName: "⌃⌥M"
     )
 
-    public var isValid: Bool { keyCode != 53 && keyCode >= 0 && !displayName.isEmpty }
+    public var isValid: Bool {
+        keyCode != 53 && (0...255).contains(keyCode) && modifiers & ~Self.allowedModifiers == 0 &&
+        !displayName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && displayName.utf8.count <= 128 &&
+        !displayName.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
 
     public func matches(_ event: CGEvent) -> Bool {
         event.getIntegerValueField(.keyboardEventKeycode) == keyCode &&
@@ -46,6 +50,22 @@ public enum PerformanceCaptureSafety {
         isCaptured: Bool, keyCode: Int64, isRepeat: Bool
     ) -> Bool {
         isCaptured && keyCode == 53 && !isRepeat
+    }
+}
+
+/// Pair swallowed downs/ups by hardware keycode, not changing modifiers.
+/// A repeat that began in another application is never captured.
+struct CaptureKeyEdges {
+    enum Action: Equatable { case pass, swallow, toggle, panic }
+    private var swallowed: Set<Int64> = []
+    mutating func reset() { swallowed.removeAll() }
+    mutating func handle(key:Int64,down:Bool,repeatKey:Bool,matches:Bool,armed:Bool,captured:Bool) -> Action {
+        if !down { return swallowed.remove(key) != nil ? .swallow : .pass }
+        if swallowed.contains(key) { return .swallow }
+        if repeatKey { return .pass }
+        if captured && key == 53 { swallowed.insert(key); return .panic }
+        if armed && matches { swallowed.insert(key); return .toggle }
+        return .pass
     }
 }
 
@@ -101,6 +121,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     private var captured = false
     private var shortcut: PerformanceCaptureShortcut = .defaultShortcut
     private var captureHotkeyEnabled = false
+    private var keyEdges = CaptureKeyEdges()
     private var keyDownEvents: UInt64 = 0
     private var pointerEvents: UInt64 = 0
     private var shortcutMatches: UInt64 = 0
@@ -314,6 +335,8 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             runLoopSource = nil
             listening = false
             captured = false
+            keyEdges.reset()
+            lastEventTapStatus = "Dedicated event loop exited"
         }
         lock.unlock()
     }
@@ -331,6 +354,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         listening = false
         captured = false
         captureHotkeyEnabled = false
+        keyEdges.reset()
         // Retain the last failure reason for diagnosis; do not erase it.
         lock.unlock()
 
@@ -342,6 +366,25 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             CFMachPortInvalidate(port)
         }
         onCaptureChanged?(false)
+    }
+
+    /// Explicit capture does not require a functioning shortcut but does
+    /// require the same active, authorized filtering tap and armed state.
+    @discardableResult
+    public func setPointerCaptured(_ value:Bool) -> Bool {
+        if !value { releasePointer(); return true }
+        lock.lock()
+        guard listening,captureHotkeyEnabled,let port = eventTap,
+              CGEvent.tapIsEnabled(tap:port),AXIsProcessTrusted() else {
+            captured = false
+            lock.unlock()
+            onCaptureChanged?(false)
+            return false
+        }
+        captured = true
+        lock.unlock()
+        onCaptureChanged?(true)
+        return true
     }
 
     public func releasePointer() {
@@ -397,39 +440,23 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
                 lock.unlock()
             }
 
-            // Esc is a global emergency kill switch ONLY while this monitor
-            // is running. Never require the user to recover the mouse first.
-            if type == .keyDown,
-               PerformanceCaptureSafety.shouldPanicOnGlobalEscape(
-                   isCaptured: isCaptured,
-                   keyCode: keyCode,
-                   isRepeat: repeatKey
-               ) {
-                releasePointer()
-                onPanic?()
-                return nil
-            }
-
             lock.lock()
-            let currentShortcut = shortcut
-            let hotkeyEnabled = captureHotkeyEnabled
-            lock.unlock()
-            let matches = currentShortcut.matches(event)
-            if matches && hotkeyEnabled {
-                if type == .keyDown, !repeatKey {
-                    lock.lock()
-                    guard listening && captureHotkeyEnabled && shortcut.matches(event) else {
-                        lock.unlock()
-                        return passthrough
-                    }
-                    shortcutMatches &+= 1
-                    captured.toggle()
-                    let newCaptureState = captured
-                    lock.unlock()
-                    onCaptureChanged?(newCaptureState)
-                }
-                return nil
+            let action = keyEdges.handle(key:keyCode,down:type == .keyDown,repeatKey:repeatKey,
+                                         matches:shortcut.matches(event),armed:listening && captureHotkeyEnabled,
+                                         captured:captured)
+            var changed: Bool?
+            if action == .toggle {
+                shortcutMatches &+= 1
+                captured.toggle()
+                changed = captured
+            } else if action == .panic {
+                captured = false
+                changed = false
             }
+            lock.unlock()
+            if let changed { onCaptureChanged?(changed) }
+            if action == .panic { onPanic?() }
+            if action != .pass { return nil }
             return passthrough
         }
 

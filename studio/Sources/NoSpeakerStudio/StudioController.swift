@@ -212,6 +212,7 @@ final class StudioController: ObservableObject {
     private var touchSustainSettings = MIDIHelperSustainSettings()
     private var touchSustainState = MIDIHelperSustainState()
     private var captureMonitor: PerformanceCaptureMonitor?
+    private var captureHealthTask: Task<Void,Never>?
     private var captureGeneration: UInt64 = 0
     private var lastRetiredCaptureStatus: String?
     private var captureHotkeyArmed = false
@@ -2703,6 +2704,8 @@ final class StudioController: ObservableObject {
     }
 
     private func retireCaptureMonitor() {
+        captureHealthTask?.cancel()
+        captureHealthTask = nil
         captureGeneration &+= 1
         let old = captureMonitor
         if let old { lastRetiredCaptureStatus = old.diagnosticSnapshot().lastEventTapStatus }
@@ -2727,6 +2730,7 @@ final class StudioController: ObservableObject {
         do {
             try monitor.start(shortcut: captureShortcut, requestPermissions: captureHotkeyArmed)
             monitor.setCaptureHotkeyEnabled(captureHotkeyArmed)
+            startCaptureHealthCheck()
             captureStatus = captureHotkeyArmed
                 ? "Ready globally · \(captureShortcut.displayName) toggles capture · Esc stops all"
                 : "Cursor free · physical-click monitor active"
@@ -2741,6 +2745,42 @@ final class StudioController: ObservableObject {
             }
             pointerCaptured = false
         }
+    }
+
+    private func startCaptureHealthCheck() {
+        guard captureHealthTask == nil else { return }
+        let generation = captureGeneration
+        captureHealthTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for:.milliseconds(500)) } catch { return }
+                guard let self,self.captureGeneration == generation,
+                      let monitor = self.captureMonitor else { return }
+                let health = monitor.diagnosticSnapshot()
+                guard health.accessibilityGranted,health.listening,health.eventTapEnabled else {
+                    self.retireCaptureMonitor()
+                    self.handlePhysicalClick(false,pressure:0)
+                    self.captureArmed = false
+                    self.captureHotkeyArmed = false
+                    self.captureStatus = "Input tap unavailable · cursor free · re-enable explicitly"
+                    return
+                }
+            }
+        }
+    }
+
+    func togglePointerCaptureNow() {
+        if pointerCaptured || captureMonitor?.isCaptured == true {
+            captureMonitor?.releasePointer()
+            pointerCaptured = false
+            captureStatus = "Cursor free"
+            return
+        }
+        guard captureArmed, let monitor = captureMonitor, monitor.setPointerCaptured(true) else {
+            captureStatus = "Capture unavailable · enable Global Capture and check permissions"
+            return
+        }
+        pointerCaptured = true
+        captureStatus = "Cursor captured · shortcut or Esc releases"
     }
 
     private func stopCaptureMonitorIfIdle() {

@@ -436,6 +436,8 @@ struct ContentView: View {
                   set: { studio.configurePerformanceCapture(armed: $0, shortcut: studio.captureShortcut) }
               )).toggleStyle(.switch)
               PerformanceShortcutRecorder()
+              Button(studio.pointerCaptured ? "Release" : "Capture Now") { studio.togglePointerCaptureNow() }
+                  .disabled(!studio.captureArmed && !studio.pointerCaptured)
               Picker("Mouse Axis", selection: Binding(
                   get: { studio.magicMouseOrientation },
                   set: { studio.setMagicMouseOrientation($0) }
@@ -2154,6 +2156,7 @@ private struct PerformanceShortcutRecorder: View {
         studio.configurePerformanceCapture(armed: false, shortcut: studio.captureShortcut)
         recording = true
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.isARepeat { return nil }
             if event.keyCode == 53 {
                 // Esc remains reserved for the emergency kill switch.
                 stopRecording()
@@ -2217,6 +2220,8 @@ private struct CaptureSettingsPanel: View {
                         ) }
                     ))
                     PerformanceShortcutRecorder()
+                    Button(studio.pointerCaptured ? "Release" : "Capture Now") { studio.togglePointerCaptureNow() }
+                        .disabled(!studio.captureArmed && !studio.pointerCaptured)
                     Spacer()
                     Label(studio.pointerCaptured ? "Captured" : "Pointer Free",
                           systemImage: studio.pointerCaptured ? "lock.fill" : "lock.open")
