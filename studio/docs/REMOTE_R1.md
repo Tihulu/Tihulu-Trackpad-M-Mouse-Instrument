@@ -1,0 +1,9 @@
+# TIHULU Remote R1 — admission and touch protocol core
+
+Transport-independent core only. No listener, browser, QR, TLS or usable phone connection yet. Normal Native Builder still rejects remote routes unless a future transport explicitly configures allowRemote. Shared PhysicalPatchRuntime and SensorRouter own local and remote output. No second MIDI engine.
+
+Host-selected phone/tablet scope; 32-byte invitation supplied by future OS CSPRNG, single pending invite, 60-second expiry, consume once. Four clients maximum; host-generated peer ID must be bound to a connection by transport, not accepted as a client credential. Per-peer monotonic sequence, host receipt time, 90 messages per fixed second window, 256-byte JSON. Version 1 touch x/y plus contact; release atomically removes contributions; idle heartbeat cannot sustain an active note. Full active snapshots required within 350 ms (recommend 100 ms); idle heartbeat within 2s. Expiry, invalid frame, replay and rate violation revoke the peer and release its ownership. Host must run watchdog and close revoked connections. No remote MIDI destination or command fields. No raw media or motion yet.
+
+R2 must implement trusted local HTTPS/WSS, OS CSPRNG invitation, strict Origin/Host checks, connection binding, pre-authentication limits, bounded reads before allocation, explicit Start/Stop and revoke. No automatic LAN listener, port forwarding or plaintext downgrade. Keep secrets and addresses out of logs/repo. R3 responsive touch UI with pointercancel/pagehide, snapshot cadence, physical iOS/Android/DAW testing. R4 secure-context motion permissions and calibration. Multi-touch, camera/mic and richer Jam roles later.
+
+Four core tests cover admission/replay, shared ownership, frame validation, capacity/rate and Stop. CI pending. No transport security or physical PASS claim.
