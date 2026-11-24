@@ -10,3 +10,6 @@ The #130 macOS job 138649871697 failed at StudioController.swift:1900:14 because
 
 ## Preview inspection teardown
 A minimal local POSIX shell reproduction (sh and bash) of trap 'false' EXIT; exit 0 returned status 0. The preview verifier now explicitly propagates detach/removal failure and prints success only after cleanup. The native mount/detach path still requires CI. No installation, signing-policy or stable identity change.
+
+## Whole-source shutdown and stale release
+#126 push run 45448144170 FULL PASS: 271 native Swift tests and verified Preview DMG, checkout 555c9bb1389a2ee22fc3467e147dbbda6806f3fc. Reconciled #132 head aa3c2fbc552799a52a5fb0fddb7a4da0ffe70cfd shared core PASS (278 Swift tests). Full-source stop previously reconciled departing owners sequentially and could restore an inactive Helper/Touch Bar controller or synthesize neutral for a never-submitted post-fault target. It now clears logical owners and releases only actual-attempt debt (pedals, notes, incomplete selectors, controllers), keeping failed cleanup retryable. Normal scoped release remains unchanged. Studio whole-source stop precedes UI owner resets. A stopped Touch Bar sustain release no longer auto-starts the bridge; a new press retains intentional start behavior. Two core regressions authored. No physical receiver or native current-head verification yet.

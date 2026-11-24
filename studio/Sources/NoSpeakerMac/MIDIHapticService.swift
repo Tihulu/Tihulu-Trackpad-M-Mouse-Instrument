@@ -271,13 +271,17 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.unlock()
         renderFence.revoke()
         cleaningOutgoing = true
-        releaseAllOutgoingSustain()
-        endAllTouchOutput()
-        sendOwnedNotes(noteOwners.releaseAll())
-        sendContinuousUpdates(continuousOwners.releaseAll())
-        sendPressureUpdates(outgoingPressure.replace([:]))
-        // The intended-owner ledgers may already have removed failed releases.
-        // Retry only the outstanding note and pedal destinations, not all channels.
+        // Full shutdown: every logical owner is leaving. Never emit a
+        // fallback value from a departing owner or a neutral for an onset
+        // suppressed after a fault. The actual-attempt ledgers are sufficient.
+        noteOwners = LegacyNoteOwners<OutgoingNoteOwner>()
+        continuousOwners = LegacyContinuousOwners()
+        outgoingPressure = LegacyChannelPressure()
+        mpeChannels = LegacyMPEChannelPool()
+        touchOutputNote = nil
+        touchOutputFretless = false
+        // Retry only the outstanding attempted note/pedal destinations.
+        // Sustain-off precedes note-off; continuous cleanup follows the gates.
         for message in gateDebt.pending { sendMIDI1(status:message.status,data1:message.data1,data2:message.data2) }
         for channel in controllerDebt.pendingRanges {
             let msb = sendMIDI1(status:0xb0|channel,data1:101,data2:127,rangePart:true)

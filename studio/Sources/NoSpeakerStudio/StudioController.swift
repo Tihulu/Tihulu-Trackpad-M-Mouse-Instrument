@@ -1111,6 +1111,7 @@ final class StudioController: ObservableObject {
             if deliverTouchBarCommands(commands) { updateTouchBarHaptics() }
             return
         }
+        guard LegacyRecoveryPolicy.permitsSustainEvent(running:midiRunning,pressed:isPressed) else { return }
         cancelStartupGreeting()
         if !midiRunning { startMIDI() }
         guard midiRunning else { return }
@@ -1400,6 +1401,8 @@ final class StudioController: ObservableObject {
         renderGeneration &+= 1
         cancelStartupGreeting()
         enableLiveHinge(false)
+        midiSessionEpoch.end()
+        midi?.stop()
         releaseTouchBarNotes()
         touchBarSustainOn = false
         captureMonitor?.stop()
@@ -1411,8 +1414,6 @@ final class StudioController: ObservableObject {
         playback?.stop(closeDriver: false)
         surfaceMonitorToken = nil
         touch?.stopPreview()
-        midiSessionEpoch.end()
-        midi?.stop()
         // Terminal revocation drains an in-flight submission and blocks any
         // late producer or monitoring request on this exact driver instance.
         driver?.panicStop()
@@ -2050,25 +2051,22 @@ final class StudioController: ObservableObject {
             engineStatus = "MIDI remains active for running instruments"
             return
         }
+        // The whole legacy source is stopping: settle actual attempted
+        // MIDI output before individual UI owners can perform a handoff.
+        midiSessionEpoch.end()
+        midi?.stop()
         if !touchBarProfile.effectiveOutput.sendsHaptics {
             releaseTouchBarNotes()
-            midi?.releaseTouchBarSustain()
             touchBarSustainOn = false
         }
         captureMonitor?.releasePointer()
-        midi?.releaseTouchSustain()
         touchSustainState.reset()
         touchInstrumentSustainActive = false
-        midi?.releaseHelperSustain()
         helperSustainState.reset()
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
         midiHelperMagicMouseSustainActive = false
         midiHelperRunning = false
-        midi?.endAllTouchOutput()
-        // The active Helper must already have stopped and released its controls.
-        midiSessionEpoch.end()
-        midi?.stop()
         midiRunning = false
         stopCaptureMonitorIfIdle()
         activeMIDINoteMap.removeAll()
