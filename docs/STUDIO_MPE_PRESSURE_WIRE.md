@@ -1,0 +1,2 @@
+# MPE channel pressure wire and snapshot
+Legacy MIDI 1.0 channel pressure and program change are two-byte messages, not three. Use a tested channel-message encoder for the existing legacy send path. Touch MPE pressure uses a per-channel snapshot, deduplicates unchanged values, retains retired sustained member pressure, and sends zero at scoped release when appropriate. CC11 remains separate. Two pure regressions authored. Real CoreMIDI delivery, MPE zone negotiation and DAW behavior remain pending. No measured CPU/latency improvement claimed, no stable change.

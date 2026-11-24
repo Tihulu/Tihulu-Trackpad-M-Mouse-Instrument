@@ -157,6 +157,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var sustainOwners = LegacySustainOwners()
     private var mpeChannels = LegacyMPEChannelPool()
     private var continuousOwners = LegacyContinuousOwners()
+    private var outgoingPressure = LegacyChannelPressure()
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
 
@@ -251,6 +252,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         endAllTouchOutput()
         sendOwnedNotes(noteOwners.releaseAll())
         sendContinuousUpdates(continuousOwners.releaseAll())
+        sendPressureUpdates(outgoingPressure.replace([:]))
 
         lock.lock()
         enabled = false
@@ -350,6 +352,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
 
         var frameControls: [SensorDestination:LegacyContinuousOwners.Value] = [:]
+        var framePressure: [Int:Int] = [:]
         for state in desired {
             let key = TouchKey(surface: state.surface, id: state.contactID)
             let drums = configuration.instrument(for: state.surface) == .drums
@@ -421,7 +424,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             if configuration.pressureToExpression {
                 frameControls[.init(.controlChange,channel:channel,number:11)] = .init(max(0,min(127,state.expression)),neutral:127)
                 if midiMode == .mpe {
-                    sendChannelPressure(state.expression, channel: channel)
+                    framePressure[channel] = max(0,min(127,state.expression))
                 }
             }
         }
@@ -430,6 +433,10 @@ public final class MIDIHapticService: @unchecked Sendable {
             frameControls[target] = frameControls[target] ?? value
         }
         sendContinuousUpdates(continuousOwners.replace(.touch,values:frameControls))
+        for (channel,value) in outgoingPressure.values where mpeChannels.reserved.contains(channel) {
+            framePressure[channel] = framePressure[channel] ?? value
+        }
+        sendPressureUpdates(outgoingPressure.replace(framePressure))
     }
 
     private func outgoingSustainChannels() -> Set<Int> {
@@ -454,6 +461,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         outgoingTouches.removeAll()
         let retained = continuousOwners.values(for:.touch).filter { mpeChannels.reserved.contains($0.key.channel) }
         sendContinuousUpdates(continuousOwners.replace(.touch,values:retained))
+        sendPressureUpdates(outgoingPressure.replace(outgoingPressure.values.filter { mpeChannels.reserved.contains($0.key) }))
         endTouchOutput()
     }
 
@@ -467,6 +475,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         let held = Set(outgoingTouches.values.map(\.channel))
         for channel in released.subtracting(held).sorted() {
             sendContinuousUpdates(continuousOwners.release(.touch,channel:channel))
+            sendPressureUpdates(outgoingPressure.release(channel))
         }
     }
 
@@ -611,6 +620,10 @@ public final class MIDIHapticService: @unchecked Sendable {
         } else {
             sendOwnedNotes(noteOwners.release(owner))
         }
+    }
+
+    private func sendPressureUpdates(_ updates: [LegacyChannelPressure.Update]) {
+        for update in updates { sendChannelPressure(update.value,channel:update.channel) }
     }
 
     public func sendChannelPressure(_ value: Int, channel: Int) {
@@ -930,7 +943,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         guard virtualSource != 0 else { return }
         var packetList = MIDIPacketList()
         let packet = MIDIPacketListInit(&packetList)
-        let bytes = [UInt8(status & 0xFF), UInt8(data1 & 0x7F), UInt8(data2 & 0x7F)]
+        let bytes = LegacyMIDI1Bytes.channelMessage(status:status,data1:data1,data2:data2)
         bytes.withUnsafeBufferPointer { buffer in
             guard let base = buffer.baseAddress else { return }
             _ = MIDIPacketListAdd(
