@@ -1,9 +1,9 @@
 /// Dedicated Touch Bar endpoint cleanup, independent of the legacy MIDI bridge.
 public struct TouchBarOutputLedger: Sendable {
     private var output = PatchOutputLedger()
-    private var pendingRanges: Set<Int> = []
+    private var selectors = MIDISelectorCleanup()
     public init() {}
-    public var isEmpty: Bool { output.outstanding.isEmpty && pendingRanges.isEmpty }
+    public var isEmpty: Bool { output.outstanding.isEmpty && selectors.isEmpty }
 
     public mutating func deliver(_ command: SensorCommand, send: (SensorCommand) -> Bool) -> Bool {
         output.deliver(command, send:send)
@@ -15,23 +15,14 @@ public struct TouchBarOutputLedger: Sendable {
 
     public mutating func configureBendRange(channel: Int, send: (SensorCommand) -> Bool) -> Bool {
         guard isEmpty, (0...15).contains(channel) else { return false }
-        pendingRanges.insert(channel)
-        for (number,value) in [(101,0),(100,0),(6,12),(38,0),(101,127),(100,127)] {
-            guard send(Self.cc(number,value,channel)) else { return false }
-        }
-        pendingRanges.remove(channel)
-        return true
+        let commands = [(101,0),(100,0),(6,12),(38,0),(101,127),(100,127)]
+            .map { Self.cc($0.0,$0.1,channel) }
+        return selectors.configure(commands,send:send)
     }
 
     public mutating func releaseAll(send: (SensorCommand) -> Bool) -> Bool {
         _ = output.releaseAll(send:send)
-        for channel in pendingRanges.sorted() {
-            // Attempt both null selectors even if one fails. Never forget the
-            // original channel after a profile change or failed delivery.
-            let msb = send(Self.cc(101,127,channel))
-            let lsb = send(Self.cc(100,127,channel))
-            if msb && lsb { pendingRanges.remove(channel) }
-        }
+        _ = selectors.releaseAll(send:send)
         return isEmpty
     }
 }

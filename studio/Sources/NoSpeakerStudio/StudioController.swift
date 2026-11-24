@@ -94,6 +94,7 @@ final class StudioController: ObservableObject {
     private var chordMPEState = ChordMPEState()
     // Retain the actual endpoint selection until all attempted notes are released.
     private var chordMPEActive = false
+    private var chordMPESelectors = MIDISelectorCleanup()
     private var activeChordMIDIOutput: ChordMIDIOutput { chordMPEActive ? chordMPEOutput : chordOutput }
     private var chordHaptics: LiveNoteHapticOutput?
     @Published private(set) var sharedNoteOutputEnabled = false
@@ -701,7 +702,7 @@ final class StudioController: ObservableObject {
     }
 
     func updateChordBank(_ proposed: ChordBank) {
-        guard proposed.isValid, !chordArmed, chordOutstanding.isEmpty else { return }
+        guard proposed.isValid, !chordArmed, chordOutstanding.isEmpty, chordMPESelectors.isEmpty else { return }
         chordBank = proposed
         touchBarBridge?.refreshChordControls()
         if let data = try? WorkspaceArchive.encode(name: "Chord bank", payload: proposed) {
@@ -731,8 +732,8 @@ final class StudioController: ObservableObject {
     func armChordPads() {
         guard !chordArmed else { return }
         releaseChordPads()
-        guard chordOutstanding.isEmpty else {
-            chordStatus = "Unreleased MIDI notes. Reset the receiving DAW before retrying."
+        guard chordOutstanding.isEmpty, chordMPESelectors.isEmpty else {
+            chordStatus = "Unreleased MIDI notes or selectors. Reset the receiving DAW before retrying."
             return
         }
         let selected = chordBank.effectiveOutput
@@ -760,10 +761,9 @@ final class StudioController: ObservableObject {
             if selected.sendsMIDI {
                 try activeChordMIDIOutput.open()
                 if chordMPEActive {
-                    for command in ChordMPEState.configuration() {
-                        guard activeChordMIDIOutput.send(command) else {
-                            throw ChordMPEConfigurationError.delivery
-                        }
+                    guard chordMPESelectors.configure(ChordMPEState.configuration(), send:{ chordMPEOutput.send($0) }) else {
+                        _ = chordMPESelectors.releaseAll(send:{ chordMPEOutput.send($0) })
+                        throw ChordMPEConfigurationError.delivery
                     }
                 }
             }
@@ -790,7 +790,8 @@ final class StudioController: ObservableObject {
             chordHaptics?.stop()
             chordHaptics = nil
             releaseSharedOutputIfIdle()
-            chordStatus = error.localizedDescription
+            chordStatus = chordMPESelectors.isEmpty ? error.localizedDescription
+                : "MPE selector cleanup failed. Reset the DAW and retry Release All."
         }
     }
 
@@ -965,7 +966,9 @@ final class StudioController: ObservableObject {
             if activeChordMIDIOutput.send(.init(key, value: 0)) { chordOutstanding.remove(key) }
         }
         if chordOutstanding.isEmpty { chordMPEState.clearAfterRelease() }
-        if !chordOutstanding.isEmpty {
+        // The original MPE endpoint is retained independently of bank selection.
+        let selectorsReleased = chordMPESelectors.releaseAll(send:{ chordMPEOutput.send($0) })
+        if !chordOutstanding.isEmpty || !selectorsReleased {
             chordHapticToken = nil
             chordHaptics?.stop()
             chordHaptics = nil
@@ -982,7 +985,7 @@ final class StudioController: ObservableObject {
         releaseSharedOutputIfIdle()
         releaseChordPads()
         chordArmed = false
-        if chordOutstanding.isEmpty { chordStatus = "Output off" }
+        if chordOutstanding.isEmpty && chordMPESelectors.isEmpty { chordStatus = "Output off" }
     }
 
     private static func readSavedCaptureShortcut() -> PerformanceCaptureShortcut {

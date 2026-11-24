@@ -19,3 +19,7 @@ Latest prior head 468dcf66ac7b8d3bea6e90cb7f613084767e8788 run 45456830324 share
 
 ## Dedicated Touch Bar MIDI cleanup
 Source inspection found that the dedicated optional Touch Bar path tracked only notes and ignored failures of pitch bend/CC resets; CC74 was not reset at all. Partial RPN setup could also leave selectors active. Reuse PatchOutputLedger for actual attempted performance destinations, retry original-channel selector nulling on partial range configuration, and block rearming while debt remains. Two focused fault-injection regressions authored. Current previous-head core passed 283 Swift Testing, 8 XCTest, 61 browser tests; native still queued. This is a defect-only amendment; new tests and native acceptance pending.
+
+
+## Chord MPE partial configuration cleanup
+The dedicated chord MPE endpoint previously aborted on an RPN setup failure without closing the possibly selected parameter. Extract the selector-debt mechanism shared with Touch Bar, retry both null selectors only on the original affected MPE channel, and prevent bank mutation or rearm while selector cleanup remains unresolved. Complete MPE configuration remains persistent, and musical release-tail bends are intentionally preserved. No claim of DAW rollback or physical receiver confirmation. Two tests cover every 122 configuration send failure positions and successful no-extra-traffic setup. Full latest CI pending.
