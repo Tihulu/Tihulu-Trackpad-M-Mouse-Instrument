@@ -56,6 +56,25 @@ struct InstrumentBuilderView: View {
                         }
                     }.padding(8).disabled(studio.patchRunning)
                 }
+                GroupBox("Orchestra & Jam · ensemble templates") {
+                    VStack(alignment:.leading,spacing:8) {
+                        ForEach(EnsemblePreset.allCases) { preset in
+                            HStack {
+                                VStack(alignment:.leading,spacing:2) {
+                                    Text(preset.title).font(.headline)
+                                    Text(preset.instructions).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Load template") {
+                                    guard let next = preset.patch() else { message = "Invalid ensemble template."; return }
+                                    replaceDraft(with:next)
+                                }
+                            }
+                        }
+                        Text("Templates configure host-side routes only. Choose Native inputs, then start Remote TLS explicitly for mobile players. Assign separate DAW tracks to the indicated MIDI channels; no automatic playback or network listener.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8)
+                }.disabled(studio.patchRunning)
                 ExpressivePresetPanel(patch: $draft).disabled(studio.patchRunning)
                 AirHandsHelperPanel(patch: $draft, physical: $physical).disabled(studio.patchRunning)
                 AirInstrumentPresetPanel(patch: $draft).disabled(studio.patchRunning)
