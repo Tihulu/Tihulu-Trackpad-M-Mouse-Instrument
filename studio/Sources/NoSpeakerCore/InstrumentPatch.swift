@@ -26,6 +26,7 @@ public struct InstrumentPatch: Codable, Equatable, Sendable {
         routes.count <= SensorRouter.maxMappings &&
         Set(routes.map(\.id)).count == routes.count &&
         routes.allSatisfy(Self.permits) && ContinuousResponse.releaseValues(for: routes) != nil &&
+        AirDrumSensitivity.settings(for: routes) != nil &&
         (performanceLayout?.isValid ?? true)
     }
 
