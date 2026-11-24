@@ -33,15 +33,31 @@ struct ChordPadPanel: View {
                 Text("Chord Pads").font(compact ? .headline : .largeTitle.bold())
                 Spacer()
                 Text(studio.chordStatus).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                Button(studio.chordArmed ? "Disarm MIDI" : "Arm MIDI") {
+                Button(studio.chordArmed ? "Disarm" : "Arm Output") {
                     if studio.chordArmed { studio.disarmChordPads() }
                     else { studio.armChordPads() }
                 }.buttonStyle(.borderedProminent)
                 Button("Release All") { studio.releaseChordPads() }
             }
             if !compact {
-                Text("Choose a key and pitch collection, then play or assign your own voicings. Select TIHULU Chord Pads as a separate DAW input or use a separate MIDI track/channel to avoid collisions with other instruments.")
+                Text("Choose a key, play or assign voicings, and select MIDI, Trackpad or Both. For MIDI use the dedicated TIHULU Chord Pads DAW input and a separate track/channel.")
                     .font(.callout).foregroundStyle(.secondary)
+                GroupBox("Output") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Destination", selection: Binding(
+                            get: { studio.chordBank.effectiveOutput },
+                            set: { output in
+                                var bank = studio.chordBank
+                                bank.output = output
+                                studio.updateChordBank(bank)
+                            }
+                        )) {
+                            ForEach(MusicalOutput.allCases) { Text($0.rawValue).tag($0) }
+                        }.pickerStyle(.segmented).disabled(studio.chordArmed)
+                        Text("Trackpad uses up to six tones with octave folding. MIDI retains the complete voicing. The shared motor is reserved while Trackpad or Both is armed; other haptic performances require disarming first.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8)
+                }
                 GroupBox("Harmony") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
@@ -75,7 +91,7 @@ struct ChordPadPanel: View {
                     }.padding(8).disabled(studio.chordArmed)
                 }
             } else {
-                Text(studio.chordBank.scale.rawValue + " · " + (studio.chordBank.latch ? "Latch" : "Timed gate") + " · Ch " + String(studio.chordBank.channel))
+                Text(studio.chordBank.scale.rawValue + " · " + studio.chordBank.effectiveOutput.rawValue + " · " + (studio.chordBank.latch ? "Latch" : "Timed gate") + " · Ch " + String(studio.chordBank.channel))
                     .font(.caption).foregroundStyle(.secondary)
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: compact ? 8 : 4), spacing: 8) {
@@ -116,7 +132,7 @@ struct ChordPadPanel: View {
                 }
             }
             if !compact {
-                Text("Custom chords stay fixed when you change the scale. Disarm before editing. Settings are saved locally; no notes or MIDI output resume on launch.")
+                Text("Custom chords stay fixed when you change the scale. Disarm before editing. Settings are saved locally; no notes or output resume on launch.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

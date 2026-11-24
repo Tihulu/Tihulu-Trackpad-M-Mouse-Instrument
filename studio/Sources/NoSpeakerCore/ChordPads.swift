@@ -114,6 +114,9 @@ public struct ChordBank: Codable, Equatable, Sendable {
     public var gateMS = 400
     public var latch = false
     public var overrides: [Int: ChordPad] = [:]
+    /// Optional for backward-compatible decoding of existing saved banks.
+    public var output: MusicalOutput?
+    public var effectiveOutput: MusicalOutput { output ?? .midi }
     public static let padCount = 8
     public init() {}
 
@@ -170,6 +173,7 @@ public struct ChordPadState: Sendable {
     private var counts: [SensorDestination: Int] = [:]
     public init() {}
     public var activeSlots: Set<Int> { Set(held.keys) }
+    public var activeNotes: [Int] { Set(counts.keys.map(\.number)).sorted() }
 
     public mutating func press(slot: Int, pad: ChordPad, channel: Int, velocity: Int) -> [SensorCommand] {
         guard (0..<ChordBank.padCount).contains(slot), held[slot] == nil,

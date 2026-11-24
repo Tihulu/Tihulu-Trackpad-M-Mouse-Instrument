@@ -151,7 +151,7 @@ struct ContentView: View {
 
     private var workspaceEditable: Bool {
         !studio.touchRunning && !studio.midiHelperRunning && !studio.midiRunning &&
-        !studio.speakerBusy && !studio.isPlaying && !studio.liveHingeEnabled &&
+        !studio.speakerBusy && !studio.chordArmed && !studio.isPlaying && !studio.liveHingeEnabled &&
         !studio.captureArmed && !studio.pointerCaptured && !studio.touchBarSustainOn
     }
 
@@ -494,7 +494,7 @@ private struct PerformanceOverview: View {
                 PageHeader(title: "Performance", subtitle: "Choose an instrument, keep other sessions running, and stop each source independently.")
                 GroupBox("Live sessions") {
                     VStack(spacing: 0) {
-                        session("Chord Pads", detail: "Dedicated MIDI output · shared chord bank", symbol: "pianokeys",
+                        session("Chord Pads", detail: studio.chordBank.effectiveOutput.rawValue + " · shared chord bank", symbol: "pianokeys",
                                 active: studio.chordArmed, page: .chords, stop: { studio.disarmChordPads() })
                         Divider()
                         session("Touch Instrument", detail: studio.touchSessionSummary, symbol: "hand.point.up.left",

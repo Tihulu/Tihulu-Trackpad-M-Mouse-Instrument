@@ -17,7 +17,9 @@ final class StudioController: ObservableObject {
     @Published var engineReady = false
     @Published var lastError: String?
     @Published var isPlaying = false
-    @Published var masterLevel = 0.75
+    @Published var masterLevel = 0.75 {
+        didSet { updateChordHaptics() }
+    }
     @Published var bpm = 120.0
     @Published var midiRunning = false
     @Published private(set) var chordBank = StudioController.readChordBank()
@@ -25,8 +27,12 @@ final class StudioController: ObservableObject {
         didSet { touchBarBridge?.refreshChordControls() }
     }
     @Published private(set) var chordActiveSlots: Set<Int> = []
-    @Published private(set) var chordStatus = "MIDI output off"
+    @Published private(set) var chordStatus = "Output off"
     private let chordOutput = ChordMIDIOutput()
+    private var chordHaptics: LiveNoteHapticOutput?
+    private var chordHapticToken: UUID?
+    private var renderGeneration: UInt64 = 0
+    var chordOwnsHaptics: Bool { chordArmed && chordBank.effectiveOutput.sendsHaptics }
     private var chordState = ChordPadState()
     private var chordTimers: [Int: Task<Void, Never>] = [:]
     private var chordTimerTokens: [Int: UUID] = [:]
@@ -129,11 +135,42 @@ final class StudioController: ObservableObject {
             chordStatus = "Unreleased MIDI notes. Reset the receiving DAW before retrying."
             return
         }
+        let selected = chordBank.effectiveOutput
+        if selected.sendsHaptics {
+            guard !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
+                  !isPlaying, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
+                chordStatus = "Stop other haptic performances and the MIDI bridge first, or choose MIDI only."
+                return
+            }
+            cancelStartupGreeting()
+            renderGeneration &+= 1
+            playback?.stop(closeDriver: false)
+            guard requireEngine(), let driver else {
+                chordStatus = "Force Touch output unavailable. MIDI-only mode remains available."
+                return
+            }
+            chordHaptics = LiveNoteHapticOutput(driver: driver)
+        }
         do {
-            try chordOutput.open()
+            if selected.sendsMIDI { try chordOutput.open() }
             chordArmed = true
-            chordStatus = "MIDI ready: TIHULU Chord Pads"
-        } catch { chordStatus = error.localizedDescription }
+            chordStatus = selected.rawValue + " ready"
+            if selected.sendsHaptics {
+                let token = UUID()
+                chordHapticToken = token
+                chordHaptics?.start { [weak self] message in
+                    Task { @MainActor in
+                        guard let self, self.chordHapticToken == token else { return }
+                        self.disarmChordPads()
+                        self.chordStatus = "Trackpad output failed: " + message
+                    }
+                }
+            }
+        } catch {
+            chordHaptics?.stop()
+            chordHaptics = nil
+            chordStatus = error.localizedDescription
+        }
     }
 
     func triggerChordPad(_ slot: Int) {
@@ -146,6 +183,7 @@ final class StudioController: ObservableObject {
                                         velocity: chordBank.velocity)
         guard deliverChordCommands(commands) else { return }
         chordActiveSlots = chordState.activeSlots
+        updateChordHaptics()
         if !chordBank.latch {
             let token = UUID()
             chordTimerTokens[slot] = token
@@ -163,14 +201,21 @@ final class StudioController: ObservableObject {
         chordTimerTokens.removeValue(forKey: slot)
         _ = deliverChordCommands(chordState.release(slot: slot))
         chordActiveSlots = chordState.activeSlots
+        updateChordHaptics()
+    }
+
+    private func updateChordHaptics() {
+        guard chordOwnsHaptics else { return }
+        let frame = NoteHapticRenderer.frame(notes: chordState.activeNotes, velocity: chordBank.velocity)
+        chordHaptics?.update(frame: frame, masterLevel: masterLevel)
     }
 
     private func deliverChordCommands(_ commands: [SensorCommand]) -> Bool {
+        guard chordBank.effectiveOutput.sendsMIDI else { return true }
         for command in commands {
             if command.value > 0 { chordOutstanding.insert(command.destination) }
             guard chordOutput.send(command) else {
-                chordArmed = false
-                releaseChordPads()
+                disarmChordPads()
                 chordStatus = "MIDI delivery failed. Check the DAW; note release is not confirmed."
                 return false
             }
@@ -185,6 +230,7 @@ final class StudioController: ObservableObject {
         chordTimerTokens.removeAll()
         _ = chordState.releaseAll()
         chordActiveSlots = []
+        chordHaptics?.update(frame: nil, masterLevel: 0)
         // Retry all possibly transmitted notes, including a failed Note On.
         for key in Array(chordOutstanding) {
             if chordOutput.send(.init(key, value: 0)) { chordOutstanding.remove(key) }
@@ -196,9 +242,12 @@ final class StudioController: ObservableObject {
     }
 
     func disarmChordPads() {
+        chordHapticToken = nil
+        chordHaptics?.stop()
+        chordHaptics = nil
         releaseChordPads()
         chordArmed = false
-        if chordOutstanding.isEmpty { chordStatus = "MIDI output off" }
+        if chordOutstanding.isEmpty { chordStatus = "Output off" }
     }
 
     private static func readSavedCaptureShortcut() -> PerformanceCaptureShortcut {
@@ -424,6 +473,7 @@ final class StudioController: ObservableObject {
 
     func panicStop() {
         disarmChordPads()
+        renderGeneration &+= 1
         cancelStartupGreeting()
         enableLiveHinge(false)
         releaseTouchBarNotes()
@@ -464,6 +514,7 @@ final class StudioController: ObservableObject {
 
     func reconnect() {
         disarmChordPads()
+        renderGeneration &+= 1
         cancelStartupGreeting()
         if speakerBusy { stopSystemAudio(); return }
         driver?.close()
@@ -512,14 +563,18 @@ final class StudioController: ObservableObject {
         isPlaying = true
         let renderText = text
         let renderVoice = voice
+        renderGeneration &+= 1
+        let token = renderGeneration
         Task {
             do {
                 let events = try await Task.detached(priority: .userInitiated) {
                     try VoiceHapticService.render(text: renderText, voice: renderVoice)
                 }.value
+                guard renderGeneration == token, !chordOwnsHaptics else { return }
                 playback?.play(events: events, masterLevel: masterLevel)
                 isPlaying = false
             } catch {
+                guard renderGeneration == token else { return }
                 fail(error)
             }
         }
@@ -546,6 +601,7 @@ final class StudioController: ObservableObject {
     }
 
     func stopPlayback() {
+        renderGeneration &+= 1
         cancelStartupGreeting()
         playback?.stop(closeDriver: false)
         isPlaying = false
@@ -1244,14 +1300,18 @@ final class StudioController: ObservableObject {
         let selectedProfile = profile ?? activeProfile
         let fileURL = url
         isPlaying = true
+        renderGeneration &+= 1
+        let token = renderGeneration
         Task {
             do {
                 let events = try await Task.detached(priority: .userInitiated) {
                     try AudioFileHapticService.render(url: fileURL, profile: selectedProfile)
                 }.value
+                guard renderGeneration == token, !chordOwnsHaptics else { return }
                 playback?.play(events: events, masterLevel: masterLevel)
                 isPlaying = false
             } catch {
+                guard renderGeneration == token else { return }
                 fail(error)
             }
         }
@@ -1266,6 +1326,10 @@ final class StudioController: ObservableObject {
     func startSystemAudio() {
         cancelStartupGreeting()
         guard !speakerBusy else { return }
+        guard !chordOwnsHaptics else {
+            lastError = "Disarm Trackpad Chord Pads before starting Speaker."
+            return
+        }
         guard !touchRunning, !midiHelperRunning, !midiRunning, !isPlaying, !liveHingeEnabled else {
             lastError = "Stop other performances and the MIDI bridge before starting Trackpad Speaker. The haptic motor is shared."
             return
@@ -1324,6 +1388,10 @@ final class StudioController: ObservableObject {
     }
 
     private func allowOtherPerformance() -> Bool {
+        guard !chordOwnsHaptics else {
+            lastError = "Disarm Trackpad Chord Pads before starting another haptic performance, or use MIDI-only chords."
+            return false
+        }
         guard !speakerBusy else {
             lastError = "Stop Trackpad Speaker before using another haptic or MIDI performance."
             return false
