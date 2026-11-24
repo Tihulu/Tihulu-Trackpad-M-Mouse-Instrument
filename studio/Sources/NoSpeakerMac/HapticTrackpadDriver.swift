@@ -193,7 +193,7 @@ private let trackpadFrameCallback: FrameCallback = { device, data, count, timest
 /// reusable lifecycle APIs while keeping the private-framework semantics close to upstream.
 public final class HapticTrackpadDriver: @unchecked Sendable {
     private let safety: HapticSafetyPolicy
-    private let stateLock = NSLock()
+    private let lifetime = ActuatorLifetimeGate()
     private var framework: UnsafeMutableRawPointer?
     private var deviceList: CFArray?
     private var motorDeviceID: UInt64 = 0
@@ -214,8 +214,10 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
     private var deviceStart: DeviceStart?
     private var deviceStop: DeviceStop?
 
-    public private(set) var isOpen = false
-    public private(set) var isBuiltIn = false
+    private var opened = false
+    private var builtIn = false
+    public var isOpen: Bool { lifetime.snapshot { opened } }
+    public var isBuiltIn: Bool { lifetime.snapshot { builtIn } }
 
     public init(safety: HapticSafetyPolicy = .init()) throws {
         self.safety = safety
@@ -257,9 +259,11 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
     }
 
     public func open() throws {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        if isOpen { return }
+        try lifetime.withActive { try openLocked() }
+    }
+
+    private func openLocked() throws {
+        if opened { return }
         guard let createList, let getID, let actuatorCreate, let actuatorOpen else { throw HapticDriverError.symbolsUnavailable }
         guard let list = createList()?.takeRetainedValue(), CFArrayGetCount(list) > 0 else { throw HapticDriverError.noTrackpad }
         deviceList = list
@@ -280,24 +284,29 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
                 motor = ref
                 motorPointer = Unmanaged.passUnretained(ref as AnyObject).toOpaque()
                 motorDeviceID = device.id
-                isBuiltIn = device.builtIn
-                isOpen = true
+                builtIn = device.builtIn
+                opened = true
                 return
             }
         }
         throw HapticDriverError.noHapticTrackpad
     }
 
+    /// Closing is terminal for this instance. Reconnect constructs a new
+    /// driver; an obsolete renderer cannot reopen a retired actuator.
     public func close() {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        stopTouchLocked()
-        if let motor { _ = actuatorClose?(motor) }
-        motor = nil
-        motorPointer = nil
-        deviceList = nil
-        motorDeviceID = 0
-        isOpen = false
+        lifetime.retire {
+            // Never clear the process-wide touch bridge from a retired driver
+            // that never owned a live monitoring session.
+            if !touchDevicesInUse.isEmpty { stopTouchLocked() }
+            if let motor { _ = actuatorClose?(motor) }
+            motor = nil
+            motorPointer = nil
+            deviceList = nil
+            motorDeviceID = 0
+            opened = false
+            builtIn = false
+        }
     }
 
     public func panicStop() {
@@ -305,9 +314,13 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
     }
 
     public func play(_ inputFrame: HapticFrame, masterLevel: Double = 1) throws {
-        if !isOpen { try open() }
-        stateLock.lock()
-        defer { stateLock.unlock() }
+        try lifetime.withActive {
+            try openLocked()
+            try playLocked(inputFrame, masterLevel: masterLevel)
+        }
+    }
+
+    private func playLocked(_ inputFrame: HapticFrame, masterLevel: Double) throws {
         guard let motorPointer, let actuationCreate, let actuationPlay else { throw HapticDriverError.actuatorOpenFailed }
 
         var frame = safety.clamp(inputFrame)
@@ -335,9 +348,16 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         includeExternalSurfaces: Bool = true,
         handler: @escaping @Sendable (SurfaceTouchFrame) -> Void
     ) throws {
-        if !isOpen { try open() }
-        stateLock.lock()
-        defer { stateLock.unlock() }
+        try lifetime.withActive {
+            try openLocked()
+            try startSurfaceMonitoringLocked(includeExternalSurfaces: includeExternalSurfaces, handler: handler)
+        }
+    }
+
+    private func startSurfaceMonitoringLocked(
+        includeExternalSurfaces: Bool,
+        handler: @escaping @Sendable (SurfaceTouchFrame) -> Void
+    ) throws {
         guard let deviceList, let getID, let registerCallback, let deviceStart else {
             throw HapticDriverError.symbolsUnavailable
         }
@@ -388,9 +408,11 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
     }
 
     public func stopTouch() {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        stopTouchLocked()
+        // Late cleanup from an old session must not clear the new owner's
+        // process-wide bridge.
+        try? lifetime.withActive {
+            if !touchDevicesInUse.isEmpty { stopTouchLocked() }
+        }
     }
 
     private func stopTouchLocked() {
