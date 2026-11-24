@@ -20,7 +20,7 @@ struct AirHandsHelperPanel: View {
                         ForEach(AirHandsHelper.Hand.allCases) { Text($0.rawValue.capitalized).tag($0) }
                     }
                     Picker("Motion",selection:$axis) {
-                        ForEach(AirHandsHelper.Axis.allCases) { Text($0.rawValue.capitalized).tag($0) }
+                        ForEach(AirHandsHelper.Axis.allCases) { Text($0 == .toggle ? "Pinch toggle" : $0 == .pinch ? "Pinch hold" : $0.rawValue.capitalized).tag($0) }
                     }
                     Picker("Effect",selection:$effect) {
                         ForEach(AirHandsHelper.Effect.allCases) { Text($0.title).tag($0) }
@@ -31,7 +31,7 @@ struct AirHandsHelperPanel: View {
                 }
                 Button("Add helper assignment") {
                     guard let route = AirHandsHelper.route(hand:hand,axis:axis,effect:effect,channel:channel) else {
-                        message = "Pedal switches require Pinch."; return
+                        message = "Pedals require Pinch (hold) or Toggle. Toggle is only for pedals."; return
                     }
                     var next = patch
                     next.routes.append(route)
@@ -40,7 +40,7 @@ struct AirHandsHelperPanel: View {
                     message = "Added. Customize range, inversion, smoothing and MIDI destination in Routes."
                 }.disabled(patch.routes.count >= SensorRouter.maxMappings ||
                            patch.routes.contains { $0.source == .camera && !AirHandsHelper.allSignals.contains($0.signal) })
-                Text("Pitch bend range is set by the receiving instrument. CC77 vibrato depth, CC76 vibrato rate and CC1 modulation require DAW support. Pinch pedals release on tracking loss; no measured force is claimed.")
+                Text("Pitch bend range is set by the receiving instrument. CC77 vibrato depth, CC76 vibrato rate and CC1 modulation require DAW support. Hold pedals release on opening; toggle pedals change only on a new pinch and always release on tracking loss. No measured force is claimed.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !message.isEmpty { Text(message).font(.caption) }
             }.padding(8)

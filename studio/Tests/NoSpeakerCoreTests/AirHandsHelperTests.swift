@@ -38,6 +38,45 @@ final class AirHandsHelperTests: XCTestCase {
         XCTAssertTrue(live.receiveHelperHands(left:closed,right:nil,hostTime:0.51,now:0.51).isEmpty)
     }
 
+    func testTogglePedalNeedsNewPinchAndClearsOnLoss() throws {
+        var live = PhysicalPatchRuntime()
+        let route = AirHandsHelper.route(hand:.left,axis:.toggle,effect:.sustain)!
+        try live.configure(.init(name:"Toggle",routes:[route]))
+        let open = AirHandSample.debugSample(x:0.5,y:0.5,aperture:0.8)
+        let closed = AirHandSample.debugSample(x:0.5,y:0.5,aperture:0.1)
+        func frame(_ hand:AirHandSample?,_ t:Double)->[SensorCommand] {
+            live.receiveHelperHands(left:hand,right:nil,hostTime:t,now:t)
+        }
+        _ = frame(open,0); _ = frame(open,0.07)
+        XCTAssertEqual(frame(closed,0.14),[.init(.init(.sustain),value:127)])
+        XCTAssertTrue(frame(closed,0.21).isEmpty)
+        XCTAssertTrue(frame(open,0.28).isEmpty)
+        XCTAssertEqual(frame(closed,0.35),[.init(.init(.sustain),value:0)])
+        _ = frame(open,0.42)
+        XCTAssertEqual(frame(closed,0.49),[.init(.init(.sustain),value:127)])
+        XCTAssertEqual(frame(nil,0.56),[.init(.init(.sustain),value:0)])
+        XCTAssertTrue(frame(closed,0.63).isEmpty)
+        XCTAssertTrue(frame(closed,0.70).isEmpty)
+    }
+
+    func testSharedCCPedalTransfersWithoutOffGlitch() throws {
+        let l = AirHandsHelper.route(hand:.left,axis:.pinch,effect:.sostenuto)!
+        let r = AirHandsHelper.route(hand:.right,axis:.pinch,effect:.sostenuto)!
+        var live = PhysicalPatchRuntime()
+        try live.configure(.init(name:"Both",routes:[l,r]))
+        let open = AirHandSample.debugSample(x:0.5,y:0.5,aperture:0.8)
+        let closed = AirHandSample.debugSample(x:0.5,y:0.5,aperture:0.1)
+        func frame(_ a:AirHandSample?,_ b:AirHandSample?,_ t:Double)->[SensorCommand] {
+            live.receiveHelperHands(left:a,right:b,hostTime:t,now:t)
+        }
+        _ = frame(open,open,0); _ = frame(open,open,0.07)
+        XCTAssertEqual(frame(closed,open,0.14),[.init(.init(.controlChange,number:66),value:127)])
+        XCTAssertTrue(frame(nil,closed,0.21).isEmpty)
+        XCTAssertEqual(frame(nil,open,0.28),[.init(.init(.controlChange,number:66),value:0)])
+        let bad = SensorMapping(id:"analog",source:.trackpad,signal:.x,destination:.init(.controlChange,number:66))
+        XCTAssertFalse(InstrumentPatch(name:"Bad",routes:[l,bad]).isValid)
+    }
+
     func testValidationAndOtherSourceOwnership() throws {
         XCTAssertNil(AirHandsHelper.route(hand:.left,axis:.x,effect:.sustain))
         let helper = AirHandsHelper.route(hand:.left,axis:.pinch,effect:.sustain)!

@@ -8,8 +8,8 @@ public struct AirHandsHelper: Sendable {
         public var id: String { rawValue }
         public var signals: [SensorSignal] {
             switch self {
-            case .left: [.airLeftX,.airLeftY,.airLeftAperture,.airLeftPinch,.airLeftSpeed]
-            case .right: [.airRightX,.airRightY,.airRightAperture,.airRightPinch,.airRightSpeed]
+            case .left: [.airLeftX,.airLeftY,.airLeftAperture,.airLeftPinch,.airLeftSpeed,.airLeftToggle]
+            case .right: [.airRightX,.airRightY,.airRightAperture,.airRightPinch,.airRightSpeed,.airRightToggle]
             }
         }
     }
@@ -48,11 +48,28 @@ public struct AirHandsHelper: Sendable {
         public var isSwitch: Bool { [.sustain,.sostenuto,.softPedal,.portamento].contains(self) }
     }
     public enum Axis: String, CaseIterable, Identifiable, Sendable {
-        case x,y,aperture,pinch,speed
+        case x,y,aperture,pinch,speed,toggle
         public var id: String { rawValue }
         public var index: Int {
-            switch self { case .x:0; case .y:1; case .aperture:2; case .pinch:3; case .speed:4 }
+            switch self { case .x:0; case .y:1; case .aperture:2; case .pinch:3; case .speed:4; case .toggle:5 }
         }
+    }
+    public static let pedalSignals: Set<SensorSignal> = [.airLeftPinch,.airRightPinch,.airLeftToggle,.airRightToggle]
+    static func isSwitchTarget(_ target:SensorDestination) -> Bool {
+        target.kind == .sustain || (target.kind == .controlChange && [65,66,67,69].contains(target.number))
+    }
+    /// Opt into OR ownership only when a camera pedal is configured. Legacy
+    /// continuous CC mappings are not silently converted into switches.
+    static func sharedSwitchTargets(_ routes:[SensorMapping]) -> Set<SensorDestination>? {
+        let targets = Set(routes.filter { $0.source == .camera && pedalSignals.contains($0.signal) &&
+            $0.destination.kind == .controlChange && isSwitchTarget($0.destination) }.map(\.destination))
+        let binary: Set<SensorSignal> = pedalSignals.union([.contact,.pedalSwitch1,.pedalSwitch2,.pianoSustain,.pedalSustain])
+        guard routes.allSatisfy({ route in
+            !targets.contains(route.destination) || (binary.contains(route.signal) &&
+                route.calibration == SensorCalibration() &&
+                (route.response == nil || route.response == ContinuousResponse()))
+        }) else { return nil }
+        return targets
     }
     public static let allSignals = Set(Hand.allCases.flatMap(\.signals))
     public static func uses(_ routes:[SensorMapping]) -> Bool {
@@ -61,20 +78,20 @@ public struct AirHandsHelper: Sendable {
     public static func permits(_ route:SensorMapping) -> Bool {
         guard allSignals.contains(route.signal) else { return true }
         guard route.source == .camera, route.destination.kind != .note else { return false }
-        let isPinch = [SensorSignal.airLeftPinch,.airRightPinch].contains(route.signal)
-        let isSwitch = route.destination.kind == .sustain ||
-            (route.destination.kind == .controlChange && [65,66,67,69].contains(route.destination.number))
+        let isPinch = pedalSignals.contains(route.signal)
+        let isSwitch = isSwitchTarget(route.destination)
         if isSwitch {
             return isPinch && route.response == nil && route.calibration.apply(1) == 1 && route.calibration.apply(0) == 0
         }
-        return ContinuousResponse.isContinuous(route.destination)
+        return ![SensorSignal.airLeftToggle,.airRightToggle].contains(route.signal) && ContinuousResponse.isContinuous(route.destination)
     }
     public static func permitsCombination(_ routes:[SensorMapping]) -> Bool {
         guard uses(routes) else { return true }
-        return routes.allSatisfy { $0.source != .camera || allSignals.contains($0.signal) }
+        return routes.allSatisfy { $0.source != .camera || allSignals.contains($0.signal) } && sharedSwitchTargets(routes) != nil
     }
     public static func route(hand:Hand,axis:Axis,effect:Effect,channel:Int = 0) -> SensorMapping? {
-        guard (0...15).contains(channel), !effect.isSwitch || axis == .pinch else { return nil }
+        guard (0...15).contains(channel), !effect.isSwitch || axis == .pinch || axis == .toggle,
+              axis != .toggle || effect.isSwitch else { return nil }
         var destination = effect.destination
         destination.channel = channel
         let response: ContinuousResponse? = effect.isSwitch ? nil :
@@ -88,9 +105,10 @@ public struct AirHandsHelper: Sendable {
         var time: Double?
         var armed = false
         var pinched = false
+        var latched = false
         mutating func values(_ sample:AirHandSample?,time:Double,now:Double) -> [Double]? {
             guard let hand = gate.accept(sample,at:time,now:now) else {
-                prior = nil; self.time = nil; armed = false; pinched = false
+                prior = nil; self.time = nil; armed = false; pinched = false; latched = false
                 return nil
             }
             var speed = 0.0
@@ -99,8 +117,8 @@ public struct AirHandsHelper: Sendable {
             }
             prior = hand; self.time = time
             if hand.aperture >= 0.35 { armed = true; pinched = false }
-            if armed && hand.aperture <= 0.18 { pinched = true }
-            return [hand.x,hand.y,hand.aperture,pinched ? 1 : 0,speed]
+            if armed && !pinched && hand.aperture <= 0.18 { pinched = true; latched.toggle() }
+            return [hand.x,hand.y,hand.aperture,pinched ? 1 : 0,speed,latched ? 1 : 0]
         }
     }
     private var left = State()
@@ -115,15 +133,14 @@ public struct AirHandsHelper: Sendable {
         var lost = Set<SensorSignal>()
         if lv == nil { lost.formUnion(Hand.left.signals) }
         if rv == nil { lost.formUnion(Hand.right.signals) }
-        var commands = router.releaseSignals(session:session,signals:lost)
+        var events: [SensorEvent] = []
         for (hand,values) in [(Hand.left,lv),(Hand.right,rv)] {
             guard let values else { continue }
             for (signal,value) in zip(hand.signals,values) {
                 sequence &+= 1
-                commands += router.ingest(.init(session:session,signal:signal,value:value,
-                                                sequence:sequence,timestamp:time),now:time)
+                events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:time))
             }
         }
-        return commands
+        return router.ingestFrame(session:session,releasing:lost,events:events,now:time)
     }
 }
