@@ -4,8 +4,8 @@ import Network
 import Security
 import NoSpeakerCore
 
-/// The first transport is intentionally loopback-only. No UI or automatic
-/// listener. A host must explicitly supply a trusted TLS identity and origin.
+/// Explicit numeric local endpoint only. No automatic listener, wildcard or
+/// plaintext fallback. The caller selects an existing trusted TLS identity.
 /// The host owns R1 admission and MIDI; this transport cannot generate MIDI.
 public final class RemoteLoopbackTransport: @unchecked Sendable {
     public enum Failure: Error { case identity, invalidPort, invalidPolicy }
@@ -26,6 +26,7 @@ public final class RemoteLoopbackTransport: @unchecked Sendable {
     private var stopped = false
     private let params: NWParameters
     private let port: NWEndpoint.Port
+    public let endpoint: RemoteEndpoint
     private var attemptStart = 0.0
     private var attempts = 0
 
@@ -39,17 +40,18 @@ public final class RemoteLoopbackTransport: @unchecked Sendable {
         return Data(bytes)
     }
 
-    public init(identity: SecIdentity, port number: UInt16, origin: String) throws {
-        guard number >= 1024, let port = NWEndpoint.Port(rawValue: number) else { throw Failure.invalidPort }
-        guard let policy = RemoteHandshakePolicy(authority: "127.0.0.1:" + String(number), origin: origin)
+    public init(identity: SecIdentity, endpoint: RemoteEndpoint = .loopback) throws {
+        let port: NWEndpoint.Port = 9443
+        guard let policy = RemoteHandshakePolicy(authority: endpoint.socketAuthority, origin: endpoint.origin)
         else { throw Failure.invalidPolicy }
+        self.endpoint = endpoint
         guard let localIdentity = sec_identity_create(identity) else { throw Failure.identity }
         let tls = NWProtocolTLS.Options()
         sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
         sec_protocol_options_set_local_identity(tls.securityProtocolOptions, localIdentity)
         let parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
-        // No wildcard, no Bonjour, no LAN bind in this increment.
-        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: port)
+        // Bind exactly the selected address, never all interfaces.
+        parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(endpoint.host), port: port)
         let ws = NWProtocolWebSocket.Options()
         ws.maximumMessageSize = RemoteTouchFrame.maximumBytes
         ws.autoReplyPing = true

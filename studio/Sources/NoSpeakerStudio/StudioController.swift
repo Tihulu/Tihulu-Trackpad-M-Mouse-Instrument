@@ -42,6 +42,8 @@ final class StudioController: ObservableObject {
     private var patchRemoteTransport: RemoteLoopbackTransport?
     private var patchRemotePage: RemoteLoopbackPageServer?
     @Published private(set) var patchRemotePageReady = false
+    @Published private(set) var patchRemoteEndpoint: RemoteEndpoint?
+    @Published private(set) var remoteLoopbackVerified = false
     private var patchRemoteBridge: RemoteHostBridge?
     @Published private(set) var patchRemoteReady = false
     @Published private(set) var patchRemotePeers: Set<UUID> = []
@@ -220,7 +222,8 @@ final class StudioController: ObservableObject {
         let sources = Set(instrumentPatch.routes.map(\.source))
         let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
         let hasRemoteRoutes = sources.contains(.phone) || sources.contains(.tablet)
-        guard (remotePage == nil || remoteTransport != nil),
+        guard (remotePage == nil || remoteTransport?.endpoint == remotePage?.endpoint),
+              (remoteTransport?.endpoint.isLoopback ?? true) || remoteLoopbackVerified,
               remoteTransport == nil || (physical && hasRemoteRoutes) else {
             patchStatus = "Remote test requires native phone/tablet routes."
             return
@@ -330,6 +333,7 @@ final class StudioController: ObservableObject {
                     patchRemoteReady = false
                     patchRemotePeers = []
                     patchRemoteProbeStatus = "Waiting for loopback listener"
+                    patchRemoteEndpoint = remoteTransport.endpoint
                     patchRemotePage = remotePage
                     patchRemotePageReady = false
                     remoteTransport.start()
@@ -356,7 +360,7 @@ final class StudioController: ObservableObject {
     func cancelBuilderRemoteInvitation() { patchPhysicalRuntime.cancelRemotePairing() }
 
     func runBuilderRemoteProbe(source: SensorSource) {
-        guard patchRemoteReady, !patchRemoteProbeRunning else { return }
+        guard patchRemoteReady, patchRemoteEndpoint?.isLoopback == true, !patchRemoteProbeRunning else { return }
         do {
             let invitation = try issueBuilderRemoteInvitation(source: source)
             let token = UUID()
@@ -367,6 +371,7 @@ final class StudioController: ObservableObject {
                 do {
                     try await RemoteLoopbackProbe.run(invitation: invitation)
                     guard let self, self.patchRemoteProbeToken == token else { return }
+                    self.remoteLoopbackVerified = true
                     self.patchRemoteProbeStatus = "TLS + pairing + touch/release acknowledgments received. Check command monitor."
                 } catch {
                     guard let self, self.patchRemoteProbeToken == token else { return }
@@ -404,7 +409,8 @@ final class StudioController: ObservableObject {
             case .starting: break
             }
         }
-        let result = bridge.process(transport.drain(), now: now, runtime: &patchPhysicalRuntime)
+        let events = transport.drain()
+        let result = bridge.process(events, now: ProcessInfo.processInfo.systemUptime, runtime: &patchPhysicalRuntime)
         patchRemoteBridge = bridge
         if patchRemoteReady != bridge.ready { patchRemoteReady = bridge.ready }
         if patchRemotePeers != bridge.connectionIDs { patchRemotePeers = bridge.connectionIDs }
@@ -617,6 +623,7 @@ final class StudioController: ObservableObject {
         patchRemotePage?.stop()
         patchRemotePage = nil
         patchRemotePageReady = false
+        patchRemoteEndpoint = nil
         patchRemoteTransport?.stop()
         patchRemoteTransport = nil
         patchRemoteBridge = nil

@@ -1,6 +1,7 @@
 #if os(macOS)
 import Foundation
 import Security
+import NoSpeakerCore
 
 /// Explicit selection of an already-provisioned Keychain identity. No private
 /// key export, certificate generation, import or trust-settings changes.
@@ -14,7 +15,7 @@ public struct RemoteTLSIdentityChoice: Identifiable {
         public var errorDescription: String? {
             switch self {
             case .keychain: "Could not enumerate Keychain identities."
-            case .untrusted: "The selected identity is not trusted for TLS server 127.0.0.1. Check the certificate and its trust chain in Keychain Access."
+            case .untrusted: "The selected identity is not trusted for the selected numeric TLS server address. Check the certificate and its trust chain in Keychain Access."
             }
         }
     }
@@ -38,20 +39,20 @@ public struct RemoteTLSIdentityChoice: Identifiable {
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    public func makeLoopbackPageServer() throws -> RemoteLoopbackPageServer {
-        try RemoteLoopbackPageServer(identity: identity)
+    public func makeLoopbackPageServer(endpoint: RemoteEndpoint = .loopback) throws -> RemoteLoopbackPageServer {
+        try RemoteLoopbackPageServer(identity: identity, endpoint: endpoint)
     }
 
-    public func makeLoopbackTransport() throws -> RemoteLoopbackTransport {
+    public func makeLoopbackTransport(endpoint: RemoteEndpoint = .loopback) throws -> RemoteLoopbackTransport {
         var certificate: SecCertificate?
         guard SecIdentityCopyCertificate(identity, &certificate) == errSecSuccess,
               let certificate else { throw Failure.keychain }
-        let policy = SecPolicyCreateSSL(true, "127.0.0.1" as CFString)
+        let policy = SecPolicyCreateSSL(true, endpoint.host as CFString)
         var trust: SecTrust?
         guard SecTrustCreateWithCertificates(certificate, policy, &trust) == errSecSuccess,
               let trust, SecTrustSetNetworkFetchAllowed(trust, false) == errSecSuccess,
               SecTrustEvaluateWithError(trust, nil) else { throw Failure.untrusted }
-        return try RemoteLoopbackTransport(identity: identity, port: 9443, origin: "https://127.0.0.1:9444")
+        return try RemoteLoopbackTransport(identity: identity, endpoint: endpoint)
     }
 }
 #endif
