@@ -141,19 +141,26 @@ public final class RemoteLoopbackTransport: @unchecked Sendable {
         queue.async { [self] in
             guard var peer = peers[id], peer.awaitingHost else { return }
             guard accepted else { close(id); return }
+            let message: String
             if peer.gate.phase == .awaitingHost {
                 guard peer.gate.admit(now: ProcessInfo.processInfo.systemUptime) else { close(id); return }
-                // Browser waits for this acknowledgment before sending touch.
-                let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
-                let context = NWConnection.ContentContext(identifier: "admitted", metadata: [metadata])
-                peer.connection.send(content: Data("admitted".utf8), contentContext: context,
-                                     isComplete: true, completion: .contentProcessed { [weak self] error in
-                    if error != nil { self?.close(id) }
-                })
+                message = "admitted"
+            } else {
+                message = "accepted"
             }
-            peer.awaitingHost = false
             peers[id] = peer
-            receive(id)
+            // Only acknowledge after host admission/delivery. Keep one frame
+            // outstanding until this small acknowledgment is processed.
+            let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
+            let context = NWConnection.ContentContext(identifier: message, metadata: [metadata])
+            peer.connection.send(content: Data(message.utf8), contentContext: context,
+                                 isComplete: true, completion: .contentProcessed { [weak self] error in
+                guard let self, var current = self.peers[id] else { return }
+                guard error == nil else { self.close(id); return }
+                current.awaitingHost = false
+                self.peers[id] = current
+                self.receive(id)
+            })
         }
     }
 
