@@ -7,6 +7,14 @@ final class TouchBarProfileTests: XCTestCase {
         profile.zones = [.vibrato, .sustain, .pitchBend, .vibrato]
         XCTAssertEqual(profile.normalized().zones, [.vibrato, .sustain, .pitchBend])
     }
+    func testChordZoneIsOptInAndCompatibleWithExistingZones() throws {
+        XCTAssertFalse(TouchBarProfile().zones.contains(.chords))
+        let profile = TouchBarProfile(zones: [.chords, .sustain, .pitchBend, .chords])
+        XCTAssertEqual(profile.normalized().zones, [.chords, .sustain, .pitchBend])
+        let data = try JSONEncoder().encode(profile)
+        XCTAssertEqual(try JSONDecoder().decode(TouchBarProfile.self, from: data).normalized(),
+                       profile.normalized())
+    }
     func testEmptyLayoutStillHasAnEscapeHatch() {
         XCTAssertEqual(TouchBarProfile(zones: []).normalized().zones, [.keys])
     }

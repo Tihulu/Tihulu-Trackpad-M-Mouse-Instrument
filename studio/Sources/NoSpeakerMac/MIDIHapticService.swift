@@ -54,6 +54,17 @@ private final class MIDIProcessClient: @unchecked Sendable {
     static let shared = MIDIProcessClient()
     private let lock = NSLock()
     private var retainedClient = MIDIClientRef()
+    private var chordSource = MIDIEndpointRef()
+
+    func setChordSource(_ source: MIDIEndpointRef) {
+        lock.lock(); defer { lock.unlock() }
+        chordSource = source
+    }
+
+    func isChordSource(_ source: MIDIEndpointRef) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return source != 0 && source == chordSource
+    }
 
     func acquire() throws -> MIDIClientRef {
         lock.lock()
@@ -223,7 +234,7 @@ public final class MIDIHapticService: @unchecked Sendable {
 
         for index in 0..<MIDIGetNumberOfSources() {
             let source = MIDIGetSource(index)
-            if source != 0, source != virtualSource {
+            if source != 0, source != virtualSource, !MIDIProcessClient.shared.isChordSource(source) {
                 MIDIPortConnectSource(inputPort, source, nil)
             }
         }
@@ -951,5 +962,42 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
         MIDIReceived(virtualSource, &packetList)
     }
+}
+
+/// Dedicated virtual source, using the existing process-wide CoreMIDI client.
+/// No input port, haptic driver or legacy note/controller state is modified.
+/// Owned and called only on the main actor.
+@MainActor
+public final class ChordMIDIOutput {
+    private var endpoint = MIDIEndpointRef()
+    public init() {}
+
+    public func open() throws {
+        if endpoint != 0 { return }
+        let client = try MIDIProcessClient.shared.acquire()
+        var source = MIDIEndpointRef()
+        let status = MIDISourceCreate(client, "TIHULU Chord Pads" as CFString, &source)
+        guard status == noErr else { throw MIDIHapticError.source(status) }
+        endpoint = source
+        MIDIProcessClient.shared.setChordSource(source)
+    }
+
+    /// Return CoreMIDI's delivery status; never report success on a failed send.
+    public func send(_ command: SensorCommand) -> Bool {
+        guard endpoint != 0, command.destination.kind == .note,
+              command.destination.isValid, (0...127).contains(command.value) else { return false }
+        var list = MIDIPacketList()
+        let packet = MIDIPacketListInit(&list)
+        let channel = command.destination.channel
+        let bytes = [UInt8((command.value > 0 ? 0x90 : 0x80) | channel),
+                     UInt8(command.destination.number), UInt8(command.value)]
+        let added = bytes.withUnsafeBufferPointer { buffer -> Bool in
+            guard let first = buffer.baseAddress else { return false }
+            return MIDIPacketListAdd(&list, MemoryLayout<MIDIPacketList>.size, packet,
+                                     0, buffer.count, first) != nil
+        }
+        return added && MIDIReceived(endpoint, &list) == noErr
+    }
+    // Keep the endpoint stable until process exit, as with the retained client.
 }
 #endif
