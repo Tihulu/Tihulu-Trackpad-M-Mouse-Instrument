@@ -26,6 +26,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Swift version
         run: swift --version
+      - name: Remote browser lifecycle tests
+        run: node --test scripts/test-remote-browser.cjs
       - name: Verify
         run: ./scripts/verify.sh
 

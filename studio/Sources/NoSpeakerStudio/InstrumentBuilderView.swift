@@ -48,6 +48,14 @@ struct InstrumentBuilderView: View {
                             }.font(.caption)
                             Divider()
                         }
+                        Button("Add Pocket Wah route (Phone · CC74)") {
+                            var next = draft
+                            next.routes.append(.init(id: UUID().uuidString, source: .phone, signal: .tiltPitch,
+                                                     destination: .init(.controlChange, number: 74),
+                                                     response: .init(smoothingMS: 35)))
+                            if next.isValid { draft = next; message = "Pocket Wah route added. Map CC74 to a wah/filter parameter in your DAW." }
+                            else { message = "Cannot add route: check capacity and release-value conflicts." }
+                        }.disabled(draft.routes.count >= SensorRouter.maxMappings || draft.routes.contains { $0.source == .phone && $0.signal == .tiltPitch && $0.destination == .init(.controlChange, number: 74) })
                         Button("Add route") {
                             draft.routes.append(.init(id: UUID().uuidString, source: .trackpad,
                                                      signal: .contact, destination: .init(.note, number: 60)))
@@ -93,7 +101,7 @@ struct InstrumentBuilderView: View {
                             RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI)
                         }
                         if physical && !PhysicalPatchRuntime.supports(draft) {
-                            Text("Normal native mode supports local surfaces, lid, ribbon and camera. For mapped phone/tablet X/Y/contact use the separate Remote panel above; other remote signals remain simulation-only.")
+                            Text("Normal native mode supports local surfaces, lid, ribbon and camera. For mapped phone/tablet X/Y/contact or tilt CC/pitch bend use the separate Remote panel above. Other remote signals remain simulation-only.")
                                 .font(.caption).foregroundStyle(.orange)
                         }
                         HStack {
