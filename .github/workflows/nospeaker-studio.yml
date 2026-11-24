@@ -47,6 +47,7 @@ jobs:
         run: |
           sh -n ../install-studio.sh
           sh -n scripts/build-app.sh
+          sh -n scripts/verify-preview-dmg.sh
       - name: Unit tests
         run: swift test
       - name: Build Studio
@@ -71,6 +72,8 @@ jobs:
           path: studio/dist/Tihulu Trackpad & M. Mouse Instrument.app
       - name: Package isolated preview DMG
         if: github.ref != 'refs/heads/main'
+        env:
+          PREVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           APP="dist/Tihulu Trackpad & M. Mouse Instrument.app"
@@ -101,6 +104,9 @@ jobs:
           hdiutil verify "$DMG"
           cd dist
           shasum -a 256 Tihulu-0.3.0-preview.dmg > PREVIEW-SHA256SUMS
+          cd ..
+          ./scripts/verify-preview-dmg.sh dist/Tihulu-0.3.0-preview.dmg dist/PREVIEW-SHA256SUMS "$GITHUB_SHA"
+          printf 'checkout_sha=%s\nhead_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_SHA" "$PREVIEW_HEAD_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > dist/PREVIEW-PROVENANCE.txt
       - name: Upload preview DMG without publishing a release
         if: github.ref != 'refs/heads/main'
         uses: actions/upload-artifact@v4
@@ -109,4 +115,5 @@ jobs:
           path: |
             studio/dist/Tihulu-0.3.0-preview.dmg
             studio/dist/PREVIEW-SHA256SUMS
+            studio/dist/PREVIEW-PROVENANCE.txt
           if-no-files-found: error

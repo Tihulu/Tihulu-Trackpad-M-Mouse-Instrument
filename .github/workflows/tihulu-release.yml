@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   build-and-publish:
+    if: github.ref == 'refs/heads/main'
     name: Build and publish macOS DMG
     runs-on: macos-latest
     steps:
