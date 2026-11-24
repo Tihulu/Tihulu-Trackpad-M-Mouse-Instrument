@@ -18,7 +18,7 @@ final class StudioController: ObservableObject {
     @Published var lastError: String?
     @Published var isPlaying = false
     @Published var masterLevel = 0.75 {
-        didSet { updateChordHaptics() }
+        didSet { updateChordHaptics(); updateTouchBarHaptics() }
     }
     @Published var bpm = 120.0
     @Published var midiRunning = false
@@ -33,6 +33,16 @@ final class StudioController: ObservableObject {
     private var chordHapticToken: UUID?
     private var renderGeneration: UInt64 = 0
     var chordOwnsHaptics: Bool { chordArmed && chordBank.effectiveOutput.sendsHaptics }
+    @Published private(set) var touchBarOutputArmed = false
+    @Published private(set) var touchBarOutputStatus = "Optional Trackpad output off"
+    private var touchBarHaptics: LiveNoteHapticOutput?
+    private let touchBarDedicatedMIDI = ChordMIDIOutput(name: "TIHULU Touch Bar")
+    private var touchBarLocalState = TouchBarNoteState()
+    private var touchBarOutstanding: Set<SensorDestination> = []
+    private var touchBarOutputToken: UUID?
+    private var nativePianoTokens: [Int: UUID] = [:]
+    var touchBarOwnsHaptics: Bool { touchBarOutputArmed }
+    var liveNoteOwnsHaptics: Bool { chordOwnsHaptics || touchBarOwnsHaptics }
     private var chordState = ChordPadState()
     private var chordTimers: [Int: Task<Void, Never>] = [:]
     private var chordTimerTokens: [Int: UUID] = [:]
@@ -137,7 +147,7 @@ final class StudioController: ObservableObject {
         }
         let selected = chordBank.effectiveOutput
         if selected.sendsHaptics {
-            guard !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
+            guard !touchBarOwnsHaptics, !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
                   !isPlaying, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
                 chordStatus = "Stop other haptic performances and the MIDI bridge first, or choose MIDI only."
                 return
@@ -236,6 +246,9 @@ final class StudioController: ObservableObject {
             if chordOutput.send(.init(key, value: 0)) { chordOutstanding.remove(key) }
         }
         if !chordOutstanding.isEmpty {
+            chordHapticToken = nil
+            chordHaptics?.stop()
+            chordHaptics = nil
             chordArmed = false
             chordStatus = "Some MIDI releases failed. Reset the receiving DAW and retry Release All."
         }
@@ -280,6 +293,7 @@ final class StudioController: ObservableObject {
     func setTouchBarProfile(_ proposed: TouchBarProfile) {
         let next = proposed.normalized()
         guard next != touchBarProfile else { return }
+        disarmTouchBarOutput()
         if touchBarProfile.zones.contains(.chords) && !next.zones.contains(.chords) {
             releaseChordPads()
         }
@@ -296,6 +310,8 @@ final class StudioController: ObservableObject {
     }
 
     func releaseTouchBarNotes() {
+        nativePianoTokens.removeAll()
+        releaseOptionalTouchBarNotes()
         for note in heldTouchBarNotes {
             midi?.sendPerformanceNote(
                 note: note, velocity: 0, isOn: false, channel: touchBarProfile.channel
@@ -304,9 +320,16 @@ final class StudioController: ObservableObject {
         heldTouchBarNotes.removeAll()
     }
 
-    func touchBarKey(_ note: Int, pressed: Bool) {
+    func touchBarKey(_ note: Int, pressed: Bool, owner: TouchBarNoteOwner = .screenPiano) {
+        if touchBarProfile.effectiveOutput.sendsHaptics {
+            guard touchBarOutputArmed else { return }
+            let commands = touchBarLocalState.key(note, owner: owner, pressed: pressed,
+                channel: touchBarProfile.channel, velocity: touchBarProfile.noteVelocity)
+            if deliverTouchBarCommands(commands) { updateTouchBarHaptics() }
+            return
+        }
         cancelStartupGreeting()
-        if !midiRunning { startMIDI() }
+        if !midiRunning && pressed { startMIDI() }
         guard midiRunning else { return }
         let safeNote = max(0, min(127, note))
         if pressed {
@@ -323,6 +346,25 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarValue(_ zone: TouchBarZone, normalized value: Double) {
+        if touchBarProfile.effectiveOutput.sendsHaptics {
+            guard touchBarOutputArmed, value.isFinite else { return }
+            let safe = min(1, max(0, value))
+            let channel = touchBarProfile.channel
+            var commands: [SensorCommand] = []
+            switch zone {
+            case .pitchBend, .fretless:
+                touchBarLocalState.setBend(safe)
+                commands = [.init(.init(.pitchBend, channel: channel), value: Int((safe * 16383).rounded()))]
+            case .expression:
+                touchBarLocalState.setExpression(safe)
+                commands = [.init(.init(.controlChange, channel: channel, number: 11), value: Int((safe * 127).rounded()))]
+            case .vibrato, .filter:
+                commands = [.init(.init(.controlChange, channel: channel, number: zone == .vibrato ? 1 : 74), value: Int((safe * 127).rounded()))]
+            case .keys, .chords, .sustain: break
+            }
+            if deliverTouchBarCommands(commands) { updateTouchBarHaptics() }
+            return
+        }
         cancelStartupGreeting()
         if !midiRunning { startMIDI() }
         guard midiRunning, value.isFinite else { return }
@@ -350,6 +392,16 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarSustainPressed(_ isPressed: Bool) {
+        if touchBarProfile.effectiveOutput.sendsHaptics {
+            guard touchBarOutputArmed else { return }
+            let next = touchBarProfile.sustainMode == .toggle
+                ? (isPressed ? !touchBarLocalState.sustain : touchBarLocalState.sustain) : isPressed
+            let commands = touchBarLocalState.setSustain(next, channel: touchBarProfile.channel,
+                                                          velocity: touchBarProfile.noteVelocity)
+            touchBarSustainOn = touchBarLocalState.sustain
+            if deliverTouchBarCommands(commands) { updateTouchBarHaptics() }
+            return
+        }
         cancelStartupGreeting()
         if !midiRunning { startMIDI() }
         guard midiRunning else { return }
@@ -361,6 +413,121 @@ final class StudioController: ObservableObject {
         let helperHoldsSameChannel = midiHelperRunning && midiHelperSustainActive &&
             helperTargetChannel == touchBarProfile.channel
         midi?.setHelperSustain(next || helperHoldsSameChannel, channel: touchBarProfile.channel)
+    }
+
+    func touchBarNativeTap(_ note: Int) {
+        guard !touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed else { return }
+        let token = UUID()
+        nativePianoTokens[note] = token
+        touchBarKey(note, pressed: true, owner: .nativePiano)
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard let self, self.nativePianoTokens[note] == token else { return }
+            self.nativePianoTokens.removeValue(forKey: note)
+            self.touchBarKey(note, pressed: false, owner: .nativePiano)
+        }
+    }
+
+    func armTouchBarOutput() {
+        guard touchBarProfile.effectiveOutput.sendsHaptics, !touchBarOutputArmed else { return }
+        guard !chordOwnsHaptics, !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
+              !isPlaying, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
+            touchBarOutputStatus = "Stop other haptic sessions and the MIDI bridge first."
+            return
+        }
+        releaseOptionalTouchBarNotes()
+        guard touchBarOutstanding.isEmpty else {
+            touchBarOutputStatus = "MIDI release failed. Reset the DAW and retry."
+            return
+        }
+        cancelStartupGreeting()
+        renderGeneration &+= 1
+        playback?.stop(closeDriver: false)
+        guard requireEngine(), let driver else {
+            touchBarOutputStatus = "Force Touch output unavailable."
+            return
+        }
+        do {
+            if touchBarProfile.effectiveOutput.sendsMIDI {
+                try touchBarDedicatedMIDI.open()
+                let channel = touchBarProfile.channel
+                // Dedicated endpoint: set the same +/-12-semitone bend range as local sound.
+                for (cc, value) in [(101,0),(100,0),(6,12),(38,0),(101,127),(100,127)] {
+                    guard touchBarDedicatedMIDI.send(.init(.init(.controlChange, channel: channel, number: cc), value: value)) else {
+                        touchBarOutputStatus = "Unable to configure dedicated MIDI output."
+                        return
+                    }
+                }
+            }
+            let output = LiveNoteHapticOutput(driver: driver)
+            touchBarHaptics = output
+            touchBarOutputArmed = true
+            let token = UUID()
+            touchBarOutputToken = token
+            touchBarOutputStatus = touchBarProfile.effectiveOutput.rawValue + " ready"
+            output.start { [weak self] message in
+                Task { @MainActor in
+                    guard let self, self.touchBarOutputToken == token else { return }
+                    self.disarmTouchBarOutput()
+                    self.touchBarOutputStatus = "Trackpad output failed: " + message
+                }
+            }
+        } catch {
+            touchBarOutputStatus = error.localizedDescription
+        }
+    }
+
+    private func updateTouchBarHaptics() {
+        guard touchBarOutputArmed else { return }
+        touchBarHaptics?.update(frame: touchBarLocalState.frame(velocity: touchBarProfile.noteVelocity),
+                                masterLevel: masterLevel)
+    }
+
+    private func deliverTouchBarCommands(_ commands: [SensorCommand]) -> Bool {
+        guard touchBarProfile.effectiveOutput.sendsMIDI else { return true }
+        for command in commands {
+            let isNote = command.destination.kind == .note
+            if isNote && command.value > 0 { touchBarOutstanding.insert(command.destination) }
+            guard touchBarDedicatedMIDI.send(command) else {
+                disarmTouchBarOutput()
+                touchBarOutputStatus = "MIDI delivery failed; check note release in the DAW."
+                return false
+            }
+            if isNote && command.value == 0 { touchBarOutstanding.remove(command.destination) }
+        }
+        return true
+    }
+
+    func releaseOptionalTouchBarNotes() {
+        nativePianoTokens.removeAll()
+        let channel = touchBarProfile.channel
+        _ = touchBarLocalState.reset(channel: channel)
+        touchBarHaptics?.update(frame: nil, masterLevel: 0)
+        if touchBarOutputArmed { touchBarSustainOn = false }
+        for note in Array(touchBarOutstanding) {
+            if touchBarDedicatedMIDI.send(.init(note, value: 0)) { touchBarOutstanding.remove(note) }
+        }
+        if touchBarOutputArmed && touchBarProfile.effectiveOutput.sendsMIDI {
+            _ = touchBarDedicatedMIDI.send(.init(.init(.pitchBend, channel: channel), value: 8192))
+            _ = touchBarDedicatedMIDI.send(.init(.init(.controlChange, channel: channel, number: 1), value: 0))
+            _ = touchBarDedicatedMIDI.send(.init(.init(.controlChange, channel: channel, number: 11), value: 127))
+        }
+        if !touchBarOutstanding.isEmpty {
+            touchBarOutputToken = nil
+            touchBarHaptics?.stop()
+            touchBarHaptics = nil
+            touchBarOutputArmed = false
+            touchBarOutputStatus = "Some MIDI releases failed; reset the receiving DAW."
+        }
+    }
+
+    func disarmTouchBarOutput() {
+        touchBarOutputToken = nil
+        touchBarHaptics?.stop()
+        touchBarHaptics = nil
+        releaseOptionalTouchBarNotes()
+        touchBarOutputArmed = false
+        if touchBarOutstanding.isEmpty { touchBarOutputStatus = "Optional Trackpad output off" }
     }
 
     func enableLiveHinge(_ enable: Bool) {
@@ -472,6 +639,7 @@ final class StudioController: ObservableObject {
     }
 
     func panicStop() {
+        disarmTouchBarOutput()
         disarmChordPads()
         renderGeneration &+= 1
         cancelStartupGreeting()
@@ -513,6 +681,7 @@ final class StudioController: ObservableObject {
     }
 
     func reconnect() {
+        disarmTouchBarOutput()
         disarmChordPads()
         renderGeneration &+= 1
         cancelStartupGreeting()
@@ -570,7 +739,7 @@ final class StudioController: ObservableObject {
                 let events = try await Task.detached(priority: .userInitiated) {
                     try VoiceHapticService.render(text: renderText, voice: renderVoice)
                 }.value
-                guard renderGeneration == token, !chordOwnsHaptics else { return }
+                guard renderGeneration == token, !liveNoteOwnsHaptics else { return }
                 playback?.play(events: events, masterLevel: masterLevel)
                 isPlaying = false
             } catch {
@@ -1307,7 +1476,7 @@ final class StudioController: ObservableObject {
                 let events = try await Task.detached(priority: .userInitiated) {
                     try AudioFileHapticService.render(url: fileURL, profile: selectedProfile)
                 }.value
-                guard renderGeneration == token, !chordOwnsHaptics else { return }
+                guard renderGeneration == token, !liveNoteOwnsHaptics else { return }
                 playback?.play(events: events, masterLevel: masterLevel)
                 isPlaying = false
             } catch {
@@ -1326,8 +1495,8 @@ final class StudioController: ObservableObject {
     func startSystemAudio() {
         cancelStartupGreeting()
         guard !speakerBusy else { return }
-        guard !chordOwnsHaptics else {
-            lastError = "Disarm Trackpad Chord Pads before starting Speaker."
+        guard !liveNoteOwnsHaptics else {
+            lastError = "Disarm the optional Trackpad note output before starting Speaker."
             return
         }
         guard !touchRunning, !midiHelperRunning, !midiRunning, !isPlaying, !liveHingeEnabled else {
@@ -1388,8 +1557,8 @@ final class StudioController: ObservableObject {
     }
 
     private func allowOtherPerformance() -> Bool {
-        guard !chordOwnsHaptics else {
-            lastError = "Disarm Trackpad Chord Pads before starting another haptic performance, or use MIDI-only chords."
+        guard !liveNoteOwnsHaptics else {
+            lastError = "Disarm the optional Trackpad note output before starting another haptic performance."
             return false
         }
         guard !speakerBusy else {

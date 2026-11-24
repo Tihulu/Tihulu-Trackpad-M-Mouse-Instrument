@@ -54,16 +54,16 @@ private final class MIDIProcessClient: @unchecked Sendable {
     static let shared = MIDIProcessClient()
     private let lock = NSLock()
     private var retainedClient = MIDIClientRef()
-    private var chordSource = MIDIEndpointRef()
+    private var isolatedSources: Set<MIDIEndpointRef> = []
 
-    func setChordSource(_ source: MIDIEndpointRef) {
+    func registerIsolatedSource(_ source: MIDIEndpointRef) {
         lock.lock(); defer { lock.unlock() }
-        chordSource = source
+        isolatedSources.insert(source)
     }
 
-    func isChordSource(_ source: MIDIEndpointRef) -> Bool {
+    func isIsolatedSource(_ source: MIDIEndpointRef) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return source != 0 && source == chordSource
+        return isolatedSources.contains(source)
     }
 
     func acquire() throws -> MIDIClientRef {
@@ -234,7 +234,7 @@ public final class MIDIHapticService: @unchecked Sendable {
 
         for index in 0..<MIDIGetNumberOfSources() {
             let source = MIDIGetSource(index)
-            if source != 0, source != virtualSource, !MIDIProcessClient.shared.isChordSource(source) {
+            if source != 0, source != virtualSource, !MIDIProcessClient.shared.isIsolatedSource(source) {
                 MIDIPortConnectSource(inputPort, source, nil)
             }
         }
@@ -970,27 +970,39 @@ public final class MIDIHapticService: @unchecked Sendable {
 @MainActor
 public final class ChordMIDIOutput {
     private var endpoint = MIDIEndpointRef()
-    public init() {}
+    private let name: String
+    public init(name: String = "TIHULU Chord Pads") { self.name = name }
 
     public func open() throws {
         if endpoint != 0 { return }
         let client = try MIDIProcessClient.shared.acquire()
         var source = MIDIEndpointRef()
-        let status = MIDISourceCreate(client, "TIHULU Chord Pads" as CFString, &source)
+        let status = MIDISourceCreate(client, name as CFString, &source)
         guard status == noErr else { throw MIDIHapticError.source(status) }
         endpoint = source
-        MIDIProcessClient.shared.setChordSource(source)
+        MIDIProcessClient.shared.registerIsolatedSource(source)
     }
 
     /// Return CoreMIDI's delivery status; never report success on a failed send.
     public func send(_ command: SensorCommand) -> Bool {
-        guard endpoint != 0, command.destination.kind == .note,
-              command.destination.isValid, (0...127).contains(command.value) else { return false }
+        guard endpoint != 0, command.destination.isValid else { return false }
+        let channel = command.destination.channel
+        let value = command.value
+        let bytes: [UInt8]
+        switch command.destination.kind {
+        case .note:
+            guard (0...127).contains(value) else { return false }
+            bytes = [UInt8((value > 0 ? 0x90 : 0x80) | channel), UInt8(command.destination.number), UInt8(value)]
+        case .controlChange, .sustain:
+            guard (0...127).contains(value) else { return false }
+            let cc = command.destination.kind == .sustain ? 64 : command.destination.number
+            bytes = [UInt8(0xB0 | channel), UInt8(cc), UInt8(value)]
+        case .pitchBend:
+            guard (0...16383).contains(value) else { return false }
+            bytes = [UInt8(0xE0 | channel), UInt8(value & 127), UInt8(value >> 7)]
+        }
         var list = MIDIPacketList()
         let packet = MIDIPacketListInit(&list)
-        let channel = command.destination.channel
-        let bytes = [UInt8((command.value > 0 ? 0x90 : 0x80) | channel),
-                     UInt8(command.destination.number), UInt8(command.value)]
         let added = bytes.withUnsafeBufferPointer { buffer -> Bool in
             guard let first = buffer.baseAddress else { return false }
             return MIDIPacketListAdd(&list, MemoryLayout<MIDIPacketList>.size, packet,

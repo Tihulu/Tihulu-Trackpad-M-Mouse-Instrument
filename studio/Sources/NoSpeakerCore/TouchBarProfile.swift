@@ -39,6 +39,8 @@ public struct TouchBarProfile: Codable, Equatable, Sendable {
     public var tiltTarget: TiltMIDITarget
     public var tiltMinDegrees: Double
     public var tiltMaxDegrees: Double
+    public var musicalOutput: MusicalOutput?
+    public var effectiveOutput: MusicalOutput { musicalOutput ?? .midi }
 
     public init(
         zones: [TouchBarZone] = [.keys, .pitchBend, .vibrato, .sustain],
