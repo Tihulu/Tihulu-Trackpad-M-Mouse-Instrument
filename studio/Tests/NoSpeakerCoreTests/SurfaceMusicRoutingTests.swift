@@ -137,3 +137,27 @@ import Testing
     #expect(!PhysicalChordGrid.permitsMIDI(bank:bank,isMPE:true,mixedFretless:false))
     #expect(!PhysicalChordGrid.permitsMIDI(bank:bank,isMPE:false,mixedFretless:true))
 }
+
+@Test func physicalChordInvalidSnapshotReleasesOnlyChordOwners() {
+    var ledger = LegacyNoteOwners<String>()
+    var gates = PhysicalChordGates<Int>()
+    let shared = SensorDestination(.note,channel:0,number:60)
+    let chordOnly = SensorDestination(.note,channel:0,number:64)
+    func owner(_ c:Int,_ t:SensorDestination) -> String { "\(c)-\(t.channel)-\(t.number)" }
+    _ = ledger.press("melody",channel:0,note:60,velocity:100)
+    let valid = gates.reconcile([1:[shared,chordOnly]],velocity:[1:90],ledger:&ledger,owner:owner)
+    #expect(valid == [.init(chordOnly,value:90)])
+    let invalid = gates.reconcile([1:[shared,chordOnly]],velocity:[1:0],ledger:&ledger,owner:owner)
+    #expect(invalid == [.init(chordOnly,value:0)])
+    #expect(ledger.active == [shared])
+    #expect(gates.channels.isEmpty)
+}
+
+@Test func physicalChordSharedNoteVelocityIsDeterministic() {
+    var ledger = LegacyNoteOwners<String>()
+    var gates = PhysicalChordGates<Int>()
+    let note = SensorDestination(.note,channel:0,number:60)
+    let commands = gates.reconcile([2:[note],1:[note]],velocity:[2:40,1:100],
+        ledger:&ledger,owner:{ c,t in "\(c)-\(t.number)" })
+    #expect(commands == [.init(note,value:100)])
+}

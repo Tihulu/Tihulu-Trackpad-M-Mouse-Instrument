@@ -497,7 +497,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             )
 
             let quantized: Int
-            var chordSlot: Int?
+            var chordSlot: Int? = nil
             if instrument == .chords {
                 guard let slot = PhysicalChordGrid.slot(x:x,y:y),
                       let pad = config.physicalChordBank?.pad(at:slot), let first = pad.notes.first else { return nil }
@@ -648,6 +648,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         guard !sounding.isEmpty else { return }
 
         var tones: [HapticTone] = []
+        var chordFrequencies = Set<Double>()
         var level = 0.0
         for state in sounding {
             if config.instrument(for:state.surface) == .chords {
@@ -655,7 +656,9 @@ public final class TouchInstrumentService: @unchecked Sendable {
                       let pad = bank.pad(at:slot) else { continue }
                 for note in pad.notes {
                     let frequency = bank.customScale?.tunedFrequency(midi:note,root:bank.root) ?? (try? MusicTheory.frequency(midi:note))
-                    if let frequency { tones.append(.init(frequencyHz:frequency)) }
+                    if let frequency, chordFrequencies.insert(frequency).inserted {
+                        tones.append(.init(frequencyHz:frequency))
+                    }
                 }
                 level = max(level,Double(state.velocity)/127)
                 continue

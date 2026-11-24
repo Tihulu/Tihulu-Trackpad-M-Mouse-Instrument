@@ -98,9 +98,12 @@ public final class MIDIHapticService: @unchecked Sendable {
         let note: Int
     }
 
-    private struct TouchKey: Hashable {
+    private struct TouchKey: Hashable, Comparable {
         let surface: TouchSurfaceKind
         let id: Int
+        static func < (lhs: Self, rhs: Self) -> Bool {
+            lhs.surface == rhs.surface ? lhs.id < rhs.id : lhs.surface.rawValue < rhs.surface.rawValue
+        }
     }
 
     private struct OutgoingTouch {
@@ -381,7 +384,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             // melodic finger; they are routed to separate channels.
             var keptMelodic = false
             desired = desired.filter { state in
-                if configuration.instrument(for: state.surface) == .drums { return true }
+                if configuration.instrument(for: state.surface) != .melodic { return true }
                 if keptMelodic { return false }
                 keptMelodic = true
                 return true

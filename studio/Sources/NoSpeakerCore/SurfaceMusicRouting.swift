@@ -150,7 +150,7 @@ public enum PhysicalChordGrid {
 
 /// Reconcile per-contact note sets through the existing shared gate ledger.
 /// Add new owners before dropping old ones so a common tone survives a swap.
-public struct PhysicalChordGates<Contact: Hashable> {
+public struct PhysicalChordGates<Contact: Hashable & Comparable> {
     private var held: [Contact: Set<SensorDestination>] = [:]
     public init() {}
     public var channels: Set<Int> { Set(held.values.flatMap { $0.map(\.channel) }) }
@@ -158,18 +158,21 @@ public struct PhysicalChordGates<Contact: Hashable> {
         _ desired: [Contact: Set<SensorDestination>], velocity: [Contact: Int],
         ledger: inout LegacyNoteOwners<Owner>, owner: (Contact, SensorDestination) -> Owner
     ) -> [SensorCommand] {
-        let next = desired.filter { !$0.value.isEmpty }
-        guard next.allSatisfy({ entry in
+        let proposed = desired.filter { !$0.value.isEmpty }
+        // Invalid snapshots fail closed for this source only.
+        let next = proposed.allSatisfy({ entry in
             (1...127).contains(velocity[entry.key] ?? 0) &&
             entry.value.allSatisfy { $0.kind == .note && $0.isValid }
-        }) else { return [] }
+        }) ? proposed : [:]
         var result: [SensorCommand] = []
-        for (contact, targets) in next {
+        for contact in next.keys.sorted() {
+            let targets = next[contact] ?? []
             for target in targets.subtracting(held[contact] ?? []).sorted(by: Self.less) {
                 result += ledger.press(owner(contact,target),channel:target.channel,note:target.number,velocity:velocity[contact] ?? 1)
             }
         }
-        for (contact, targets) in held {
+        for contact in held.keys.sorted() {
+            let targets = held[contact] ?? []
             for target in targets.subtracting(next[contact] ?? []).sorted(by: Self.less) {
                 result += ledger.release(owner(contact,target))
             }
