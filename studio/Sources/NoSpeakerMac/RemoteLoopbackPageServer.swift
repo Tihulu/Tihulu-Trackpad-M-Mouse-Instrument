@@ -194,7 +194,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const motionStart=get("motionStart"), motionStop=get("motionStop"), meter=get("tiltMeter"), motionStatus=get("motionStatus");
   let mode="idle", sample=null, neutral=null, sampleAt=0, sentAt=-1, permissionEpoch=0, waitingSince=0, pendingKind=null;
   let lastTouchSend=-Infinity,lastTiltSend=-Infinity;
-  let touchQueue=[],touchSent=false;
+  let touchQueue=[],touchSent=false,paceTimer=null;
   function touchBusy(){return pointer!==null||touchQueue.length!==0||touchSent||pendingKind==="touch"||pendingKind==="release";}
   function queueTouch(kind,axes){
     if(touchQueue.length>=8){close("Touch input backlog. Reconnect explicitly.");return;}
@@ -447,7 +447,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
     const old=ws;ws=null;admitted=false;caps=null;pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
-    clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();
+    if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
   }
@@ -487,38 +487,41 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(pianoQueue.length&&now-pianoQueue[0].at>=150){close("Piano input delayed. Reconnect explicitly.");return;}
     if(pedalQueue.length&&now-pedalQueue[0].at>=150){close("Pedal input delayed. Reconnect explicitly.");return;}
     if(pending)return;
+    // Bound sends before dequeue, including releases.
+    if(now-lastSend<13){if(paceTimer===null)paceTimer=setTimeout(()=>{paceTimer=null;tick();},13-(now-lastSend));return;}
     // Release takes precedence over new samples; one frame per ACK.
-    if(pedalEmergency){pedalEmergency=false;sendPedals({mask:0,levels:[0,0,0,0,0,0]});return;}
-    if(pianoEmergency){pianoEmergency=false;sendPiano(0);return;}
-    if(drumEmergency){drumEmergency=false;sendDrum(0);return;}
-    if(touchQueue[0]?.kind==="release"){sendTouchEdge();return;}
-    if(mode==="releasing"){send("motionRelease");return;}
-    const releasing=streams.find(s=>s.mode==="releasing");
-    if(releasing){send(releasing.kind+"Release");return;}
+    const releases=[];const due=last=>Number.isFinite(last)?last+300:now;
+    if(pedalEmergency)releases.push({due:due(lastPedalSend),run:()=>{pedalEmergency=false;sendPedals({mask:0,levels:[0,0,0,0,0,0]});}});
+    if(pianoEmergency)releases.push({due:due(lastPianoSend),run:()=>{pianoEmergency=false;sendPiano(0);}});
+    if(drumEmergency)releases.push({due:due(lastDrumSend),run:()=>{drumEmergency=false;sendDrum(0);}});
+    if(touchQueue[0]?.kind==="release")releases.push({due:Math.min(due(lastTouchSend),touchQueue[0].at+150),run:sendTouchEdge});
+    if(mode==="releasing")releases.push({due:due(lastTiltSend),run:()=>send("motionRelease")});
+    for(const s of streams)if(s.mode==="releasing")releases.push({due:due(s.last),run:()=>send(s.kind+"Release")});
+    if(releases.length){releases.reduce((a,b)=>a.due<=b.due?a:b).run();return;}
     const ready=[];
-    if(pedalQueue.length&&now-lastPedalSend>=25)ready.push({last:lastPedalSend,run:()=>sendPedals(pedalQueue.shift().snapshot)});
+    if(pedalQueue.length&&now-lastPedalSend>=25)ready.push({last:lastPedalSend,edge:pedalQueue[0].at,run:()=>sendPedals(pedalQueue.shift().snapshot)});
     else if(!pedalQueue.length&&pedalMask!==0&&now-lastPedalSend>=50)ready.push({last:lastPedalSend,run:()=>{pedalDirty=false;sendPedals(pedalSnapshot());}});
-    if(pianoQueue.length&&now-lastPianoSend>=25)ready.push({last:lastPianoSend,run:()=>sendPiano(pianoQueue.shift().mask)});
+    if(pianoQueue.length&&now-lastPianoSend>=25)ready.push({last:lastPianoSend,edge:pianoQueue[0].at,run:()=>sendPiano(pianoQueue.shift().mask)});
     else if(pianoSent!==0&&!pianoQueue.length&&now-lastPianoSend>=50)ready.push({last:lastPianoSend,run:()=>sendPiano(pianoSent)});
-    if(drumQueue.length&&now-lastDrumSend>=25)ready.push({last:lastDrumSend,run:()=>sendDrum(drumQueue.shift().mask)});
+    if(drumQueue.length&&now-lastDrumSend>=25)ready.push({last:lastDrumSend,edge:drumQueue[0].at,run:()=>sendDrum(drumQueue.shift().mask)});
     else if(drumSent!==0&&!drumQueue.length&&now-lastDrumSend>=50)ready.push({last:lastDrumSend,run:()=>sendDrum(drumSent)});
-    if(touchQueue.length)ready.push({last:lastTouchSend,run:sendTouchEdge});
+    if(touchQueue.length)ready.push({last:lastTouchSend,edge:touchQueue[0].at,run:sendTouchEdge});
     else if(pointer!==null&&position&&touchSent&&now-lastTouchSend>=50)ready.push({last:lastTouchSend,run:()=>send("touch",position)});
-    if(mode==="waiting"&&sample&&now-sampleAt<150)ready.push({last:-Infinity,run:()=>{
+    if(mode==="waiting"&&sample&&now-sampleAt<150)ready.push({last:-Infinity,arm:waitingSince,run:()=>{
       neutral={...sample};sentAt=sampleAt;mode="arming";motionStatus.textContent="Calibrating…";send("orientationArm",sample);
     }});
     if(mode==="active"&&sample&&sampleAt>sentAt&&now-lastTiltSend>=50&&now-sampleAt<150)
       ready.push({last:lastTiltSend,run:()=>{sentAt=sampleAt;send("orientation",sample);}});
     for(const s of streams){
-      if(s.mode==="waiting"&&s.sample&&now-s.at<150)ready.push({last:-Infinity,run:()=>{
+      if(s.mode==="waiting"&&s.sample&&now-s.at<150)ready.push({last:-Infinity,arm:s.waiting,run:()=>{
         s.sent=s.at;s.mode="arming";s.status.textContent="Arming…";send(s.kind+"Arm",s.sample);
       }});
       if(s.mode==="active"&&s.sample&&s.at>s.sent&&now-s.last>=50&&now-s.at<150)
         ready.push({last:s.last,run:()=>{s.sent=s.at;send(s.kind,s.sample);}});
     }
-    // One ACK lane, oldest serviced eligible stream wins; ties favor the
-    // later candidate (preserves tilt's initial refresh priority).
-    if(ready.length){ready.reduce((a,b)=>a.last<b.last?a:b).run();return;}
+    // One ACK lane: discrete edges by age, then waiting arms, then refresh age.
+    // Release targets are scheduling priorities, not extended safety deadlines.
+    if(ready.length){const rank=x=>[x.edge!==undefined?0:x.arm!==undefined?1:2,x.edge??x.arm??x.last];ready.reduce((a,b)=>{const x=rank(a),y=rank(b);return x[0]<y[0]||(x[0]===y[0]&&x[1]<=y[1])?a:b;}).run();return;}
     if(!touchBusy()&&pedalSentMask===0&&!pedalQueue.length&&pianoSent===0&&!pianoQueue.length&&drumSent===0&&!drumQueue.length&&mode!=="active"&&mode!=="arming"&&!streams.some(s=>s.mode==="active"||s.mode==="arming")&&now-lastSend>=500)send("heartbeat");
   }
   connect.addEventListener("click",()=>{
@@ -554,7 +557,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         if(kind===s.kind+"Arm"&&s.mode==="arming"){s.mode="active";s.status.textContent="Active. Release when finished.";}
         if(kind===s.kind+"Release")resetInertial(s,"Released.");
       }
-      syncControls();if(pedalEmergency||pedalQueue.length||pedalDirty||pianoEmergency||pianoQueue.length||drumEmergency||drumQueue.length||touchQueue.length||mode==="releasing"||streams.some(s=>s.mode==="releasing"))tick();
+      syncControls();tick();
     };
     socket.onerror=()=>{key.fill(0);if(ws===socket)close("TLS or connection failed. Do not bypass certificate validation.");};
     socket.onclose=()=>{key.fill(0);if(ws===socket)close("Disconnected. Request a new invitation.");};
