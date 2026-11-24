@@ -65,6 +65,9 @@ final class StudioController: ObservableObject {
     @Published var patchCameraOrientation: AirControlOrientation = .upright
     @Published var patchCameraMirrorX = false
     @Published var patchCameraSwapRoles = false
+    @Published private(set) var patchAirDebugSelected: Int?
+    @Published private(set) var patchAirDebugSounding: Int?
+    var patchAirDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasDualCamera }
     @Published private(set) var patchCameraStatus = "Camera OFF"
     @Published private(set) var patchCameraHand: AirHandSample?
     var patchCameraCalibrationAvailable: Bool { patchRunning && patchPhysical && !patchMIDIEnabled && patchCameraHand != nil }
@@ -374,6 +377,8 @@ final class StudioController: ObservableObject {
                     remotePage?.start()
                 }
                 startPatchWatchdog()
+            } else if patchSimulation.hasDualCamera {
+                startAirDebugWatchdog()
             }
         } catch {
             stopInstrumentPatch()
@@ -481,6 +486,41 @@ final class StudioController: ObservableObject {
     func builderBarValue(_ value: Double?, token: UUID) {
         guard patchNativeBar, token == patchNativeToken else { return }
         receiveBuilderScalar(.touchBar, value: value)
+    }
+
+    private func startAirDebugWatchdog() {
+        patchWatchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+                guard let self, self.patchAirDebugAvailable else { return }
+                let commands = self.patchSimulation.expireDualHand(now: ProcessInfo.processInfo.systemUptime)
+                self.refreshAirDebugState()
+                self.recordPatchCommands(commands)
+            }
+        }
+    }
+
+    private func refreshAirDebugState() {
+        let selected = patchSimulation.airSelectedSlot
+        let sounding = patchSimulation.airSoundingSlot
+        if patchAirDebugSelected != selected { patchAirDebugSelected = selected }
+        if patchAirDebugSounding != sounding { patchAirDebugSounding = sounding }
+    }
+
+    func sendAirDebugFrame(count: Int, aperture: Double, x: Double, y: Double) {
+        guard patchAirDebugAvailable else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let hand = AirHandSample.debugSample(x: x, y: y, aperture: aperture)
+        let commands = patchSimulation.receiveDualHand(count: count, confidence: 1, helper: hand, time: now, now: now)
+        refreshAirDebugState()
+        recordPatchCommands(commands)
+    }
+
+    func releaseAirDebugFrame() {
+        guard patchAirDebugAvailable else { return }
+        let commands = patchSimulation.releaseDualHand()
+        refreshAirDebugState()
+        recordPatchCommands(commands)
     }
 
     private func startPatchWatchdog() {
@@ -677,6 +717,8 @@ final class StudioController: ObservableObject {
         patchPadTokens.removeAll()
         patchWatchdog?.cancel()
         patchWatchdog = nil
+        patchAirDebugSelected = nil
+        patchAirDebugSounding = nil
         let hadPhysicalInput = patchPhysical
         let hadNativeBar = patchNativeBar
         patchNativeToken = nil
