@@ -68,11 +68,13 @@ private struct NoteDraft: Codable {
     var selectedMIDI: Int = 72
     var velocity: Double = 0.85
     var loop: Bool = false
+    var groove: GrooveSettings?
 }
 
 private struct DrumDraft: Codable {
     var active: Set<String> = ["kick:0","kick:8","snare:4","snare:12","closedHat:0","closedHat:2","closedHat:4","closedHat:6","closedHat:8","closedHat:10","closedHat:12","closedHat:14"]
     var loop: Bool = false
+    var groove: GrooveSettings?
 }
 
 /// A saved workspace is declarative settings, not an executable instrument or a
@@ -103,6 +105,7 @@ private struct WorkspaceSettings: Codable {
         notes.notes.allSatisfy { $0.map { (0...127).contains($0) } ?? true } &&
         (48...95).contains(notes.selectedMIDI) &&
         (0.1...1).contains(notes.velocity) &&
+        (notes.groove?.isValid ?? true) && (drums.groove?.isValid ?? true) &&
         drums.active.count <= 96 &&
         drums.active.isSubset(of: Self.validDrumSteps) &&
         (20...300).contains(bpm)
@@ -208,8 +211,8 @@ struct ContentView: View {
                     case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture)
                     case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture)
                     case .touchBar: TouchBarModeView()
-                    case .notes: NoteSequencerView(notes: $noteDraft.notes, selectedMIDI: $noteDraft.selectedMIDI, velocity: $noteDraft.velocity, loop: $noteDraft.loop)
-                    case .drums: DrumSequencerView(active: $drumDraft.active, loop: $drumDraft.loop)
+                    case .notes: NoteSequencerView(notes: $noteDraft.notes, selectedMIDI: $noteDraft.selectedMIDI, velocity: $noteDraft.velocity, loop: $noteDraft.loop, groove: $noteDraft.groove)
+                    case .drums: DrumSequencerView(active: $drumDraft.active, loop: $drumDraft.loop, groove: $drumDraft.groove)
                     case .midi: MIDIModeView()
                     case .audio: AudioFileModeView()
                     case .speaker: SpeakerModeView()
@@ -1352,12 +1355,14 @@ private struct NoteSequencerView: View {
     @Binding var selectedMIDI: Int
     @Binding var velocity: Double
     @Binding var loop: Bool
+    @Binding var groove: GrooveSettings?
 
     var body: some View {
         ScrollView {
         VStack(alignment: .leading, spacing: 20) {
             PageHeader(title: "Note Sequencer", subtitle: "Build or generate a 16-step melody and play it directly through the haptic motor.")
             NoteComposerPanel(notes: $notes)
+            GroovePanel(settings: $groove)
             HStack {
                 Stepper("Selected note: \((try? MusicTheory.noteName(midi: selectedMIDI)) ?? "-")", value: $selectedMIDI, in: 48...95)
                 Slider(value: $velocity, in: 0.1...1) { Text("Velocity") }.frame(width: 180)
@@ -1365,7 +1370,7 @@ private struct NoteSequencerView: View {
                 Spacer()
                 Button("Play Pattern") { play() }.buttonStyle(.borderedProminent)
                 MIDIClipExportButton(filename: "TIHULU Notes") {
-                    try MIDIClip.melody(.init(bpm: studio.bpm, steps: noteSteps))
+                    try makeClip()
                 }
                 Button("Clear") { notes = Array(repeating: nil, count: 16) }
             }
@@ -1401,8 +1406,14 @@ private struct NoteSequencerView: View {
         }
     }
 
+    private func makeClip() throws -> MIDIClip {
+        let clip = try MIDIClip.melody(.init(bpm: studio.bpm, steps: noteSteps))
+        return try groove?.apply(to: clip) ?? clip
+    }
+
     private func play() {
-        studio.playNotes(noteSteps, loop: loop)
+        if groove != nil { studio.playGrooveClip(loop: loop, makeClip: makeClip) }
+        else { studio.playNotes(noteSteps, loop: loop) }
     }
 }
 
@@ -1410,6 +1421,7 @@ private struct DrumSequencerView: View {
     @EnvironmentObject private var studio: StudioController
     @Binding var active: Set<String>
     @Binding var loop: Bool
+    @Binding var groove: GrooveSettings?
     private let voices: [DrumVoice] = [.kick, .snare, .closedHat, .openHat, .clap, .tom]
 
     var body: some View {
@@ -1417,12 +1429,13 @@ private struct DrumSequencerView: View {
         VStack(alignment: .leading, spacing: 18) {
             PageHeader(title: "Drum Sequencer", subtitle: "Sequence or generate haptic kick, snare, hats, clap and tom voices.")
             DrumComposerPanel(active: $active)
+            GroovePanel(settings: $groove)
             HStack {
                 Toggle("Loop", isOn: $loop)
                 Spacer()
                 Button("Play Pattern") { play() }.buttonStyle(.borderedProminent)
                 MIDIClipExportButton(filename: "TIHULU Drums") {
-                    try MIDIClip.drums(.init(bpm: studio.bpm, hits: drumHits))
+                    try makeClip()
                 }
                 Button("Clear") { active.removeAll() }
             }
@@ -1480,8 +1493,14 @@ private struct DrumSequencerView: View {
     private var drumHits: [DrumStep] {
         voices.flatMap { voice in (0..<16).compactMap { active.contains("\(voice.rawValue):\($0)") ? DrumStep(index: $0, voice: voice, velocity: 0.9) : nil } }
     }
+    private func makeClip() throws -> MIDIClip {
+        let clip = try MIDIClip.drums(.init(bpm: studio.bpm, hits: drumHits))
+        return try groove?.apply(to: clip) ?? clip
+    }
+
     private func play() {
-        studio.playDrums(drumHits, loop: loop)
+        if groove != nil { studio.playGrooveClip(loop: loop, makeClip: makeClip) }
+        else { studio.playDrums(drumHits, loop: loop) }
     }
 }
 

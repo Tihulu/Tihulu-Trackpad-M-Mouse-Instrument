@@ -991,6 +991,26 @@ final class StudioController: ObservableObject {
         }
     }
 
+    func playGrooveClip(loop: Bool, makeClip: () throws -> MIDIClip) {
+        guard allowOtherPerformance() else { return }
+        guard !touchRunning, !midiRunning, !midiHelperRunning, !liveHingeEnabled else {
+            lastError = "Stop other live performances before starting groove haptic playback."
+            return
+        }
+        do {
+            let clip = try makeClip()
+            let events = try clip.grooveHapticEvents()
+            cancelStartupGreeting()
+            guard requireEngine() else { return }
+            let token = beginPlaybackRequest()
+            playRendered(events, token: token, loop: loop,
+                         duration: Double(clip.length) * 60 / clip.bpm / Double(MIDIClip.ppq))
+        } catch {
+            // Validation before taking over the current playback.
+            lastError = error.localizedDescription
+        }
+    }
+
     func playNotes(_ steps: [NoteStep], length: Int = 16, loop: Bool = false) {
         guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
