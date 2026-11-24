@@ -1,9 +1,15 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public enum MIDIFileError: Error, Equatable {
     case invalidHeader
     case unsupportedTiming
     case truncated
+    case resourceLimit
     case malformed(String)
 }
 
@@ -41,7 +47,39 @@ private struct MIDITrackEvent {
 }
 
 public enum MIDIFileParser {
+    // Proposed import budgets; not limits of the MIDI standard.
+    public static let maximumFileBytes = 16 * 1024 * 1024
+    public static let maximumRetainedEvents = 250_000
+
+    /// Read only a regular local file, with a hard byte cap even if it grows
+    /// after open. Nonblocking open prevents a named pipe from stalling import.
+    public static func parse(contentsOf url: URL) throws -> ParsedMIDIFile {
+        guard url.isFileURL else { throw MIDIFileError.malformed("A local MIDI file is required") }
+        let fd = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        }
+        guard fd >= 0 else { throw NSError(domain:NSPOSIXErrorDomain, code:Int(errno)) }
+        let handle = FileHandle(fileDescriptor:fd, closeOnDealloc:true)
+        defer { try? handle.close() }
+        var info = stat()
+        guard fstat(fd, &info) == 0 else { throw NSError(domain:NSPOSIXErrorDomain, code:Int(errno)) }
+        guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else {
+            throw MIDIFileError.malformed("A regular MIDI file is required")
+        }
+        guard info.st_size >= 0, info.st_size <= maximumFileBytes else { throw MIDIFileError.resourceLimit }
+        var data = Data()
+        while data.count <= maximumFileBytes {
+            let remaining = maximumFileBytes + 1 - data.count
+            guard let chunk = try handle.read(upToCount:min(64 * 1024, remaining)), !chunk.isEmpty else { break }
+            data.append(chunk)
+            guard data.count <= maximumFileBytes else { throw MIDIFileError.resourceLimit }
+        }
+        return try parse(data)
+    }
+
     public static func parse(_ data: Data) throws -> ParsedMIDIFile {
+        guard data.count <= maximumFileBytes else { throw MIDIFileError.resourceLimit }
         let bytes = [UInt8](data)
         var cursor = 0
 
@@ -61,11 +99,17 @@ public enum MIDIFileParser {
         let division = u16(try read(2))
         if headerLength > 6 { _ = try read(headerLength - 6) }
         guard format == 0 || format == 1 else { throw MIDIFileError.malformed("Only MIDI formats 0 and 1 are supported") }
-        guard division & 0x8000 == 0 else { throw MIDIFileError.unsupportedTiming }
-        let ticksPerQuarter = max(1, division)
+        guard division > 0, division & 0x8000 == 0 else { throw MIDIFileError.unsupportedTiming }
+        let ticksPerQuarter = division
+        guard trackCount > 0, format != 0 || trackCount == 1 else { throw MIDIFileError.invalidHeader }
 
         var allEvents: [MIDITrackEvent] = []
         var eventOrder = 0
+        func record(_ event: MIDITrackEvent) throws {
+            guard allEvents.count < maximumRetainedEvents else { throw MIDIFileError.resourceLimit }
+            allEvents.append(event)
+            eventOrder += 1
+        }
 
         for _ in 0..<trackCount {
             guard String(bytes: try read(4), encoding: .ascii) == "MTrk" else { throw MIDIFileError.malformed("Missing MTrk chunk") }
@@ -95,7 +139,7 @@ public enum MIDIFileParser {
                     status = runningStatus
                 } else {
                     cursor += 1
-                    if status < 0xF0 { runningStatus = status }
+                    runningStatus = status < 0xF0 ? status : nil
                 }
 
                 if status == 0xFF {
@@ -103,10 +147,11 @@ public enum MIDIFileParser {
                     let type = bytes[cursor]; cursor += 1
                     let metaLength = try readVariableLength()
                     guard cursor + metaLength <= trackEnd else { throw MIDIFileError.truncated }
-                    if type == 0x51, metaLength == 3 {
+                    if type == 0x51 {
+                        guard metaLength == 3 else { throw MIDIFileError.malformed("Invalid tempo length") }
                         let tempo = (Int(bytes[cursor]) << 16) | (Int(bytes[cursor + 1]) << 8) | Int(bytes[cursor + 2])
-                        allEvents.append(.init(tick: tick, order: eventOrder, kind: .tempo(microsecondsPerQuarter: tempo)))
-                        eventOrder += 1
+                        guard tempo > 0 else { throw MIDIFileError.malformed("Invalid zero tempo") }
+                        try record(.init(tick: tick, order: eventOrder, kind: .tempo(microsecondsPerQuarter: tempo)))
                     }
                     cursor += metaLength
                     continue
@@ -118,6 +163,7 @@ public enum MIDIFileParser {
                     continue
                 }
 
+                guard status < 0xF0 else { throw MIDIFileError.malformed("Unsupported system status") }
                 let command = status & 0xF0
                 let channel = Int(status & 0x0F)
                 let dataLength = (command == 0xC0 || command == 0xD0) ? 1 : 2
@@ -125,17 +171,15 @@ public enum MIDIFileParser {
                 let d1 = Int(bytes[cursor]); cursor += 1
                 let d2 = dataLength == 2 ? Int(bytes[cursor]) : 0
                 if dataLength == 2 { cursor += 1 }
+                guard d1 < 128, d2 < 128 else { throw MIDIFileError.malformed("Invalid channel data byte") }
 
                 switch command {
                 case 0x80:
-                    allEvents.append(.init(tick: tick, order: eventOrder, kind: .noteOff(channel: channel, note: d1)))
-                    eventOrder += 1
+                    try record(.init(tick: tick, order: eventOrder, kind: .noteOff(channel: channel, note: d1)))
                 case 0x90 where d2 == 0:
-                    allEvents.append(.init(tick: tick, order: eventOrder, kind: .noteOff(channel: channel, note: d1)))
-                    eventOrder += 1
+                    try record(.init(tick: tick, order: eventOrder, kind: .noteOff(channel: channel, note: d1)))
                 case 0x90:
-                    allEvents.append(.init(tick: tick, order: eventOrder, kind: .noteOn(channel: channel, note: d1, velocity: d2)))
-                    eventOrder += 1
+                    try record(.init(tick: tick, order: eventOrder, kind: .noteOn(channel: channel, note: d1, velocity: d2)))
                 default:
                     break
                 }

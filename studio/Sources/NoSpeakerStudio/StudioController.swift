@@ -2481,8 +2481,7 @@ final class StudioController: ObservableObject {
         guard requireEngine() else { return }
         let token = beginPlaybackRequest()
         do {
-            let data = try Data(contentsOf: url)
-            let midi = try MIDIFileParser.parse(data)
+            let midi = try MIDIFileParser.parse(contentsOf: url)
             currentFileName = url.lastPathComponent
             playRendered(MIDIFileParser.hapticEvents(from: midi), token: token,
                          duration: midi.durationSeconds)
