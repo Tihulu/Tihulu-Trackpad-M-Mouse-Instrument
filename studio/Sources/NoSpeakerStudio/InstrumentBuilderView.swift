@@ -20,6 +20,10 @@ struct InstrumentBuilderView: View {
     @State private var routeSource: SensorSource?
     @State private var routeSearch = ""
     @State private var expandedRoutes: Set<String> = []
+    @State private var pendingReplacement: InstrumentPatch?
+    @State private var confirmReplacement = false
+
+    private var dirty: Bool { draft != studio.instrumentPatch }
 
     private var visibleRouteIDs: Set<String> {
         Set(BuilderRouteTools.visibleIDs(in:draft,source:routeSource,query:routeSearch))
@@ -34,11 +38,16 @@ struct InstrumentBuilderView: View {
                 GroupBox("Instrument") {
                     VStack(alignment: .leading, spacing: 8) {
                         TextField("Instrument name", text: $draft.name)
+                        Text(dirty ? "Unsaved draft · retained while this app is open. Save before quitting." : "Matches saved instrument.")
+                            .font(.caption).foregroundStyle(dirty ? Color.orange : Color.secondary)
                         HStack {
-                            Button("Blank") { draft = InstrumentPatch() }
-                            Button("Expressive template") { draft = .starter }
-                            Button("Save changes") { studio.updateInstrumentPatch(draft); message = "Saved locally." }
-                                .disabled(!draft.isValid)
+                            Button("Blank") { replaceDraft(with: InstrumentPatch()) }
+                            Button("Expressive template") { replaceDraft(with: .starter) }
+                            Button("Revert draft") { replaceDraft(with: studio.instrumentPatch) }.disabled(!dirty)
+                            Button("Save changes") {
+                                studio.updateInstrumentPatch(draft)
+                                message = dirty ? "Could not save this instrument." : "Saved locally."
+                            }.disabled(!draft.isValid || !dirty)
                             Button("Export JSON") { exportPatch() }.disabled(!draft.isValid)
                             Button("Import JSON") { importPatch() }
                             Button("Visual Patchbay") { showPatchbay = true }.buttonStyle(.borderedProminent)
@@ -265,12 +274,24 @@ struct InstrumentBuilderView: View {
         }
         .sheet(isPresented: $showPatchbay) { VisualPatchbayView(patch: $draft) }
         .sheet(isPresented: $showLayout) { PerformanceLayoutEditor(patch: $draft) }
+        .confirmationDialog("Replace unsaved instrument draft?", isPresented: $confirmReplacement, titleVisibility: .visible) {
+            Button("Replace draft", role: .destructive) {
+                if !studio.patchRunning, let replacement = pendingReplacement {
+                    applyReplacement(replacement)
+                }
+                pendingReplacement = nil
+            }
+            Button("Cancel", role: .cancel) { pendingReplacement = nil }
+        } message: {
+            Text("Unsaved routes, labels and settings in the current draft will be replaced. The saved instrument is unchanged until Save or Start.")
+        }
         .onAppear {
-            draft = studio.instrumentPatch
+            draft = studio.resumeBuilderDraft()
             if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled }
         }
         .onDisappear {
             if !studio.patchPhysical { studio.stopInstrumentPatch() }
+            studio.rememberBuilderDraft(draft)
         }
     }
 
@@ -362,6 +383,21 @@ struct InstrumentBuilderView: View {
         }
     }
 
+    private func replaceDraft(with replacement: InstrumentPatch) {
+        guard !studio.patchRunning, draft != replacement else { return }
+        if dirty { pendingReplacement = replacement; confirmReplacement = true }
+        else { applyReplacement(replacement) }
+    }
+
+    private func applyReplacement(_ replacement: InstrumentPatch) {
+        draft = replacement
+        expandedRoutes.removeAll()
+        routeSource = nil
+        routeSearch = ""
+        if replacement == studio.instrumentPatch { studio.discardBuilderDraft() }
+        message = replacement == studio.instrumentPatch ? "Restored saved instrument." : "Draft replaced. Save changes or Start test to use it."
+    }
+
     private func exportPatch() {
         do {
             let data = try draft.archive()
@@ -383,8 +419,7 @@ struct InstrumentBuilderView: View {
             let handle = try FileHandle(forReadingFrom: url)
             defer { try? handle.close() }
             let data = try handle.read(upToCount: WorkspaceArchive.maximumBytes + 1) ?? Data()
-            draft = try InstrumentPatch.read(data)
-            message = "Imported draft. Save changes or Start test to use it."
+            replaceDraft(with: try InstrumentPatch.read(data))
         } catch { message = error.localizedDescription }
     }
 }
