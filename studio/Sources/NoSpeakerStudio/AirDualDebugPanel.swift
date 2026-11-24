@@ -6,6 +6,7 @@ import NoSpeakerCore
 struct AirDualDebugPanel: View {
     @EnvironmentObject private var studio: StudioController
     @State private var streaming = false
+    @State private var runID:UUID?
     @State private var count = 0
     @State private var aperture = 0.8
     @State private var x = 0.5
@@ -39,15 +40,15 @@ struct AirDualDebugPanel: View {
                     .font(.caption.monospacedDigit())
                 HStack {
                     Button("Start frames") {
-                        count = 0; aperture = 0.8; streaming = true
+                        count = 0; aperture = 0.8; runID = studio.patchDebugCameraRunID; streaming = true
                     }.disabled(streaming || studio.patchAirReplaying)
                     Button("Simulate tracking loss") {
-                        streaming = false; studio.stopAirReplay()
+                        streaming = false; if let runID,studio.patchDebugCameraRunID == runID { studio.stopAirReplay() }
                     }
                 }
                 HStack {
                     Text("Recorded frames: \(studio.patchAirTraceCount)").font(.caption.monospacedDigit())
-                    Button("Replay trace") { studio.startAirReplay() }
+                    Button("Replay trace") { runID = studio.patchDebugCameraRunID; studio.startAirReplay() }
                         .disabled(streaming || studio.patchAirReplaying || studio.patchAirTraceCount == 0 || !studio.patchAirTraceCompatible)
                     Button("Stop replay") { studio.stopAirReplay() }.disabled(!studio.patchAirReplaying)
                     Button("Clear trace") { studio.clearAirTrace() }.disabled(studio.patchAirReplaying)
@@ -57,15 +58,16 @@ struct AirDualDebugPanel: View {
             }.padding(8)
         }
         .task(id: streaming) {
-            guard streaming else { return }
-            while !Task.isCancelled && studio.patchAirDebugAvailable {
+            guard streaming,let runID else { return }
+            while !Task.isCancelled && studio.patchAirDebugAvailable && studio.patchDebugCameraRunID == runID {
                 studio.sendAirDebugFrame(count:count,aperture:aperture,x:x,y:y,
                     chordHand:AirHandSample.debugSample(x:chordX,y:chordY,aperture:chordAperture),
-                    chordVisible:chordVisible,helperVisible:helperVisible)
+                    chordVisible:chordVisible,helperVisible:helperVisible,runID:runID)
                 do { try await Task.sleep(for: .milliseconds(33)) } catch { return }
             }
         }
-        .onDisappear { streaming = false; studio.stopAirReplay() }
+        .onChange(of:studio.patchDebugCameraRunID) { _ in streaming = false; runID = nil }
+        .onDisappear { streaming = false; if let runID,studio.patchDebugCameraRunID == runID { studio.stopAirReplay() } }
     }
 }
 #endif

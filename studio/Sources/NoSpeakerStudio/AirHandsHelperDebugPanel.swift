@@ -5,6 +5,7 @@ import NoSpeakerCore
 struct AirHandsHelperDebugPanel: View {
     @EnvironmentObject private var studio: StudioController
     @State private var streaming = false
+    @State private var runID:UUID?
     @State private var leftOn = true
     @State private var rightOn = true
     @State private var lx = 0.5
@@ -33,20 +34,21 @@ struct AirHandsHelperDebugPanel: View {
                     }
                 }
                 HStack {
-                    Button("Start helper frames") { la = 0.8; ra = 0.8; streaming = true }.disabled(streaming)
-                    Button("Stop / release") { streaming = false; studio.releaseHelperDebugFrame() }
+                    Button("Start helper frames") { la = 0.8; ra = 0.8; runID = studio.patchDebugCameraRunID; streaming = true }.disabled(streaming)
+                    Button("Stop / release") { streaming = false; if let runID { studio.releaseHelperDebugFrame(runID:runID) } }
                 }
             }.padding(8)
         }
         .task(id:streaming) {
-            guard streaming else { return }
-            while !Task.isCancelled && studio.patchHelperDebugAvailable {
+            guard streaming,let runID else { return }
+            while !Task.isCancelled && studio.patchHelperDebugAvailable && studio.patchDebugCameraRunID == runID {
                 studio.sendHelperDebugFrame(left:leftOn ? AirHandSample.debugSample(x:lx,y:ly,aperture:la) : nil,
-                                            right:rightOn ? AirHandSample.debugSample(x:rx,y:ry,aperture:ra) : nil)
+                                            right:rightOn ? AirHandSample.debugSample(x:rx,y:ry,aperture:ra) : nil,runID:runID)
                 do { try await Task.sleep(for:.milliseconds(33)) } catch { return }
             }
         }
-        .onDisappear { streaming = false; studio.releaseHelperDebugFrame() }
+        .onChange(of:studio.patchDebugCameraRunID) { _ in streaming = false; runID = nil }
+        .onDisappear { streaming = false; if let runID { studio.releaseHelperDebugFrame(runID:runID) } }
     }
 }
 #endif

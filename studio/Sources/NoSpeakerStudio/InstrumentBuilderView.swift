@@ -281,7 +281,7 @@ struct InstrumentBuilderView: View {
                         if studio.patchRunning && (!studio.patchPhysical || studio.patchHybridSource != nil) {
                             if studio.patchAirDebugAvailable { AirDualDebugPanel() }
                             if studio.patchHelperDebugAvailable { AirHandsHelperDebugPanel() }
-                            if studio.patchHybridSource != nil {
+                            if studio.patchHybridSource != nil && studio.patchHybridSource != .camera {
                                 Button("Release all synthetic controls") {
                                     studio.releaseHybridControls()
                                     values = [:]

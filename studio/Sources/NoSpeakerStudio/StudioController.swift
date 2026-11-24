@@ -34,6 +34,8 @@ final class StudioController: ObservableObject {
     @Published private(set) var patchMessages: [String] = []
     @Published private(set) var patchStatus = "Builder idle"
     private var patchSimulation = PatchSimulation()
+    private var debugCameraRunToken:UUID?
+    var patchDebugCameraRunID:UUID? { patchRunning ? debugCameraRunToken : nil }
     private var patchLedger = PatchOutputLedger()
     private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
     @Published private(set) var patchMIDIEnabled = false
@@ -346,6 +348,7 @@ final class StudioController: ObservableObject {
                 patchInputs = patchSimulation.inputs
             }
             patchMIDIEnabled = sendMIDI
+            debugCameraRunToken = UUID()
             patchRunning = true
             patchMessages = []
             patchStatus = physical ? (synthetic == nil ? "Native input requested · waiting for a physical contact" : "Hybrid · explicit synthetic source · waiting for input") :
@@ -535,20 +538,20 @@ final class StudioController: ObservableObject {
         if patchAirDebugSounding != sounding { patchAirDebugSounding = sounding }
     }
 
-    func sendHelperDebugFrame(left:AirHandSample?,right:AirHandSample?) {
-        guard patchHelperDebugAvailable else { return }
+    func sendHelperDebugFrame(left:AirHandSample?,right:AirHandSample?,runID:UUID) {
+        guard patchHelperDebugAvailable,patchDebugCameraRunID == runID else { return }
         let now = ProcessInfo.processInfo.systemUptime
         recordPatchCommands(patchPhysical ? patchPhysicalRuntime.receiveHelperHands(left:left,right:right,hostTime:now,now:now,synthetic:true) : patchSimulation.receiveHelperHands(left:left,right:right,time:now,now:now))
     }
 
-    func releaseHelperDebugFrame() {
-        guard patchHelperDebugAvailable else { return }
+    func releaseHelperDebugFrame(runID:UUID) {
+        guard patchHelperDebugAvailable,patchDebugCameraRunID == runID else { return }
         recordPatchCommands(patchPhysical ? patchPhysicalRuntime.releaseHybridSource() : patchSimulation.releaseDualHand())
     }
 
     func sendAirDebugFrame(count: Int, aperture: Double, x: Double, y: Double,
-                           chordHand:AirHandSample? = nil, chordVisible:Bool = true, helperVisible:Bool = true) {
-        guard patchAirDebugAvailable, !patchAirReplaying else { return }
+                           chordHand:AirHandSample? = nil, chordVisible:Bool = true, helperVisible:Bool = true,runID:UUID) {
+        guard patchAirDebugAvailable, !patchAirReplaying,patchDebugCameraRunID == runID else { return }
         let now = ProcessInfo.processInfo.systemUptime
         let hand = AirHandSample.debugSample(x: x, y: y, aperture: aperture)
         let commands: [SensorCommand]
@@ -701,7 +704,7 @@ final class StudioController: ObservableObject {
             if patchCameraStatus == "One hand tracked" { patchCameraStatus = "Tracking lost · controls released" }
         }
         guard patchRunning else { return }
-        let active = patchPhysicalRuntime.activeSources
+        let active = patchPhysicalRuntime.activeSources.subtracting(patchHybridSource.map { [$0] } ?? [])
         if active != patchActiveSurfaces {
             patchActiveSurfaces = active
             let native = active.isEmpty ? "No active native input" : "Native input · " + active.map(\.rawValue).sorted().joined(separator: ", ")
@@ -963,6 +966,7 @@ final class StudioController: ObservableObject {
         _ = patchPhysicalRuntime.stop()
         _ = patchSimulation.stop()
         patchInputs = []
+        debugCameraRunToken = nil
         patchRunning = false
         patchMIDIEnabled = false
         let released = patchLedger.releaseAll(send: { patchMIDI.send($0) })
