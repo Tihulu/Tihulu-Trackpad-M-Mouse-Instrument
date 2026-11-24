@@ -287,3 +287,12 @@ test("partial pedals and sensor notices reflect manifest",()=>{
   a.elements.pedalToggle0.emit("click");assert.equal(a.socket.frames.length,0);
   a.elements.pedalToggle4.emit("click");assert.equal(a.socket.frames.at(-1).mask,16);
 });
+
+test("manifest rejects duplicate decoded names including escapes",()=>{
+  const valid=JSON.stringify(fullManifest);
+  for(const bad of [valid.replace('"touch":true','"touch":false,"touch":true'),
+    valid.replace('"version":7','"version":7,"\\u0076ersion":7'),
+    valid.replace('"drums":255','"drums":0,"drums":255')]){
+    const a=setup("granted",bad);assert.equal(a.socket.closed,true);assert.equal(a.elements.touchSection.hidden,true);
+  }
+});

@@ -198,9 +198,30 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const manifestFields=["kind","version","touch","tilt","acceleration","rotation","airDrums","drums","piano","pedals"];
   const has=(group,index)=>Boolean(caps&&(caps[group]&(1<<index)));
   const octaveAvailable=value=>Boolean(caps&&(caps.piano&(8191<<(12*value))));
+  // Flat manifest only. Parse decoded key tokens before JSON.parse collapses
+  // duplicates; reject nested objects/arrays and trailing content.
+  function uniqueManifestKeys(data){
+    const start=/[ \t\r\n]*\{[ \t\r\n]*/y,end=/[ \t\r\n]*\}[ \t\r\n]*$/y,comma=/[ \t\r\n]*,[ \t\r\n]*/y;
+    const member=/[ \t\r\n]*("(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*")[ \t\r\n]*:[ \t\r\n]*(?:"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false|null)[ \t\r\n]*/y;
+    let at=0;
+    function take(re){re.lastIndex=at;const m=re.exec(data);if(m)at=re.lastIndex;return m;}
+    if(!take(start))return false;
+    const keys=new Set();
+    if(take(end))return at===data.length;
+    let m;
+    while((m=take(member))){
+      const key=JSON.parse(m[1]);
+      if(keys.has(key))return false;
+      keys.add(key);
+      if(take(end))return at===data.length;
+      if(!take(comma))return false;
+    }
+    return false;
+  }
   function parseCapabilities(data){
     if(typeof data!=="string"||data.length>256)return null;
     try{
+      if(!uniqueManifestKeys(data))return null;
       const value=JSON.parse(data);
       if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).length!==manifestFields.length||
          !manifestFields.every(k=>Object.prototype.hasOwnProperty.call(value,k))||

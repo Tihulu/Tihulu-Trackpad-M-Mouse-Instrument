@@ -185,6 +185,7 @@ public struct PhysicalPatchRuntime: Sendable {
             remotePeers[id] = peer
             return .accepted(commands)
         case .touch:
+            guard touchSources.contains(peer.source) else { return .close(revokeRemote(id)) }
             if peer.routerSession == nil { peer.routerSession = try? router.connect(peer.source, now: now) }
             guard let session = peer.routerSession, let x = frame.x, let y = frame.y
             else { return .close(revokeRemote(id)) }

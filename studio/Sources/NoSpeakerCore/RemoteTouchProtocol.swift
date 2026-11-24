@@ -38,11 +38,10 @@ public struct RemoteTouchFrame: Decodable, Equatable, Sendable {
 
     public static func read(_ bytes: Data) throws -> Self {
         guard !bytes.isEmpty, bytes.count <= maximumBytes,
-              let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              let keys = RemoteFlatJSON.uniqueKeys(bytes),
               let frame = try? JSONDecoder().decode(Self.self, from: bytes),
               (1...9_007_199_254_740_991).contains(frame.sequence)
         else { throw RemoteTouchError.invalidFrame }
-        let keys = Set(object.keys)
         let common: Set<String> = ["version","sequence","kind"]
         switch frame.kind {
         case .touch:
