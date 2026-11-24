@@ -231,7 +231,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const tiltDue=mode==="active"&&sample&&sampleAt>sentAt&&now-lastTiltSend>=50&&now-sampleAt<150;
     // Oldest serviced eligible stream wins. A steady held touch still needs
     // refresh; orientation never reuses a stale sample.
-    if(touchDue&&(!tiltDue||lastTouchSend<=lastTiltSend)){send("touch",position);return;}
+    if(touchDue&&(!tiltDue||lastTouchSend<lastTiltSend)){send("touch",position);return;}
     if(tiltDue){sentAt=sampleAt;send("orientation",sample);return;}
     if(pointer===null&&mode!=="active"&&mode!=="arming"&&now-lastSend>=500)send("heartbeat");
   }
