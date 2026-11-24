@@ -13,6 +13,7 @@ struct InstrumentBuilderView: View {
     @State private var message = ""
     @State private var showPatchbay = false
     @State private var showLayout = false
+    @State private var airRange = AirRangeCapture()
 
     var body: some View {
         ScrollView {
@@ -36,6 +37,7 @@ struct InstrumentBuilderView: View {
                     }.padding(8).disabled(studio.patchRunning)
                 }
                 ExpressivePresetPanel(patch: $draft).disabled(studio.patchRunning)
+                AirInstrumentPresetPanel(patch: $draft).disabled(studio.patchRunning)
                 GroupBox("Routes · \(draft.routes.count)/64") {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach($draft.routes) { $route in
@@ -71,6 +73,7 @@ struct InstrumentBuilderView: View {
                             Button("Start test") {
                                 studio.updateInstrumentPatch(draft)
                                 values = [:]
+                                airRange = AirRangeCapture(signal: airRange.signal)
                                 studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical)
                             }.buttonStyle(.borderedProminent)
                                 .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty || (physical && !PhysicalPatchRuntime.supports(draft)))
@@ -108,6 +111,7 @@ struct InstrumentBuilderView: View {
                                         Text("Aperture"); ProgressView(value: hand.aperture)
                                     }.font(.caption)
                                 }
+                                AirCalibrationPanel(patch: $draft, capture: $airRange)
                             }
                         }
                         if physical && draft.routes.contains(where: { $0.source == .lid }) {
