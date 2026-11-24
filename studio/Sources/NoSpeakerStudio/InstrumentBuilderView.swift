@@ -59,12 +59,12 @@ struct InstrumentBuilderView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Picker("Input", selection: $physical) {
                             Text("Simulation").tag(false)
-                            Text("Physical surfaces (experimental)").tag(true)
+                            Text("Native inputs (experimental)").tag(true)
                         }.pickerStyle(.segmented).disabled(studio.patchRunning)
                         Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)
                             .disabled(studio.patchRunning)
                         if physical && !PhysicalPatchRuntime.supports(draft) {
-                            Text("Physical mode requires only Trackpad / external touch-surface routes with X, Y, contact or contact size. Other sources remain simulation-only.")
+                            Text("Native mode supports Trackpad/external touch X/Y/contact/contact size, lid angle and Touch Bar X ribbon. Other sources remain simulation-only.")
                                 .font(.caption).foregroundStyle(.orange)
                         }
                         HStack {
@@ -80,6 +80,27 @@ struct InstrumentBuilderView: View {
                         }
                         if studio.patchRunning && !studio.patchPhysical {
                             PerformanceControlsView(patch: studio.instrumentPatch, values: $values)
+                        }
+                        if studio.patchRunning && studio.patchNativeBar, let token = studio.builderBarToken {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Builder ribbon · native Touch Bar / on-screen fallback").font(.headline)
+                                Slider(value: Binding(get: { values[.init(source: .touchBar, signal: .x)] ?? 0.5 },
+                                                      set: { value in
+                                    values[.init(source: .touchBar, signal: .x)] = value
+                                    studio.builderBarValue(value, token: token)
+                                }), in: 0...1, onEditingChanged: { editing in
+                                    if !editing { studio.builderBarValue(nil, token: token) }
+                                })
+                                Button("Release ribbon") { studio.builderBarValue(nil, token: token) }
+                                Text("No native hardware detection claim. Inactive samples release after 350 ms.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        if physical && draft.routes.contains(where: { $0.source == .lid }) {
+                            Text(studio.patchLidStatus + (studio.patchLidDegrees.map { String(format: " · %.1f°", $0) } ?? ""))
+                                .font(.caption)
+                            Text("Lid angle is normalized from 5–175°. Use input calibration to limit the sweep to a comfortable range. Do not force or repeatedly move the lid.")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
                         if physical {
                             Text("Primary contact per surface; contact size is not measured pressure. The private macOS driver groups compatible external touch surfaces under Magic Mouse; device identity is not verified here. The shared monitor supports independent Touch Instrument and MIDI Helper sessions; route the dedicated MIDI source separately in the DAW. Lift or loss of input releases owned controls. No automatic pointer capture.")

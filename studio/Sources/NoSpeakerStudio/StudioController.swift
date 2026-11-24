@@ -40,6 +40,11 @@ final class StudioController: ObservableObject {
     private var patchPhysicalRuntime = PhysicalPatchRuntime()
     private var patchMailbox: PatchSurfaceMailbox?
     private var patchWatchdog: Task<Void, Never>?
+    private var patchHinge: MacBookHingeAngleSource?
+    private var patchNativeToken: UUID?
+    @Published private(set) var patchNativeBar = false
+    @Published private(set) var patchLidStatus = "Builder lid OFF"
+    @Published private(set) var patchLidDegrees: Double?
     private var patchPadTasks: [PatchSimulation.Input: Task<Void, Never>] = [:]
     private var patchPadTokens: [PatchSimulation.Input: UUID] = [:]
     private var surfaceMonitorToken: UUID?
@@ -180,14 +185,22 @@ final class StudioController: ObservableObject {
 
     func startInstrumentPatch(sendMIDI: Bool, physical: Bool = false) {
         guard !patchRunning else { return }
+        let sources = Set(instrumentPatch.routes.map(\.source))
+        let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
         if physical {
             guard PhysicalPatchRuntime.supports(instrumentPatch) else {
-                patchStatus = "Live input supports only Trackpad/external touch surface X, Y, contact and contact size."
+                patchStatus = "Unsupported live source or signal. Use Simulation or edit the routes."
                 return
             }
-            guard requireEngine(), touch != nil else {
-                patchStatus = "Native surface monitoring unavailable on this Mac."
+            if sources.contains(.lid) && liveHingeEnabled {
+                patchStatus = "Stop the independent Tilt sensor before starting Builder lid input."
                 return
+            }
+            if needsSurface {
+                guard requireEngine(), touch != nil else {
+                    patchStatus = "Native surface monitoring unavailable on this Mac."
+                    return
+                }
             }
         }
         guard patchLedger.releaseAll(send: { patchMIDI.send($0) }) else {
@@ -202,12 +215,15 @@ final class StudioController: ObservableObject {
                 let mailbox = PatchSurfaceMailbox()
                 patchMailbox = mailbox
                 patchPhysical = true
-                touch?.setPatchMailbox(mailbox)
-                refreshSharedSurfaceMonitoring()
-                guard touchPreviewRunning else {
-                    stopInstrumentPatch()
-                    patchStatus = "Shared native surface monitoring failed."
-                    return
+                patchNativeToken = UUID()
+                if needsSurface {
+                    touch?.setPatchMailbox(mailbox)
+                    refreshSharedSurfaceMonitoring()
+                    guard touchPreviewRunning else {
+                        stopInstrumentPatch()
+                        patchStatus = "Shared native surface monitoring failed."
+                        return
+                    }
                 }
                 patchInputs = []
                 patchActiveSurfaces = []
@@ -220,11 +236,50 @@ final class StudioController: ObservableObject {
             patchMessages = []
             patchStatus = physical ? "Native input requested · waiting for a physical contact" :
                 (sendMIDI ? "Simulated inputs · live TIHULU Instrument Builder MIDI" : "Simulation only · no MIDI output")
-            if physical { startPatchWatchdog() }
+            if physical {
+                if sources.contains(.touchBar) {
+                    patchNativeBar = true
+                    installTouchBar()
+                }
+                if sources.contains(.lid) {
+                    guard let token = patchNativeToken else { stopInstrumentPatch(); return }
+                    let sensor = MacBookHingeAngleSource()
+                    patchHinge = sensor
+                    sensor.onAngle = { [weak self] degrees in
+                        guard let self, self.patchNativeToken == token, self.patchRunning else { return }
+                        self.patchLidDegrees = degrees
+                        self.receiveBuilderScalar(.lid, value: PhysicalPatchRuntime.normalizedLid(degrees))
+                    }
+                    if !sensor.start() {
+                        let reason = sensor.status
+                        stopInstrumentPatch()
+                        patchLidStatus = reason
+                        patchStatus = reason
+                        return
+                    }
+                    guard patchRunning, patchNativeToken == token else { sensor.stop(); return }
+                    patchLidStatus = sensor.status
+                }
+                startPatchWatchdog()
+            }
         } catch {
             stopInstrumentPatch()
             patchStatus = error.localizedDescription
         }
+    }
+
+    private func receiveBuilderScalar(_ source: SensorSource, value: Double?) {
+        guard patchRunning, patchPhysical else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let commands = patchPhysicalRuntime.receiveScalar(source: source, value: value, hostTime: now, now: now)
+        recordPatchCommands(commands)
+    }
+
+    var builderBarToken: UUID? { patchNativeBar ? patchNativeToken : nil }
+
+    func builderBarValue(_ value: Double?, token: UUID) {
+        guard patchNativeBar, token == patchNativeToken else { return }
+        receiveBuilderScalar(.touchBar, value: value)
     }
 
     private func startPatchWatchdog() {
@@ -274,8 +329,8 @@ final class StudioController: ObservableObject {
         let active = patchPhysicalRuntime.activeSources
         if active != patchActiveSurfaces {
             patchActiveSurfaces = active
-            patchStatus = active.isEmpty ? "No live contacts · controls released" :
-                "Live contacts · " + active.map(\.rawValue).sorted().joined(separator: ", ")
+            patchStatus = active.isEmpty ? "No live input · controls released" :
+                "Live input · " + active.map(\.rawValue).sorted().joined(separator: ", ")
         }
     }
 
@@ -342,11 +397,19 @@ final class StudioController: ObservableObject {
         patchWatchdog?.cancel()
         patchWatchdog = nil
         let hadPhysicalInput = patchPhysical
+        let hadNativeBar = patchNativeBar
+        patchNativeToken = nil
+        patchNativeBar = false
+        patchHinge?.stop()
+        patchHinge = nil
+        patchLidDegrees = nil
+        patchLidStatus = "Builder lid OFF"
         touch?.setPatchMailbox(nil)
         patchMailbox?.close()
         patchMailbox = nil
         patchPhysical = false
         if hadPhysicalInput { refreshSharedSurfaceMonitoring() }
+        if hadNativeBar { installTouchBar() }
         patchActiveSurfaces = []
         _ = patchPhysicalRuntime.stop()
         _ = patchSimulation.stop()
@@ -673,7 +736,7 @@ final class StudioController: ObservableObject {
             bridge.controller = self
             touchBarBridge = bridge
         }
-        touchBarBridge?.install(profile: touchBarProfile)
+        touchBarBridge?.install(profile: touchBarProfile, builderToken: builderBarToken)
     }
 
     func setTouchBarProfile(_ proposed: TouchBarProfile) {
@@ -692,7 +755,7 @@ final class StudioController: ObservableObject {
         if let data = try? JSONEncoder().encode(next) {
             UserDefaults.standard.set(data, forKey: "TIHULU.touchBarProfile")
         }
-        touchBarBridge?.install(profile: next)
+        touchBarBridge?.install(profile: next, builderToken: builderBarToken)
     }
 
     func releaseTouchBarNotes() {
@@ -927,6 +990,10 @@ final class StudioController: ObservableObject {
     }
 
     func enableLiveHinge(_ enable: Bool) {
+        if enable && patchHinge != nil {
+            hingeSensorStatus = "Stop Builder lid input before using independent Tilt."
+            return
+        }
         if enable && !allowOtherPerformance() { return }
         if !enable {
             hingeSensor?.stop()
@@ -952,6 +1019,7 @@ final class StudioController: ObservableObject {
 
     func applySimulatedHingeAngle(_ degrees: Double) {
         simulatedHingeAngle = degrees
+        guard patchHinge == nil else { return }
         guard let value = touchBarProfile.normalizedTilt(degrees) else { return }
         switch touchBarProfile.tiltTarget {
         case .disabled: break
@@ -1414,7 +1482,8 @@ final class StudioController: ObservableObject {
     private func refreshSharedSurfaceMonitoring() {
         guard let touch else { return }
         let needed = instrumentPreviewRequested || helperPreviewRequested ||
-                     touchRunning || midiHelperRunning || patchPhysical
+                     touchRunning || midiHelperRunning ||
+                     (patchPhysical && instrumentPatch.routes.contains { $0.source == .trackpad || $0.source == .magicMouse })
         if !needed {
             surfaceMonitorToken = nil
             touch.stopPreview()

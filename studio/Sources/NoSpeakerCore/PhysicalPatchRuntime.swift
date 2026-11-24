@@ -16,7 +16,12 @@ public struct PhysicalPatchRuntime: Sendable {
 
     public static func supports(_ patch: InstrumentPatch) -> Bool {
         patch.isValid && !patch.routes.isEmpty && patch.routes.allSatisfy {
-            ($0.source == .trackpad || $0.source == .magicMouse) && supportedSignals.contains($0.signal)
+            switch $0.source {
+            case .trackpad, .magicMouse: return supportedSignals.contains($0.signal)
+            case .lid: return $0.signal == .angle
+            case .touchBar: return $0.signal == .x
+            default: return false
+            }
         }
     }
 
@@ -50,6 +55,29 @@ public struct PhysicalPatchRuntime: Sendable {
                                           sequence: sequence, timestamp: hostTime), now: hostTime)
         }
         return result
+    }
+
+    /// Lid degrees are normalized over the documented valid sensor range.
+    /// Mapping calibration then selects the comfortable musical sweep.
+    public static func normalizedLid(_ degrees: Double) -> Double? {
+        guard degrees.isFinite, (5...175).contains(degrees) else { return nil }
+        return (degrees - 5) / 170
+    }
+
+    /// Scalar adapters share the same router and ownership as touch surfaces.
+    /// Nil is a release/lost sample, not a synthetic input of zero.
+    public mutating func receiveScalar(source: SensorSource, value: Double?,
+                                       hostTime: Double, now: Double) -> [SensorCommand] {
+        guard source == .lid || source == .touchBar, supported.contains(source),
+              hostTime.isFinite, now.isFinite, hostTime >= 0, hostTime <= now,
+              now - hostTime < Self.timeout, hostTime >= (seen[source] ?? 0) else { return [] }
+        seen[source] = hostTime
+        guard let value, value.isFinite, (0...1).contains(value) else { return disconnect(source) }
+        if sessions[source] == nil { sessions[source] = try? router.connect(source, now: hostTime) }
+        guard let session = sessions[source] else { return [] }
+        sequence &+= 1
+        return router.ingest(.init(session: session, signal: source == .lid ? .angle : .x,
+                                   value: value, sequence: sequence, timestamp: hostTime), now: hostTime)
     }
 
     public mutating func expire(now: Double) -> [SensorCommand] {
