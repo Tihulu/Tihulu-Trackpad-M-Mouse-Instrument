@@ -27,7 +27,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         bar.customizationAllowedItemIdentifiers = TouchBarZone.allCases.map(identifier)
         if builderToken != nil {
             bar.defaultItemIdentifiers.append(builderID)
-            bar.customizationAllowedItemIdentifiers?.append(builderID)
+            bar.customizationAllowedItemIdentifiers.append(builderID)
         }
         NSApplication.shared.touchBar = bar
         NSApplication.shared.isAutomaticCustomizeTouchBarMenuItemEnabled = true
