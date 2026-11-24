@@ -204,7 +204,9 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var pendingDrumHits: [HapticFrame] = []
     // Accessed only on the serial render queue.
     private var drumPriorityUntil = 0.0
+    private var drumRenderToken: UUID?
     private var renderTimer: DispatchSourceTimer?
+    private let renderFence = HapticSourceFence()
     private let renderQueue = DispatchQueue(
         label: "com.tihulu.nospeaker.touch-haptic-render",
         qos: .userInteractive
@@ -239,6 +241,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     }
 
     public func setActive(_ active: Bool) {
+        if !active { renderFence.revoke() }
         lock.lock()
         self.active = active
         if !active {
@@ -252,9 +255,10 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
         if active {
             guard renderTimer == nil else { return }
+            let token = renderFence.begin()
             let timer = DispatchSource.makeTimerSource(queue: renderQueue)
             timer.schedule(deadline: .now(), repeating: .milliseconds(18), leeway: .milliseconds(2))
-            timer.setEventHandler { [weak self] in self?.renderHapticFrame() }
+            timer.setEventHandler { [weak self] in self?.renderHapticFrame(token: token) }
             renderTimer = timer
             timer.resume()
         } else {
@@ -416,26 +420,27 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.unlock()
     }
 
-    private func renderHapticFrame() {
-        lock.lock()
-        let config = configuration
-        let shouldRender = active && config.localHapticSound
-        let current = liveHapticStates
-        let sustained = sustainedHapticStates
-        let isSustained = sustainActive
-        let hits = pendingDrumHits
-        pendingDrumHits.removeAll(keepingCapacity: true)
-        lock.unlock()
-        guard shouldRender else { return }
+    private func renderHapticFrame(token: UUID) {
+        var snapshot: (TouchInstrumentConfiguration, [TouchPerformanceState],
+                        [String: TouchPerformanceState], Bool, [HapticFrame])?
+        renderFence.submit(token) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard active && configuration.localHapticSound else { return }
+            snapshot = (configuration, liveHapticStates, sustainedHapticStates,
+                        sustainActive, pendingDrumHits)
+            pendingDrumHits.removeAll(keepingCapacity: true)
+        }
+        guard let (config, current, sustained, isSustained, hits) = snapshot else { return }
+        if drumRenderToken != token {
+            drumRenderToken = token
+            drumPriorityUntil = 0
+        }
 
         let now = ProcessInfo.processInfo.systemUptime
         if !hits.isEmpty {
             for hit in hits {
-                lock.lock()
-                let stillActive = active && configuration.localHapticSound
-                lock.unlock()
-                guard stillActive else { return }
-                try? driver.play(hit, masterLevel: config.masterLevel)
+                guard submitFrame(hit, level: config.masterLevel, token: token) else { return }
             }
             drumPriorityUntil = now + (hits.map(\.durationMS).max() ?? 0) / 1000
             return
@@ -473,11 +478,22 @@ public final class TouchInstrumentService: @unchecked Sendable {
         }
 
         guard !tones.isEmpty else { return }
-        try? driver.play(.init(
+        submitFrame(.init(
             tones: tones,
             durationMS: 28,
             level: min(1, max(0.15, level) * config.masterLevel)
-        ))
+        ), level: 1, token: token)
+    }
+
+    @discardableResult
+    private func submitFrame(_ frame: HapticFrame, level: Double, token: UUID) -> Bool {
+        renderFence.submit(token) {
+            lock.lock()
+            let allowed = active && configuration.localHapticSound
+            lock.unlock()
+            guard allowed else { return }
+            try? driver.play(frame, masterLevel: level)
+        }
     }
 }
 #endif
