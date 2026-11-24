@@ -165,10 +165,10 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     /// Host-only API: a future transport must bind returned IDs to connections.
-    public mutating func issueRemotePairing(secret: Data, source: SensorSource, now: Double, mappingDetails: Bool = false) throws {
+    public mutating func issueRemotePairing(secret: Data, source: SensorSource, now: Double, mappingDetails: Bool = false, mappingLabels: Bool = false) throws {
         guard remoteEnabled, supported.contains(source), source == .phone || source == .tablet
         else { throw RemoteTouchError.unavailable }
-        try pairing.issue(secret: secret, source: source, now: now, mappingDetails: mappingDetails)
+        try pairing.issue(secret: secret, source: source, now: now, mappingDetails: mappingDetails, mappingLabels: mappingLabels)
     }
 
     public mutating func admitRemote(secret: Data, now: Double) throws -> UUID {
@@ -183,7 +183,7 @@ public struct PhysicalPatchRuntime: Sendable {
         guard cost > 0 else { throw RemoteTouchError.unavailable }
         guard reservedRemoteSessions + cost <= Self.maximumRemoteSessions else { throw RemoteTouchError.capacity }
         let id = UUID()
-        remotePeers[id] = RemoteTouchPeer(source: source, now: now, mappingDetails: invitation.mappingDetails)
+        remotePeers[id] = RemoteTouchPeer(source: source, now: now, mappingDetails: invitation.mappingDetails, mappingLabels: invitation.mappingLabels)
         return id
     }
 
@@ -204,6 +204,15 @@ public struct PhysicalPatchRuntime: Sendable {
         guard remoteEnabled, let peer = remotePeers[id], peer.isIdle,
               let projection = mappingProjections[peer.source] else { throw RemoteTouchError.unavailable }
         return try projection.page(page,sequence:sequence,detail:peer.mappingDetails)
+    }
+
+    // No label network dispatch exists at this stage. A future wire path
+    // must enforce the ordered metadata phase before invoking this API.
+    func remoteMappingLabelPage(_ id: UUID, page: Int, sequence: UInt64) throws -> RemoteMappingLabelPage {
+        guard remoteEnabled, let peer = remotePeers[id], peer.isIdle, peer.mappingDetails,
+              peer.mappingComplete, !peer.performanceStarted,
+              let projection = mappingProjections[peer.source] else { throw RemoteTouchError.unavailable }
+        return try projection.labelPage(page,sequence:sequence,allowed:peer.mappingLabels)
     }
 
     public mutating func receiveRemote(_ id: UUID, bytes: Data, now: Double) -> RemoteTouchResult {

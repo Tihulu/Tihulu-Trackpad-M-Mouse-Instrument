@@ -1,7 +1,8 @@
 import Foundation
 
 /// Read-only, source-scoped destination projection. No route IDs, patch names,
-/// calibration, velocities, labels, or local source data are included.
+/// calibration, velocities, or local source data are included in destination rows.
+/// Labels are a separate projection with independent invitation consent.
 struct RemoteMappingProjection: Sendable {
     static let signals: [SensorSignal] = [.x,.y,.contact,.tiltYaw,.tiltPitch,.tiltRoll,
         .accelerationMagnitude,.rotationMagnitude,.airStrike] +
@@ -14,6 +15,7 @@ struct RemoteMappingProjection: Sendable {
         var columns: [Int] { [signal,kind,channel,number] }
     }
     let rows: [[Int]]
+    let labels: [RemoteMappingLabel]
 
     init(patch: InstrumentPatch, source: SensorSource) throws {
         guard source == .phone || source == .tablet,
@@ -34,6 +36,23 @@ struct RemoteMappingProjection: Sendable {
         }
         rows = grouped.keys.sorted { $0.columns.lexicographicallyPrecedes($1.columns) }
             .map { $0.columns + [grouped[$0]!] }
+        let mapped = Set(grouped.keys.map(\.signal))
+        labels = (patch.performanceLayout?.resolved(for: patch.routes) ?? [])
+            .compactMap { widget -> RemoteMappingLabel? in
+                guard widget.source == source,
+                      let id = Self.signals.firstIndex(of: widget.signal), mapped.contains(id),
+                      RemoteMappingLabel.permits(widget.label) else { return nil }
+                return RemoteMappingLabel(signal:id,text:widget.label)
+            }.sorted { $0.signal < $1.signal }
+    }
+
+    func labelPage(_ index: Int, sequence: UInt64, allowed: Bool) throws -> RemoteMappingLabelPage {
+        let visible = allowed ? labels : []
+        let pages = max(1,visible.count)
+        guard (0..<pages).contains(index), visible.count <= 49,
+              (1...9_007_199_254_740_991).contains(sequence) else { throw RemoteTouchError.invalidFrame }
+        return RemoteMappingLabelPage(sequence:sequence,page:index,pages:pages,total:visible.count,
+                                      rows:visible.isEmpty ? [] : [visible[index]])
     }
 
     func page(_ index: Int, sequence: UInt64, detail: Bool) throws -> RemoteMappingPage {
@@ -58,6 +77,49 @@ public struct RemoteMappingPage: Encodable, Equatable, Sendable {
     let detail: Bool
     let rows: [[Int]]
     public func encoded() throws -> Data {
+        let data = try JSONEncoder().encode(self)
+        guard data.count <= RemoteTouchFrame.maximumBytes else { throw RemoteTouchError.invalidFrame }
+        return data
+    }
+}
+
+
+/// A single bounded UTF-8 label, encoded as a fixed tuple of logical ID and
+/// canonical unpadded base64url. No label is interpreted as code or MIDI.
+struct RemoteMappingLabel: Encodable, Equatable, Sendable {
+    let signal: Int
+    let text: String
+
+    static func permits(_ text: String) -> Bool {
+        guard (1...64).contains(text.utf8.count),
+              text.unicodeScalars.contains(where: { !$0.properties.isWhitespace }) else { return false }
+        return text.unicodeScalars.allSatisfy {
+            $0.properties.generalCategory != .control && $0.properties.generalCategory != .format
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard (0...48).contains(signal), Self.permits(text) else { throw RemoteTouchError.invalidFrame }
+        let value = Data(text.utf8).base64EncodedString()
+            .replacingOccurrences(of:"+",with:"-")
+            .replacingOccurrences(of:"/",with:"_")
+            .replacingOccurrences(of:"=",with:"")
+        var tuple = encoder.unkeyedContainer()
+        try tuple.encode(signal)
+        try tuple.encode(value)
+    }
+}
+
+/// Internal foundation only; wire dispatch and browser decoding are separate.
+struct RemoteMappingLabelPage: Encodable, Equatable, Sendable {
+    let kind = "mappingLabels"
+    let version = 8
+    let sequence: UInt64
+    let page: Int
+    let pages: Int
+    let total: Int
+    let rows: [RemoteMappingLabel]
+    func encoded() throws -> Data {
         let data = try JSONEncoder().encode(self)
         guard data.count <= RemoteTouchFrame.maximumBytes else { throw RemoteTouchError.invalidFrame }
         return data

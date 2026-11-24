@@ -33,9 +33,9 @@ public struct RemoteHostBridge: Sendable {
     public init() {}
 
     public mutating func issue(secret: Data, source: SensorSource, now: Double,
-                               runtime: inout PhysicalPatchRuntime, mappingDetails: Bool = false) throws {
+                               runtime: inout PhysicalPatchRuntime, mappingDetails: Bool = false, mappingLabels: Bool = false) throws {
         guard ready, !stopped else { throw RemoteTouchError.unavailable }
-        try runtime.issueRemotePairing(secret: secret, source: source, now: now, mappingDetails: mappingDetails)
+        try runtime.issueRemotePairing(secret: secret, source: source, now: now, mappingDetails: mappingDetails, mappingLabels: mappingLabels)
     }
 
     public mutating func revoke(_ connection: UUID, runtime: inout PhysicalPatchRuntime) -> RemoteHostBatch {
