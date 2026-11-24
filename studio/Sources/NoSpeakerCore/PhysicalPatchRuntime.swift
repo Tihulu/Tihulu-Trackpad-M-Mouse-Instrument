@@ -14,6 +14,7 @@ public struct PhysicalPatchRuntime: Sendable {
     private var inertialSignals: [SensorSource: Set<SensorSignal>] = [:]
     private var drumMasks: [SensorSource: Int] = [:]
     private var pianoMasks: [SensorSource: Int] = [:]
+    private var pedalMasks: [SensorSource: Int] = [:]
     private var strikeSettings: [SensorSource: AirStrikeDetector.Settings] = [:]
     private static let strikeDuration = 0.06
     private var remoteEnabled = false
@@ -38,6 +39,7 @@ public struct PhysicalPatchRuntime: Sendable {
                 if $0.signal == .airStrike { return $0.destination.kind == .note }
                 if RemoteDrumPads.signals.contains($0.signal) { return RemoteDrumPads.permits($0) }
                 if RemotePiano.signals.contains($0.signal) { return RemotePiano.permits($0) }
+                if RemotePedalboard.signals.contains($0.signal) { return RemotePedalboard.permits($0) }
                 return [.tiltYaw,.tiltPitch,.tiltRoll,.accelerationMagnitude,.rotationMagnitude].contains($0.signal) &&
                     ($0.destination.kind == .controlChange || $0.destination.kind == .pitchBend)
             default: return false
@@ -52,7 +54,9 @@ public struct PhysicalPatchRuntime: Sendable {
         motionSources = Set(patch.routes.filter { [.tiltYaw,.tiltPitch,.tiltRoll].contains($0.signal) }.map(\.source))
         drumMasks = [:]
         pianoMasks = [:]
+        pedalMasks = [:]
         for route in patch.routes {
+            if let index = RemotePedalboard.signals.firstIndex(of: route.signal) { pedalMasks[route.source, default: 0] |= 1 << index }
             if let index = RemotePiano.signals.firstIndex(of: route.signal) { pianoMasks[route.source, default: 0] |= 1 << index }
             if let index = RemoteDrumPads.signals.firstIndex(of: route.signal) { drumMasks[route.source, default: 0] |= 1 << index }
         }
@@ -214,6 +218,30 @@ public struct PhysicalPatchRuntime: Sendable {
             peer.motionFreshness.disarm()
             remotePeers[id] = peer
             return .accepted(commands)
+        case .pedalboard:
+            guard let mask = frame.mask, let levels = frame.levels,
+                  let allowed = pedalMasks[peer.source], mask & ~allowed == 0
+            else { return .close(revokeRemote(id)) }
+            if mask == 0 {
+                let commands = peer.pedalSession.map { router.disconnect($0) } ?? []
+                peer.pedalSession = nil; peer.pedalMask = 0; peer.lastPedalReceipt = nil
+                remotePeers[id] = peer
+                return .accepted(commands)
+            }
+            if peer.pedalSession == nil { peer.pedalSession = try? router.connect(peer.source, now: now) }
+            guard let session = peer.pedalSession else { return .close(revokeRemote(id)) }
+            var commands: [SensorCommand] = []
+            for (index, signal) in RemotePedalboard.signals.enumerated() where mask & (1 << index) != 0 {
+                sequence &+= 1
+                commands += router.ingest(.init(session: session, signal: signal, value: levels[index],
+                                                sequence: sequence, timestamp: now), now: now)
+            }
+            for (index, signal) in RemotePedalboard.signals.enumerated() where mask & (1 << index) == 0 && peer.pedalMask & (1 << index) != 0 {
+                commands += router.releaseSignal(session: session, signal: signal)
+            }
+            peer.pedalMask = mask; peer.lastPedalReceipt = now
+            remotePeers[id] = peer
+            return .accepted(commands)
         case .pianoKeys:
             guard let mask = frame.mask, let allowed = pianoMasks[peer.source], mask & ~allowed == 0
             else { return .close(revokeRemote(id)) }
@@ -314,7 +342,7 @@ public struct PhysicalPatchRuntime: Sendable {
     public mutating func revokeRemote(_ id: UUID) -> [SensorCommand] {
         guard let peer = remotePeers.removeValue(forKey: id) else { return [] }
         let inertialSessions = [SensorSignal.accelerationMagnitude, .rotationMagnitude].compactMap { peer.inertial[$0]?.session }
-        return ([peer.routerSession, peer.motionSession, peer.drumSession, peer.pianoSession].compactMap { $0 } + inertialSessions).flatMap { router.disconnect($0) }
+        return ([peer.routerSession, peer.motionSession, peer.drumSession, peer.pianoSession, peer.pedalSession].compactMap { $0 } + inertialSessions).flatMap { router.disconnect($0) }
     }
 
     public mutating func cancelRemotePairing() { pairing.clear() }
@@ -360,6 +388,7 @@ public struct PhysicalPatchRuntime: Sendable {
         strikeSettings = [:]
         drumMasks = [:]
         pianoMasks = [:]
+        pedalMasks = [:]
         remoteEnabled = false
         pairing.clear()
         remotePeers = [:]
