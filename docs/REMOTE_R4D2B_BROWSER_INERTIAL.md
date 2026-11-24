@@ -1,0 +1,7 @@
+# R4d2b — browser motion dynamics
+
+Explicit independent acceleration and rotation enable/release buttons, DeviceMotion permission from a user gesture, secure-context check, pre-mapping magnitude meters and 3-second discovery deadline. Gravity-free acceleration only; rotationRate alpha/beta/gamma map to x/y/z for the magnitude calculation. Finite component bounds match host. Missing active data closes the connection; no synthetic samples. No background capture, storage or new network access.
+
+One shared devicemotion listener is present only while at least one stream is waiting, arming or active. Separate epochs fence late permissions. Separate sample timestamps and service clocks; no stale resends. Existing one-ACK scheduler serves oldest eligible stream, with releases first. Each stream is capped at 20 Hz, total practical rate is limited by tick and ACK; four streams may operate at roughly 10 Hz each under ideal ACK timing, not guaranteed. Host deadline remains 350 ms, browser 250 ms. Permission prompts may trigger blur and require reconnect. No automatic arm on pairing; user must explicitly configure the corresponding Mac route before enabling it. No note triggers or audio effects yet.
+
+Five added Node VM scenarios: denial, missing gravity-free data, independent arm/sample/release, invalid active sample, stale sample. Existing tests still run. Physical iOS/Android permissions, TLS, sample availability, DAW and timing remain HOLD. Stable untouched.

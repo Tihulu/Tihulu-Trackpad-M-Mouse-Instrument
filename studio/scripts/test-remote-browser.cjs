@@ -11,9 +11,9 @@ function setup(permission="granted"){
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus"].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus"].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id]});
-  const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
+  const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
   class WS{
     static OPEN=1;
     constructor(){socket=this;this.readyState=1;this.bufferedAmount=0;this.protocol="tihulu-touch-v1";this.frames=[];}
@@ -72,4 +72,44 @@ test("touch and tilt alternate on a single ACK lane and release independently",a
   a.orientation(30);a.step(50);assert.equal(a.socket.frames.at(-1).kind,"orientation");a.ack();
   a.elements.motionStop.emit("click");assert.equal(a.socket.frames.at(-1).kind,"motionRelease");a.ack();
   assert.equal(a.socket.closed,undefined);
+});
+
+test("inertial permission denial does not attach or transmit",async()=>{
+  const a=setup("denied");await a.elements.accelStart.emit("click");
+  assert.equal(a.window.events.has("devicemotion"),false);
+  assert.equal(a.socket.frames.length,0);
+  assert.match(a.elements.accelStatus.textContent,/denied/);
+});
+test("gravity-only data does not arm acceleration",async()=>{
+  const a=setup();await a.elements.accelStart.emit("click");
+  a.window.emit("devicemotion",{acceleration:null,accelerationIncludingGravity:{x:9.8,y:0,z:0}});
+  a.step();assert.equal(a.socket.frames.length,0);
+  a.step(3100);assert.equal(a.window.events.has("devicemotion"),false);
+  assert.match(a.elements.accelStatus.textContent,/No valid/);
+});
+test("independent inertial permission, v3 arms, samples and releases",async()=>{
+  const a=setup();await a.elements.accelStart.emit("click");await a.elements.rotationStart.emit("click");
+  const motion=()=>a.window.emit("devicemotion",{acceleration:{x:10,y:0,z:0},rotationRate:{alpha:180,beta:0,gamma:0}});
+  motion();a.step();assert.equal(a.socket.frames.at(-1).kind,"rotationArm");a.ack();
+  a.step();assert.equal(a.socket.frames.at(-1).kind,"accelerationArm");a.ack();
+  motion();a.step(50);assert.equal(a.socket.frames.at(-1).kind,"rotation");
+  assert.equal(a.socket.frames.at(-1).version,3);assert.equal(a.socket.frames.at(-1).x,180);a.ack();
+  a.step();assert.equal(a.socket.frames.at(-1).kind,"acceleration");a.ack();
+  a.elements.accelStop.emit("click");assert.equal(a.socket.frames.at(-1).kind,"accelerationRelease");a.ack();
+  assert.equal(a.window.events.has("devicemotion"),true);
+  motion();a.step(50);assert.equal(a.socket.frames.at(-1).kind,"rotation");a.ack();
+  a.elements.rotationStop.emit("click");assert.equal(a.socket.frames.at(-1).kind,"rotationRelease");a.ack();
+  assert.equal(a.window.events.has("devicemotion"),false);
+});
+test("missing active inertial sample closes and removes listener",async()=>{
+  const a=setup();await a.elements.accelStart.emit("click");
+  a.window.emit("devicemotion",{acceleration:{x:1,y:0,z:0}});a.step();a.ack();
+  a.window.emit("devicemotion",{acceleration:null});
+  assert.equal(a.socket.closed,true);assert.equal(a.window.events.has("devicemotion"),false);
+});
+test("stale inertial sample cannot be repeated",async()=>{
+  const a=setup();await a.elements.rotationStart.emit("click");
+  a.window.emit("devicemotion",{rotationRate:{alpha:10,beta:0,gamma:0}});a.step();a.ack();
+  a.step(100);assert.equal(a.socket.frames.length,1);
+  a.step(200);assert.equal(a.socket.closed,true);
 });

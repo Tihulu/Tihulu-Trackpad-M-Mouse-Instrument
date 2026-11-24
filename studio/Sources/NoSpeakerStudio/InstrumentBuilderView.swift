@@ -108,7 +108,7 @@ struct InstrumentBuilderView: View {
                             RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI)
                         }
                         if physical && !PhysicalPatchRuntime.supports(draft) {
-                            Text("Normal native mode supports local surfaces, lid, ribbon and camera. For mapped phone/tablet X/Y/contact or tilt CC/pitch bend use the separate Remote panel above. Other remote signals remain simulation-only.")
+                            Text("Normal native mode supports local surfaces, lid, ribbon and camera. For mapped phone/tablet X/Y/contact or continuous tilt, acceleration and rotation signals, use the separate Remote panel above. Other remote signals remain simulation-only.")
                                 .font(.caption).foregroundStyle(.orange)
                         }
                         HStack {
