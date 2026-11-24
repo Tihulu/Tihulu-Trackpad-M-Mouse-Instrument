@@ -1364,6 +1364,9 @@ private struct NoteSequencerView: View {
                 Toggle("Loop", isOn: $loop).toggleStyle(.switch)
                 Spacer()
                 Button("Play Pattern") { play() }.buttonStyle(.borderedProminent)
+                MIDIClipExportButton(filename: "TIHULU Notes") {
+                    try MIDIClip.melody(.init(bpm: studio.bpm, steps: noteSteps))
+                }
                 Button("Clear") { notes = Array(repeating: nil, count: 16) }
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 8), spacing: 8) {
@@ -1391,12 +1394,15 @@ private struct NoteSequencerView: View {
         }
     }
 
-    private func play() {
-        let steps = notes.enumerated().compactMap { index, note -> NoteStep? in
+    private var noteSteps: [NoteStep] {
+        notes.enumerated().compactMap { index, note -> NoteStep? in
             guard let note else { return nil }
             return NoteStep(index: index, midi: note, velocity: velocity, gate: 0.8)
         }
-        studio.playNotes(steps, loop: loop)
+    }
+
+    private func play() {
+        studio.playNotes(noteSteps, loop: loop)
     }
 }
 
@@ -1411,7 +1417,15 @@ private struct DrumSequencerView: View {
         VStack(alignment: .leading, spacing: 18) {
             PageHeader(title: "Drum Sequencer", subtitle: "Sequence or generate haptic kick, snare, hats, clap and tom voices.")
             DrumComposerPanel(active: $active)
-            HStack { Toggle("Loop", isOn: $loop); Spacer(); Button("Play Pattern") { play() }.buttonStyle(.borderedProminent); Button("Clear") { active.removeAll() } }
+            HStack {
+                Toggle("Loop", isOn: $loop)
+                Spacer()
+                Button("Play Pattern") { play() }.buttonStyle(.borderedProminent)
+                MIDIClipExportButton(filename: "TIHULU Drums") {
+                    try MIDIClip.drums(.init(bpm: studio.bpm, hits: drumHits))
+                }
+                Button("Clear") { active.removeAll() }
+            }
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 5) {
                     Color.clear.frame(width: 86, height: 1)
@@ -1463,9 +1477,11 @@ private struct DrumSequencerView: View {
         case .tom: return "Tom"
         }
     }
+    private var drumHits: [DrumStep] {
+        voices.flatMap { voice in (0..<16).compactMap { active.contains("\(voice.rawValue):\($0)") ? DrumStep(index: $0, voice: voice, velocity: 0.9) : nil } }
+    }
     private func play() {
-        let hits = voices.flatMap { voice in (0..<16).compactMap { active.contains("\(voice.rawValue):\($0)") ? DrumStep(index: $0, voice: voice, velocity: 0.9) : nil } }
-        studio.playDrums(hits, loop: loop)
+        studio.playDrums(drumHits, loop: loop)
     }
 }
 

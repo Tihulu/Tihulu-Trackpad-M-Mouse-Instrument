@@ -40,6 +40,10 @@ struct ChordProgressionPanel: View {
                         else { studio.startChordProgression() }
                     }.buttonStyle(.borderedProminent)
                         .disabled(!studio.chordArmed)
+                    MIDIClipExportButton(filename: "TIHULU Chords",
+                                         title: studio.chordBank.customScale?.isMicrotonal == true ? "Export MIDI (12-TET)" : "Export MIDI") {
+                        try MIDIClip.progression(studio.chordProgression, bank: studio.chordBank, bpm: studio.bpm)
+                    }.disabled(studio.progressionRunning)
                     Text(studio.progressionRunning ? (studio.progressionSingleSlot == nil ? "Playing" : "Pad arpeggio") : "Stopped")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -54,6 +58,7 @@ struct ChordProgressionPanel: View {
                         stepCell(index)
                     }
                 }.disabled(studio.progressionRunning)
+                Text("MIDI export writes one cycle of nominal notes, not microtonal MPE bends. Import the file into your DAW and choose an instrument.").font(.caption).foregroundStyle(.secondary)
                 Text("Uses the current bank, including custom chords and its selected output. Arm first. Tempo is captured when Play starts. A manual pad press takes over; Release All, Panic, disarm or loss of app focus stops the progression. Changing pages does not stop it.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(8)
