@@ -37,6 +37,28 @@ public struct AirDualHandPerformance: Sendable {
         return soundingSlot
     }
 
+    /// Shared routing for live camera and synthetic frame debugging.
+    static func route(slot: Int, previous: Int?, helper: AirHandSample,
+                      session: UUID, time: Double, router: inout SensorRouter,
+                      sequence: inout UInt64) -> [SensorCommand] {
+        guard (1...5).contains(slot) else { return [] }
+        var commands: [SensorCommand] = []
+        if let previous, previous != slot, (1...5).contains(previous) {
+            commands += router.releaseSignal(session: session, signal: signals[previous - 1])
+        }
+        for (signal,value): (SensorSignal,Double) in [(.x,helper.x),(.y,helper.y),(.gesture,helper.aperture),(.contact,1)] {
+            sequence &+= 1
+            commands += router.ingest(.init(session: session, signal: signal, value: value,
+                                             sequence: sequence, timestamp: time), now: time)
+        }
+        if previous != slot {
+            sequence &+= 1
+            commands += router.ingest(.init(session: session, signal: signals[slot - 1], value: 1,
+                                             sequence: sequence, timestamp: time), now: time)
+        }
+        return commands
+    }
+
     public static func permits(_ route: SensorMapping) -> Bool {
         guard signals.contains(route.signal) else { return true }
         return route.source == .camera && route.destination.kind == .note &&
