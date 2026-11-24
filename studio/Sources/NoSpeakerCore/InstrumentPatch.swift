@@ -25,7 +25,7 @@ public struct InstrumentPatch: Codable, Equatable, Sendable {
         !name.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } &&
         routes.count <= SensorRouter.maxMappings &&
         Set(routes.map(\.id)).count == routes.count &&
-        routes.allSatisfy(Self.permits) && ContinuousResponse.releaseValues(for: routes) != nil &&
+        routes.allSatisfy(Self.permits) && AirDualHandPerformance.permitsCombination(routes) && ContinuousResponse.releaseValues(for: routes) != nil &&
         AirDrumSensitivity.settings(for: routes) != nil &&
         (performanceLayout?.isValid ?? true)
     }
@@ -69,6 +69,7 @@ public struct PatchSimulation: Sendable {
     private var airDual = AirDualHandPerformance()
     public private(set) var hasDualCamera = false
     private var airLastFrame: Double?
+    private var airHelperEnabled = false
     private var airActiveSlot: Int?
     public var airSelectedSlot: Int? { airDual.trackingReady ? airDual.selectedSlot : nil }
     public var airSoundingSlot: Int? { airDual.soundingSlot }
@@ -88,6 +89,7 @@ public struct PatchSimulation: Sendable {
         router = next
         sessions = ids
         hasDualCamera = dual
+        airHelperEnabled = dual && AirDualHandPerformance.hasHelperRoutes(patch.routes)
         airDual = AirDualHandPerformance()
         airLastFrame = nil
         airActiveSlot = nil
@@ -115,7 +117,7 @@ public struct PatchSimulation: Sendable {
               airLastFrame.map({ time > $0 }) ?? true else { return releaseDualHand() }
         airLastFrame = time
         let slot = airDual.receive(count: count, confidence: confidence, helper: helper, time: time, now: now)
-        guard let slot, let helper else {
+        guard let helper, slot != nil || (airHelperEnabled && airDual.trackingReady) else {
             airActiveSlot = nil
             guard let session = sessions.removeValue(forKey: .camera) else { return [] }
             return router.disconnect(session)
@@ -153,6 +155,7 @@ public struct PatchSimulation: Sendable {
 
     public mutating func stop() -> [SensorCommand] {
         hasDualCamera = false
+        airHelperEnabled = false
         airDual = AirDualHandPerformance()
         airLastFrame = nil
         airActiveSlot = nil
