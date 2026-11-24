@@ -12,6 +12,7 @@ struct InstrumentBuilderView: View {
     @State private var values: [PatchSimulation.Input: Double] = [:]
     @State private var message = ""
     @State private var showPatchbay = false
+    @State private var showLayout = false
 
     var body: some View {
         ScrollView {
@@ -30,6 +31,7 @@ struct InstrumentBuilderView: View {
                             Button("Export JSON") { exportPatch() }.disabled(!draft.isValid)
                             Button("Import JSON") { importPatch() }
                             Button("Visual Patchbay") { showPatchbay = true }.buttonStyle(.borderedProminent)
+                            Button("Control Layout") { showLayout = true }.disabled(draft.routes.isEmpty)
                         }
                     }.padding(8).disabled(studio.patchRunning)
                 }
@@ -76,15 +78,8 @@ struct InstrumentBuilderView: View {
                             Spacer()
                             Text(studio.patchStatus).font(.caption)
                         }
-                        ForEach(studio.patchInputs) { input in
-                            HStack {
-                                Text(input.id).frame(width: 160, alignment: .leading)
-                                Slider(value: Binding(get: { values[input] ?? 0 }, set: { value in
-                                    values[input] = value
-                                    studio.sendPatchInput(input, value: value)
-                                }), in: 0...1)
-                                Button("Disconnect source") { studio.disconnectPatchInput(input.source) }
-                            }
+                        if studio.patchRunning && !studio.patchPhysical {
+                            PerformanceControlsView(patch: studio.instrumentPatch, values: $values)
                         }
                         if physical {
                             Text("Primary contact per surface; contact size is not measured pressure. The private macOS driver groups compatible external touch surfaces under Magic Mouse; device identity is not verified here. The shared monitor supports independent Touch Instrument and MIDI Helper sessions; route the dedicated MIDI source separately in the DAW. Lift or loss of input releases owned controls. No automatic pointer capture.")
@@ -106,6 +101,7 @@ struct InstrumentBuilderView: View {
             }.padding(24)
         }
         .sheet(isPresented: $showPatchbay) { VisualPatchbayView(patch: $draft) }
+        .sheet(isPresented: $showLayout) { PerformanceLayoutEditor(patch: $draft) }
         .onAppear {
             draft = studio.instrumentPatch
             if studio.patchRunning { physical = studio.patchPhysical }

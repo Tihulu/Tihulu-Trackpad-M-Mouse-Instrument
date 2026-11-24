@@ -4,9 +4,12 @@ import Foundation
 public struct InstrumentPatch: Codable, Equatable, Sendable {
     public var name: String
     public var routes: [SensorMapping]
-    public init(name: String = "Untitled instrument", routes: [SensorMapping] = []) {
+    public var performanceLayout: PerformanceLayout?
+    public init(name: String = "Untitled instrument", routes: [SensorMapping] = [],
+                performanceLayout: PerformanceLayout? = nil) {
         self.name = name
         self.routes = routes
+        self.performanceLayout = performanceLayout
     }
 
     public static func permits(_ route: SensorMapping) -> Bool {
@@ -22,7 +25,8 @@ public struct InstrumentPatch: Codable, Equatable, Sendable {
         !name.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } &&
         routes.count <= SensorRouter.maxMappings &&
         Set(routes.map(\.id)).count == routes.count &&
-        routes.allSatisfy(Self.permits) && ContinuousResponse.releaseValues(for: routes) != nil
+        routes.allSatisfy(Self.permits) && ContinuousResponse.releaseValues(for: routes) != nil &&
+        (performanceLayout?.isValid ?? true)
     }
 
     public static var starter: Self {
@@ -85,6 +89,11 @@ public struct PatchSimulation: Sendable {
         sequence &+= 1
         return router.ingest(.init(session: id, signal: input.signal, value: value,
                                    sequence: sequence, timestamp: now), now: now)
+    }
+
+    public mutating func release(_ input: Input) -> [SensorCommand] {
+        guard inputs.contains(input), let id = sessions[input.source] else { return [] }
+        return router.releaseSignal(session: id, signal: input.signal)
     }
 
     public mutating func disconnect(_ source: SensorSource) -> [SensorCommand] {

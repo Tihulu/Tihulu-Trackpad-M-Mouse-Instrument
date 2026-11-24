@@ -58,6 +58,7 @@ public struct PatchGraph: Equatable, Sendable {
     public var inputs: [Input] = []
     public var processors: [Processor] = []
     public var outputs: [Output] = []
+    public var performanceLayout: PerformanceLayout?
     public init() {}
     public static let limit = SensorRouter.maxMappings
 
@@ -65,6 +66,7 @@ public struct PatchGraph: Equatable, Sendable {
     /// inputs and calibrations. Route IDs and order are preserved.
     public init(patch: InstrumentPatch) {
         self.init()
+        performanceLayout = patch.performanceLayout
         for route in patch.routes {
             let input: Input
             if let existing = inputs.first(where: { $0.source == route.source && $0.signal == route.signal }) {
@@ -111,7 +113,7 @@ public struct PatchGraph: Equatable, Sendable {
             guard InstrumentPatch.permits(route) else { throw PatchGraphError.invalidNode }
             return route
         }
-        let patch = InstrumentPatch(name: name, routes: routes)
+        let patch = InstrumentPatch(name: name, routes: routes, performanceLayout: performanceLayout)
         guard patch.isValid else { throw PatchGraphError.invalidPatch }
         return patch
     }
