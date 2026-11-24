@@ -58,6 +58,20 @@ struct InstrumentBuilderView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8).disabled(studio.patchRunning)
                 }
+                GroupBox("Mobile Drum Pads") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Picker("Device", selection: $drumSource) {
+                                Text("Phone").tag(SensorSource.phone)
+                                Text("Tablet").tag(SensorSource.tablet)
+                            }
+                            Button("Add missing drum pads") { addMobileDrumPads() }
+                                .disabled(draft.routes.count >= SensorRouter.maxMappings)
+                        }
+                        Text("Adds missing logical pads 1–8 with General MIDI defaults on channel 10. Existing pad mappings are preserved. Customize note, channel and velocity in Routes. Start Remote, pair the selected source, then enable drum pads in the browser.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8).disabled(studio.patchRunning)
+                }
                 GroupBox("Routes · \(draft.routes.count)/64") {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach($draft.routes) { $route in
@@ -127,7 +141,7 @@ struct InstrumentBuilderView: View {
                             RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI)
                         }
                         if physical && !PhysicalPatchRuntime.supports(draft) {
-                            Text("Normal native mode supports local surfaces, lid, ribbon and camera. For mapped phone/tablet X/Y/contact or continuous tilt, acceleration and rotation signals, use the separate Remote panel above. Other remote signals remain simulation-only.")
+                            Text("Normal native mode supports local surfaces, lid, ribbon and camera. For mapped phone/tablet X/Y/contact, drum pads, Air Drums or continuous motion signals, use the separate Remote panel above. Other remote signals remain simulation-only.")
                                 .font(.caption).foregroundStyle(.orange)
                         }
                         HStack {
@@ -263,6 +277,17 @@ struct InstrumentBuilderView: View {
                 }.padding(4)
             }
         }
+    }
+
+    private func addMobileDrumPads() {
+        var next = draft
+        let missing = RemoteDrumPads.routes(source: drumSource).filter { candidate in
+            !next.routes.contains { $0.source == candidate.source && $0.signal == candidate.signal }
+        }
+        next.routes += missing
+        guard next.isValid else { message = "Cannot add pads: check route capacity or existing mappings."; return }
+        draft = next
+        message = missing.isEmpty ? "All eight pads already mapped." : "Added \(missing.count) missing drum pads."
     }
 
     private func addDrumRoute() {
