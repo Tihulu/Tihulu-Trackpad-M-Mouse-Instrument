@@ -38,6 +38,7 @@ final class StudioController: ObservableObject {
     private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
     @Published private(set) var patchMIDIEnabled = false
     @Published private(set) var patchPhysical = false
+    @Published private(set) var patchHybridSource: SensorSource?
     @Published private(set) var patchActiveSurfaces: Set<SensorSource> = []
     private var patchPhysicalRuntime = PhysicalPatchRuntime()
     private var patchRemoteTransport: RemoteLoopbackTransport?
@@ -265,9 +266,14 @@ final class StudioController: ObservableObject {
     // certificate provisioning and trusted browser flow are implemented.
     func startInstrumentPatch(sendMIDI: Bool, physical: Bool = false,
                               remoteTransport: RemoteLoopbackTransport? = nil,
-                              remotePage: RemoteLoopbackPageServer? = nil) {
+                              remotePage: RemoteLoopbackPageServer? = nil,
+                              synthetic:SensorSource? = nil) {
         guard !patchRunning else { return }
-        let sources = Set(instrumentPatch.routes.map(\.source))
+        guard synthetic == nil || (physical && remoteTransport == nil && remotePage == nil) else {
+            patchStatus = "Hybrid requires local native inputs; Remote is not enabled in this mode."
+            return
+        }
+        let sources = Set(instrumentPatch.routes.map(\.source)).subtracting(synthetic.map { [$0] } ?? [])
         let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
         let hasRemoteRoutes = sources.contains(.phone) || sources.contains(.tablet)
         guard (remotePage == nil || remoteTransport?.endpoint == remotePage?.endpoint),
@@ -277,7 +283,7 @@ final class StudioController: ObservableObject {
             return
         }
         if physical {
-            guard PhysicalPatchRuntime.supports(instrumentPatch, allowRemote: remoteTransport != nil) else {
+            guard synthetic.map({ PhysicalPatchRuntime.supportsHybrid(instrumentPatch,synthetic:$0) }) ?? PhysicalPatchRuntime.supports(instrumentPatch, allowRemote:remoteTransport != nil) else {
                 patchStatus = "Unsupported live source or signal. Use Simulation or edit the routes."
                 return
             }
@@ -317,8 +323,10 @@ final class StudioController: ObservableObject {
             try patchLedger.configure(instrumentPatch)
             if sendMIDI { try patchMIDI.open() }
             if physical {
-                try patchPhysicalRuntime.configure(instrumentPatch, allowRemote: remoteTransport != nil)
-                let mailbox = PatchSurfaceMailbox()
+                try patchPhysicalRuntime.configure(instrumentPatch, allowRemote: remoteTransport != nil,synthetic:synthetic)
+                patchHybridSource = synthetic
+                let excluded:TouchSurfaceKind? = synthetic == .trackpad ? .trackpad : synthetic == .magicMouse ? .magicMouse : nil
+                let mailbox = PatchSurfaceMailbox(excludedSurface:excluded)
                 patchMailbox = mailbox
                 patchPhysical = true
                 patchNativeToken = UUID()
@@ -331,7 +339,7 @@ final class StudioController: ObservableObject {
                         return
                     }
                 }
-                patchInputs = []
+                patchInputs = patchPhysicalRuntime.hybridInputs
                 patchActiveSurfaces = []
             } else {
                 try patchSimulation.start(instrumentPatch, now: ProcessInfo.processInfo.systemUptime)
@@ -340,7 +348,7 @@ final class StudioController: ObservableObject {
             patchMIDIEnabled = sendMIDI
             patchRunning = true
             patchMessages = []
-            patchStatus = physical ? "Native input requested · waiting for a physical contact" :
+            patchStatus = physical ? (synthetic == nil ? "Native input requested · waiting for a physical contact" : "Hybrid · explicit synthetic source · waiting for input") :
                 (sendMIDI ? "Simulated inputs · live TIHULU Instrument Builder MIDI" : "Simulation only · no MIDI output")
             if physical {
                 if sources.contains(.touchBar) {
@@ -695,8 +703,8 @@ final class StudioController: ObservableObject {
         let active = patchPhysicalRuntime.activeSources
         if active != patchActiveSurfaces {
             patchActiveSurfaces = active
-            patchStatus = active.isEmpty ? "No live input · controls released" :
-                "Live input · " + active.map(\.rawValue).sorted().joined(separator: ", ")
+            let native = active.isEmpty ? "No active native input" : "Native input · " + active.map(\.rawValue).sorted().joined(separator: ", ")
+            patchStatus = patchHybridSource.map { native + " · Hybrid: " + $0.rawValue + " (synthetic)" } ?? native
         }
     }
 
@@ -810,7 +818,7 @@ final class StudioController: ObservableObject {
     }
 
     func sendPatchInput(_ input: PatchSimulation.Input, value: Double) {
-        guard patchRunning, !patchPhysical, patchInputs.contains(input),
+        guard patchRunning, (!patchPhysical || patchHybridSource != nil), patchInputs.contains(input),
               value.isFinite, (0...1).contains(value) else { return }
         // A later manual input supersedes the pulse's release timer.
         // Do not release its contribution here: the new value owns it.
@@ -824,19 +832,20 @@ final class StudioController: ObservableObject {
     }
 
     private func deliverPatchInput(_ input: PatchSimulation.Input, value: Double) {
-        let commands = patchSimulation.send(input, value: value, now: ProcessInfo.processInfo.systemUptime)
+        let now = ProcessInfo.processInfo.systemUptime
+        let commands = patchPhysical ? patchPhysicalRuntime.sendHybrid(input,value:value,now:now) : patchSimulation.send(input,value:value,now:now)
         recordPatchCommands(commands)
     }
 
     func releasePatchInput(_ input: PatchSimulation.Input) {
-        guard patchRunning, !patchPhysical else { return }
+        guard patchRunning, (!patchPhysical || patchHybridSource != nil),patchInputs.contains(input) else { return }
         cancelPatchPulse(input)
-        let commands = patchSimulation.release(input)
+        let commands = patchPhysical ? patchPhysicalRuntime.releaseHybrid(input) : patchSimulation.release(input)
         recordPatchCommands(commands)
     }
 
     func pulsePatchInput(_ input: PatchSimulation.Input, value: Double = 1) {
-        guard patchRunning, !patchPhysical, patchInputs.contains(input),
+        guard patchRunning, (!patchPhysical || patchHybridSource != nil), patchInputs.contains(input),
               value.isFinite, (0...1).contains(value) else { return }
         // Release first for an actual retrigger. No raw-zero synthesis.
         releasePatchInput(input)
@@ -852,8 +861,24 @@ final class StudioController: ObservableObject {
         }
     }
 
+    func refreshHybridControls() {
+        guard patchRunning,patchHybridSource != nil else { return }
+        recordPatchCommands(patchPhysicalRuntime.refreshHybrid(now:ProcessInfo.processInfo.systemUptime))
+    }
+
+    func releaseHybridControls() {
+        guard patchRunning,let source = patchHybridSource else { return }
+        for input in Array(patchPadTasks.keys) where input.source == source { cancelPatchPulse(input) }
+        recordPatchCommands(patchPhysicalRuntime.releaseHybridSource())
+    }
+
     func disconnectPatchInput(_ source: SensorSource) {
-        guard patchRunning, !patchPhysical else { return }
+        guard patchRunning, (!patchPhysical || source == patchHybridSource) else { return }
+        if patchPhysical {
+            releaseHybridControls()
+            patchInputs = []
+            return
+        }
         for input in Array(patchPadTasks.keys) where input.source == source {
             cancelPatchPulse(input)
         }
@@ -928,6 +953,7 @@ final class StudioController: ObservableObject {
         patchMailbox?.close()
         patchMailbox = nil
         patchPhysical = false
+        patchHybridSource = nil
         if hadPhysicalInput { refreshSharedSurfaceMonitoring() }
         if hadNativeBar { installTouchBar() }
         patchActiveSurfaces = []
@@ -2041,7 +2067,7 @@ final class StudioController: ObservableObject {
         guard let touch else { return }
         let needed = instrumentPreviewRequested || helperPreviewRequested ||
                      touchRunning || midiHelperRunning ||
-                     (patchPhysical && instrumentPatch.routes.contains { $0.source == .trackpad || $0.source == .magicMouse })
+                     (patchPhysical && instrumentPatch.routes.contains { $0.source != patchHybridSource && ($0.source == .trackpad || $0.source == .magicMouse) })
         if !needed {
             surfaceMonitorToken = nil
             clearClickAttribution()

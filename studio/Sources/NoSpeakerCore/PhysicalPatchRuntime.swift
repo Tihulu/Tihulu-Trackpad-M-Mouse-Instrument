@@ -14,6 +14,10 @@ public struct PhysicalPatchRuntime: Sendable {
     private var cameraHands = AirHandsHelper()
     private var cameraHandsEnabled = false
     private var supported: Set<SensorSource> = []
+    private var hybridSource: SensorSource?
+    public private(set) var hybridInputs: [PatchSimulation.Input] = []
+    private var hybridSession: UUID?
+    private var hybridReceipt: Double?
     private var sessions: [SensorSource: UUID] = [:]
     private var seen: [SensorSource: Double] = [:]
     private var sequence: UInt64 = 0
@@ -78,8 +82,23 @@ public struct PhysicalPatchRuntime: Sendable {
         }
     }
 
-    public mutating func configure(_ patch: InstrumentPatch, allowRemote: Bool = false) throws {
-        guard sessions.isEmpty, remotePeers.isEmpty, Self.supports(patch, allowRemote: allowRemote) else { throw SensorRouterError.invalidMappings }
+    /// One explicitly substituted source. Never simulate a live camera or a
+    /// paired network stream, and never enlarge the local reservation.
+    public static func supportsHybrid(_ patch:InstrumentPatch, synthetic:SensorSource) -> Bool {
+        guard patch.isValid,[SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external].contains(synthetic),
+              Set(patch.routes.map(\.source)).count <= reservedLocalSessions else { return false }
+        let syntheticRoutes = patch.routes.filter { $0.source == synthetic }
+        let simple:Set<SensorSignal> = [.x,.y,.contact,.contactSize,.pressure,.angle,.speed,.gesture,.expression]
+        guard !syntheticRoutes.isEmpty,syntheticRoutes.allSatisfy({ simple.contains($0.signal) }) else { return false }
+        let native = InstrumentPatch(name:patch.name,routes:patch.routes.filter { $0.source != synthetic })
+        return supports(native)
+    }
+
+    public mutating func configure(_ patch: InstrumentPatch, allowRemote: Bool = false,
+                                   synthetic:SensorSource? = nil) throws {
+        guard sessions.isEmpty, remotePeers.isEmpty, hybridSession == nil,
+              synthetic.map({ !allowRemote && Self.supportsHybrid(patch,synthetic:$0) }) ?? Self.supports(patch, allowRemote:allowRemote)
+              else { throw SensorRouterError.invalidMappings }
         var projections: [SensorSource:RemoteMappingProjection] = [:]
         if allowRemote {
             for source in [SensorSource.phone,.tablet] where patch.routes.contains(where: { $0.source == source }) {
@@ -95,7 +114,10 @@ public struct PhysicalPatchRuntime: Sendable {
         airStrum = AirStrumPerformance(routes:patch.routes)
         airHelperEnabled = airDualEnabled && AirDualHandPerformance.hasHelperRoutes(patch.routes)
         mappingProjections = projections
-        supported = Set(patch.routes.map(\.source))
+        hybridSource = synthetic
+        hybridInputs = Array(Set(patch.routes.filter { $0.source == synthetic }.map { PatchSimulation.Input(source:$0.source,signal:$0.signal) })).sorted { $0.id < $1.id }
+        hybridReceipt = nil
+        supported = Set(patch.routes.map(\.source)).subtracting(synthetic.map { [$0] } ?? [])
         touchSources = Set(patch.routes.filter { [.x,.y,.contact].contains($0.signal) }.map(\.source))
         motionSources = Set(patch.routes.filter { [.tiltYaw,.tiltPitch,.tiltRoll].contains($0.signal) }.map(\.source))
         drumMasks = [:]
@@ -116,6 +138,43 @@ public struct PhysicalPatchRuntime: Sendable {
         pairing.clear()
         seen = [:]
         sequence = 0
+    }
+
+    /// UI-originated synthetic values share the physical router and ledger,
+    /// never the hardware adapter. A stale lease requires a fresh user action.
+    public mutating func sendHybrid(_ input:PatchSimulation.Input,value:Double,now:Double) -> [SensorCommand] {
+        guard input.source == hybridSource,hybridInputs.contains(input),now.isFinite,now >= 0,
+              value.isFinite,(0...1).contains(value) else { return [] }
+        var commands = expireHybrid(now:now)
+        if hybridSession == nil { hybridSession = try? router.connect(input.source,now:now) }
+        guard let id = hybridSession else { return commands }
+        hybridReceipt = now
+        sequence &+= 1
+        commands += router.ingest(.init(session:id,signal:input.signal,value:value,sequence:sequence,timestamp:now),now:now)
+        return commands
+    }
+    public mutating func releaseHybrid(_ input:PatchSimulation.Input) -> [SensorCommand] {
+        guard hybridInputs.contains(input),let id = hybridSession else { return [] }
+        return router.releaseSignal(session:id,signal:input.signal)
+    }
+    public mutating func releaseHybridSource() -> [SensorCommand] {
+        guard let id = hybridSession else { return [] }
+        hybridSession = nil; hybridReceipt = nil
+        return router.disconnect(id)
+    }
+    /// Heartbeats only renew existing ownership; never recreate notes.
+    public mutating func refreshHybrid(now:Double) -> [SensorCommand] {
+        let commands = expireHybrid(now:now)
+        if let id = hybridSession {
+            hybridReceipt = now
+            router.heartbeat(id,now:now)
+        }
+        return commands
+    }
+    private mutating func expireHybrid(now:Double) -> [SensorCommand] {
+        guard let last = hybridReceipt else { return [] }
+        guard now.isFinite,now >= last,now-last < Self.timeout else { return releaseHybridSource() }
+        return []
     }
 
     /// hostTime is local receipt time, not the undocumented driver timestamp.
@@ -583,6 +642,9 @@ public struct PhysicalPatchRuntime: Sendable {
         }
         let expiredPeers = remotePeers.filter { $0.value.expired(now:now) }.map(\.key)
         for id in expiredPeers { removed.formUnion(removeRemoteSessions(id)) }
+        if let id = hybridSession,let last = hybridReceipt, now < last || now-last >= Self.timeout {
+            removed.insert(id); hybridSession = nil; hybridReceipt = nil
+        }
         var commands = router.disconnect(sessions:removed)
         if let camera = sessions[.camera], airStrum != nil {
             commands += airStrum!.expire(now:now,session:camera,router:&router)
@@ -616,6 +678,7 @@ public struct PhysicalPatchRuntime: Sendable {
         cameraHands.reset(); cameraHandsEnabled = false
         airDual = AirDualHandPerformance(); airDualEnabled = false; airHelperEnabled = false; airActiveSlot = nil; airStrum = nil
         sessions = [:]
+        hybridSource = nil; hybridInputs = []; hybridSession = nil; hybridReceipt = nil
         seen = [:]
         supported = []
         motionSources = []

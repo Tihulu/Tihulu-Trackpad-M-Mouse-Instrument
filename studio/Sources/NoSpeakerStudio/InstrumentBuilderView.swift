@@ -10,6 +10,7 @@ struct InstrumentBuilderView: View {
     @State private var draft = InstrumentPatch()
     @State private var sendMIDI = false
     @State private var physical = false
+    @State private var syntheticSource: SensorSource?
     @State private var values: [PatchSimulation.Input: Double] = [:]
     @State private var message = ""
     @State private var showPatchbay = false
@@ -218,6 +219,20 @@ struct InstrumentBuilderView: View {
                             Text("Simulation").tag(false)
                             Text("Native inputs (experimental)").tag(true)
                         }.pickerStyle(.segmented).disabled(studio.patchRunning)
+                        if physical {
+                            Picker("Synthetic source (Hybrid)",selection:$syntheticSource) {
+                                Text("None · native only").tag(nil as SensorSource?)
+                                ForEach([SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external],id:\.self) { source in
+                                    if draft.routes.contains(where: { $0.source == source }) {
+                                        Text(source.rawValue + " · on-screen").tag(Optional(source))
+                                    }
+                                }
+                            }.disabled(studio.patchRunning)
+                            if syntheticSource != nil {
+                                Text("Only the selected source is simulated. Other sources are native. Leaving this page releases simulated controls; a stalled UI lease expires in 350 ms. Remote is not available in this initial Hybrid mode.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                         Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)
                             .disabled(studio.patchRunning)
                         if physical && draft.routes.contains(where: { $0.source == .camera }) {
@@ -243,10 +258,10 @@ struct InstrumentBuilderView: View {
                                 }.disabled(studio.patchRunning)
                             }
                         }
-                        if physical && draft.routes.contains(where: { $0.source == .phone || $0.source == .tablet }) {
+                        if physical && syntheticSource == nil && draft.routes.contains(where: { $0.source == .phone || $0.source == .tablet }) {
                             RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI)
                         }
-                        if physical && !PhysicalPatchRuntime.supports(draft) {
+                        if physical && !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(draft,synthetic:$0) } ?? PhysicalPatchRuntime.supports(draft)) {
                             Text("Normal native mode supports local surfaces, lid, ribbon and camera. For valid phone/tablet touch, piano, drum pads, pedalboard and motion routes, use the Remote panel above. Other unsupported signals remain simulation-only.")
                                 .font(.caption).foregroundStyle(.orange)
                         }
@@ -255,14 +270,14 @@ struct InstrumentBuilderView: View {
                                 studio.updateInstrumentPatch(draft)
                                 values = [:]
                                 airRange = AirRangeCapture(signal: airRange.signal)
-                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical)
+                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical,synthetic:physical ? syntheticSource : nil)
                             }.buttonStyle(.borderedProminent)
-                                .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty || (physical && !PhysicalPatchRuntime.supports(draft)))
+                                .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty || (physical && !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(draft,synthetic:$0) } ?? PhysicalPatchRuntime.supports(draft))))
                             Button("Stop / Release All") { studio.stopInstrumentPatch() }
                             Spacer()
                             Text(studio.patchStatus).font(.caption)
                         }
-                        if studio.patchRunning && !studio.patchPhysical {
+                        if studio.patchRunning && (!studio.patchPhysical || studio.patchHybridSource != nil) {
                             if studio.patchAirDebugAvailable { AirDualDebugPanel() }
                             if studio.patchHelperDebugAvailable { AirHandsHelperDebugPanel() }
                             PerformanceControlsView(patch: studio.instrumentPatch, values: $values)
@@ -352,10 +367,19 @@ struct InstrumentBuilderView: View {
         }
         .onAppear {
             draft = studio.resumeBuilderDraft()
-            if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled }
+            if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled; syntheticSource = studio.patchHybridSource }
+        }
+        .task(id:studio.patchHybridSource) {
+            guard studio.patchHybridSource != nil else { return }
+            while !Task.isCancelled && studio.patchRunning && studio.patchHybridSource != nil {
+                do { try await Task.sleep(for:.milliseconds(100)) } catch { return }
+                guard !Task.isCancelled else { return }
+                studio.refreshHybridControls()
+            }
         }
         .onDisappear {
             if !studio.patchPhysical { studio.stopInstrumentPatch() }
+            else { studio.releaseHybridControls() }
             studio.rememberBuilderDraft(draft)
         }
     }
