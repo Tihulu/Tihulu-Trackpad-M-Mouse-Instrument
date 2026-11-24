@@ -46,6 +46,11 @@ final class StudioController: ObservableObject {
     private var nativePianoTokens: [Int: UUID] = [:]
     var touchBarOwnsHaptics: Bool { touchBarOutputArmed }
     var liveNoteOwnsHaptics: Bool { chordOwnsHaptics || touchBarOwnsHaptics }
+    @Published private(set) var chordProgression = StudioController.readChordProgression()
+    @Published private(set) var progressionRunning = false
+    @Published private(set) var progressionStep: Int?
+    private var progressionTask: Task<Void, Never>?
+    private var progressionToken: UUID?
     private var chordState = ChordPadState()
     private var chordTimers: [Int: Task<Void, Never>] = [:]
     private var chordTimerTokens: [Int: UUID] = [:]
@@ -207,8 +212,89 @@ final class StudioController: ObservableObject {
         }
     }
 
+    private static func readChordProgression() -> ChordProgression {
+        guard let data = UserDefaults.standard.data(forKey: "TIHULU.chordProgression.v1"),
+              let archive = try? WorkspaceArchive.decode(ChordProgression.self, from: data),
+              archive.payload.isValid else { return ChordProgression() }
+        return archive.payload
+    }
+
+    func updateChordProgression(_ proposed: ChordProgression) {
+        guard !progressionRunning, proposed.isValid else { return }
+        chordProgression = proposed
+        if let data = try? WorkspaceArchive.encode(name: "Chord progression", payload: proposed) {
+            UserDefaults.standard.set(data, forKey: "TIHULU.chordProgression.v1")
+        }
+    }
+
+    func startChordProgression() {
+        guard chordArmed, !progressionRunning,
+              let plan = chordProgression.plan(bank: chordBank, bpm: bpm) else {
+            chordStatus = "Arm output and choose a valid non-empty progression and tempo."
+            return
+        }
+        releaseChordPads()
+        guard chordArmed else { return }
+        let token = UUID()
+        progressionToken = token
+        progressionRunning = true
+        progressionTask = Task { [weak self] in
+            let clock = ContinuousClock()
+            let period = Duration.nanoseconds(Int64((plan.duration * 1_000_000_000).rounded()))
+            var origin = clock.now
+            do {
+                repeat {
+                    for (index, step) in plan.steps.enumerated() {
+                        let onset = origin.advanced(by: .nanoseconds(Int64((step.onset * 1_000_000_000).rounded())))
+                        let end = onset.advanced(by: .nanoseconds(Int64((step.gate * 1_000_000_000).rounded())))
+                        try await clock.sleep(until: onset)
+                        guard !Task.isCancelled, self?.progressionToken == token,
+                              self?.chordArmed == true else { return }
+                        self?.progressionStep = index
+                        // Skip an expired gate instead of bursting missed notes.
+                        guard let slot = step.slot, let pad = step.pad, clock.now < end else { continue }
+                        guard self?.pressProgressionChord(slot: slot, pad: pad, plan: plan) == true else { return }
+                        try await clock.sleep(until: end)
+                        guard !Task.isCancelled, self?.progressionToken == token else { return }
+                        self?.releaseChordPad(slot)
+                        guard self?.progressionToken == token else { return }
+                    }
+                    let boundary = origin.advanced(by: period)
+                    try await clock.sleep(until: boundary)
+                    guard !Task.isCancelled, self?.progressionToken == token else { return }
+                    origin = clock.now >= boundary.advanced(by: period) ? clock.now : boundary
+                } while plan.loop
+                self?.stopChordProgression()
+            } catch {
+                if self?.progressionToken == token { self?.stopChordProgression() }
+            }
+        }
+    }
+
+    private func pressProgressionChord(slot: Int, pad: ChordPad, plan: ChordProgressionPlan) -> Bool {
+        guard chordArmed, progressionRunning else { return false }
+        let commands = chordState.press(slot: slot, pad: pad, channel: plan.channel, velocity: plan.velocity)
+        guard deliverChordCommands(commands) else { return false }
+        chordActiveSlots = chordState.activeSlots
+        updateChordHaptics()
+        return true
+    }
+
+    func stopChordProgression() {
+        guard progressionRunning else { return }
+        releaseChordPads()
+    }
+
+    func releaseManualChordPadsOnDisappear() {
+        // A deliberately started progression can accompany a different
+        // instrument page; global focus loss still invokes Release All.
+        if !progressionRunning { releaseChordPads() }
+    }
+
     func triggerChordPad(_ slot: Int) {
         guard chordArmed, let pad = chordBank.pad(at: slot) else { return }
+        if progressionRunning { stopChordProgression() }
+        guard chordArmed else { return }
         if chordState.activeSlots.contains(slot) {
             releaseChordPad(slot)
             if chordBank.latch || !chordArmed { return }
@@ -259,6 +345,11 @@ final class StudioController: ObservableObject {
     }
 
     func releaseChordPads() {
+        progressionToken = nil
+        progressionTask?.cancel()
+        progressionTask = nil
+        progressionRunning = false
+        progressionStep = nil
         for task in chordTimers.values { task.cancel() }
         chordTimers.removeAll()
         chordTimerTokens.removeAll()
