@@ -645,26 +645,16 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     public func sendHelperControls(
         x: Double, y: Double, contactSize: Double, assignments: MIDIHelperAssignments,
-        channel: Int, pitchBendRange: Int, vibratoCC: Int, expressionCC: Int
+        channel: Int, pitchBendRange: Int, vibratoCC: Int, expressionCC: Int,
+        configureReceiverBendRange:Bool = false
     ) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         lock.unlock()
-        guard canSend, HelperPerformancePolicy.validContact(x:x,y:y,size:contactSize),
-              HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
-                                     vibratoCC:vibratoCC,expressionCC:expressionCC) else { return }
-        let ch = max(0,min(15,channel))
-        var values: [SensorDestination:LegacyContinuousOwners.Value] = [:]
-        if assignments.pitchBend {
-            let bend = Int((8192 + (min(1,max(0,x))-0.5)*2*8191).rounded())
-            values[.init(.pitchBend,channel:ch)] = .init(bend,neutral:8192,bendRange:max(1,min(24,pitchBendRange)))
-        }
-        if assignments.vibrato {
-            values[.init(.controlChange,channel:ch,number:vibratoCC)] = HelperPerformancePolicy.gainValue(Int((min(1,max(0,y))*127).rounded()),cc:vibratoCC)
-        }
-        if assignments.expression {
-            values[.init(.controlChange,channel:ch,number:expressionCC)] = HelperPerformancePolicy.gainValue(Int((min(1,max(0,contactSize))*127).rounded()),cc:expressionCC)
-        }
+        guard canSend,let values = HelperPerformancePolicy.controls(x:x,y:y,size:contactSize,
+            assignments:assignments,channel:channel,bendRange:pitchBendRange,
+            vibratoCC:vibratoCC,expressionCC:expressionCC,
+            configureReceiverBendRange:configureReceiverBendRange) else { return }
         sendContinuousUpdates(continuousOwners.replace(.helper,values:values))
     }
 

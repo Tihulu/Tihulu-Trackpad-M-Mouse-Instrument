@@ -4,8 +4,10 @@
 public struct HelperRoutingSnapshot: Equatable, Sendable {
     public let sendToDAW: Bool
     public let channel, bendRange, vibratoCC, expressionCC: Int
-    public init(sendToDAW: Bool, channel: Int, bendRange: Int, vibratoCC: Int, expressionCC: Int) {
+    public let configureReceiverBendRange:Bool
+    public init(sendToDAW: Bool, channel: Int, bendRange: Int, vibratoCC: Int, expressionCC: Int,configureReceiverBendRange:Bool = false) {
         self.sendToDAW = sendToDAW
+        self.configureReceiverBendRange = configureReceiverBendRange
         self.channel = max(0,min(15,channel))
         self.bendRange = max(1,min(24,bendRange))
         self.vibratoCC = max(0,min(127,vibratoCC))

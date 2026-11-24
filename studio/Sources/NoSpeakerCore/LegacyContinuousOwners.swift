@@ -21,7 +21,7 @@ public struct LegacyContinuousOwners: Sendable {
                     (0...127).contains(neutral) && bendRange == nil
             case .pitchBend:
                 return (0...16383).contains(value) && neutral == 8192 &&
-                    bendRange.map { (1...24).contains($0) } == true
+                    (bendRange.map { (1...24).contains($0) } ?? true)
             default: return false
             }
         }

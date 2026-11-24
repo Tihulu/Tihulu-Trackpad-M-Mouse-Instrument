@@ -237,15 +237,34 @@ import Testing
     let bend = SensorDestination(.pitchBend)
     var owners = LegacyContinuousOwners()
     let values:[SensorDestination:LegacyContinuousOwners.Value] = [
-        volume:.init(55,neutral:127),expression:.init(42,neutral:127),
+        volume:HelperPerformancePolicy.gainValue(55,cc:7),expression:HelperPerformancePolicy.gainValue(42,cc:11),
         wah:.init(80,neutral:0),bend:.init(10000,neutral:8192,bendRange:12)]
     _ = owners.replace(.helper,values:values)
-    let release = owners.replace(.helper,values:HelperPerformancePolicy.idleValues(values))
+    let release = owners.release(.helper)
     #expect(Set(release.map(\.target)) == [wah,bend])
-    #expect(owners.values(for:.helper)[expression]?.value == 42)
-    #expect(owners.values(for:.helper)[volume]?.value == 55)
-    #expect(owners.replace(.helper,values:HelperPerformancePolicy.idleValues(owners.values(for:.helper))).isEmpty)
-    #expect(Set(owners.release(.helper).map(\.target)) == [volume,expression])
-    #expect(HelperPerformancePolicy.neutral(forCC:74) == 0)
-    #expect(HelperPerformancePolicy.neutral(forCC:7) == 127)
+    #expect(owners.values(for:.helper).isEmpty)
+    #expect(owners.release(.helper).isEmpty)
+}
+@Test func keyboardSustainOnlyProductionPlannerAndWireEdges() throws {
+    var pedal = LegacySustainOwners(), owners = LegacyContinuousOwners()
+    let target = SensorDestination(.sustain,channel:2)
+    for active in [false,true,true,false,false] {
+        let values = try #require(HelperPerformancePolicy.controls(x:0.99,y:0.99,size:0.99,assignments:.sustainOnly,
+            channel:2,bendRange:12,vibratoCC:7,expressionCC:11))
+        #expect(values.isEmpty)
+        #expect(owners.replace(.helper,values:values).isEmpty)
+        let messages = pedal.replace(.helper,channels:active ? [2] : [])
+        #expect(messages.allSatisfy { $0.destination == target && [0,127].contains($0.value) })
+    }
+    #expect(pedal.releaseAll().isEmpty)
+}
+@Test func helperBendDoesNotConfigureKeyboardRangeUnlessExplicit() throws {
+    let a = MIDIHelperAssignments(vibrato:false,pitchBend:true,expression:false)
+    let target = SensorDestination(.pitchBend,channel:2)
+    let safe = try #require(HelperPerformancePolicy.controls(x:1,y:0.5,size:0.6,assignments:a,channel:2,bendRange:12,vibratoCC:1,expressionCC:11))
+    var owners = LegacyContinuousOwners()
+    #expect(owners.replace(.helper,values:safe) == [.init(target,value:16383)])
+    #expect(owners.release(.helper) == [.init(target,value:8192)])
+    let explicit = try #require(HelperPerformancePolicy.controls(x:1,y:0.5,size:0.6,assignments:a,channel:2,bendRange:12,vibratoCC:1,expressionCC:11,configureReceiverBendRange:true))
+    #expect(owners.replace(.helper,values:explicit) == [.init(target,value:16383,bendRange:12)])
 }

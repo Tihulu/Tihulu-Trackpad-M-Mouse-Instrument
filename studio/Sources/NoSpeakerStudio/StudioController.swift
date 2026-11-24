@@ -330,6 +330,7 @@ final class StudioController: ObservableObject {
     private var helperSendToDAW = true
     private var helperTargetChannel = 0
     private var helperPitchBendRange = 12
+    private var helperConfigureReceiverBendRange = false
     private var helperVibratoCC = 1
     private var helperExpressionCC = 11
     private var helperLocalSound = false
@@ -2570,7 +2571,8 @@ final class StudioController: ObservableObject {
         trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold,
         trackpadSustainSensor: TrackpadSustainSensor = .contactSize,
         magicMouseTapThreshold: Double = 0,
-        sharePedalSurface:Bool = false
+        sharePedalSurface:Bool = false,
+        configureReceiverBendRange:Bool = false
     ) {
         guard allowLivePerformance() else { return }
         guard !sendToDAW || HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
@@ -2592,9 +2594,9 @@ final class StudioController: ObservableObject {
             magicMouseTapThreshold: magicMouseTapThreshold
         )
         let oldRouting = HelperRoutingSnapshot(sendToDAW:helperSendToDAW,channel:helperTargetChannel,
-            bendRange:helperPitchBendRange,vibratoCC:helperVibratoCC,expressionCC:helperExpressionCC)
+            bendRange:helperPitchBendRange,vibratoCC:helperVibratoCC,expressionCC:helperExpressionCC,configureReceiverBendRange:helperConfigureReceiverBendRange)
         let nextRouting = HelperRoutingSnapshot(sendToDAW:sendToDAW,channel:targetChannel,
-            bendRange:pitchBendRange,vibratoCC:vibratoCC,expressionCC:expressionCC)
+            bendRange:pitchBendRange,vibratoCC:vibratoCC,expressionCC:expressionCC,configureReceiverBendRange:configureReceiverBendRange)
         let otherMappingChanged = newSustainSettings != helperSustainSettings ||
             assignments != helperAssignments || surfaceSelection != helperSurfaceSelection || sharePedalSurface != helperSharePedalSurface
         if !midiHelperRunning || otherMappingChanged || oldRouting != nextRouting { touch?.invalidatePendingSamples() }
@@ -2629,6 +2631,7 @@ final class StudioController: ObservableObject {
         helperLocalSound = localSound
         helperTargetChannel = max(0, min(15, targetChannel))
         helperPitchBendRange = max(1, min(24, pitchBendRange))
+        helperConfigureReceiverBendRange = configureReceiverBendRange
         helperVibratoCC = max(0, min(127, vibratoCC))
         helperExpressionCC = max(0, min(127, expressionCC))
 
@@ -2732,7 +2735,8 @@ final class StudioController: ObservableObject {
             channel: helperTargetChannel,
             pitchBendRange: helperPitchBendRange,
             vibratoCC: helperVibratoCC,
-            expressionCC: helperExpressionCC
+            expressionCC: helperExpressionCC,
+            configureReceiverBendRange:helperConfigureReceiverBendRange
         )
     }
 

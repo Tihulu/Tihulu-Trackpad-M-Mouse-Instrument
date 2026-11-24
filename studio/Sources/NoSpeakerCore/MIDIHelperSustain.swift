@@ -278,11 +278,27 @@ public enum HelperPerformancePolicy {
     public static func validContact(x:Double,y:Double,size:Double) -> Bool {
         [x,y,size].allSatisfy { $0.isFinite && (0...1).contains($0) }
     }
-    /// Gain controllers hold the last intentional value between touches.
-    /// Other momentary controls release normally. Full Stop still performs
-    /// the existing explicitly owned controller cleanup.
-    public static func idleValues(_ values:[SensorDestination:LegacyContinuousOwners.Value]) -> [SensorDestination:LegacyContinuousOwners.Value] {
-        values.filter { $0.key.kind == .controlChange && [7,11].contains($0.key.number) }
+    /// Shared, testable production planner. No disabled assignment produces
+    /// a target, and keyboard-friendly bend does not send RPN by default.
+    public static func controls(x:Double,y:Double,size:Double,assignments:MIDIHelperAssignments,
+        channel:Int,bendRange:Int,vibratoCC:Int,expressionCC:Int,configureReceiverBendRange:Bool = false)
+        -> [SensorDestination:LegacyContinuousOwners.Value]? {
+        guard validContact(x:x,y:y,size:size),(0...15).contains(channel),
+            HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
+                vibratoCC:vibratoCC,expressionCC:expressionCC) else { return nil }
+        var result:[SensorDestination:LegacyContinuousOwners.Value] = [:]
+        if assignments.pitchBend {
+            let bend = Int((8192+(x-0.5)*2*8191).rounded())
+            result[.init(.pitchBend,channel:channel)] = .init(bend,neutral:8192,
+                bendRange:configureReceiverBendRange ? max(1,min(24,bendRange)) : nil)
+        }
+        if assignments.vibrato {
+            result[.init(.controlChange,channel:channel,number:vibratoCC)] = gainValue(Int((y*127).rounded()),cc:vibratoCC)
+        }
+        if assignments.expression {
+            result[.init(.controlChange,channel:channel,number:expressionCC)] = gainValue(Int((size*127).rounded()),cc:expressionCC)
+        }
+        return result
     }
     public static func gainValue(_ value:Int,cc:Int) -> LegacyContinuousOwners.Value {
         .init(value,neutral:neutral(forCC:cc),preserveOnRelease:[7,11].contains(cc))

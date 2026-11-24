@@ -66,6 +66,7 @@ private struct HelperDraft: Codable {
     var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
     var magicMouseTapThreshold: Double? = nil
     var sharePedalSurface: Bool? = nil
+    var configureReceiverBendRange:Bool? = nil
 }
 
 private struct NoteDraft: Codable {
@@ -220,7 +221,7 @@ struct ContentView: View {
                     case .chords: ChordPadPanel(compact: false)
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
                     case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, stringLayout: $touchDraft.stringLayout, mouseStringLayout: $touchDraft.mouseStringLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
-                    case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture, magicMouseTapThreshold: $helperDraft.magicMouseTapThreshold, sharePedalSurface:$helperDraft.sharePedalSurface)
+                    case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture, magicMouseTapThreshold: $helperDraft.magicMouseTapThreshold, sharePedalSurface:$helperDraft.sharePedalSurface,configureReceiverBendRange:$helperDraft.configureReceiverBendRange)
                     case .touchBar: TouchBarModeView()
                     case .notes: NoteSequencerView(notes: $noteDraft.notes, selectedMIDI: $noteDraft.selectedMIDI, velocity: $noteDraft.velocity, loop: $noteDraft.loop, groove: $noteDraft.groove, output: $noteDraft.output)
                     case .drums: DrumSequencerView(active: $drumDraft.active, loop: $drumDraft.loop, groove: $drumDraft.groove, output: $drumDraft.output)
@@ -1797,6 +1798,7 @@ private struct MIDIHelperView: View {
     @Binding var magicMouseSustainGesture: MagicMouseSustainGesture
     @Binding var magicMouseTapThreshold: Double?
     @Binding var sharePedalSurface:Bool?
+    @Binding var configureReceiverBendRange:Bool?
 
     private var assignments: MIDIHelperAssignments {
         .init(vibrato: vibratoEnabled, pitchBend: pitchBendEnabled, expression: expressionEnabled)
@@ -1844,6 +1846,7 @@ private struct MIDIHelperView: View {
                             trackpadSustainEnabled = surfaceSelection != .magicMouse
                             magicMouseSustainEnabled = surfaceSelection != .trackpad
                             sharePedalSurface = false
+                            configureReceiverBendRange = false
                         }
                         Button("Hybrid Preset") {
                             vibratoEnabled = true
@@ -1914,11 +1917,24 @@ private struct MIDIHelperView: View {
                                 }.disabled(studio.midiHelperRunning)
                                 Text("CC4 requires DAW MIDI Learn. For shared fretted pitch bend disable conflicting controls; frets, fretless pitch and MPE ownership are not replaced by this preset.")
                                     .font(.caption).foregroundStyle(.secondary)
+                                Toggle("Configure DAW bend range (RPN · advanced)",isOn:Binding(get:{configureReceiverBendRange ?? false},set:{configureReceiverBendRange = $0}))
+                                    .disabled(!pitchBendEnabled)
+                                if configureReceiverBendRange == true && pitchBendEnabled {
                                 Picker("Pitch Bend Range", selection: $pitchBendRange) {
                                     Text("±2 semitones").tag(2)
                                     Text("±5 semitones").tag(5)
                                     Text("±12 semitones").tag(12)
                                     Text("±24 semitones").tag(24)
+                                }
+                                    Text("RPN changes the receiving MIDI channel's bend sensitivity, including the physical keyboard. Configure only if intended.")
+                                        .font(.caption).foregroundStyle(.orange)
+                                } else {
+                                    Text("Pitch bend uses the receiving DAW's existing range. No RPN is sent by the Helper.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                if assignments.hasEffects && (vibratoEnabled && [7,11].contains(vibratoCC) || expressionEnabled && [7,11].contains(expressionCC)) {
+                                    Text("Gain control affects all notes on the selected DAW channel. Use sustain-only to preserve keyboard dynamics.")
+                                        .font(.caption).foregroundStyle(.orange)
                                 }
                                 Picker("Y / Vertical CC", selection: $vibratoCC) {
                                     if !HelperCCPolicy.permits(vibratoCC) {
@@ -2021,6 +2037,7 @@ private struct MIDIHelperView: View {
         .onChange(of: magicMouseSustainGesture) { _ in syncIfRunning() }
         .onChange(of: magicMouseTapThreshold) { _ in syncIfRunning() }
         .onChange(of: sharePedalSurface) { _ in syncIfRunning() }
+        .onChange(of: configureReceiverBendRange) { _ in syncIfRunning() }
     }
 
     private func startHelper() {
@@ -2040,7 +2057,8 @@ private struct MIDIHelperView: View {
             trackpadSustainGesture: trackpadSustainGesture,
             trackpadSustainSensor: trackpadSustainSensor,
             magicMouseTapThreshold: magicMouseTapThreshold ?? 0,
-            sharePedalSurface:sharePedalSurface ?? false
+            sharePedalSurface:sharePedalSurface ?? false,
+            configureReceiverBendRange:configureReceiverBendRange ?? false
         )
     }
 
