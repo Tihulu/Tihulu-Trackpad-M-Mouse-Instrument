@@ -337,6 +337,7 @@ final class StudioController: ObservableObject {
     private var helperSurfaceSelection: TouchSurfaceSelection = .trackpad
     private var helperSustainSettings = MIDIHelperSustainSettings()
     private var helperSustainState = MIDIHelperSustainState()
+    private var helperRearmGate = HelperRearmGate()
     private var touchSustainSettings = MIDIHelperSustainSettings()
     private var touchSustainState = MIDIHelperSustainState()
     private var captureMonitor: PerformanceCaptureMonitor?
@@ -2617,12 +2618,14 @@ final class StudioController: ObservableObject {
         }
 
         if midiHelperRunning && (otherMappingChanged || oldRouting != nextRouting) {
+            helperRearmGate.invalidate()
             // Reset local latch state even if the old configuration was preview-only.
             helperSustainState.reset()
             midiHelperSustainActive = false
             midiHelperTrackpadSustainActive = false
             midiHelperMagicMouseSustainActive = false
         }
+        if !midiHelperRunning { helperRearmGate.reset() }
         helperSustainSettings = newSustainSettings
         helperAssignments = assignments
         helperSharePedalSurface = sharePedalSurface
@@ -2656,6 +2659,7 @@ final class StudioController: ObservableObject {
         guard midiHelperRunning else { return }
         touch?.invalidatePendingSamples()
         midi?.releaseHelperSustain()
+        helperRearmGate.reset()
         helperSustainState.reset()
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
@@ -2688,6 +2692,8 @@ final class StudioController: ObservableObject {
         midiHelperStates = states
         guard midiHelperRunning else { return }
 
+        let selectedClick = clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false
+        guard helperRearmGate.permits(touching:states.contains(where: { $0.isTouching }),clicking:selectedClick) else { return }
         let active = states.filter { $0.isTouching && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
         let snapshot = helperSustainState.update(
             trackpadContactSizes: active
@@ -2695,8 +2701,8 @@ final class StudioController: ObservableObject {
                 .map(\.pressure),
             magicMouseTouching: active.contains { $0.surface == .magicMouse },
             settings: helperSustainSettings,
-            trackpadClickDown: clickedSurface == .trackpad,
-            magicMouseClickDown: clickedSurface == .magicMouse,
+            trackpadClickDown: selectedClick && clickedSurface == .trackpad,
+            magicMouseClickDown: selectedClick && clickedSurface == .magicMouse,
             trackpadClickPressure: trackpadClickPressure,
             magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure)
         )

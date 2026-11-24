@@ -268,3 +268,18 @@ import Testing
     let explicit = try #require(HelperPerformancePolicy.controls(x:1,y:0.5,size:0.6,assignments:a,channel:2,bendRange:12,vibratoCC:1,expressionCC:11,configureReceiverBendRange:true))
     #expect(owners.replace(.helper,values:explicit) == [.init(target,value:16383,bendRange:12)])
 }
+
+@Test func helperMappingChangeRequiresIdleFrameBeforeNewOnset() {
+    var gate = HelperRearmGate()
+    #expect(gate.permits(touching:true,clicking:false))
+    gate.invalidate()
+    #expect(!gate.permits(touching:true,clicking:false))
+    #expect(!gate.permits(touching:false,clicking:true))
+    #expect(gate.waiting)
+    #expect(!gate.permits(touching:false,clicking:false))
+    #expect(!gate.waiting)
+    #expect(gate.permits(touching:true,clicking:false))
+    gate.invalidate()
+    gate.reset()
+    #expect(gate.permits(touching:true,clicking:true))
+}

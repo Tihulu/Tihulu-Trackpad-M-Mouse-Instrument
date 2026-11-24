@@ -85,7 +85,7 @@ public struct LegacyContinuousOwners: Sendable {
     public mutating func releaseAll() -> [Update] {
         let targets = sorted(Set(owners.values.flatMap(\.keys)))
         let result: [Update] = targets.compactMap { target in
-            guard let previous = winner(target), previous.value != previous.neutral else { return nil }
+            guard let previous = winner(target), !previous.preserveOnRelease, previous.value != previous.neutral else { return nil }
             return .init(target,value:previous.neutral,neutral:previous.neutral)
         }
         owners.removeAll()
