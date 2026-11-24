@@ -564,62 +564,7 @@ final class StudioController: ObservableObject {
             recordPatchCommands(commands)
         }
         guard patchRunning else { return }
-        if let camera = patchCamera {
-            if BuilderCameraSource.authorization != .authorized {
-                stopInstrumentPatch()
-                patchCameraStatus = "Camera permission lost. Restart explicitly."
-                patchStatus = patchCameraStatus
-                return
-            }
-            for event in camera.drain() {
-                guard patchRunning else { return }
-                switch event {
-                case .ready: patchCameraStatus = "Camera running · show configured hands"
-                case .fault(let message):
-                    stopInstrumentPatch()
-                    patchCameraStatus = message
-                    patchStatus = message
-                    return
-                case .dualFrame(let count, let confidence, let helper, let time):
-                    guard now >= time, now - time < 0.25 else {
-                        recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: nil, confidence: 0, helper: nil, hostTime: time, now: now))
-                        patchCameraHand = nil
-                        patchCameraStatus = "Stale dual-hand frame · controls released"
-                        continue
-                    }
-                    patchCameraReceivedFrame = true
-                    patchCameraLastFrame = time
-                    let oriented = helper?.oriented(patchCameraOrientation, mirrorX: patchCameraMirrorX)
-                    patchCameraHand = oriented
-                    patchCameraStatus = count.map { "Chord fingers: \($0) · pinch helper to play" } ?? "Two reliable hands required"
-                    recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: count, confidence: confidence,
-                                                                            helper: oriented, hostTime: time, now: now))
-                case .frame(let hand, let time):
-                    guard now >= time, now - time < PhysicalPatchRuntime.timeout else {
-                        stopInstrumentPatch()
-                        patchCameraStatus = "Stale camera frames. Restart explicitly."
-                        patchStatus = patchCameraStatus
-                        return
-                    }
-                    patchCameraReceivedFrame = true
-                    patchCameraLastFrame = time
-                    let oriented = hand?.oriented(patchCameraOrientation, mirrorX: patchCameraMirrorX)
-                    let accepted = airTracking.accept(oriented, at: time, now: now)
-                    patchCameraHand = accepted
-                    patchCameraStatus = accepted != nil ? "One hand tracked" :
-                        (hand == nil ? "No reliable single hand" : "Acquiring hand")
-                    recordPatchCommands(patchPhysicalRuntime.receiveHand(accepted, hostTime: time, now: now))
-                }
-            }
-            guard patchRunning else { return }
-            let limit = patchCameraReceivedFrame ? 2.0 : 8.0
-            if now - patchCameraLastFrame >= limit {
-                stopInstrumentPatch()
-                patchCameraStatus = "Camera stopped delivering fresh frames. Restart explicitly."
-                patchStatus = patchCameraStatus
-                return
-            }
-        }
+        drainBuilderCamera(now: now)
         guard patchRunning else { return }
         drainBuilderRemote(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
@@ -638,6 +583,69 @@ final class StudioController: ObservableObject {
             patchActiveSurfaces = active
             patchStatus = active.isEmpty ? "No live input · controls released" :
                 "Live input · " + active.map(\.rawValue).sorted().joined(separator: ", ")
+        }
+    }
+
+    private func stopBuilderCamera(reason: String) {
+        if let camera = patchCamera {
+            retiringPatchCamera = camera
+            camera.stop()
+        }
+        patchCamera = nil
+        airTracking.reset()
+        patchCameraHand = nil
+        recordPatchCommands(patchPhysicalRuntime.releaseCamera())
+        patchCameraStatus = reason
+    }
+
+    private func drainBuilderCamera(now: Double) {
+        if let camera = patchCamera {
+            if BuilderCameraSource.authorization != .authorized {
+                stopBuilderCamera(reason: "Camera permission lost. Restart Builder explicitly.")
+                return
+            }
+            for event in camera.drain() {
+                guard patchRunning else { return }
+                switch event {
+                case .ready: patchCameraStatus = "Camera running · show configured hands"
+                case .fault(let message):
+                    stopBuilderCamera(reason: message)
+                    return
+                case .dualFrame(let count, let confidence, let helper, let time):
+                    guard now >= time, now - time < 0.25 else {
+                        recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: nil, confidence: 0, helper: nil, hostTime: time, now: now))
+                        patchCameraHand = nil
+                        patchCameraStatus = "Stale dual-hand frame · controls released"
+                        continue
+                    }
+                    patchCameraReceivedFrame = true
+                    patchCameraLastFrame = time
+                    let oriented = helper?.oriented(patchCameraOrientation, mirrorX: patchCameraMirrorX)
+                    patchCameraHand = oriented
+                    patchCameraStatus = count.map { "Chord fingers: \($0) · pinch helper to play" } ?? "Two reliable hands required"
+                    recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: count, confidence: confidence,
+                                                                            helper: oriented, hostTime: time, now: now))
+                case .frame(let hand, let time):
+                    guard now >= time, now - time < PhysicalPatchRuntime.timeout else {
+                        stopBuilderCamera(reason: "Stale camera frames. Restart Builder explicitly.")
+                        return
+                    }
+                    patchCameraReceivedFrame = true
+                    patchCameraLastFrame = time
+                    let oriented = hand?.oriented(patchCameraOrientation, mirrorX: patchCameraMirrorX)
+                    let accepted = airTracking.accept(oriented, at: time, now: now)
+                    patchCameraHand = accepted
+                    patchCameraStatus = accepted != nil ? "One hand tracked" :
+                        (hand == nil ? "No reliable single hand" : "Acquiring hand")
+                    recordPatchCommands(patchPhysicalRuntime.receiveHand(accepted, hostTime: time, now: now))
+                }
+            }
+            guard patchRunning else { return }
+            let limit = patchCameraReceivedFrame ? 2.0 : 8.0
+            if now - patchCameraLastFrame >= limit {
+                stopBuilderCamera(reason: "Camera stopped delivering fresh frames. Restart Builder explicitly.")
+                return
+            }
         }
     }
 
