@@ -1282,13 +1282,18 @@ final class StudioController: ObservableObject {
     func recordNativeTouchBarItemRequest() { nativeTouchBarItemRequests &+= 1 }
     func recordNativeTouchBarInput() { nativeTouchBarInputCount &+= 1 }
 
-    /// Explicit reconnect releases the old bar owners before replacing controls.
-    /// No note or MIDI output is armed by this action.
-    func reconnectNativeTouchBar() {
+    /// Only the Touch Bar domain is retired; other instrument owners remain.
+    func retireTouchBarGesturesForReplacement() {
         releaseTouchBarNotes()
         midi?.releaseTouchBarControls()
         touchBarSustainOn = false
         midi?.releaseTouchBarSustain()
+    }
+
+    /// Explicit reconnect releases the old bar owners before replacing controls.
+    /// No note or MIDI output is armed by this action.
+    func reconnectNativeTouchBar() {
+        retireTouchBarGesturesForReplacement()
         if patchNativeBar { receiveBuilderScalar(.touchBar, value: nil) }
         nativeTouchBarItemRequests = 0
         nativeTouchBarInputCount = 0

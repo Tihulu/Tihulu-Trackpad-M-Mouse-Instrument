@@ -26,6 +26,11 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             attachToKeyWindow()
             return
         }
+        // Adding/removing the Builder ribbon replaces AppKit controls. Retire
+        // held gestures before fencing their old release callbacks.
+        if !force, installedBar != nil, normalized == self.profile, builderToken != self.builderToken {
+            controller?.retireTouchBarGesturesForReplacement()
+        }
         self.builderToken = builderToken
         profileEpoch.invalidate()
         profileControls.removeAllObjects()
