@@ -40,6 +40,8 @@ final class StudioController: ObservableObject {
     @Published private(set) var patchActiveSurfaces: Set<SensorSource> = []
     private var patchPhysicalRuntime = PhysicalPatchRuntime()
     private var patchRemoteTransport: RemoteLoopbackTransport?
+    private var patchRemotePage: RemoteLoopbackPageServer?
+    @Published private(set) var patchRemotePageReady = false
     private var patchRemoteBridge: RemoteHostBridge?
     @Published private(set) var patchRemoteReady = false
     @Published private(set) var patchRemotePeers: Set<UUID> = []
@@ -212,12 +214,14 @@ final class StudioController: ObservableObject {
     // Internal explicit loopback test entry point. No UI or LAN exposure until
     // certificate provisioning and trusted browser flow are implemented.
     func startInstrumentPatch(sendMIDI: Bool, physical: Bool = false,
-                              remoteTransport: RemoteLoopbackTransport? = nil) {
+                              remoteTransport: RemoteLoopbackTransport? = nil,
+                              remotePage: RemoteLoopbackPageServer? = nil) {
         guard !patchRunning else { return }
         let sources = Set(instrumentPatch.routes.map(\.source))
         let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
         let hasRemoteRoutes = sources.contains(.phone) || sources.contains(.tablet)
-        guard remoteTransport == nil || (physical && hasRemoteRoutes) else {
+        guard (remotePage == nil || remoteTransport != nil),
+              remoteTransport == nil || (physical && hasRemoteRoutes) else {
             patchStatus = "Remote test requires native phone/tablet routes."
             return
         }
@@ -326,7 +330,10 @@ final class StudioController: ObservableObject {
                     patchRemoteReady = false
                     patchRemotePeers = []
                     patchRemoteProbeStatus = "Waiting for loopback listener"
+                    patchRemotePage = remotePage
+                    patchRemotePageReady = false
                     remoteTransport.start()
+                    remotePage?.start()
                 }
                 startPatchWatchdog()
             }
@@ -345,6 +352,8 @@ final class StudioController: ObservableObject {
         patchRemoteBridge = bridge
         return secret
     }
+
+    func cancelBuilderRemoteInvitation() { patchPhysicalRuntime.cancelRemotePairing() }
 
     func runBuilderRemoteProbe(source: SensorSource) {
         guard patchRemoteReady, !patchRemoteProbeRunning else { return }
@@ -385,6 +394,16 @@ final class StudioController: ObservableObject {
 
     private func drainBuilderRemote(now: Double) {
         guard let transport = patchRemoteTransport, var bridge = patchRemoteBridge else { return }
+        if let page = patchRemotePage {
+            switch page.status {
+            case .failed, .stopped:
+                stopInstrumentPatch()
+                patchStatus = "HTTPS page server failed. Outputs released."
+                return
+            case .ready: if !patchRemotePageReady { patchRemotePageReady = true }
+            case .starting: break
+            }
+        }
         let result = bridge.process(transport.drain(), now: now, runtime: &patchPhysicalRuntime)
         patchRemoteBridge = bridge
         if patchRemoteReady != bridge.ready { patchRemoteReady = bridge.ready }
@@ -595,6 +614,9 @@ final class StudioController: ObservableObject {
         patchRemoteProbeTask = nil
         patchRemoteProbeRunning = false
         patchRemoteProbeStatus = "Not tested"
+        patchRemotePage?.stop()
+        patchRemotePage = nil
+        patchRemotePageReady = false
         patchRemoteTransport?.stop()
         patchRemoteTransport = nil
         patchRemoteBridge = nil

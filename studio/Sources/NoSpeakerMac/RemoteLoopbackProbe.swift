@@ -24,7 +24,7 @@ public enum RemoteLoopbackProbe {
         defer { session.invalidateAndCancel() }
         // Fixed endpoint, not supplied by an untrusted client.
         var request = URLRequest(url: URL(string: "wss://127.0.0.1:9443/")!)
-        request.setValue("https://127.0.0.1:9443", forHTTPHeaderField: "Origin")
+        request.setValue("https://127.0.0.1:9444", forHTTPHeaderField: "Origin")
         request.setValue(RemoteHandshakePolicy.subprotocol, forHTTPHeaderField: "Sec-WebSocket-Protocol")
         let socket = session.webSocketTask(with: request)
         socket.maximumMessageSize = 256

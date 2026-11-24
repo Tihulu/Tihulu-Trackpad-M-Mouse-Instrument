@@ -38,6 +38,10 @@ public struct RemoteTLSIdentityChoice: Identifiable {
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    public func makeLoopbackPageServer() throws -> RemoteLoopbackPageServer {
+        try RemoteLoopbackPageServer(identity: identity)
+    }
+
     public func makeLoopbackTransport() throws -> RemoteLoopbackTransport {
         var certificate: SecCertificate?
         guard SecIdentityCopyCertificate(identity, &certificate) == errSecSuccess,
@@ -47,7 +51,7 @@ public struct RemoteTLSIdentityChoice: Identifiable {
         guard SecTrustCreateWithCertificates(certificate, policy, &trust) == errSecSuccess,
               let trust, SecTrustSetNetworkFetchAllowed(trust, false) == errSecSuccess,
               SecTrustEvaluateWithError(trust, nil) else { throw Failure.untrusted }
-        return try RemoteLoopbackTransport(identity: identity, port: 9443, origin: "https://127.0.0.1:9443")
+        return try RemoteLoopbackTransport(identity: identity, port: 9443, origin: "https://127.0.0.1:9444")
     }
 }
 #endif
