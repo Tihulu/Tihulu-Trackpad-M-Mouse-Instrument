@@ -26,6 +26,15 @@ final class StudioController: ObservableObject {
         didSet { updateChordHaptics(); updateTouchBarHaptics() }
     }
     @Published var bpm = 120.0
+    @Published private(set) var instrumentPatch = StudioController.readInstrumentPatch()
+    @Published private(set) var patchRunning = false
+    @Published private(set) var patchInputs: [PatchSimulation.Input] = []
+    @Published private(set) var patchMessages: [String] = []
+    @Published private(set) var patchStatus = "Builder idle"
+    private var patchSimulation = PatchSimulation()
+    private var patchLedger = PatchOutputLedger()
+    private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
+    private var patchMIDIEnabled = false
     @Published private(set) var sequenceRunning = false
     @Published private(set) var sequenceStatus = "Sequencer MIDI idle"
     private let sequenceMIDI = ChordMIDIOutput(name: "TIHULU Sequencer")
@@ -148,6 +157,72 @@ final class StudioController: ObservableObject {
     private var clickedSurface: TouchSurfaceKind?
     private var trackpadClickPressure: Double?
     private var activeMIDINoteMap: [String: ActiveMIDINote] = [:]
+
+    private static func readInstrumentPatch() -> InstrumentPatch {
+        guard let data = UserDefaults.standard.data(forKey: "TIHULU.instrumentPatch.v1"),
+              let patch = try? InstrumentPatch.read(data) else { return .starter }
+        return patch
+    }
+
+    func updateInstrumentPatch(_ proposed: InstrumentPatch) {
+        guard !patchRunning, let data = try? proposed.archive() else { return }
+        instrumentPatch = proposed
+        UserDefaults.standard.set(data, forKey: "TIHULU.instrumentPatch.v1")
+    }
+
+    func startInstrumentPatch(sendMIDI: Bool) {
+        guard !patchRunning else { return }
+        guard patchLedger.releaseAll(send: { patchMIDI.send($0) }) else {
+            patchStatus = "Unreleased MIDI controls. Reset the DAW and retry Stop."
+            return
+        }
+        do {
+            if sendMIDI { try patchMIDI.open() }
+            try patchSimulation.start(instrumentPatch, now: ProcessInfo.processInfo.systemUptime)
+            patchMIDIEnabled = sendMIDI
+            patchRunning = true
+            patchInputs = patchSimulation.inputs
+            patchMessages = []
+            patchStatus = sendMIDI ? "Simulated inputs · live TIHULU Instrument Builder MIDI" : "Simulation only · no MIDI output"
+        } catch { patchStatus = error.localizedDescription }
+    }
+
+    func sendPatchInput(_ input: PatchSimulation.Input, value: Double) {
+        guard patchRunning else { return }
+        let commands = patchSimulation.send(input, value: value, now: ProcessInfo.processInfo.systemUptime)
+        recordPatchCommands(commands)
+    }
+
+    func disconnectPatchInput(_ source: SensorSource) {
+        guard patchRunning else { return }
+        let commands = patchSimulation.disconnect(source)
+        patchInputs = patchSimulation.inputs
+        recordPatchCommands(commands)
+        if !patchSimulation.running { stopInstrumentPatch() }
+    }
+
+    private func recordPatchCommands(_ commands: [SensorCommand]) {
+        for command in commands {
+            let target = command.destination
+            patchMessages.insert("Ch " + String(target.channel + 1) + " · " + target.kind.rawValue +
+                                 " " + String(target.number) + " → " + String(command.value), at: 0)
+            if patchMIDIEnabled && !patchLedger.deliver(command, send: { patchMIDI.send($0) }) {
+                stopInstrumentPatch()
+                patchStatus = "MIDI delivery failed. Check DAW and retry Stop."
+                break
+            }
+        }
+        if patchMessages.count > 24 { patchMessages = Array(patchMessages.prefix(24)) }
+    }
+
+    func stopInstrumentPatch() {
+        _ = patchSimulation.stop()
+        patchInputs = []
+        patchRunning = false
+        patchMIDIEnabled = false
+        let released = patchLedger.releaseAll(send: { patchMIDI.send($0) })
+        patchStatus = released ? "Builder idle" : "MIDI release failed. Reset DAW and retry Stop."
+    }
 
     private static func readChordBank() -> ChordBank {
         guard let data = UserDefaults.standard.data(forKey: "TIHULU.chordBank.v1"),
@@ -843,6 +918,7 @@ final class StudioController: ObservableObject {
     }
 
     func panicStop() {
+        stopInstrumentPatch()
         stopLiveSequence()
         engineGeneration &+= 1
         disarmTouchBarOutput()
