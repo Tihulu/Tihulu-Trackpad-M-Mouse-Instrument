@@ -12,7 +12,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id]});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
   class WS{
@@ -29,7 +29,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
   function step(ms=25){time+=ms;for(const [id,t] of [...timers])if(t.at<=time&&timers.delete(id))t.f();ticker?.()}
   function withheld(){step(50);const q=socket.frames.at(-1);if(q?.kind==="mapping"){socket.frames.pop();time+=13;socket.onmessage({data:JSON.stringify({kind:"mapping",version:8,sequence:q.sequence,page:0,pages:1,total:0,detail:false,rows:[]})});}}
   if(autoMapping&&!socket.closed&&manifest!==null)withheld();
-  if(experimental&&!socket.closed&&manifest!==null)elements.workloadMode.emit("click");
+  if(experimental&&!socket.closed&&manifest!==null){elements.navSetup.emit("click");elements.workloadMode.emit("click");elements.navPlay.emit("click");}
   return {query,elements,window,document,socket,step,withheld,ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
     orientation(beta=0){window.emit("deviceorientation",{alpha:0,beta,gamma:0})}};
 }
@@ -384,7 +384,7 @@ test("experimental choice only when idle; reset on disconnect",()=>{
   const a=setup("granted",fullManifest,false);
   a.elements.pianoEnable.emit("click");
   a.elements.workloadMode.emit("click");assert.match(a.elements.workloadMode.textContent,/Enable experimental/);
-  a.elements.pianoEnable.emit("click");a.elements.workloadMode.emit("click");
+  a.elements.pianoEnable.emit("click");a.elements.navSetup.emit("click");a.elements.workloadMode.emit("click");a.elements.navPlay.emit("click");
   assert.match(a.elements.workloadMode.textContent,/Use conservative/);
   a.elements.drumEnable.emit("click");a.elements.pianoEnable.emit("click");
   assert.match(a.elements.workloadStatus.textContent,/streams: 2/);
@@ -508,4 +508,47 @@ test("ACK latency reports only observed response time and resets on close",()=>{
   assert.match(a.elements.ackLatency.textContent,/37 ms/);
   assert.match(a.elements.ackLatency.textContent,/Not MIDI\/audio latency/);
   a.window.emit("pagehide");assert.match(a.elements.ackLatency.textContent,/no recent sample/);
+});
+
+test("metadata waits a full 50ms after ACK despite delayed delivery",()=>{
+  const a=setup("granted",touchOnly,false,false);
+  a.step(50);const first=a.socket.frames.at(-1);
+  a.step(40);
+  a.socket.onmessage({data:JSON.stringify({kind:"mapping",version:8,sequence:first.sequence,page:0,pages:1,total:1,detail:true,rows:[[0,1,0,74,1]]})});
+  a.step(49);assert.equal(a.socket.frames.length,1);
+  a.step(1);assert.equal(a.socket.frames.at(-1).kind,"mappingLabels");
+  assert.equal(a.socket.sendTimes.at(-1)-a.socket.sendTimes.at(-2),90);
+});
+test("full 64 destination rows and 49 labels complete within bounded metadata phase",()=>{
+  const a=setup("granted",fullManifest,false,false);
+  const rows=Array.from({length:15},(_,i)=>[0,0,0,60+i,1]);
+  for(let i=0;i<49;i++){
+    const kind=i===42||i===46?3:i>=8&&i<=41?0:1;
+    rows.push([i,kind,0,kind===3?0:kind===0?60:74,1]);
+  }
+  for(let i=0;i<8;i++){
+    a.step(50);const q=a.socket.frames.at(-1);assert.equal(q.kind,"mapping");assert.equal(q.page,i);
+    const payload=JSON.stringify({kind:"mapping",version:8,sequence:q.sequence,page:i,pages:8,total:64,detail:true,rows:rows.slice(i*8,i*8+8)});
+    assert.equal(payload.length<=256,true);a.step(60);a.socket.onmessage({data:payload});
+    assert.equal(a.elements.playView.hidden,true);
+  }
+  for(let i=0;i<49;i++){
+    a.step(50);const q=a.socket.frames.at(-1);assert.equal(q.kind,"mappingLabels");assert.equal(q.page,i);
+    const payload=JSON.stringify({kind:"mappingLabels",version:8,sequence:q.sequence,page:i,pages:49,total:49,rows:[[i,"QUFB".repeat(21)+"QQ"]]});
+    assert.equal(payload.length<=256,true);a.step(60);a.socket.onmessage({data:payload});
+    assert.equal(a.elements.playView.hidden,i!==48);
+  }
+  assert.equal(a.socket.closed,undefined);assert.match(a.elements.mappingDetails.textContent,/A{64}/);
+  assert.equal(a.socket.frames.length,57);
+});
+test("workload refusal is visible in Play and hidden mode action is rejected",()=>{
+  const a=setup("granted",fullManifest,false);
+  a.elements.workloadMode.emit("click");assert.match(a.elements.workloadMode.textContent,/Enable experimental/);
+  a.elements.pianoEnable.emit("click");a.elements.drumEnable.emit("click");
+  assert.match(a.elements.playWorkloadStatus.textContent,/Combination unavailable/);
+});
+test("ACK sample median uses even pair average",()=>{
+  const a=setup();a.elements.pad.emit("pointerdown",xyEvent(1));a.ack(20);
+  a.elements.pad.emit("pointerup",xyEvent(1));a.ack(40);
+  assert.match(a.elements.ackLatency.textContent,/30 ms/);
 });
