@@ -9,10 +9,12 @@ public struct RemoteTouchFrame: Decodable, Equatable, Sendable {
     public enum Kind: String, Decodable, Sendable {
         case touch, release, heartbeat, orientationArm, orientation, motionRelease
         case accelerationArm, acceleration, accelerationRelease, rotationArm, rotation, rotationRelease
+        case drumPads
     }
     public let version: Int
     public let sequence: UInt64
     public let kind: Kind
+    public let mask: Int?
     public let x: Double?
     public let y: Double?
     public let z: Double?
@@ -59,6 +61,9 @@ public struct RemoteTouchFrame: Decodable, Equatable, Sendable {
             else { throw RemoteTouchError.invalidFrame }
         case .accelerationRelease, .rotationRelease:
             guard frame.version == 3, keys == common else { throw RemoteTouchError.invalidFrame }
+        case .drumPads:
+            guard frame.version == 4, keys == common.union(["mask"]), let mask = frame.mask,
+                  (0...255).contains(mask) else { throw RemoteTouchError.invalidFrame }
         }
         return frame
     }
@@ -106,6 +111,9 @@ struct RemoteInertialStream: Sendable {
 struct RemoteTouchPeer: Sendable {
     let source: SensorSource
     var routerSession: UUID?
+    var drumSession: UUID?
+    var drumMask = 0
+    var lastDrumReceipt: Double?
     var motionSession: UUID?
     var tilt: RemoteTiltCalibration?
     var motionFreshness = RemoteMotionFreshness()
@@ -132,11 +140,14 @@ struct RemoteTouchPeer: Sendable {
             guard let lastOrientation, now >= lastOrientation, now-lastOrientation < 0.35 else { return true }
         }
         if inertial.values.contains(where: { $0.expired(now: now) }) { return true }
+        if drumSession != nil {
+            guard let lastDrumReceipt, now >= lastDrumReceipt, now-lastDrumReceipt < 0.35 else { return true }
+        }
         return false
     }
     mutating func accept(_ frame: RemoteTouchFrame, now: Double) -> Bool {
         guard !expired(now: now), frame.sequence > lastSequence,
-              frame.kind != .heartbeat || (routerSession == nil && tilt == nil && inertial.isEmpty) else { return false }
+              frame.kind != .heartbeat || (routerSession == nil && tilt == nil && inertial.isEmpty && drumSession == nil) else { return false }
         if now-windowStart >= 1 { windowStart = now; count = 0 }
         guard count < 90 else { return false }
         count += 1

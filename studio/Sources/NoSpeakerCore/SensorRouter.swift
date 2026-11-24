@@ -9,6 +9,7 @@ public enum SensorSource: String, Codable, CaseIterable, Sendable {
 public enum SensorSignal: String, Codable, CaseIterable, Sendable {
     case x, y, contact, contactSize, pressure, angle, speed, gesture, expression
     case tiltYaw, tiltPitch, tiltRoll, accelerationMagnitude, rotationMagnitude, airStrike
+    case drumPad1, drumPad2, drumPad3, drumPad4, drumPad5, drumPad6, drumPad7, drumPad8
 }
 
 public struct SensorCalibration: Codable, Equatable, Sendable {
