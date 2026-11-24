@@ -13,7 +13,11 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     private weak var chordControl: NSSegmentedControl?
     private let prefix = "com.tihulu.instrument.touchbar."
 
-    func install(profile: TouchBarProfile) {
+    private var builderToken: UUID?
+    private var builderID: NSTouchBarItem.Identifier { .init(prefix + "builderRibbon") }
+
+    func install(profile: TouchBarProfile, builderToken: UUID? = nil) {
+        self.builderToken = builderToken
         self.profile = profile.normalized()
         chordControl = nil
         let bar = NSTouchBar()
@@ -21,6 +25,10 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         bar.customizationIdentifier = NSTouchBar.CustomizationIdentifier(prefix + "layout")
         bar.defaultItemIdentifiers = self.profile.zones.map(identifier)
         bar.customizationAllowedItemIdentifiers = TouchBarZone.allCases.map(identifier)
+        if builderToken != nil {
+            bar.defaultItemIdentifiers.append(builderID)
+            bar.customizationAllowedItemIdentifiers?.append(builderID)
+        }
         NSApplication.shared.touchBar = bar
         NSApplication.shared.isAutomaticCustomizeTouchBarMenuItemEnabled = true
     }
@@ -36,6 +44,15 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     }
 
     func touchBar(_ touchBar: NSTouchBar, makeItemForIdentifier identifier: NSTouchBarItem.Identifier) -> NSTouchBarItem? {
+        if identifier == builderID, let token = builderToken {
+            let item = NSCustomTouchBarItem(identifier: identifier)
+            item.customizationLabel = "Builder ribbon"
+            let slider = BuilderRibbonSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
+            slider.onValue = { [weak self] value in self?.controller?.builderBarValue(value, token: token) }
+            slider.setAccessibilityLabel("Builder ribbon")
+            item.view = slider
+            return item
+        }
         guard let zone = zone(for: identifier) else { return nil }
         switch zone {
         case .keys:
@@ -167,6 +184,19 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         controller?.touchBarSustainPressed(true)
         sender.title = controller?.touchBarSustainOn == true ? "Sustain ON" : "Sustain Toggle"
     }
+}
+
+@MainActor
+private final class BuilderRibbonSlider: NSSlider {
+    var onValue: ((Double?) -> Void)?
+    override func mouseDown(with event: NSEvent) {
+        target = self
+        action = #selector(changed(_:))
+        isContinuous = true
+        defer { onValue?(nil) }
+        super.mouseDown(with: event)
+    }
+    @objc private func changed(_ sender: NSSlider) { onValue?(sender.doubleValue) }
 }
 
 @MainActor
