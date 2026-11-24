@@ -23,6 +23,7 @@ public enum ExpressivePreset: String, CaseIterable, Identifiable, Sendable {
     case vibrato = "Vibrato (CC1)"
     case pan = "Pan (CC10)"
     case xyFilter = "XY Filter & Resonance"
+    case tiltEffects = "Tilt Bend + Wah + Expression"
     public var id: String { rawValue }
 
     public var instructions: String {
@@ -35,6 +36,7 @@ public enum ExpressivePreset: String, CaseIterable, Identifiable, Sendable {
         case .vibrato: "CC1 modulation can control vibrato if assigned in the receiving instrument."
         case .pan: "CC10 is conventional MIDI pan. This preset returns to center (64) on release."
         case .xyFilter: "X sends CC74 cutoff, Y sends CC71 resonance. Assign both in the DAW. Both axes require a compatible input."
+        case .tiltEffects: "Calibrate the paired phone/tablet neutral orientation; roll controls bend, pitch controls wah, relative yaw controls expression. No absolute heading or measured force."
         }
     }
 
@@ -44,7 +46,7 @@ public enum ExpressivePreset: String, CaseIterable, Identifiable, Sendable {
         case .trackpad, .magicMouse: [.x,.y,.contactSize]
         case .touchBar: [.x]
         case .lid: [.angle]
-        case .phone, .tablet: [.x,.y,.angle,.speed]
+        case .phone, .tablet: [.x,.y,.tiltYaw,.tiltPitch,.tiltRoll,.accelerationMagnitude,.rotationMagnitude]
         case .camera: [.x,.y,.gesture]
         default: []
         }
@@ -52,6 +54,7 @@ public enum ExpressivePreset: String, CaseIterable, Identifiable, Sendable {
 
     public func supports(source: SensorSource, signal: SensorSignal) -> Bool {
         let signals = Self.signals(for: source)
+        if self == .tiltEffects { return (source == .phone || source == .tablet) && signal == .tiltRoll }
         if self == .xyFilter { return signal == .x && signals.contains(.x) && signals.contains(.y) }
         return signals.contains(signal)
     }
@@ -72,6 +75,9 @@ public enum ExpressivePreset: String, CaseIterable, Identifiable, Sendable {
         case .pan: targets = [(signal,.init(.controlChange, channel: channel, number: 10))]
         case .xyFilter: targets = [(.x,.init(.controlChange, channel: channel, number: 74)),
                                    (.y,.init(.controlChange, channel: channel, number: 71))]
+        case .tiltEffects: targets = [(.tiltRoll,.init(.pitchBend,channel:channel)),
+                                      (.tiltPitch,.init(.controlChange,channel:channel,number:74)),
+                                      (.tiltYaw,.init(.controlChange,channel:channel,number:11))]
         }
         let occupied = Set(patch.routes.map(\.destination))
         guard targets.allSatisfy({ !occupied.contains($0.1) }) else { throw ExpressivePresetError.targetConflict }
@@ -79,7 +85,8 @@ public enum ExpressivePreset: String, CaseIterable, Identifiable, Sendable {
         result.routes += targets.map { input, target in
             SensorMapping(id: UUID().uuidString, source: source, signal: input, destination: target,
                           calibration: .init(inverted: inverted),
-                          response: self == .pan ? ContinuousResponse(release: 64.0 / 127.0) : nil)
+                          response: self == .pan ? ContinuousResponse(release: 64.0 / 127.0) :
+                              (self == .tiltEffects ? ContinuousResponse(smoothingMS:25) : nil))
         }
         guard result.isValid else { throw ExpressivePresetError.invalidPatch }
         return result

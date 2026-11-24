@@ -14,6 +14,7 @@ struct ExpressivePresetPanel: View {
 
     private var signals: [SensorSignal] { ExpressivePreset.signals(for: source) }
     private var physical: Bool { [.trackpad,.magicMouse,.touchBar,.lid,.camera].contains(source) }
+    private var selectedSignal: SensorSignal { preset == .xyFilter ? .x : preset == .tiltEffects ? .tiltRoll : signal }
 
     var body: some View {
         DisclosureGroup("Add expressive control", isExpanded: $expanded) {
@@ -32,6 +33,8 @@ struct ExpressivePresetPanel: View {
                     }
                     if preset == .xyFilter {
                         Text("X + Y").font(.callout)
+                    } else if preset == .tiltEffects {
+                        Text("Roll + Pitch + Yaw").font(.callout)
                     } else {
                         Picker("Signal", selection: $signal) {
                             ForEach(signals, id: \.self) { Text($0.rawValue).tag($0) }
@@ -41,17 +44,17 @@ struct ExpressivePresetPanel: View {
                 }
                 Text(preset.instructions).font(.caption).foregroundStyle(.secondary)
                 Text(physical ? "Native input is experimental; release returns to the configured position. Select Native inputs to test the surface, lid, ribbon or camera." :
-                    "Simulation only in this Builder version. The signal is a normalized test input, not an active hardware sensor.")
+                    "Real paired phone/tablet input is available through the Remote panel in Native inputs. Motion sensors require browser permission and explicit arming; simulation is also available.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Add to instrument") {
                         do {
                             patch = try preset.appending(to: patch, source: source,
-                                                         signal: preset == .xyFilter ? .x : signal,
+                                                         signal: selectedSignal,
                                                          channel: channel - 1, inverted: inverted)
                             message = "Added to draft. Edit calibration below, then save or start a test."
                         } catch { message = error.localizedDescription }
-                    }.disabled(!preset.supports(source: source, signal: preset == .xyFilter ? .x : signal) || !patch.isValid)
+                    }.disabled(!preset.supports(source: source, signal: selectedSignal) || !patch.isValid)
                     Text(message).font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(.vertical, 6)
@@ -66,8 +69,8 @@ struct ExpressivePresetPanel: View {
         case .magicMouse: "Magic Mouse / external touch"
         case .touchBar: "Touch Bar / ribbon (experimental)"
         case .lid: "Lid angle (experimental)"
-        case .phone: "Phone (simulation)"
-        case .tablet: "Tablet (simulation)"
+        case .phone: "Phone (Remote)"
+        case .tablet: "Tablet (Remote)"
         case .camera: "Camera / hand (experimental)"
         default: source.rawValue
         }
