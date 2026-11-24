@@ -1,0 +1,76 @@
+#if os(macOS)
+import SwiftUI
+import NoSpeakerCore
+
+struct ExpressivePresetPanel: View {
+    @Binding var patch: InstrumentPatch
+    @State private var preset: ExpressivePreset = .wah
+    @State private var source: SensorSource = .trackpad
+    @State private var signal: SensorSignal = .x
+    @State private var channel = 1
+    @State private var inverted = false
+    @State private var message = ""
+    @State private var expanded = false
+
+    private var signals: [SensorSignal] { ExpressivePreset.signals(for: source) }
+    private var physical: Bool { source == .trackpad || source == .magicMouse }
+
+    var body: some View {
+        DisclosureGroup("Add expressive control", isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Picker("Control", selection: $preset) {
+                        ForEach(ExpressivePreset.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    Stepper("Channel \(channel)", value: $channel, in: 1...16)
+                }
+                HStack {
+                    Picker("Source", selection: $source) {
+                        ForEach(ExpressivePreset.sources, id: \.self) {
+                            Text(sourceLabel($0)).tag($0)
+                        }
+                    }
+                    if preset == .xyFilter {
+                        Text("X + Y").font(.callout)
+                    } else {
+                        Picker("Signal", selection: $signal) {
+                            ForEach(signals, id: \.self) { Text($0.rawValue).tag($0) }
+                        }
+                    }
+                    Toggle("Invert", isOn: $inverted)
+                }
+                Text(preset.instructions).font(.caption).foregroundStyle(.secondary)
+                Text(physical ? "Native input is experimental; lift returns controls to the router's default neutral. Select physical mode to test the actual surface." :
+                    "Simulation only in this Builder version. The signal is a normalized test input, not an active hardware sensor.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Add to instrument") {
+                        do {
+                            patch = try preset.appending(to: patch, source: source,
+                                                         signal: preset == .xyFilter ? .x : signal,
+                                                         channel: channel - 1, inverted: inverted)
+                            message = "Added to draft. Edit calibration below, then save or start a test."
+                        } catch { message = error.localizedDescription }
+                    }.disabled(!preset.supports(source: source, signal: preset == .xyFilter ? .x : signal) || !patch.isValid)
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                }
+            }.padding(.vertical, 6)
+        }
+        .onChange(of: source) { value in signal = ExpressivePreset.signals(for: value).first ?? .x; message = "" }
+        .onChange(of: preset) { _ in message = "" }
+    }
+
+    private func sourceLabel(_ source: SensorSource) -> String {
+        switch source {
+        case .trackpad: "Trackpad"
+        case .magicMouse: "Magic Mouse / external touch"
+        case .touchBar: "Touch Bar (simulation)"
+        case .lid: "Lid (simulation)"
+        case .phone: "Phone (simulation)"
+        case .tablet: "Tablet (simulation)"
+        case .camera: "Camera (simulation)"
+        default: source.rawValue
+        }
+    }
+}
+#endif
