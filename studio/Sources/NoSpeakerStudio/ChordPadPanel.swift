@@ -1,0 +1,156 @@
+#if os(macOS)
+import Foundation
+import SwiftUI
+import NoSpeakerCore
+
+struct ChordPadPanel: View {
+    @EnvironmentObject private var studio: StudioController
+    let compact: Bool
+    @State private var editSlot: Int?
+    @State private var customName = ""
+    @State private var customNotes = ""
+    @State private var editError = ""
+
+    private func binding<T>(_ key: WritableKeyPath<ChordBank, T>) -> Binding<T> {
+        Binding(get: { studio.chordBank[keyPath: key] }, set: { value in
+            var bank = studio.chordBank
+            bank[keyPath: key] = value
+            studio.updateChordBank(bank)
+        })
+    }
+
+    var body: some View {
+        if compact {
+            content
+        } else {
+            ScrollView { content.padding(24) }
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: compact ? 8 : 16) {
+            HStack {
+                Text("Chord Pads").font(compact ? .headline : .largeTitle.bold())
+                Spacer()
+                Text(studio.chordStatus).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Button(studio.chordArmed ? "Disarm MIDI" : "Arm MIDI") {
+                    if studio.chordArmed { studio.disarmChordPads() }
+                    else { studio.armChordPads() }
+                }.buttonStyle(.borderedProminent)
+                Button("Release All") { studio.releaseChordPads() }
+            }
+            if !compact {
+                Text("Choose a key and pitch collection, then play or assign your own voicings. Select TIHULU Chord Pads as a separate DAW input or use a separate MIDI track/channel to avoid collisions with other instruments.")
+                    .font(.callout).foregroundStyle(.secondary)
+                GroupBox("Harmony") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Picker("Root", selection: binding(\.root)) {
+                                ForEach(36...71, id: \.self) { note in
+                                    Text((try? MusicTheory.noteName(midi: note)) ?? String(note)).tag(note)
+                                }
+                            }
+                            Picker("Scale", selection: binding(\.scale)) {
+                                ForEach(ChordScale.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                        }
+                        HStack {
+                            Picker("Voicing", selection: binding(\.stack)) {
+                                ForEach(ChordStack.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            Stepper("Inversion \(studio.chordBank.inversion)", value: binding(\.inversion), in: 0...2)
+                        }
+                        HStack {
+                            Stepper("MIDI channel \(studio.chordBank.channel)", value: binding(\.channel), in: 1...16)
+                            Stepper("Velocity \(studio.chordBank.velocity)", value: binding(\.velocity), in: 1...127)
+                        }
+                        HStack {
+                            Toggle("Latch / toggle chords", isOn: binding(\.latch))
+                            if !studio.chordBank.latch {
+                                Stepper("Gate \(studio.chordBank.gateMS) ms", value: binding(\.gateMS), in: 100...2000, step: 100)
+                            }
+                        }
+                        Text("Makam-inspired options are equal-tempered pitch collections, not authentic makam intonation or melodic seyir. Scale stacks are creative harmony, not traditional makam chord rules.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8).disabled(studio.chordArmed)
+                }
+            } else {
+                Text(studio.chordBank.scale.rawValue + " · " + (studio.chordBank.latch ? "Latch" : "Timed gate") + " · Ch " + String(studio.chordBank.channel))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: compact ? 8 : 4), spacing: 8) {
+                ForEach(0..<ChordBank.padCount, id: \.self) { slot in
+                    if let pad = studio.chordBank.pad(at: slot) {
+                        VStack(spacing: 4) {
+                            Button { studio.triggerChordPad(slot) } label: {
+                                VStack(spacing: 4) {
+                                    Text(pad.name).font(.headline).lineLimit(1)
+                                    if !compact { Text(pad.noteNames).font(.caption).lineLimit(2) }
+                                    Text(studio.chordBank.overrides[slot] == nil ? "Pad \(slot + 1)" : "Custom \(slot + 1)")
+                                        .font(.caption2)
+                                }.frame(maxWidth: .infinity, minHeight: compact ? 38 : 64)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(studio.chordActiveSlots.contains(slot) ? .green : .accentColor)
+                            .disabled(!studio.chordArmed)
+                            .accessibilityLabel("Chord pad \(slot + 1), " + pad.name + ", " + pad.noteNames)
+                            if !compact {
+                                HStack {
+                                    Button("Assign") {
+                                        editSlot = slot
+                                        customName = pad.name
+                                        customNotes = pad.notes.map(String.init).joined(separator: ", ")
+                                        editError = ""
+                                    }
+                                    if studio.chordBank.overrides[slot] != nil {
+                                        Button("Reset") {
+                                            var bank = studio.chordBank
+                                            bank.overrides.removeValue(forKey: slot)
+                                            studio.updateChordBank(bank)
+                                        }
+                                    }
+                                }.disabled(studio.chordArmed)
+                            }
+                        }
+                    }
+                }
+            }
+            if !compact {
+                Text("Custom chords stay fixed when you change the scale. Disarm before editing. Settings are saved locally; no notes or MIDI output resume on launch.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .sheet(isPresented: Binding(get: { editSlot != nil }, set: { if !$0 { editSlot = nil } })) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Assign custom chord").font(.title2.bold())
+                TextField("Chord name", text: $customName)
+                TextField("MIDI notes", text: $customNotes)
+                Text("Enter 1–8 distinct MIDI note numbers (0–127), separated by commas or spaces. Example: 60, 64, 67, 71.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !editError.isEmpty { Text(editError).foregroundStyle(.red) }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { editSlot = nil }
+                    Button("Assign") { saveCustom() }.buttonStyle(.borderedProminent)
+                }
+            }.padding(24).frame(width: 420)
+        }
+        .onDisappear { studio.releaseChordPads() }
+    }
+
+    private func saveCustom() {
+        guard let slot = editSlot, !studio.chordArmed else { return }
+        let pieces = customNotes.split(whereSeparator: { $0 == "," || $0.isWhitespace })
+        let notes = pieces.compactMap { Int($0) }
+        let pad = ChordPad(name: customName.trimmingCharacters(in: .whitespacesAndNewlines), notes: notes)
+        guard notes.count == pieces.count, pad.isValid else {
+            editError = "Enter a valid name and 1–8 distinct MIDI notes."
+            return
+        }
+        var bank = studio.chordBank
+        bank.overrides[slot] = pad
+        studio.updateChordBank(bank)
+        editSlot = nil
+    }
+}
+#endif

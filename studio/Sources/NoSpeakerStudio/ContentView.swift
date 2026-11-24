@@ -143,6 +143,7 @@ struct ContentView: View {
     @State private var drumDraft = DrumDraft()
     @State private var tapTempo = TapTempo()
     @State private var compactTransport = false
+    @State private var showChordStrip = false
     @State private var workspaceName = "Untitled Workspace"
     @State private var workspaceMessage = ""
     @State private var pendingWorkspace: QuickWorkspace?
@@ -156,7 +157,7 @@ struct ContentView: View {
     private var navigationGroups: [(String, [StudioMode])] {
         [
             ("Workspace", [.performance, .mapping]),
-            ("Play", [.touch, .midiHelper, .touchBar]),
+            ("Play", [.chords, .touch, .midiHelper, .touchBar]),
             ("Compose", [.notes, .drums, .midi]),
             ("Sound", [.voice, .audio, .speaker]),
             ("Support", [.diagnostics, .about])
@@ -189,6 +190,10 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 transport
                 Divider()
+                if showChordStrip && mode != .chords {
+                    ChordPadPanel(compact: true).padding(8)
+                    Divider()
+                }
                 Group {
                     switch mode ?? .performance {
                     case .performance: PerformanceOverview(
@@ -197,6 +202,7 @@ struct ContentView: View {
                         choose: { pendingWorkspace = $0 }, save: saveWorkspace, load: loadWorkspace
                     )
                     case .mapping: SensorMappingLabView()
+                    case .chords: ChordPadPanel(compact: false)
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
                     case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture)
                     case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture)
@@ -230,6 +236,9 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) { pendingWorkspace = nil }
         } message: { _ in
             Text("This changes the instrument and helper drafts, not your sequencer patterns. It will not start a session.")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            studio.releaseChordPads()
         }
         .onAppear {
             studio.installTouchBar()
@@ -320,6 +329,7 @@ struct ContentView: View {
 
     private func isSessionActive(_ item: StudioMode) -> Bool {
         switch item {
+        case .chords: studio.chordArmed
         case .touch: studio.touchRunning
         case .midiHelper: studio.midiHelperRunning
         case .midi: studio.midiRunning
@@ -377,6 +387,9 @@ struct ContentView: View {
               Label(studio.pointerCaptured ? "Pointer Captured" : "Pointer Free",
                     systemImage: studio.pointerCaptured ? "lock.fill" : "lock.open")
                   .font(.caption.weight(.semibold))
+              Button { showChordStrip.toggle() } label: {
+                  Label(showChordStrip ? "Hide Chord Pads" : "Chord Pads", systemImage: "pianokeys")
+              }.help("Open shared chord pads alongside any performance mode")
               Button { compactTransport.toggle() } label: {
                   Label("Capture Settings", systemImage: compactTransport ? "chevron.down" : "chevron.up")
                       .labelStyle(.iconOnly)
@@ -444,6 +457,7 @@ struct ContentView: View {
         switch mode {
         case .performance: "music.note.house"
         case .mapping: "point.3.connected.trianglepath.dotted"
+        case .chords: "pianokeys"
         case .voice: "text.bubble"
         case .touch: "hand.point.up.left"
         case .midiHelper: "slider.horizontal.3"
@@ -475,6 +489,9 @@ private struct PerformanceOverview: View {
                 PageHeader(title: "Performance", subtitle: "Choose an instrument, keep other sessions running, and stop each source independently.")
                 GroupBox("Live sessions") {
                     VStack(spacing: 0) {
+                        session("Chord Pads", detail: "Dedicated MIDI output · shared chord bank", symbol: "pianokeys",
+                                active: studio.chordArmed, page: .chords, stop: { studio.disarmChordPads() })
+                        Divider()
                         session("Touch Instrument", detail: studio.touchSessionSummary, symbol: "hand.point.up.left",
                                 active: studio.touchRunning, page: .touch, stop: { studio.stopTouch() })
                         Divider()
@@ -524,6 +541,7 @@ private struct PerformanceOverview: View {
                 }
                 Text("Play & compose").font(.headline)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
+                    launch("Chord Pads", "Scale-based chords and custom voicings", "pianokeys", .chords)
                     launch("Touch Instrument", "Melody, fretless and GM drums", "hand.point.up.left", .touch)
                     launch("MIDI Helper", "Bend, vibrato, expression and sustain", "slider.horizontal.3", .midiHelper)
                     launch("Touch Bar & Tilt", "Custom controls and lid mapping", "pianokeys", .touchBar)

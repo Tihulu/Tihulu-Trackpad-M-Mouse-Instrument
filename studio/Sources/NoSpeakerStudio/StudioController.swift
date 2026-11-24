@@ -20,6 +20,15 @@ final class StudioController: ObservableObject {
     @Published var masterLevel = 0.75
     @Published var bpm = 120.0
     @Published var midiRunning = false
+    @Published private(set) var chordBank = StudioController.readChordBank()
+    @Published private(set) var chordArmed = false
+    @Published private(set) var chordActiveSlots: Set<Int> = []
+    @Published private(set) var chordStatus = "MIDI output off"
+    private let chordOutput = ChordMIDIOutput()
+    private var chordState = ChordPadState()
+    private var chordTimers: [Int: Task<Void, Never>] = [:]
+    private var chordTimerTokens: [Int: UUID] = [:]
+    private var chordOutstanding: Set<SensorDestination> = []
     @Published var touchRunning = false
     @Published var touchPreviewRunning = false
     @Published var touchContact = TrackpadContact()
@@ -94,6 +103,100 @@ final class StudioController: ObservableObject {
     private var clickedSurface: TouchSurfaceKind?
     private var trackpadClickPressure: Double?
     private var activeMIDINoteMap: [String: ActiveMIDINote] = [:]
+
+    private static func readChordBank() -> ChordBank {
+        guard let data = UserDefaults.standard.data(forKey: "TIHULU.chordBank.v1"),
+              let document = try? WorkspaceArchive.decode(ChordBank.self, from: data),
+              document.payload.isValid else { return ChordBank() }
+        return document.payload
+    }
+
+    func updateChordBank(_ proposed: ChordBank) {
+        guard proposed.isValid, !chordArmed, chordOutstanding.isEmpty else { return }
+        chordBank = proposed
+        if let data = try? WorkspaceArchive.encode(name: "Chord bank", payload: proposed) {
+            UserDefaults.standard.set(data, forKey: "TIHULU.chordBank.v1")
+        }
+    }
+
+    func armChordPads() {
+        guard !chordArmed else { return }
+        releaseChordPads()
+        guard chordOutstanding.isEmpty else {
+            chordStatus = "Unreleased MIDI notes. Reset the receiving DAW before retrying."
+            return
+        }
+        do {
+            try chordOutput.open()
+            chordArmed = true
+            chordStatus = "MIDI ready: TIHULU Chord Pads"
+        } catch { chordStatus = error.localizedDescription }
+    }
+
+    func triggerChordPad(_ slot: Int) {
+        guard chordArmed, let pad = chordBank.pad(at: slot) else { return }
+        if chordState.activeSlots.contains(slot) {
+            releaseChordPad(slot)
+            if chordBank.latch || !chordArmed { return }
+        }
+        let commands = chordState.press(slot: slot, pad: pad, channel: chordBank.channel - 1,
+                                        velocity: chordBank.velocity)
+        guard deliverChordCommands(commands) else { return }
+        chordActiveSlots = chordState.activeSlots
+        if !chordBank.latch {
+            let token = UUID()
+            chordTimerTokens[slot] = token
+            let duration = chordBank.gateMS
+            chordTimers[slot] = Task { [weak self] in
+                do { try await Task.sleep(for: .milliseconds(duration)) } catch { return }
+                guard let self, self.chordTimerTokens[slot] == token else { return }
+                self.releaseChordPad(slot)
+            }
+        }
+    }
+
+    private func releaseChordPad(_ slot: Int) {
+        chordTimers.removeValue(forKey: slot)?.cancel()
+        chordTimerTokens.removeValue(forKey: slot)
+        _ = deliverChordCommands(chordState.release(slot: slot))
+        chordActiveSlots = chordState.activeSlots
+    }
+
+    private func deliverChordCommands(_ commands: [SensorCommand]) -> Bool {
+        for command in commands {
+            if command.value > 0 { chordOutstanding.insert(command.destination) }
+            guard chordOutput.send(command) else {
+                chordArmed = false
+                releaseChordPads()
+                chordStatus = "MIDI delivery failed. Check the DAW; note release is not confirmed."
+                return false
+            }
+            if command.value == 0 { chordOutstanding.remove(command.destination) }
+        }
+        return true
+    }
+
+    func releaseChordPads() {
+        for task in chordTimers.values { task.cancel() }
+        chordTimers.removeAll()
+        chordTimerTokens.removeAll()
+        _ = chordState.releaseAll()
+        chordActiveSlots = []
+        // Retry all possibly transmitted notes, including a failed Note On.
+        for key in Array(chordOutstanding) {
+            if chordOutput.send(.init(key, value: 0)) { chordOutstanding.remove(key) }
+        }
+        if !chordOutstanding.isEmpty {
+            chordArmed = false
+            chordStatus = "Some MIDI releases failed. Reset the receiving DAW and retry Release All."
+        }
+    }
+
+    func disarmChordPads() {
+        releaseChordPads()
+        chordArmed = false
+        if chordOutstanding.isEmpty { chordStatus = "MIDI output off" }
+    }
 
     private static func readSavedCaptureShortcut() -> PerformanceCaptureShortcut {
         guard let data = UserDefaults.standard.data(forKey: "TIHULU.captureShortcut"),
@@ -314,6 +417,7 @@ final class StudioController: ObservableObject {
     }
 
     func panicStop() {
+        disarmChordPads()
         cancelStartupGreeting()
         enableLiveHinge(false)
         releaseTouchBarNotes()
@@ -353,6 +457,7 @@ final class StudioController: ObservableObject {
     }
 
     func reconnect() {
+        disarmChordPads()
         cancelStartupGreeting()
         if speakerBusy { stopSystemAudio(); return }
         driver?.close()
