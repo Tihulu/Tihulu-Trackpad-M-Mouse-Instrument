@@ -11,6 +11,7 @@ public struct PhysicalPatchRuntime: Sendable {
     private var seen: [SensorSource: Double] = [:]
     private var sequence: UInt64 = 0
     private var motionSources: Set<SensorSource> = []
+    private var touchSources: Set<SensorSource> = []
     private var inertialSignals: [SensorSource: Set<SensorSignal>] = [:]
     private var drumMasks: [SensorSource: Int] = [:]
     private var pianoMasks: [SensorSource: Int] = [:]
@@ -51,6 +52,7 @@ public struct PhysicalPatchRuntime: Sendable {
         guard sessions.isEmpty, remotePeers.isEmpty, Self.supports(patch, allowRemote: allowRemote) else { throw SensorRouterError.invalidMappings }
         try router.configure(patch.routes)
         supported = Set(patch.routes.map(\.source))
+        touchSources = Set(patch.routes.filter { [.x,.y,.contact].contains($0.signal) }.map(\.source))
         motionSources = Set(patch.routes.filter { [.tiltYaw,.tiltPitch,.tiltRoll].contains($0.signal) }.map(\.source))
         drumMasks = [:]
         pianoMasks = [:]
@@ -156,12 +158,24 @@ public struct PhysicalPatchRuntime: Sendable {
         return id
     }
 
+    /// Available only for an already admitted peer; never exposes secrets,
+    /// local routes, destination IDs, patch name or arbitrary host metadata.
+    public func remoteCapabilities(_ id: UUID) -> RemoteCapabilities? {
+        guard remoteEnabled, let peer = remotePeers[id] else { return nil }
+        let source = peer.source
+        return .init(touch: touchSources.contains(source), tilt: motionSources.contains(source),
+                     acceleration: inertialSignals[source]?.contains(.accelerationMagnitude) == true,
+                     rotation: inertialSignals[source]?.contains(.rotationMagnitude) == true,
+                     airDrums: strikeSettings[source] != nil, drums: drumMasks[source] ?? 0,
+                     piano: pianoMasks[source] ?? 0, pedals: pedalMasks[source] ?? 0)
+    }
+
     public mutating func receiveRemote(_ id: UUID, bytes: Data, now: Double) -> RemoteTouchResult {
         guard var peer = remotePeers[id], remoteEnabled else { return .close([]) }
         guard let frame = try? RemoteTouchFrame.read(bytes), peer.accept(frame, now: now)
         else { return .close(revokeRemote(id)) }
         switch frame.kind {
-        case .heartbeat:
+        case .heartbeat, .capabilities:
             remotePeers[id] = peer
             return .accepted([])
         case .release:
@@ -384,6 +398,7 @@ public struct PhysicalPatchRuntime: Sendable {
         seen = [:]
         supported = []
         motionSources = []
+        touchSources = []
         inertialSignals = [:]
         strikeSettings = [:]
         drumMasks = [:]

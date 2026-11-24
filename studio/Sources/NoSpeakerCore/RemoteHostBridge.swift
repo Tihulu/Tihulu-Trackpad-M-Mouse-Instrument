@@ -10,6 +10,7 @@ public enum RemoteHostEvent: Sendable {
 
 public enum RemoteHostAction: Equatable, Sendable {
     case acknowledge(UUID, Bool)
+    case capabilities(UUID, RemoteCapabilities)
     case revoke(UUID)
     case stop
 }
@@ -105,7 +106,17 @@ public struct RemoteHostBridge: Sendable {
                 switch runtime.receiveRemote(peer, bytes: bytes, now: now) {
                 case .accepted(let commands):
                     result.commands += commands
-                    result.actions.append(.acknowledge(connection, true))
+                    if (try? RemoteTouchFrame.read(bytes))?.kind == .capabilities {
+                        if let capabilities = runtime.remoteCapabilities(peer) {
+                            result.actions.append(.capabilities(connection, capabilities))
+                        } else {
+                            result.commands += runtime.revokeRemote(peer)
+                            bindings.removeValue(forKey: connection)
+                            result.actions.append(.acknowledge(connection, false))
+                        }
+                    } else {
+                        result.actions.append(.acknowledge(connection, true))
+                    }
                 case .close(let commands):
                     result.commands += commands
                     bindings.removeValue(forKey: connection)
