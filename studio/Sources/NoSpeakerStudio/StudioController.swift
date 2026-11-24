@@ -1994,6 +1994,9 @@ final class StudioController: ObservableObject {
                 Task { @MainActor in
                     guard let self, self.engineGeneration == generation,
                           self.midiSessionEpoch.accepts(session) else { return }
+                    // Release using the intact service owner ledgers before
+                    // producer stop methods can remove them.
+                    self.midi?.stop()
                     // Stop only producers on the shared legacy source.
                     if self.touchRunning && self.touchMIDIOutEnabled { self.stopTouch() }
                     if self.midiHelperRunning { self.stopMIDIHelper() }
