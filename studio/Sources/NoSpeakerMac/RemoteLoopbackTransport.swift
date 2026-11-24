@@ -9,13 +9,7 @@ import NoSpeakerCore
 /// The host owns R1 admission and MIDI; this transport cannot generate MIDI.
 public final class RemoteLoopbackTransport: @unchecked Sendable {
     public enum Failure: Error { case identity, invalidPort, invalidPolicy }
-    public enum Event: Sendable {
-        case ready
-        case invitation(UUID, Data, Double)
-        case frame(UUID, Data, Double)
-        case disconnected(UUID)
-        case fault
-    }
+    public typealias Event = RemoteHostEvent
     private struct Peer {
         let connection: NWConnection
         var gate: RemoteConnectionGate
