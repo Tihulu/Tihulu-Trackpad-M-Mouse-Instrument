@@ -108,7 +108,7 @@ final class StudioController: ObservableObject {
     private var touchBarHaptics: LiveNoteHapticOutput?
     private let touchBarDedicatedMIDI = ChordMIDIOutput(name: "TIHULU Touch Bar")
     private var touchBarLocalState = TouchBarNoteState()
-    private var touchBarOutstanding: Set<SensorDestination> = []
+    private var touchBarOutputLedger = TouchBarOutputLedger()
     private var touchBarOutputToken: UUID?
     private var nativePianoTokens: [Int: UUID] = [:]
     var touchBarOwnsHaptics: Bool { touchBarOutputArmed }
@@ -1144,7 +1144,7 @@ final class StudioController: ObservableObject {
             return
         }
         releaseOptionalTouchBarNotes()
-        guard touchBarOutstanding.isEmpty else {
+        guard touchBarOutputLedger.isEmpty else {
             touchBarOutputStatus = "MIDI release failed. Reset the DAW and retry."
             return
         }
@@ -1159,12 +1159,13 @@ final class StudioController: ObservableObject {
             if touchBarProfile.effectiveOutput.sendsMIDI {
                 try touchBarDedicatedMIDI.open()
                 let channel = touchBarProfile.channel
-                // Dedicated endpoint: set the same +/-12-semitone bend range as local sound.
-                for (cc, value) in [(101,0),(100,0),(6,12),(38,0),(101,127),(100,127)] {
-                    guard touchBarDedicatedMIDI.send(.init(.init(.controlChange, channel: channel, number: cc), value: value)) else {
-                        touchBarOutputStatus = "Unable to configure dedicated MIDI output."
-                        return
-                    }
+                // Track partial RPN setup separately from performance CCs.
+                guard touchBarOutputLedger.configureBendRange(channel:channel, send:{ touchBarDedicatedMIDI.send($0) }) else {
+                    releaseOptionalTouchBarNotes()
+                    touchBarOutputStatus = touchBarOutputLedger.isEmpty
+                        ? "Unable to configure dedicated MIDI output."
+                        : "MIDI selector cleanup failed. Reset the DAW and retry."
+                    return
                 }
             }
             let output = makeLiveNoteOutput(driver: driver, source: .touchBar)
@@ -1198,14 +1199,11 @@ final class StudioController: ObservableObject {
     private func deliverTouchBarCommands(_ commands: [SensorCommand]) -> Bool {
         guard touchBarProfile.effectiveOutput.sendsMIDI else { return true }
         for command in commands {
-            let isNote = command.destination.kind == .note
-            if isNote && command.value > 0 { touchBarOutstanding.insert(command.destination) }
-            guard touchBarDedicatedMIDI.send(command) else {
+            guard touchBarOutputLedger.deliver(command, send:{ touchBarDedicatedMIDI.send($0) }) else {
                 disarmTouchBarOutput()
-                touchBarOutputStatus = "MIDI delivery failed; check note release in the DAW."
+                touchBarOutputStatus = "MIDI delivery failed; check note and controller release in the DAW."
                 return false
             }
-            if isNote && command.value == 0 { touchBarOutstanding.remove(command.destination) }
         }
         return true
     }
@@ -1214,27 +1212,20 @@ final class StudioController: ObservableObject {
         // Do not invalidate legacy MIDI tap timers when merely releasing the
         // optional output. Otherwise an app-focus change could strand a note.
         guard touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed ||
-              !touchBarOutstanding.isEmpty else { return }
+              !touchBarOutputLedger.isEmpty else { return }
         nativePianoTokens.removeAll()
         let channel = touchBarProfile.channel
         _ = touchBarLocalState.reset(channel: channel)
         touchBarHaptics?.update(frame: nil, masterLevel: 0)
         if touchBarOutputArmed { touchBarSustainOn = false }
-        for note in Array(touchBarOutstanding) {
-            if touchBarDedicatedMIDI.send(.init(note, value: 0)) { touchBarOutstanding.remove(note) }
-        }
-        if touchBarOutputArmed && touchBarProfile.effectiveOutput.sendsMIDI {
-            _ = touchBarDedicatedMIDI.send(.init(.init(.pitchBend, channel: channel), value: 8192))
-            _ = touchBarDedicatedMIDI.send(.init(.init(.controlChange, channel: channel, number: 1), value: 0))
-            _ = touchBarDedicatedMIDI.send(.init(.init(.controlChange, channel: channel, number: 11), value: 127))
-        }
-        if !touchBarOutstanding.isEmpty {
+        let released = touchBarOutputLedger.releaseAll(send:{ touchBarDedicatedMIDI.send($0) })
+        if !released {
             touchBarOutputToken = nil
             touchBarHaptics?.stop()
             touchBarHaptics = nil
             releaseSharedOutputIfIdle()
             touchBarOutputArmed = false
-            touchBarOutputStatus = "Some MIDI releases failed; reset the receiving DAW."
+            touchBarOutputStatus = "Some MIDI note/controller releases failed; reset the receiving DAW and retry."
         }
     }
 
@@ -1245,7 +1236,7 @@ final class StudioController: ObservableObject {
         releaseSharedOutputIfIdle()
         releaseOptionalTouchBarNotes()
         touchBarOutputArmed = false
-        if touchBarOutstanding.isEmpty { touchBarOutputStatus = "Optional Trackpad output off" }
+        if touchBarOutputLedger.isEmpty { touchBarOutputStatus = "Optional Trackpad output off" }
     }
 
     func enableLiveHinge(_ enable: Bool) {
