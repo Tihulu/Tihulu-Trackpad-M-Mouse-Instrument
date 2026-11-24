@@ -33,6 +33,7 @@ struct InstrumentBuilderView: View {
                         }
                     }.padding(8).disabled(studio.patchRunning)
                 }
+                ExpressivePresetPanel(patch: $draft).disabled(studio.patchRunning)
                 GroupBox("Routes · \(draft.routes.count)/64") {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach($draft.routes) { $route in

@@ -287,7 +287,9 @@ public struct SensorRouter: Sendable {
             if target.isGate {
                 // Shared notes never retrigger when another owner joins.
                 if (before > 0) != (after > 0) { result.append(.init(target, value: after)) }
-            } else if before != after {
+            } else if before != after || (emitted[target] == nil && next[target] != nil) {
+                // The receiver may not already be at our neutral value.
+                // Send the first owned continuous sample even when neutral.
                 result.append(.init(target, value: after))
             }
         }
