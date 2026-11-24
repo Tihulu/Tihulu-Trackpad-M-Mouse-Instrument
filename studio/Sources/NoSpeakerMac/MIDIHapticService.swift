@@ -1061,6 +1061,15 @@ public final class ChordMIDIOutput {
         }
         return added && MIDIReceived(endpoint, &list) == noErr
     }
+    /// Only the three typed realtime transport messages are permitted.
+    public func sendRealtime(_ message:EnsembleClock.Message) -> Bool {
+        guard endpoint != 0 else { return false }
+        var list = MIDIPacketList()
+        let packet = MIDIPacketListInit(&list)
+        var byte = message.rawValue
+        let added = MIDIPacketListAdd(&list,MemoryLayout<MIDIPacketList>.size,packet,0,1,&byte) != nil
+        return added && MIDIReceived(endpoint,&list) == noErr
+    }
     // Keep the endpoint stable until process exit, as with the retained client.
 }
 #endif

@@ -38,6 +38,68 @@ final class StudioController: ObservableObject {
     var patchDebugCameraRunID:UUID? { patchRunning ? debugCameraRunToken : nil }
     private var patchLedger = PatchOutputLedger()
     private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
+    private let ensembleClockMIDI = ChordMIDIOutput(name:"TIHULU Ensemble Clock")
+    private var ensembleClockTask:Task<Void,Never>?
+    private var ensembleClockToken:UUID?
+    private var ensembleClockStopDebt = false
+    @Published private(set) var ensembleClockRunning = false
+    @Published private(set) var ensembleClockBeat = 0
+    @Published private(set) var ensembleClockStatus = "Clock idle"
+    func startEnsembleClock(bpm:Double,beatsPerBar:Int,sendMIDI:Bool) {
+        guard patchRunning,!ensembleClockRunning,!sendMIDI || patchMIDIEnabled,
+              var clock = EnsembleClock(bpm:bpm,beatsPerBar:beatsPerBar,now:ProcessInfo.processInfo.systemUptime) else { return }
+        guard clearEnsembleClockDebt() else { return }
+        if sendMIDI {
+            do { try ensembleClockMIDI.open() } catch { ensembleClockStatus = "Clock MIDI open failed"; return }
+            // Even an uncertain Start delivery must be followed by Stop.
+            ensembleClockStopDebt = true
+            guard ensembleClockMIDI.sendRealtime(.start) else {
+                stopEnsembleClock(reason:"Clock Start delivery failed")
+                return
+            }
+        }
+        let token = UUID()
+        ensembleClockToken = token
+        ensembleClockRunning = true
+        ensembleClockBeat = 0
+        ensembleClockStatus = sendMIDI ? "MIDI Clock running" : "Visual tempo running · MIDI off"
+        ensembleClockTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self,self.patchRunning,self.ensembleClockToken == token else { return }
+                switch clock.tick(now:ProcessInfo.processInfo.systemUptime) {
+                case .wait(let delay):
+                    do { try await Task.sleep(for:.seconds(delay)) } catch { return }
+                case .pulse(let beat):
+                    if sendMIDI && !self.ensembleClockMIDI.sendRealtime(.clock) {
+                        self.stopEnsembleClock(reason:"Clock delivery failed"); return
+                    }
+                    if let beat { self.ensembleClockBeat = beat }
+                case .fault:
+                    self.stopEnsembleClock(reason:"Clock deadline missed · restart explicitly"); return
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    private func clearEnsembleClockDebt() -> Bool {
+        guard ensembleClockStopDebt else { return true }
+        guard ensembleClockMIDI.sendRealtime(.stop) else {
+            ensembleClockStatus = "Clock Stop delivery failed · reset DAW and retry Stop"
+            return false
+        }
+        ensembleClockStopDebt = false
+        return true
+    }
+
+    func stopEnsembleClock(reason:String = "Clock idle") {
+        ensembleClockToken = nil
+        ensembleClockTask?.cancel()
+        ensembleClockTask = nil
+        ensembleClockRunning = false
+        ensembleClockBeat = 0
+        if clearEnsembleClockDebt() { ensembleClockStatus = reason }
+    }
     @Published private(set) var patchMIDIEnabled = false
     @Published private(set) var patchPhysical = false
     @Published private(set) var patchHybridSource: SensorSource?
@@ -911,6 +973,7 @@ final class StudioController: ObservableObject {
     }
 
     func stopInstrumentPatch() {
+        stopEnsembleClock()
         stopAirTrace()
         patchAirReplayToken = nil
         patchAirReplayTask?.cancel()

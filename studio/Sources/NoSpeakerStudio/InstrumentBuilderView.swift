@@ -297,6 +297,7 @@ struct InstrumentBuilderView: View {
                             Spacer()
                             Text(studio.patchStatus).font(.caption)
                         }
+                        if studio.patchRunning { EnsembleClockPanel() }
                         if studio.patchRunning && (!studio.patchPhysical || studio.patchHybridSource != nil) {
                             if studio.patchAirDebugAvailable { AirDualDebugPanel() }
                             if studio.patchHelperDebugAvailable { AirHandsHelperDebugPanel() }
@@ -404,6 +405,7 @@ struct InstrumentBuilderView: View {
             }
         }
         .onDisappear {
+            studio.stopEnsembleClock()
             if !studio.patchPhysical { studio.stopInstrumentPatch() }
             else { studio.releaseHybridControls() }
             studio.rememberBuilderDraft(draft)
