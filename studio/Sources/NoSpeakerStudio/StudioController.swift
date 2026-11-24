@@ -26,6 +26,13 @@ final class StudioController: ObservableObject {
         didSet { updateChordHaptics(); updateTouchBarHaptics() }
     }
     @Published var bpm = 120.0
+    @Published private(set) var sequenceRunning = false
+    @Published private(set) var sequenceStatus = "Sequencer MIDI idle"
+    private let sequenceMIDI = ChordMIDIOutput(name: "TIHULU Sequencer")
+    private var sequenceLedger = MIDIClipNoteLedger()
+    private var sequenceTask: Task<Void, Never>?
+    private var sequenceToken: UUID?
+    private var sequenceOwnsHaptics = false
     @Published var midiRunning = false
     @Published private(set) var chordBank = StudioController.readChordBank()
     @Published private(set) var chordArmed = false {
@@ -191,7 +198,7 @@ final class StudioController: ObservableObject {
         }
         if selected.sendsHaptics {
             guard (!touchBarOwnsHaptics || sharedNoteOutputEnabled), !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
-                  !isPlaying, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
+                  !isPlaying, !sequenceOwnsHaptics, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
                 chordStatus = "Stop other haptic performances and the MIDI bridge first, or choose MIDI only."
                 return
             }
@@ -602,7 +609,7 @@ final class StudioController: ObservableObject {
     func armTouchBarOutput() {
         guard touchBarProfile.effectiveOutput.sendsHaptics, !touchBarOutputArmed else { return }
         guard (!chordOwnsHaptics || sharedNoteOutputEnabled), !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
-              !isPlaying, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
+              !isPlaying, !sequenceOwnsHaptics, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
             touchBarOutputStatus = "Stop other haptic sessions and the MIDI bridge first."
             return
         }
@@ -836,6 +843,7 @@ final class StudioController: ObservableObject {
     }
 
     func panicStop() {
+        stopLiveSequence()
         engineGeneration &+= 1
         disarmTouchBarOutput()
         disarmChordPads()
@@ -991,6 +999,99 @@ final class StudioController: ObservableObject {
         }
     }
 
+    /// One independent MIDI sequence, with optional exclusive haptic
+    /// preview. MIDI-only does not require the Force Touch driver.
+    func startLiveSequence(output: MusicalOutput, loop: Bool, makeClip: () throws -> MIDIClip) {
+        guard output.sendsMIDI, !sequenceRunning else { return }
+        do {
+            let clip = try makeClip().validated()
+            let schedule = try MIDIClipSchedule(clip)
+            let hapticEvents = output.sendsHaptics ? try clip.grooveHapticEvents() : []
+            if output.sendsHaptics {
+                guard allowOtherPerformance(), !isPlaying, !touchRunning, !midiRunning,
+                      !midiHelperRunning, !liveHingeEnabled else {
+                    sequenceStatus = "Stop other haptic performances before choosing Both."
+                    return
+                }
+                cancelStartupGreeting()
+                guard requireEngine(), playback != nil else { return }
+            }
+            guard sequenceLedger.releaseAll(send: { sequenceMIDI.send($0) }) else {
+                sequenceStatus = "MIDI release failed. Reset the receiving DAW and retry Stop."
+                return
+            }
+            try sequenceMIDI.open()
+            let token = UUID()
+            sequenceToken = token
+            sequenceRunning = true
+            sequenceOwnsHaptics = output.sendsHaptics
+            sequenceStatus = "Playing · TIHULU Sequencer · " + output.rawValue
+            if output.sendsHaptics {
+                renderGeneration &+= 1
+                isPlaying = true
+                playback?.play(events: hapticEvents, masterLevel: masterLevel, loop: loop,
+                               duration: schedule.seconds(at: schedule.length)) { [weak self] error in
+                    if let error {
+                        Task { @MainActor in
+                            guard let self, self.sequenceToken == token else { return }
+                            self.stopLiveSequence()
+                            self.lastError = error
+                        }
+                    }
+                }
+            }
+            sequenceTask = Task { [weak self] in
+                let clock = ContinuousClock()
+                func offset(_ tick: Int) -> Duration {
+                    .nanoseconds(Int64((schedule.seconds(at: tick) * 1_000_000_000).rounded()))
+                }
+                let period = offset(schedule.length)
+                var origin = clock.now
+                do {
+                    repeat {
+                        for event in schedule.events {
+                            try await clock.sleep(until: origin.advanced(by: offset(event.tick)))
+                            guard !Task.isCancelled, let self, self.sequenceToken == token else { return }
+                            // Skip notes whose entire gate has expired.
+                            if event.isNoteOn && clock.now >= origin.advanced(by: offset(event.endTick)) { continue }
+                            let delivered = self.sequenceLedger.deliver(event.command, send: { self.sequenceMIDI.send($0) })
+                            guard delivered else {
+                                self.stopLiveSequence()
+                                self.lastError = "Sequencer MIDI delivery failed. Check the receiving DAW."
+                                return
+                            }
+                        }
+                        let boundary = origin.advanced(by: period)
+                        try await clock.sleep(until: boundary)
+                        guard !Task.isCancelled, self?.sequenceToken == token else { return }
+                        // When substantially stalled, never burst old cycles.
+                        origin = clock.now >= boundary.advanced(by: period) ? clock.now : boundary
+                    } while loop
+                    self?.stopLiveSequence()
+                } catch {
+                    if self?.sequenceToken == token { self?.stopLiveSequence() }
+                }
+            }
+        } catch {
+            sequenceStatus = error.localizedDescription
+        }
+    }
+
+    func stopLiveSequence() {
+        sequenceToken = nil
+        sequenceTask?.cancel()
+        sequenceTask = nil
+        if sequenceOwnsHaptics {
+            renderGeneration &+= 1
+            playback?.stop(closeDriver: false)
+            isPlaying = false
+        }
+        sequenceOwnsHaptics = false
+        sequenceRunning = false
+        let released = sequenceLedger.releaseAll(send: { sequenceMIDI.send($0) })
+        sequenceStatus = released ? "Sequencer MIDI idle" : "MIDI release failed. Reset the receiving DAW and retry Stop."
+    }
+
     func playGrooveClip(loop: Bool, makeClip: () throws -> MIDIClip) {
         guard allowOtherPerformance() else { return }
         guard !touchRunning, !midiRunning, !midiHelperRunning, !liveHingeEnabled else {
@@ -1040,6 +1141,7 @@ final class StudioController: ObservableObject {
     }
 
     func stopPlayback() {
+        stopLiveSequence()
         renderGeneration &+= 1
         cancelStartupGreeting()
         playback?.stop(closeDriver: false)
@@ -1794,7 +1896,7 @@ final class StudioController: ObservableObject {
     func startSystemAudio() {
         cancelStartupGreeting()
         guard !speakerBusy else { return }
-        guard !liveNoteOwnsHaptics else {
+        guard !liveNoteOwnsHaptics, !sequenceOwnsHaptics else {
             lastError = "Disarm the optional Trackpad note output before starting Speaker."
             return
         }
@@ -1856,6 +1958,10 @@ final class StudioController: ObservableObject {
     }
 
     private func allowOtherPerformance() -> Bool {
+        guard !sequenceOwnsHaptics else {
+            lastError = "Stop the sequencer's combined Trackpad/MIDI output first."
+            return false
+        }
         guard !liveNoteOwnsHaptics else {
             lastError = "Disarm the optional Trackpad note output before starting another haptic performance."
             return false
