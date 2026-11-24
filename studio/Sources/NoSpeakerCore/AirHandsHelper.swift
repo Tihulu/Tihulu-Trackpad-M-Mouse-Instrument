@@ -99,6 +99,43 @@ public struct AirHandsHelper: Sendable {
         return .init(id:UUID().uuidString,source:.camera,signal:hand.signals[axis.index],
                      destination:destination,response:response)
     }
+    /// UI-friendly output excursion, separate from the receiving synth's
+    /// semitone bend range. No RPN or channel configuration messages.
+    public static func configuredRoute(hand:Hand,axis:Axis,effect:Effect,channel:Int,
+                                       excursion:Double,smoothingMS:Int,customCC:Int = 12) -> SensorMapping? {
+        guard excursion.isFinite,(0.05...1).contains(excursion),(0...250).contains(smoothingMS),
+              var route = route(hand:hand,axis:axis,effect:effect,channel:channel) else { return nil }
+        if effect == .customCC { route.destination.number = customCC }
+        if !effect.isSwitch {
+            let centered = effect == .pitchBend || effect == .pan
+            route.response = .init(minimum:centered ? (1-excursion)/2 : 0,
+                                   maximum:centered ? (1+excursion)/2 : excursion,
+                                   smoothingMS:smoothingMS,release:effect == .pan ? 0.5 : nil)
+        }
+        return InstrumentPatch.permits(route) ? route : nil
+    }
+
+    public enum Preset: String, CaseIterable, Identifiable, Sendable {
+        case expressive, guitarEffects, pedalPair
+        public var id: String { rawValue }
+        public var title: String {
+            switch self {
+            case .expressive: "Expression + modulation"
+            case .guitarEffects: "Guitar bend + wah"
+            case .pedalPair: "Sustain + sostenuto"
+            }
+        }
+        public func routes(channel:Int) -> [SensorMapping] {
+            let assignments: [(Hand,Axis,Effect)]
+            switch self {
+            case .expressive: assignments = [(.left,.y,.expression),(.right,.y,.modulation)]
+            case .guitarEffects: assignments = [(.left,.x,.pitchBend),(.right,.aperture,.wah)]
+            case .pedalPair: assignments = [(.left,.pinch,.sustain),(.right,.toggle,.sostenuto)]
+            }
+            return assignments.compactMap { AirHandsHelper.route(hand:$0.0,axis:$0.1,effect:$0.2,channel:channel) }
+        }
+    }
+
     private struct State: Sendable {
         var gate = AirTrackingGate()
         var prior: AirHandSample?

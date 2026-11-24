@@ -77,6 +77,23 @@ final class AirHandsHelperTests: XCTestCase {
         XCTAssertFalse(InstrumentPatch(name:"Bad",routes:[l,bad]).isValid)
     }
 
+    func testExcursionAndReservedCCValidation() {
+        let bend = AirHandsHelper.configuredRoute(hand:.left,axis:.x,effect:.pitchBend,channel:3,excursion:0.5,smoothingMS:40)
+        XCTAssertEqual(bend?.destination.channel,3)
+        XCTAssertEqual(bend?.response?.minimum,0.25)
+        XCTAssertEqual(bend?.response?.maximum,0.75)
+        XCTAssertEqual(bend?.response?.smoothingMS,40)
+        XCTAssertNil(AirHandsHelper.configuredRoute(hand:.left,axis:.x,effect:.pitchBend,channel:0,excursion:.nan,smoothingMS:0))
+        for cc in [0,6,32,38,64,65,66,67,69,96,97,98,99,100,101,120] {
+            XCTAssertNil(AirHandsHelper.configuredRoute(hand:.left,axis:.x,effect:.customCC,channel:0,excursion:1,smoothingMS:0,customCC:cc))
+        }
+        XCTAssertNotNil(AirHandsHelper.configuredRoute(hand:.right,axis:.y,effect:.customCC,channel:0,excursion:1,smoothingMS:0,customCC:12))
+        for preset in AirHandsHelper.Preset.allCases {
+            XCTAssertEqual(preset.routes(channel:2).count,2)
+            XCTAssertTrue(InstrumentPatch(name:preset.title,routes:preset.routes(channel:2)).isValid)
+        }
+    }
+
     func testValidationAndOtherSourceOwnership() throws {
         XCTAssertNil(AirHandsHelper.route(hand:.left,axis:.x,effect:.sustain))
         let helper = AirHandsHelper.route(hand:.left,axis:.pinch,effect:.sustain)!
