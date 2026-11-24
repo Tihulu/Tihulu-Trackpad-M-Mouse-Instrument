@@ -20,30 +20,37 @@ import Testing
     #expect(writes == 2)
 }
 
-@Test func retirementDrainsInFlightMockActuationAndRejectsLateWork() {
+@Test func retirementDrainsInFlightMockActuationAndRejectsLateWork() throws {
     let gate = ActuatorLifetimeGate()
     let entered = DispatchSemaphore(value: 0)
     let permitReturn = DispatchSemaphore(value: 0)
     let retired = DispatchSemaphore(value: 0)
+    let attempting = DispatchSemaphore(value: 0)
+    let permitted = DispatchSemaphore(value: 0)
+    defer { permitReturn.signal() }
     let workerDone = DispatchSemaphore(value: 0)
-    DispatchQueue.global().async {
+    Thread.detachNewThread {
         try? gate.withActive {
             entered.signal()
-            _ = permitReturn.wait(timeout: .now() + 3)
+            if permitReturn.wait(timeout: .now() + 15) == .success {
+            permitted.signal()
+        }
         }
         workerDone.signal()
     }
-    let started = entered.wait(timeout: .now() + 2)
-    #expect(started == .success)
-    DispatchQueue.global().async {
+    try #require(entered.wait(timeout: .now() + 5) == .success)
+    Thread.detachNewThread {
+        attempting.signal()
         gate.retire {}
         retired.signal()
     }
     // The active operation deliberately has not returned.
-    #expect(retired.wait(timeout: .now() + .milliseconds(30)) == .timedOut)
+    try #require(attempting.wait(timeout: .now() + 5) == .success)
+    #expect(retired.wait(timeout: .now() + .milliseconds(50)) == .timedOut)
     permitReturn.signal()
-    #expect(workerDone.wait(timeout: .now() + 2) == .success)
-    #expect(retired.wait(timeout: .now() + 2) == .success)
+    try #require(permitted.wait(timeout: .now() + 5) == .success)
+    try #require(workerDone.wait(timeout: .now() + 5) == .success)
+    try #require(retired.wait(timeout: .now() + 5) == .success)
     #expect(throws: ActuatorLifetimeError.retired) {
         try gate.withActive {}
     }

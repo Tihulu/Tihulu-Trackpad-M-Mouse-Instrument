@@ -19,29 +19,37 @@ import Testing
     #expect(writes == 3)
 }
 
-@Test func sourceFenceStopWaitsForInFlightSubmission() {
+@Test func sourceFenceStopWaitsForInFlightSubmission() throws {
     let fence = HapticSourceFence()
     let token = fence.begin()
     let entered = DispatchSemaphore(value: 0)
     let release = DispatchSemaphore(value: 0)
     let done = DispatchSemaphore(value: 0)
     let stopped = DispatchSemaphore(value: 0)
-    DispatchQueue.global().async {
+    let attempting = DispatchSemaphore(value: 0)
+    let permitted = DispatchSemaphore(value: 0)
+    defer { release.signal() }
+    Thread.detachNewThread {
         fence.submit(token) {
             entered.signal()
-            _ = release.wait(timeout: .now() + 3)
+            if release.wait(timeout: .now() + 15) == .success {
+            permitted.signal()
+        }
         }
         done.signal()
     }
-    #expect(entered.wait(timeout: .now() + 2) == .success)
-    DispatchQueue.global().async {
+    try #require(entered.wait(timeout: .now() + 5) == .success)
+    Thread.detachNewThread {
+        attempting.signal()
         fence.revoke()
         stopped.signal()
     }
-    #expect(stopped.wait(timeout: .now() + .milliseconds(30)) == .timedOut)
+    try #require(attempting.wait(timeout: .now() + 5) == .success)
+    #expect(stopped.wait(timeout: .now() + .milliseconds(50)) == .timedOut)
     release.signal()
-    #expect(done.wait(timeout: .now() + 2) == .success)
-    #expect(stopped.wait(timeout: .now() + 2) == .success)
+    try #require(permitted.wait(timeout: .now() + 5) == .success)
+    try #require(done.wait(timeout: .now() + 5) == .success)
+    try #require(stopped.wait(timeout: .now() + 5) == .success)
     #expect(!fence.submit(token) {})
 }
 
