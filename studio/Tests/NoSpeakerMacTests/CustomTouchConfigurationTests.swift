@@ -27,4 +27,15 @@ import NoSpeakerCore
     let expected = try #require(custom.tunedFrequency(midi: 64, root: 60))
     #expect(actual == expected)
 }
+
+@Test func touchConfigurationRejectsInvalidScaleInputsBeforeIntConversion() {
+    #expect(TouchScale.chromatic.mappedMIDINotes(root:Int.max,zoneWidth:1).isEmpty)
+    #expect(TouchScale.chromatic.mappedMIDINotes(root:60,zoneWidth:.nan).isEmpty)
+    var config = TouchInstrumentConfiguration()
+    config.pitchSpanSemitones = .infinity
+    #expect(config.mappedMIDINotes.isEmpty)
+    config.pitchSpanSemitones = 24
+    config.zoneWidth = 1
+    #expect(!config.mappedMIDINotes.isEmpty)
+}
 #endif
