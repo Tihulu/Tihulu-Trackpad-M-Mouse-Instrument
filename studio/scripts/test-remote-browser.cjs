@@ -12,7 +12,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id]});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
   class WS{
@@ -487,4 +487,25 @@ test("global release preserves touch release order and closes on missing ACK",()
 test("global release idle sends no synthetic MIDI frame",()=>{
   const a=setup();a.elements.releaseAll.emit("click");assert.equal(a.socket.frames.length,0);
   assert.match(a.elements.status.textContent,/My controls released locally/);
+});
+
+test("views are gated by readiness and release acknowledgments",()=>{
+  const a=setup("granted",fullManifest,false,false);
+  a.elements.navPlay.emit("click");assert.equal(a.elements.connectionView.hidden,false);
+  a.withheld();assert.equal(a.elements.playView.hidden,false);
+  a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.navSetup.emit("click");assert.equal(a.elements.playView.hidden,false);
+  a.elements.releaseAll.emit("click");a.ack();
+  a.elements.navSetup.emit("click");assert.equal(a.elements.setupView.hidden,true);
+  a.ack();a.elements.navSetup.emit("click");assert.equal(a.elements.setupView.hidden,false);
+  a.elements.pad.emit("pointerdown",xyEvent(2));assert.equal(a.socket.frames.at(-1).mask,0);
+  a.elements.navConnection.emit("click");assert.equal(a.elements.connectionView.hidden,false);
+  a.window.emit("pagehide");assert.equal(a.elements.navPlay.disabled,true);
+});
+test("ACK latency reports only observed response time and resets on close",()=>{
+  const a=setup();assert.match(a.elements.ackLatency.textContent,/no recent sample/);
+  a.elements.pad.emit("pointerdown",xyEvent(1));a.ack(37);
+  assert.match(a.elements.ackLatency.textContent,/37 ms/);
+  assert.match(a.elements.ackLatency.textContent,/Not MIDI\/audio latency/);
+  a.window.emit("pagehide");assert.match(a.elements.ackLatency.textContent,/no recent sample/);
 });
