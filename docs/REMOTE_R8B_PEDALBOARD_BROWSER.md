@@ -1,0 +1,7 @@
+# R8b — mobile pedalboard browser
+
+Explicit enable and individual activation for expression, volume and manual wah sliders; independent latched sustain and two FX switches. All controls start inactive, so admission or enable alone sends no MIDI. Sliders start at 100/100/0, stay at their selected position while owned and send finite normalized levels. Release uses host-defined neutral/ownership arbitration, not a synthetic slider zero. Release all discards unsent pedal edges and sends zero after an outstanding ACK; other streams remain owned. Off switches release their contribution (not an unconditional DAW override).
+
+Binary/ownership transitions use a bounded ordered queue (8 entries, 150 ms age); continuous input coalesces to the current value at 50 ms service interval. Snapshots refresh while owned, existing one-ACK scheduler, independent host watchdog and lifecycle fail-close remain. Non-destructive Mac preset appends missing routes. Labels show defaults only. Pocket Wah uses existing tilt route separately; if both manual and motion control target CC74, host route priority decides the winner. No automatic sensor activation, audio FX engine, DAW status feedback or capability negotiation. Sustain is latched here, unlike the momentary piano pedal. Actual mobile browser/DAW acceptance remains HOLD.
+
+Five new Node VM scenarios: explicit activation/level/release, preserved binary edges, continuous coalescing, release isolation, watchdog/backlog. Stable unchanged.

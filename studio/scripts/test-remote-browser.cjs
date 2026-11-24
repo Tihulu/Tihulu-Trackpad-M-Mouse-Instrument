@@ -11,7 +11,7 @@ function setup(permission="granted"){
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id]});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
   class WS{
@@ -200,4 +200,46 @@ test("scale guide does not send MIDI and stale piano edge fails closed",()=>{
   assert.equal(a.socket.frames.length,0);
   a.elements.piano0.emit("pointerdown",drumEvent(1));a.elements.piano0.emit("pointerup",drumEvent(1));
   a.step(151);assert.equal(a.socket.closed,true);
+});
+
+test("pedalboard explicit enable and per-control ownership",()=>{
+  const a=setup();
+  a.elements.pedalToggle0.emit("click");assert.equal(a.socket.frames.length,0);
+  a.elements.pedalEnable.emit("click");assert.equal(a.socket.frames.length,0);
+  a.elements.pedalToggle0.emit("click");
+  assert.equal(a.socket.frames.at(-1).version,6);assert.equal(a.socket.frames.at(-1).mask,1);
+  assert.deepEqual(a.socket.frames.at(-1).levels,[1,0,0,0,0,0]);a.ack();
+  a.elements.pedalLevel0.value="45";a.elements.pedalLevel0.emit("input");a.step(50);
+  assert.deepEqual(a.socket.frames.at(-1).levels,[0.45,0,0,0,0,0]);a.ack();
+  a.elements.pedalToggle0.emit("click");a.step();
+  assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+});
+test("pedal binary edges survive pending ACK and independent sustain",()=>{
+  const a=setup();a.elements.pedalEnable.emit("click");
+  a.elements.pedalToggle3.emit("click");
+  a.elements.pedalToggle4.emit("click");a.elements.pedalToggle4.emit("click");
+  a.ack();a.step();assert.equal(a.socket.frames.at(-1).mask,24);a.ack();
+  a.step();assert.equal(a.socket.frames.at(-1).mask,8);a.ack();
+  assert.deepEqual(a.socket.frames.at(-1).levels,[0,0,0,1,0,0]);
+  a.elements.pedalRelease.emit("click");assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+});
+test("pedal continuous movements coalesce without consuming edge queue",()=>{
+  const a=setup();a.elements.pedalEnable.emit("click");a.elements.pedalToggle2.emit("click");
+  for(let i=0;i<30;i++){a.elements.pedalLevel2.value=String(i);a.elements.pedalLevel2.emit("input");}
+  assert.equal(a.socket.closed,undefined);assert.equal(a.socket.frames.length,1);
+  a.ack();a.step(50);assert.deepEqual(a.socket.frames.at(-1).levels,[0,0,0.29,0,0,0]);a.ack();
+});
+test("pedal release all discards unsent switches and preserves piano",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.pedalEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.pedalToggle0.emit("click");a.elements.pedalToggle5.emit("click");
+  a.elements.pedalRelease.emit("click");a.ack();
+  assert.equal(a.socket.frames.at(-1).kind,"pedalboard");assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  a.step(50);assert.equal(a.socket.frames.at(-1).kind,"pianoKeys");assert.equal(a.socket.frames.at(-1).mask,1);
+});
+test("pedal held refresh and stale binary edge fail closed",()=>{
+  const a=setup();a.elements.pedalEnable.emit("click");a.elements.pedalToggle4.emit("click");a.ack();a.step(50);
+  assert.equal(a.socket.frames.at(-1).mask,16);
+  a.elements.pedalToggle4.emit("click");a.step(151);
+  assert.equal(a.socket.closed,true);
 });
