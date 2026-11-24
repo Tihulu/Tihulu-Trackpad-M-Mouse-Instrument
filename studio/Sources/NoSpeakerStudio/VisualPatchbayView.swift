@@ -106,6 +106,7 @@ struct VisualPatchbayView: View {
                         }
                         Picker("Type", selection: Binding(get: { node.destination.kind }, set: { kind in
                             node.destination.kind = kind
+                            node.response = nil
                             node.destination.number = kind == .note ? 60 : (kind == .controlChange ? 74 : 0)
                         })) {
                             ForEach(SensorDestinationKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -120,6 +121,9 @@ struct VisualPatchbayView: View {
                             parameter("Gate", value: $node.threshold, range: 0.05...1)
                             parameter("Hysteresis", value: $node.hysteresis, range: 0...0.5)
                             Stepper("Velocity \(node.velocity)", value: $node.velocity, in: 1...127)
+                        }
+                        if ContinuousResponse.isContinuous(node.destination) {
+                            ContinuousResponsePanel(response: $node.response, target: node.destination)
                         }
                         Button("Remove", role: .destructive) {
                             graph.outputs.removeAll { $0.id == id }

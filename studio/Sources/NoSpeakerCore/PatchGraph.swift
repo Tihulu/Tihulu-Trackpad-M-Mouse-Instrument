@@ -44,13 +44,14 @@ public struct PatchGraph: Equatable, Sendable {
         public var threshold: Double
         public var hysteresis: Double
         public var velocity: Int
+        public var response: ContinuousResponse?
         public init(id: String = UUID().uuidString, processorID: String? = nil,
                     destination: SensorDestination = .init(.note, number: 60),
                     priority: Int = 0, threshold: Double = 0.55,
-                    hysteresis: Double = 0.08, velocity: Int = 100) {
+                    hysteresis: Double = 0.08, velocity: Int = 100, response: ContinuousResponse? = nil) {
             self.id = id; self.processorID = processorID; self.destination = destination
             self.priority = priority; self.threshold = threshold
-            self.hysteresis = hysteresis; self.velocity = velocity
+            self.hysteresis = hysteresis; self.velocity = velocity; self.response = response
         }
     }
 
@@ -81,7 +82,7 @@ public struct PatchGraph: Equatable, Sendable {
             }
             outputs.append(.init(id: route.id, processorID: processor.id, destination: route.destination,
                                  priority: route.priority, threshold: route.threshold,
-                                 hysteresis: route.hysteresis, velocity: route.velocity))
+                                 hysteresis: route.hysteresis, velocity: route.velocity, response: route.response))
         }
     }
 
@@ -106,7 +107,7 @@ public struct PatchGraph: Equatable, Sendable {
             let route = SensorMapping(id: out.id, source: input.source, signal: input.signal,
                                       destination: out.destination, calibration: p.calibration,
                                       priority: out.priority, threshold: out.threshold,
-                                      hysteresis: out.hysteresis, velocity: out.velocity)
+                                      hysteresis: out.hysteresis, velocity: out.velocity, response: out.response)
             guard InstrumentPatch.permits(route) else { throw PatchGraphError.invalidNode }
             return route
         }

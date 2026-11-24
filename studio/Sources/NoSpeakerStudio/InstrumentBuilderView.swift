@@ -48,7 +48,7 @@ struct InstrumentBuilderView: View {
                                                      signal: .contact, destination: .init(.note, number: 60)))
                         }.disabled(draft.routes.count >= SensorRouter.maxMappings)
                         if !draft.isValid {
-                            Text("Correct invalid names, calibration, thresholds or reserved CC numbers before saving.")
+                            Text("Correct invalid names, calibration, thresholds, reserved CC numbers or conflicting release values before saving.")
                                 .font(.caption).foregroundStyle(.orange)
                         }
                     }.padding(8).disabled(studio.patchRunning)
@@ -127,6 +127,7 @@ struct InstrumentBuilderView: View {
                 Image(systemName: "arrow.right")
                 Picker("Output", selection: Binding(get: { route.wrappedValue.destination.kind }, set: { kind in
                     route.wrappedValue.destination.kind = kind
+                    route.wrappedValue.response = nil
                     route.wrappedValue.destination.number = kind == .note ? 60 : (kind == .controlChange ? 74 : 0)
                 })) {
                     ForEach(SensorDestinationKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -139,6 +140,9 @@ struct InstrumentBuilderView: View {
                             in: 0...(route.wrappedValue.destination.kind == .note ? 127 : 119))
                 }
                 Stepper("Priority \(route.wrappedValue.priority)", value: route.priority, in: -100...100)
+            }
+            if ContinuousResponse.isContinuous(route.wrappedValue.destination) {
+                ContinuousResponsePanel(response: route.response, target: route.wrappedValue.destination)
             }
             DisclosureGroup("Calibration & gate") {
                 VStack(alignment: .leading, spacing: 4) {

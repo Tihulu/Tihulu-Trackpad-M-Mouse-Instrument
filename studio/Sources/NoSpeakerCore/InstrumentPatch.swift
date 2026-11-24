@@ -22,7 +22,7 @@ public struct InstrumentPatch: Codable, Equatable, Sendable {
         !name.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } &&
         routes.count <= SensorRouter.maxMappings &&
         Set(routes.map(\.id)).count == routes.count &&
-        routes.allSatisfy(Self.permits)
+        routes.allSatisfy(Self.permits) && ContinuousResponse.releaseValues(for: routes) != nil
     }
 
     public static var starter: Self {
@@ -104,18 +104,25 @@ public struct PatchSimulation: Sendable {
 /// Retain attempted state until the receiver accepts its neutral command.
 public struct PatchOutputLedger: Sendable {
     public private(set) var outstanding: Set<SensorDestination> = []
+    private var releases: [SensorDestination:Int] = [:]
     public init() {}
     public static func neutral(_ target: SensorDestination) -> Int {
-        switch target.kind {
-        case .note, .sustain: return 0
-        case .pitchBend: return 8192
-        case .controlChange: return [7,11].contains(target.number) ? 127 : 0
-        }
+        ContinuousResponse.defaultRelease(target)
+    }
+    /// A running or failed-release ledger must never change its reset policy.
+    public mutating func configure(_ patch: InstrumentPatch) throws {
+        guard outstanding.isEmpty, patch.isValid,
+              let values = ContinuousResponse.releaseValues(for: patch.routes)
+        else { throw WorkspaceArchiveError.invalidPayload }
+        releases = values
+    }
+    private func releaseValue(_ target: SensorDestination) -> Int {
+        releases[target] ?? Self.neutral(target)
     }
     public mutating func deliver(_ command: SensorCommand, send: (SensorCommand) -> Bool) -> Bool {
         let target = command.destination
         guard target.isValid else { return false }
-        let neutral = Self.neutral(target)
+        let neutral = releaseValue(target)
         // Even a failed neutral command remains eligible for retry.
         outstanding.insert(target)
         guard send(command) else { return false }
@@ -133,7 +140,7 @@ public struct PatchOutputLedger: Sendable {
             return $0.number < $1.number
         }
         for target in targets {
-            if send(.init(target, value: Self.neutral(target))) { outstanding.remove(target) }
+            if send(.init(target, value: releaseValue(target))) { outstanding.remove(target) }
         }
         return outstanding.isEmpty
     }

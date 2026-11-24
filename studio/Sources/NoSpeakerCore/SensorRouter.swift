@@ -91,11 +91,12 @@ public struct SensorMapping: Codable, Equatable, Identifiable, Sendable {
     public var threshold: Double
     public var hysteresis: Double
     public var velocity: Int
+    public var response: ContinuousResponse?
 
     public init(id: String, source: SensorSource, signal: SensorSignal,
                 destination: SensorDestination, calibration: SensorCalibration = .init(),
                 priority: Int = 0, threshold: Double = 0.55,
-                hysteresis: Double = 0.08, velocity: Int = 100) {
+                hysteresis: Double = 0.08, velocity: Int = 100, response: ContinuousResponse? = nil) {
         self.id = id
         self.source = source
         self.signal = signal
@@ -105,6 +106,7 @@ public struct SensorMapping: Codable, Equatable, Identifiable, Sendable {
         self.threshold = threshold
         self.hysteresis = hysteresis
         self.velocity = velocity
+        self.response = response
     }
 
     public var isValid: Bool {
@@ -113,7 +115,8 @@ public struct SensorMapping: Codable, Equatable, Identifiable, Sendable {
         destination.isValid && calibration.isValid && (-100...100).contains(priority) &&
         threshold.isFinite && (0.05...1).contains(threshold) &&
         hysteresis.isFinite && (0...0.5).contains(hysteresis) && hysteresis < threshold &&
-        (1...127).contains(velocity)
+        (1...127).contains(velocity) &&
+        (response.map { ContinuousResponse.isContinuous(destination) && $0.isValid } ?? true)
     }
 }
 
@@ -170,6 +173,8 @@ public struct SensorRouter: Sendable {
         let destination: SensorDestination
         let priority: Int
         let value: Int
+        let filtered: Double
+        let timestamp: Double
     }
 
     public static let maxSessions = 16
@@ -178,6 +183,7 @@ public struct SensorRouter: Sendable {
     private var sessions: [UUID: Session] = [:]
     private var contributions: [Owner: Contribution] = [:]
     private var emitted: [SensorDestination: Int] = [:]
+    private var releaseValues: [SensorDestination: Int] = [:]
 
     public init() {}
     public var sessionCount: Int { sessions.count }
@@ -187,10 +193,12 @@ public struct SensorRouter: Sendable {
     public mutating func configure(_ proposed: [SensorMapping]) throws {
         guard sessions.isEmpty else { throw SensorRouterError.activeSessions }
         guard proposed.count <= Self.maxMappings, proposed.allSatisfy(\.isValid),
-              Set(proposed.map(\.id)).count == proposed.count else {
+              Set(proposed.map(\.id)).count == proposed.count,
+              let releases = ContinuousResponse.releaseValues(for: proposed) else {
             throw SensorRouterError.invalidMappings
         }
         mappings = proposed
+        releaseValues = releases
     }
 
     public mutating func connect(_ source: SensorSource, now: Double) throws -> UUID {
@@ -224,16 +232,22 @@ public struct SensorRouter: Sendable {
             guard let normalized = mapping.calibration.apply(event.value) else { continue }
             let owner = Owner(session: event.session, mapping: mapping.id)
             let value: Int
+            var filtered = normalized
             if mapping.destination.isGate {
                 let wasOn = (contributions[owner]?.value ?? 0) > 0
                 let active = normalized >= (wasOn ? mapping.threshold - mapping.hysteresis : mapping.threshold)
                 value = active ? (mapping.destination.kind == .note ? mapping.velocity : 127) : 0
             } else {
-                let maximum = mapping.destination.kind == .pitchBend ? 16383.0 : 127.0
-                value = Int((normalized * maximum).rounded())
+                let response = mapping.response ?? ContinuousResponse()
+                if let previous = contributions[owner] {
+                    filtered = response.smooth(normalized, previous: previous.filtered,
+                                               elapsed: event.timestamp - previous.timestamp)
+                }
+                value = response.output(filtered, target: mapping.destination)
             }
             contributions[owner] = Contribution(owner: owner, destination: mapping.destination,
-                                                priority: mapping.priority, value: value)
+                                                priority: mapping.priority, value: value,
+                                                filtered: filtered, timestamp: event.timestamp)
         }
         return reconcile()
     }
@@ -282,8 +296,9 @@ public struct SensorRouter: Sendable {
         let targets = Set(emitted.keys).union(next.keys).sorted { $0.sortKey < $1.sortKey }
         var result: [SensorCommand] = []
         for target in targets {
-            let before = emitted[target] ?? target.neutral
-            let after = next[target] ?? target.neutral
+            let neutral = releaseValues[target] ?? target.neutral
+            let before = emitted[target] ?? neutral
+            let after = next[target] ?? neutral
             if target.isGate {
                 // Shared notes never retrigger when another owner joins.
                 if (before > 0) != (after > 0) { result.append(.init(target, value: after)) }
