@@ -148,6 +148,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <input id="secret" type="password" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
 <button id="connect">Connect</button><button id="disconnect" disabled>Disconnect / release</button>
 <p id="status" role="status" aria-live="polite">Not connected.</p>
+<section id="workloadSection" hidden aria-labelledby="workloadTitle"><h2 id="workloadTitle">Performance combinations</h2>
+<p id="workloadStatus" role="status" aria-live="polite">Conservative combinations. No physical latency guarantee.</p>
+<button id="workloadMode" type="button" aria-pressed="false" disabled>Enable experimental combinations</button>
+<small>Conservative mode allows one touch, drum, piano or pedal surface plus up to two motion streams, or all three motion streams alone. Experimental mode permits additional mapped combinations but may interrupt performance; the same safety limits apply. Change mode only when all controls are disabled and released.</small></section>
 <section id="touchSection" hidden><div id="pad" aria-label="XY touch surface" aria-disabled="true"><span>Touch and move</span><div id="dot" hidden></div></div>
 <p><small>X and Y control the mapped instrument. Lift to release. One contact only.</small></p></section>
 <section id="drumSection" hidden aria-labelledby="drum-title"><h2 id="drum-title">Drum Pads</h2>
@@ -198,10 +202,45 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function touchBusy(){return pointer!==null||touchQueue.length!==0||touchSent||pendingKind==="touch"||pendingKind==="release";}
   function queueTouch(kind,axes){
     if(touchQueue.length>=8){close("Touch input backlog. Reconnect explicitly.");return;}
-    touchQueue.push({kind,axes,at:performance.now()});tick();
+    touchQueue.push({kind,axes,at:performance.now()});syncControls();tick();
   }
   function sendTouchEdge(){const edge=touchQueue.shift();send(edge.kind,edge.axes);}
-  let caps=null;
+  let caps=null,experimentalWorkload=false,workloadRefusal="";
+  const workloadMode=get("workloadMode"),workloadStatus=get("workloadStatus");
+  const workloadBits={touch:1,tilt:2,acceleration:4,rotation:8,drums:16,piano:32,pedals:64};
+  function drumBusy(){return drumDesired!==0||drumSent!==0||drumQueue.length!==0||drumEmergency||pendingKind==="drumPads";}
+  function workloadMask(){
+    let mask=0;
+    if(touchBusy())mask|=1;
+    if(mode!=="idle")mask|=2;
+    for(const s of streams)if(s.mode!=="idle")mask|=workloadBits[s.kind];
+    if(drumEnabled||drumBusy())mask|=16;
+    if(pianoEnabled||pianoBusy())mask|=32;
+    if(pedalEnabled||pedalBusy())mask|=64;
+    return mask;
+  }
+  function popcount(mask){let n=0;while(mask){mask&=mask-1;n++;}return n;}
+  function conservativeCombination(mask){
+    const discrete=popcount(mask&113),sensors=popcount(mask&14);
+    return discrete===0?sensors<=3:discrete===1&&sensors<=2;
+  }
+  function workloadAllows(group){
+    return experimentalWorkload||conservativeCombination(workloadMask()|workloadBits[group]);
+  }
+  function requestWorkload(group){
+    if(workloadAllows(group)){workloadRefusal="";return true;}
+    workloadRefusal="Combination unavailable. Disable and release another control before trying again.";
+    syncWorkload();return false;
+  }
+  function syncWorkload(){
+    const mask=workloadMask();
+    get("workloadSection").hidden=!caps;
+    workloadMode.disabled=!admitted||!caps||mask!==0||pending;
+    workloadMode.textContent=experimentalWorkload?"Use conservative combinations":"Enable experimental combinations";
+    workloadMode.setAttribute("aria-pressed",String(experimentalWorkload));
+    const description=experimentalWorkload?"Experimental combinations. Performance may be interrupted.":"Conservative combinations. No physical latency guarantee.";
+    workloadStatus.textContent=(workloadRefusal?workloadRefusal+" ":"")+description+" Enabled, requested or releasing streams: "+popcount(mask)+".";
+  }
   const manifestFields=["kind","version","touch","tilt","acceleration","rotation","airDrums","drums","piano","pedals"];
   const has=(group,index)=>Boolean(caps&&(caps[group]&(1<<index)));
   const octaveAvailable=value=>Boolean(caps&&(caps.piano&(8191<<(12*value))));
@@ -261,7 +300,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function releaseDrums(){
     drumOwners.clear();drumDesired=0;drumQueue=[];
-    drumEmergency=drumSent!==0;syncDrums();tick();
+    drumEmergency=drumSent!==0;syncControls();tick();
   }
   function drumDown(owner,index){
     if(!admitted||!drumEnabled||!has("drums",index)||drumEmergency||drumOwners.has(owner))return;
@@ -305,7 +344,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function releasePiano(){
     pianoOwners.clear();pianoDesired=0;pianoQueue=[];
-    pianoEmergency=pianoSent!==0;syncPiano();tick();
+    pianoEmergency=pianoSent!==0;syncControls();tick();
   }
   function pianoDown(owner,index){
     if(!admitted||!pianoEnabled||!has("piano",index)||pianoEmergency||pianoOwners.has(owner))return;
@@ -355,7 +394,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pedalPositions[i]=Math.round(n);pedalDirty=true;syncPedals();tick();
   }
   function releasePedals(){
-    pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;syncPedals();tick();
+    pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;syncControls();tick();
   }
   function sendPedals(snapshot){send("pedalboard",snapshot);}
   function inertialState(kind,prefix,limit,scale){return {kind,start:get(prefix+"Start"),stop:get(prefix+"Stop"),meter:get(prefix+"Meter"),status:get(prefix+"Status"),limit,scale,mode:"idle",epoch:0,sample:null,at:0,sent:-1,last:-Infinity,waiting:0};}
@@ -385,6 +424,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   async function startInertial(s){
     if(!admitted||!caps?.[s.kind]||s.mode!=="idle"||streams.some(x=>x.mode==="requesting")||mode==="requesting")return;
     if(!window.isSecureContext||typeof window.DeviceMotionEvent==="undefined"){s.status.textContent="DeviceMotion unavailable.";return;}
+    if(!requestWorkload(s.kind))return;
     const epoch=++s.epoch;s.mode="requesting";s.status.textContent="Waiting for permission…";syncControls();
     try{
       const api=window.DeviceMotionEvent;
@@ -401,7 +441,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     s.epoch++;s.mode="releasing";s.sample=null;s.status.textContent="Releasing…";syncInertialListener();syncControls();tick();
   }
   function syncControls(){
-    pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch));syncSections();syncDrums();syncPiano();syncPedals();
+    pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncWorkload();
     const asking=mode==="requesting"||streams.some(s=>s.mode==="requesting");
     motionStart.disabled=!admitted||!caps?.tilt||mode!=="idle"||asking;
     for(const s of streams){s.start.disabled=!admitted||!caps?.[s.kind]||s.mode!=="idle"||asking;s.stop.disabled=!admitted||s.mode==="idle"||s.mode==="releasing";}
@@ -427,6 +467,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(!window.isSecureContext||typeof window.DeviceOrientationEvent==="undefined"){
       motionStatus.textContent="Orientation unavailable in this secure browser.";return;
     }
+    if(!requestWorkload("tilt"))return;
     const epoch=++permissionEpoch;mode="requesting";syncControls();motionStatus.textContent="Waiting for permission…";
     try{
       const api=window.DeviceOrientationEvent;
@@ -447,8 +488,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
-    const old=ws;ws=null;admitted=false;caps=null;pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
-    if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();
+    const old=ws;ws=null;admitted=false;caps=null;experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
+    if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();syncControls();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
   }
@@ -538,7 +579,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     socket.onmessage=e=>{
       if(ws!==socket)return;
       if(!admitted){
-        if(e.data!=="admitted"||socket.protocol!=="tihulu-touch-v1"){close("Pairing rejected.");return;}
+        if(e.data!=="admitted"||socket.protocol!=="tihulu-touch-v1"){close("Connection not accepted. Request a new invitation from the Mac. Invitation, mapping or device capacity may be unavailable.");return;}
         clearDeadline();admitted=true;lastSend=performance.now();syncControls();status.textContent="Checking mapped controls…";
         send("capabilities");return;
       }
@@ -572,6 +613,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   pad.addEventListener("pointerdown",e=>{
     if(!admitted||!caps?.touch||pointer!==null||e.button!==0)return;
+    if(!requestWorkload("touch"))return;
     e.preventDefault();pointer=e.pointerId;try{pad.setPointerCapture(pointer);}catch{close("Pointer capture failed.");return;}
     if(!move(e))return;syncControls();queueTouch("touch",{...position});
   });
@@ -586,8 +628,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   for(const event of ["pointercancel","lostpointercapture"])pad.addEventListener(event,e=>{if(e.pointerId===pointer)close("Touch cancelled. Reconnect explicitly.");});
   drumEnable.addEventListener("click",()=>{
     if(!admitted||!caps?.drums)return;
+    if(!drumEnabled&&!requestWorkload("drums"))return;
     drumEnabled=!drumEnabled;
     if(!drumEnabled)releaseDrums();
+    workloadRefusal="";syncControls();
     drumStatus.textContent=drumEnabled?"Enabled. Use only with the mapped Mac preset.":"Off.";
     syncDrums();
   });
@@ -605,8 +649,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   });
   pianoEnable.addEventListener("click",()=>{
     if(!admitted||!caps?.piano)return;
+    if(!pianoEnabled&&!requestWorkload("piano"))return;
     pianoEnabled=!pianoEnabled;
     if(!pianoEnabled)releasePiano();
+    workloadRefusal="";syncControls();
     pianoStatus.textContent=pianoEnabled?"Enabled. Use only with the mapped Mac preset.":"Off.";syncPiano();
   });
   pianoRelease.addEventListener("click",releasePiano);
@@ -627,13 +673,19 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   });
   pedalEnable.addEventListener("click",()=>{
     if(!admitted||!caps?.pedals)return;
+    if(!pedalEnabled&&!requestWorkload("pedals"))return;
     pedalEnabled=!pedalEnabled;
     if(!pedalEnabled)releasePedals();
+    workloadRefusal="";syncControls();
     pedalStatus.textContent=pedalEnabled?"Enabled. Activate individual mapped pedals.":"Off.";syncPedals();
   });
   pedalRelease.addEventListener("click",releasePedals);
   pedalToggles.forEach((b,i)=>b.addEventListener("click",()=>pedalToggle(i)));
   pedalSliders.forEach((b,i)=>b.addEventListener("input",()=>pedalMove(i)));
+  workloadMode.addEventListener("click",()=>{
+    if(!admitted||!caps||workloadMask()!==0||pending)return;
+    experimentalWorkload=!experimentalWorkload;workloadRefusal="";syncControls();
+  });
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);
   for(const s of streams){s.start.addEventListener("click",()=>startInertial(s));s.stop.addEventListener("click",()=>stopInertial(s));}
