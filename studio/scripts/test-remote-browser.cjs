@@ -12,7 +12,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["mappingSection","mappingStatus","mappingDetails","pianoBoard","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id]});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
   class WS{
@@ -459,4 +459,32 @@ test("labels remain hidden during multiple pages and reject duplicates",()=>{
   labelResponse(a,[[0,"V2Fo"]],{pages:2,total:2});
   assert.equal(a.elements.touchSection.hidden,true);
   labelResponse(a,[[0,"V2Fo"]],{pages:2,total:2});assert.equal(a.socket.closed,true);
+});
+
+test("global release cancels unsent onsets and awaits pending owner release",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.pad.emit("pointerdown",xyEvent(2));a.elements.pad.emit("pointerup",xyEvent(2));
+  a.elements.releaseAll.emit("click");
+  a.elements.drumEnable.emit("click");a.elements.drum0.emit("pointerdown",drumEvent(3));
+  a.ack();assert.equal(a.socket.frames.at(-1).kind,"pianoKeys");assert.equal(a.socket.frames.at(-1).mask,0);
+  assert.equal(a.socket.frames.some(f=>f.kind==="touch"),false);
+  assert.equal(a.elements.releaseAll.disabled,true);a.ack();
+  assert.match(a.elements.status.textContent,/required Mac acknowledgments received/);
+  assert.equal(a.elements.releaseAll.disabled,false);
+});
+test("global release pending sensor arm follows ACK with release",async()=>{
+  const a=setup();await a.elements.motionStart.emit("click");a.orientation(5);a.step();
+  assert.equal(a.socket.frames.at(-1).kind,"orientationArm");a.elements.releaseAll.emit("click");a.ack();
+  assert.equal(a.socket.frames.at(-1).kind,"motionRelease");a.ack();
+  assert.equal(a.window.events.has("deviceorientation"),false);
+  assert.match(a.elements.status.textContent,/required Mac acknowledgments received/);
+});
+test("global release preserves touch release order and closes on missing ACK",()=>{
+  const a=setup();a.elements.pad.emit("pointerdown",xyEvent(1));a.elements.releaseAll.emit("click");a.ack();
+  assert.equal(a.socket.frames.at(-1).kind,"release");
+  a.step(220);assert.equal(a.socket.closed,true);
+});
+test("global release idle sends no synthetic MIDI frame",()=>{
+  const a=setup();a.elements.releaseAll.emit("click");assert.equal(a.socket.frames.length,0);
+  assert.match(a.elements.status.textContent,/My controls released locally/);
 });
