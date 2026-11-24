@@ -10,6 +10,7 @@ public struct PhysicalPatchRuntime: Sendable {
     private var sessions: [SensorSource: UUID] = [:]
     private var seen: [SensorSource: Double] = [:]
     private var sequence: UInt64 = 0
+    private var motionSources: Set<SensorSource> = []
     private var remoteEnabled = false
     private var pairing = RemotePairingGate()
     private var remotePeers: [UUID: RemoteTouchPeer] = [:]
@@ -26,7 +27,11 @@ public struct PhysicalPatchRuntime: Sendable {
             case .lid: return $0.signal == .angle
             case .touchBar: return $0.signal == .x
             case .camera: return [.x,.y,.gesture,.contact].contains($0.signal)
-            case .phone, .tablet: return allowRemote && [.x,.y,.contact].contains($0.signal)
+            case .phone, .tablet:
+                guard allowRemote else { return false }
+                if [.x,.y,.contact].contains($0.signal) { return true }
+                return [.tiltYaw,.tiltPitch,.tiltRoll].contains($0.signal) &&
+                    ($0.destination.kind == .controlChange || $0.destination.kind == .pitchBend)
             default: return false
             }
         }
@@ -36,6 +41,7 @@ public struct PhysicalPatchRuntime: Sendable {
         guard sessions.isEmpty, remotePeers.isEmpty, Self.supports(patch, allowRemote: allowRemote) else { throw SensorRouterError.invalidMappings }
         try router.configure(patch.routes)
         supported = Set(patch.routes.map(\.source))
+        motionSources = Set(patch.routes.filter { [.tiltYaw,.tiltPitch,.tiltRoll].contains($0.signal) }.map(\.source))
         remoteEnabled = allowRemote
         pairing.clear()
         seen = [:]
@@ -135,11 +141,13 @@ public struct PhysicalPatchRuntime: Sendable {
             remotePeers[id] = peer
             return .accepted([])
         case .release:
+            guard peer.tilt == nil else { return .close(revokeRemote(id)) }
             let commands = peer.routerSession.map { router.disconnect($0) } ?? []
             peer.routerSession = nil
             remotePeers[id] = peer
             return .accepted(commands)
         case .touch:
+            guard peer.tilt == nil else { return .close(revokeRemote(id)) }
             if peer.routerSession == nil { peer.routerSession = try? router.connect(peer.source, now: now) }
             guard let session = peer.routerSession, let x = frame.x, let y = frame.y
             else { return .close(revokeRemote(id)) }
@@ -151,13 +159,44 @@ public struct PhysicalPatchRuntime: Sendable {
                                                 sequence: sequence, timestamp: now), now: now)
             }
             return .accepted(commands)
+        case .orientationArm:
+            guard motionSources.contains(peer.source), peer.routerSession == nil,
+                  peer.tilt == nil, let angles = frame.angles,
+                  let calibration = RemoteTiltCalibration(neutral: angles),
+                  peer.motionFreshness.arm(receipt: now, now: now)
+            else { return .close(revokeRemote(id)) }
+            peer.tilt = calibration
+            remotePeers[id] = peer
+            return .accepted([])
+        case .orientation:
+            guard peer.routerSession == nil, let tilt = peer.tilt, let angles = frame.angles,
+                  peer.motionFreshness.accept(receipt: now, now: now)
+            else { return .close(revokeRemote(id)) }
+            if peer.motionSession == nil { peer.motionSession = try? router.connect(peer.source, now: now) }
+            guard let session = peer.motionSession else { return .close(revokeRemote(id)) }
+            remotePeers[id] = peer
+            let values = tilt.normalize(angles)
+            var commands: [SensorCommand] = []
+            for (signal, value): (SensorSignal, Double) in [(.tiltYaw, values.yaw), (.tiltPitch, values.pitch), (.tiltRoll, values.roll)] {
+                sequence &+= 1
+                commands += router.ingest(.init(session: session, signal: signal, value: value,
+                                                sequence: sequence, timestamp: now), now: now)
+            }
+            return .accepted(commands)
+        case .motionRelease:
+            guard peer.tilt != nil else { return .close(revokeRemote(id)) }
+            let commands = peer.motionSession.map { router.disconnect($0) } ?? []
+            peer.motionSession = nil
+            peer.tilt = nil
+            peer.motionFreshness.disarm()
+            remotePeers[id] = peer
+            return .accepted(commands)
         }
     }
 
     public mutating func revokeRemote(_ id: UUID) -> [SensorCommand] {
-        guard let peer = remotePeers.removeValue(forKey: id),
-              let session = peer.routerSession else { return [] }
-        return router.disconnect(session)
+        guard let peer = remotePeers.removeValue(forKey: id) else { return [] }
+        return [peer.routerSession, peer.motionSession].compactMap { $0 }.flatMap { router.disconnect($0) }
     }
 
     public mutating func cancelRemotePairing() { pairing.clear() }
@@ -190,6 +229,7 @@ public struct PhysicalPatchRuntime: Sendable {
         sessions = [:]
         seen = [:]
         supported = []
+        motionSources = []
         remoteEnabled = false
         pairing.clear()
         remotePeers = [:]
