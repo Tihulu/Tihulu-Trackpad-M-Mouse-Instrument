@@ -208,21 +208,39 @@ public enum StringTuning: String, CaseIterable, Identifiable, Codable, Sendable 
     }
 }
 
+public enum StringFretDivision: Int, CaseIterable, Identifiable, Codable, Sendable {
+    case edo12 = 12
+    case edo24 = 24
+    case edo53 = 53
+    public var id: Int { rawValue }
+    public var title: String { "\(rawValue)-EDO" }
+}
+
 public struct StringSurfaceLayout: Codable, Equatable, Sendable {
     public var tuning: StringTuning
     public var frets: Int
     /// Optional so archives without custom tuning keep their preset.
     public var customOpenNotes: [Int]?
-    public init(tuning:StringTuning = .standard, frets:Int = 12, customOpenNotes:[Int]? = nil) {
+    public var fretDivision: StringFretDivision?
+    public init(tuning:StringTuning = .standard, frets:Int = 12, customOpenNotes:[Int]? = nil,
+                fretDivision:StringFretDivision? = nil) {
         self.tuning = tuning; self.frets = frets; self.customOpenNotes = customOpenNotes
+        self.fretDivision = fretDivision
     }
+    public var effectiveDivision: StringFretDivision { fretDivision ?? .edo12 }
+    public var isMicrotonal: Bool { effectiveDivision != .edo12 }
     public var openNotes: [Int] { customOpenNotes ?? tuning.openNotes }
     public var isValid: Bool {
         guard (4...24).contains(frets), (4...8).contains(openNotes.count) else { return false }
         return openNotes.allSatisfy { (0...(127-frets)).contains($0) }
     }
     public var rows: Int { isValid ? openNotes.count : 0 }
-    public var columns: Int { isValid ? frets + 1 : 0 }
+    public var columns: Int { isValid ? frets * effectiveDivision.rawValue / 12 + 1 : 0 }
+    /// Only complete EDO steps inside the requested span; no out-of-range extra fret.
+    public func semitoneOffset(at step:Int) -> Double? {
+        guard isValid, (0..<columns).contains(step) else { return nil }
+        return Double(step) * 12 / Double(effectiveDivision.rawValue)
+    }
     public struct Cell: Equatable, Sendable {
         public let string: Int
         public let fret: Int
@@ -232,7 +250,8 @@ public struct StringSurfaceLayout: Codable, Equatable, Sendable {
         guard isValid, x.isFinite,y.isFinite,(0...1).contains(x),(0...1).contains(y) else { return nil }
         let string = min(rows-1,Int((1-y)*Double(rows)))
         let fret = min(columns-1,Int(x*Double(columns)))
-        return .init(string:string,fret:fret,note:openNotes[string]+fret)
+        guard let offset = semitoneOffset(at:fret) else { return nil }
+        return .init(string:string,fret:fret,note:Int((Double(openNotes[string])+offset).rounded()))
     }
 
     public struct ContinuousCell: Equatable, Sendable {
@@ -254,6 +273,19 @@ public struct StringSurfaceLayout: Codable, Equatable, Sendable {
         let delta = (pitch - Double(anchor)) / Double(range)
         let bend = Int((8192 + delta * (delta < 0 ? 8192 : 8191)).rounded())
         return .init(string:cell.string,pitch:pitch,anchor:anchor,bendRange:range,
+                     bend:min(16383,max(0,bend)))
+    }
+
+    /// Discrete microtonal fret pitch, represented by a nearby MIDI note
+    /// plus a bounded per-member bend. No equal-tempered approximation.
+    public func microtonalCell(x:Double,y:Double) -> ContinuousCell? {
+        guard isMicrotonal, let cell = cell(x:x,y:y),
+              let offset = semitoneOffset(at:cell.fret) else { return nil }
+        let pitch = Double(openNotes[cell.string])+offset
+        let anchor = cell.note
+        let delta = (pitch-Double(anchor))/2
+        let bend = Int((8192+delta*(delta < 0 ? 8192 : 8191)).rounded())
+        return .init(string:cell.string,pitch:pitch,anchor:anchor,bendRange:2,
                      bend:min(16383,max(0,bend)))
     }
 

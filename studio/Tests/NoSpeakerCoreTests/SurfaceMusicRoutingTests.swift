@@ -249,3 +249,34 @@ import Testing
     #expect(StringSurfaceLayout(frets:Int.max).continuousCell(x:0,y:0) == nil)
     #expect(StringSurfaceLayout(frets:24,customOpenNotes:[104,1,2,3]).continuousCell(x:0,y:0) == nil)
 }
+
+@Test func microtonalStringDivisionsReconstructExactPitchAndBoundSpan() throws {
+    for division in [StringFretDivision.edo24,.edo53] {
+        for span in 4...24 {
+            let layout = StringSurfaceLayout(frets:span,fretDivision:division)
+            #expect(layout.columns == span*division.rawValue/12+1)
+            for row in 0..<layout.rows {
+                let y = 1-(Double(row)+0.5)/Double(layout.rows)
+                for step in 0..<layout.columns {
+                    let x = (Double(step)+0.5)/Double(layout.columns)
+                    let cell = try #require(layout.microtonalCell(x:x,y:y))
+                    let expected = Double(layout.openNotes[row])+Double(step)*12/Double(division.rawValue)
+                    #expect(abs(cell.pitch-expected) < 0.000001)
+                    #expect(cell.pitch <= Double(layout.openNotes[row]+span))
+                    let delta = Double(cell.bend-8192)
+                    let reconstructed = Double(cell.anchor)+2*delta/Double(delta < 0 ? 8192 : 8191)
+                    #expect(abs(reconstructed-expected) < 0.00013)
+                }
+            }
+            #expect(layout.microtonalCell(x:.nan,y:1) == nil)
+        }
+    }
+}
+@Test func microtonalDivisionArchiveAndFretlessIndependence() throws {
+    let normal = StringSurfaceLayout()
+    #expect(normal.effectiveDivision == .edo12)
+    #expect(normal.microtonalCell(x:0.5,y:0.5) == nil)
+    let tuned = StringSurfaceLayout(fretDivision:.edo53)
+    #expect(try JSONDecoder().decode(StringSurfaceLayout.self,from:JSONEncoder().encode(tuned)) == tuned)
+    #expect(tuned.continuousCell(x:0.25,y:0.5) == normal.continuousCell(x:0.25,y:0.5))
+}

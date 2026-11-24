@@ -1300,10 +1300,18 @@ private struct StringLayoutEditor: View {
                             )) {
                                 ForEach(StringTuning.allCases) { Text($0.rawValue).tag($0) }
                             }
-                            Stepper("Frets: \(layout.frets) + open string",value:Binding(
+                            Stepper("Pitch span: \(layout.frets) semitones",value:Binding(
                                 get:{ layout.frets },
                                 set:{ var next = layout; next.frets = $0; if next.isValid { layout = next } }
                             ),in:4...24)
+                            Picker("Fret division",selection:Binding(
+                                get:{ layout.effectiveDivision },
+                                set:{ var next = layout; next.fretDivision = $0 == .edo12 ? nil : $0; layout = next }
+                            )) {
+                                ForEach(StringFretDivision.allCases) { Text($0.title).tag($0) }
+                            }
+                            Text("\(layout.columns) discrete positions including open string. 24-EDO gives quarter tones; 53-EDO gives equal commas, not a complete makam. Microtonal MIDI requires MPE. Fretless mode ignores fret divisions.")
+                                .font(.caption).foregroundStyle(.secondary)
                             Toggle("Custom open-string tuning",isOn:Binding(
                                 get:{ layout.customOpenNotes != nil },
                                 set:{ enabled in
@@ -1367,7 +1375,31 @@ private struct TouchSurfaceMap: View {
                 RoundedRectangle(cornerRadius: 18)
                     .fill(.quaternary.opacity(active ? 0.58 : 0.42))
 
-                if instrument.isStringSurface && stringLayout.isValid {
+                if instrument == .guitar && stringLayout.isValid && stringLayout.isMicrotonal {
+                    // Dense microtonal layout: one grid path, not hundreds
+                    // of individual labels and repeated contact scans.
+                    let w = proxy.size.width / CGFloat(stringLayout.columns)
+                    let h = proxy.size.height / CGFloat(stringLayout.rows)
+                    Path { path in
+                        for i in 0...stringLayout.columns {
+                            let x = CGFloat(i)*w
+                            path.move(to:CGPoint(x:x,y:0))
+                            path.addLine(to:CGPoint(x:x,y:proxy.size.height))
+                        }
+                        for i in 0..<stringLayout.rows {
+                            let y = (CGFloat(i)+0.5)*h
+                            path.move(to:CGPoint(x:0,y:y))
+                            path.addLine(to:CGPoint(x:proxy.size.width,y:y))
+                        }
+                    }.stroke(Color.secondary.opacity(0.32),lineWidth:0.6)
+                    ForEach(states.filter(\.isDown)) { state in
+                        if let cell = stringLayout.cell(x:state.x,y:state.y) {
+                            Rectangle().fill(Color.accentColor.opacity(0.45))
+                                .frame(width:max(1,w),height:h)
+                                .position(x:(CGFloat(cell.fret)+0.5)*w,y:(CGFloat(cell.string)+0.5)*h)
+                        }
+                    }
+                } else if instrument.isStringSurface && stringLayout.isValid {
                     let width = proxy.size.width / CGFloat(stringLayout.columns)
                     let height = proxy.size.height / CGFloat(stringLayout.rows)
                     ForEach(0..<stringLayout.rows,id:\.self) { row in

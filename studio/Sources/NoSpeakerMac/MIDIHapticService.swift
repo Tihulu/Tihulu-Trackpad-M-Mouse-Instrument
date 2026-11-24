@@ -426,8 +426,14 @@ public final class MIDIHapticService: @unchecked Sendable {
             guard processed.insert(key).inserted else { continue }
             let instrument = configuration.instrument(for:state.surface)
             let isGuitar = instrument.isStringSurface
+            let layout = configuration.strings(for:state.surface)
             let stringCell = instrument == .fretlessStrings
-                ? configuration.strings(for:state.surface).continuousCell(x:state.x,y:state.y) : nil
+                ? layout.continuousCell(x:state.x,y:state.y)
+                : (instrument == .guitar ? layout.microtonalCell(x:state.x,y:state.y) : nil)
+            if instrument == .guitar && layout.isMicrotonal && stringCell == nil {
+                if let old = outgoingTouches.removeValue(forKey:key) { releaseOutgoingTouch(key,outgoing:old) }
+                continue
+            }
             let isFretlessMelody = stringCell != nil || (instrument == .melodic && configuration.fretless)
             let isMPE = midiMode == .mpe && !drums
             let standardChannel = drums ? GMDrumPads.midiChannel : safeMelodicChannel

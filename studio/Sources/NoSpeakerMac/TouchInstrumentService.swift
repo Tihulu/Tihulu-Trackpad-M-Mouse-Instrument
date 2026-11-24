@@ -196,7 +196,7 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
     public func permitsStringMIDI(isMPE:Bool) -> Bool {
         let stringSurfaces = selectedSurfaces.filter { instrument(for:$0).isStringSurface && output(for:$0).sendsMIDI }
         guard !stringSurfaces.isEmpty else { return true }
-        if stringSurfaces.contains(where: { instrument(for:$0) == .fretlessStrings }) && !isMPE { return false }
+        if stringSurfaces.contains(where: { instrument(for:$0) == .fretlessStrings || strings(for:$0).isMicrotonal }) && !isMPE { return false }
         let mixedFretless = fretless && selectedSurfaces.contains {
             instrument(for:$0) == .melodic && output(for:$0).sendsMIDI
         }
@@ -526,6 +526,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             } else if instrument == .guitar {
                 guard let cell = config.strings(for:frame.surface).cell(x:x,y:y) else { return nil }
                 quantized = cell.note
+                if let tuned = config.strings(for:frame.surface).microtonalCell(x:x,y:y) { stringPitch = tuned.pitch }
             } else if instrument == .chords {
                 guard let slot = PhysicalChordGrid.slot(x:x,y:y),
                       let pad = config.physicalChordBank?.pad(at:slot), let first = pad.notes.first else { return nil }
@@ -693,6 +694,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             }
             let baseFrequency: Double
             if config.instrument(for:state.surface) == .fretlessStrings ||
+                (config.instrument(for:state.surface) == .guitar && config.strings(for:state.surface).isMicrotonal) ||
                 (config.fretless && config.instrument(for: state.surface) == .melodic) {
                 baseFrequency = 440.0 * pow(2.0, (state.continuousMIDI - 69.0) / 12.0)
             } else if config.instrument(for:state.surface) == .guitar {
