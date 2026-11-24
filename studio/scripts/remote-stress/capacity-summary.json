@@ -1,7 +1,7 @@
 {
   "base": "e55acd52d9e8ba241afa3b8574618625c0dab47e",
-  "harness": "59d087271f885c0296a4a51099b873fe00ff6c95",
-  "execution": "V8 Function, virtual timers, modeled host; candidate-independent in-memory variants",
+  "harness": "910bf4597ba2d2343dc66327aa28c301c130e870",
+  "execution": "V8 Function, virtual timers, modeled host; two identical runs; in-memory experimental variants",
   "profiles": {
     "rtt5": {
       "rtt": 5
@@ -689,6 +689,215 @@
           "touchTiltAccel"
         ]
       }
+    },
+    "pacedEdgeFirst": {
+      "rtt5": {
+        "passed": 32,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ]
+      },
+      "rtt20": {
+        "passed": 32,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ]
+      },
+      "rtt40": {
+        "passed": 22,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "inertial",
+          "touchTiltAccel"
+        ]
+      },
+      "rtt60": {
+        "passed": 20,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "inertial",
+          "touchTiltAccel"
+        ]
+      },
+      "jitter20": {
+        "passed": 31,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six"
+        ]
+      },
+      "jitter40": {
+        "passed": 22,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "inertial",
+          "touchTiltAccel"
+        ]
+      }
     }
   },
   "xy": {
@@ -874,6 +1083,105 @@
       }
     ],
     "deadlineAware": [
+      {
+        "case": "pending-drumPads",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-pianoKeys",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-pedalboard",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-orientation",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-acceleration",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-rotation",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-pointerup",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-pointercancel",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-lostpointercapture",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "touch-overflow",
+        "closed": {
+          "at": 1100,
+          "status": "Touch input backlog.",
+          "hostReason": null
+        },
+        "modelActive": [],
+        "pass": true
+      }
+    ],
+    "pacedEdgeFirst": [
       {
         "case": "pending-drumPads",
         "wire": [
