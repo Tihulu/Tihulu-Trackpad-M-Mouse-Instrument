@@ -2721,8 +2721,13 @@ private struct TouchBarHoldSustainPad: View {
 private struct TouchBarSliderPad: View {
     @EnvironmentObject private var studio: StudioController
     let zone: TouchBarZone
-    @State private var value = 0.5
+    @State private var value: Double
     @State private var gesture: UInt64?
+
+    init(zone:TouchBarZone) {
+        self.zone = zone
+        _value = State(initialValue:zone.initialPosition)
+    }
 
     var body: some View {
         HStack {

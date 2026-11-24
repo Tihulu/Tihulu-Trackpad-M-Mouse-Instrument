@@ -55,3 +55,21 @@ extension TouchBarProfileTests {
         XCTAssertEqual(restored.neutralTilt?.value, 0)
     }
 }
+
+extension TouchBarProfileTests {
+    func testRibbonNeutralAndInitialPositions() {
+        XCTAssertEqual(TouchBarZone.pitchBend.releasePosition,0.5)
+        XCTAssertEqual(TouchBarZone.fretless.releasePosition,0.5)
+        XCTAssertNil(TouchBarZone.expression.releasePosition)
+        XCTAssertNil(TouchBarZone.wah.releasePosition)
+        XCTAssertEqual(TouchBarZone.expression.initialPosition,1)
+        XCTAssertEqual(TouchBarZone.pitchBend.initialPosition,0.5)
+        XCTAssertEqual(TouchBarZone.wah.initialPosition,0)
+    }
+    func testNonFiniteTiltSettingsNormalizeToFiniteRange() {
+        let profile = TouchBarProfile(tiltTarget:.pitchBend,tiltMinDegrees:.nan,tiltMaxDegrees:.infinity)
+        XCTAssertEqual(profile.normalized().tiltMinDegrees,90)
+        XCTAssertEqual(profile.normalized().tiltMaxDegrees,120)
+        XCTAssertEqual(profile.normalizedTilt(105),0.5)
+    }
+}

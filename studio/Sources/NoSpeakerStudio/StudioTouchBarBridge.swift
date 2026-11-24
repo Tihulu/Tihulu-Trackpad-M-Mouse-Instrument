@@ -21,12 +21,14 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     private var builderID: NSTouchBarItem.Identifier { .init(prefix + "builderRibbon") }
 
     func install(profile: TouchBarProfile, builderToken: UUID? = nil, force: Bool = false) {
-        self.builderToken = builderToken
         let normalized = profile.normalized()
-        if force || normalized != self.profile {
-            profileEpoch.invalidate()
-            profileControls.removeAllObjects()
+        if !force, installedBar != nil, normalized == self.profile, builderToken == self.builderToken {
+            attachToKeyWindow()
+            return
         }
+        self.builderToken = builderToken
+        profileEpoch.invalidate()
+        profileControls.removeAllObjects()
         self.profile = normalized
         chordControl = nil
         // Detach only our own old bar before installing a replacement.
@@ -170,7 +172,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             let item = NSCustomTouchBarItem(identifier: identifier)
             item.customizationLabel = zone.rawValue
             let slider = PerformanceTouchSlider(
-                value: zone == .pitchBend ? 0.5 : 0, minValue: 0, maxValue: 1,
+                value: zone.initialPosition, minValue: 0, maxValue: 1,
                 target: self, action: #selector(sliderChanged(_:))
             )
             slider.isContinuous = true
@@ -178,8 +180,18 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             profileControls.add(slider)
             slider.onPress = { [weak self, weak slider] pressed in
                 guard let slider else { return }
-                if !pressed { slider.gesture = nil; return }
-                guard let self, self.profileEpoch.accepts(profileStamp), let controller = self.controller else { return }
+                guard let self, self.profileEpoch.accepts(profileStamp), let controller = self.controller else { slider.gesture = nil; return }
+                if !pressed {
+                    let captured = slider.gesture
+                    slider.gesture = nil
+                    if let neutral = zone.releasePosition {
+                        slider.doubleValue = neutral
+                        if let captured,controller.touchBarGestureEpoch.accepts(captured) {
+                            controller.touchBarValue(zone,normalized:neutral,releaseOnly:true)
+                        }
+                    }
+                    return
+                }
                 slider.gesture = controller.touchBarGestureEpoch.revision
             }
             slider.tag = switch zone {

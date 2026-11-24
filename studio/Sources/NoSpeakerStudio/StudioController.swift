@@ -1299,6 +1299,8 @@ final class StudioController: ObservableObject {
     func setTouchBarProfile(_ proposed: TouchBarProfile) {
         let next = proposed.normalized()
         guard next != touchBarProfile else { return }
+        // Stop the old producer before replacing its target or channel.
+        if liveHingeEnabled { enableLiveHinge(false) }
         disarmTouchBarOutput()
         if touchBarProfile.zones.contains(.chords) && !next.zones.contains(.chords) {
             releaseChordPads()
@@ -1553,9 +1555,14 @@ final class StudioController: ObservableObject {
         }
         if enable && !allowLivePerformance() { return }
         if !enable {
+            let wasLive = liveHingeEnabled || hingeSensor != nil
             hingeSensor?.stop()
             hingeSensor = nil
             liveHingeEnabled = false
+            if wasLive,let neutral = touchBarProfile.neutralTilt {
+                simulatedHingeAngle = neutral.angle
+                touchBarValue(neutral.zone,normalized:neutral.value,releaseOnly:true)
+            }
             hingeSensorStatus = "Hardware sensor OFF · manual simulator available"
             return
         }
@@ -1569,10 +1576,6 @@ final class StudioController: ObservableObject {
         sensor.onLoss = { [weak self, weak sensor] reason in
             guard let self, let sensor, self.hingeSensor === sensor else { return }
             self.enableLiveHinge(false)
-            if let neutral = self.touchBarProfile.neutralTilt {
-                self.simulatedHingeAngle = neutral.angle
-                self.touchBarValue(neutral.zone, normalized: neutral.value, releaseOnly: true)
-            }
             self.hingeSensorStatus = reason
         }
         if sensor.start() {
@@ -1589,9 +1592,12 @@ final class StudioController: ObservableObject {
         guard patchHinge == nil, let neutral = touchBarProfile.neutralTilt else { return }
         // Retire the live producer first so its next poll cannot overwrite
         // the neutral. Neutralization itself must not start a stopped bridge.
+        let wasLive = liveHingeEnabled || hingeSensor != nil
         enableLiveHinge(false)
-        simulatedHingeAngle = neutral.angle
-        touchBarValue(neutral.zone, normalized: neutral.value, releaseOnly: true)
+        if !wasLive {
+            simulatedHingeAngle = neutral.angle
+            touchBarValue(neutral.zone, normalized: neutral.value, releaseOnly: true)
+        }
     }
 
     func applySimulatedHingeAngle(_ degrees: Double) {
