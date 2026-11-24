@@ -523,6 +523,13 @@ public struct PhysicalPatchRuntime: Sendable {
         return commands
     }
 
+    /// Camera failure must not revoke unrelated physical or remote owners.
+    public mutating func releaseCamera() -> [SensorCommand] {
+        airDual.reset()
+        airActiveSlot = nil
+        return disconnect(.camera)
+    }
+
     private mutating func disconnect(_ source: SensorSource) -> [SensorCommand] {
         guard let id = sessions.removeValue(forKey: source) else { return [] }
         return router.disconnect(id)
