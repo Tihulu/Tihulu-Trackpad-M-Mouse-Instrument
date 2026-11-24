@@ -10,7 +10,7 @@ public struct LiveMIDIMessage: Sendable, Equatable {
     public var isNoteOn: Bool
 }
 
-public enum TouchMIDIMode: String, CaseIterable, Identifiable, Sendable {
+public enum TouchMIDIMode: String, CaseIterable, Identifiable, Sendable, Codable {
     case standard = "Standard MIDI"
     case mpe = "MPE"
 

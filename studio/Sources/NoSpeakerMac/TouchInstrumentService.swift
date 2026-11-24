@@ -2,7 +2,7 @@
 import Foundation
 import NoSpeakerCore
 
-public enum TouchScale: String, CaseIterable, Identifiable, Sendable {
+public enum TouchScale: String, CaseIterable, Identifiable, Sendable, Codable {
     case chromatic = "Chromatic"
     case major = "Major"
     case minor = "Minor"
@@ -41,7 +41,7 @@ public enum TouchScale: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-public enum TouchSurfaceSelection: String, CaseIterable, Identifiable, Sendable {
+public enum TouchSurfaceSelection: String, CaseIterable, Identifiable, Sendable, Codable {
     case trackpad = "Trackpad"
     case magicMouse = "Magic Mouse"
     case both = "Both"
@@ -57,7 +57,7 @@ public enum TouchSurfaceSelection: String, CaseIterable, Identifiable, Sendable 
     }
 }
 
-public enum TouchTriggerMode: String, CaseIterable, Identifiable, Sendable {
+public enum TouchTriggerMode: String, CaseIterable, Identifiable, Sendable, Codable {
     case touch = "Touch"
     case press = "Press"
 
