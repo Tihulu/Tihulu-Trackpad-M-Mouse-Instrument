@@ -127,7 +127,7 @@ input,button{font:inherit;box-sizing:border-box;padding:12px;border-radius:8px;b
 input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pad{position:relative;height:clamp(180px,42vh,340px);border:1px solid #888;border-radius:12px;background:linear-gradient(90deg,transparent 49.7%,#454545 50%,transparent 50.3%),linear-gradient(transparent 49.7%,#454545 50%,transparent 50.3%),#252525;touch-action:none;user-select:none;display:grid;place-items:center}
 #pad[aria-disabled=true]{opacity:.45}#dot{position:absolute;width:22px;height:22px;background:#e34f4f;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}#dot[hidden]{display:none}
-#status{min-height:2.8em}small{color:#bdbdbd}
+#releaseAll{position:sticky;top:4px;z-index:4;min-height:44px;border-color:#e5a33b}#status{min-height:2.8em}small{color:#bdbdbd}
 #drumGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}#drumGrid button{margin:0;min-height:80px;padding:8px;touch-action:none;user-select:none;overflow-wrap:anywhere}#drumGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5} @media(max-width:420px){#drumGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #pianoBoard{position:relative;height:clamp(145px,30vh,240px);touch-action:none;user-select:none}
 #pianoBoard button{position:absolute;margin:0;border-radius:0 0 6px 6px;padding:0 0 8px;display:flex;align-items:flex-end;justify-content:center;touch-action:none;user-select:none;font-size:12px}
@@ -146,7 +146,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <body><h1>TIHULU Remote</h1><p>Local touch &amp; tilt controller · Experimental</p>
 <label for="secret">One-time invitation (64 hexadecimal characters)</label>
 <input id="secret" type="password" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
-<button id="connect">Connect</button><button id="disconnect" disabled>Disconnect / release</button>
+<button id="connect">Connect</button><button id="disconnect" disabled>Disconnect / release</button><button id="releaseAll" disabled>Release my controls</button>
 <p id="status" role="status" aria-live="polite">Not connected.</p>
 <section id="mappingSection" hidden><h2>Mapped MIDI destinations</h2><p id="mappingStatus" role="status"></p><pre id="mappingDetails" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></section>
 <section id="workloadSection" hidden aria-labelledby="workloadTitle"><h2 id="workloadTitle">Performance combinations</h2>
@@ -207,6 +207,38 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function sendTouchEdge(){const edge=touchQueue.shift();send(edge.kind,edge.axes);}
   let caps=null,experimentalWorkload=false,workloadRefusal="";
+  let releasingAll=false,releaseAllTimer=null;
+  const releaseAll=get("releaseAll");
+  function cancelGlobalTimer(){if(releaseAllTimer!==null)clearTimeout(releaseAllTimer);releaseAllTimer=null;}
+  function finishGlobalRelease(){
+    if(!releasingAll||pending||workloadMask()!==0)return false;
+    cancelGlobalTimer();releasingAll=false;
+    drumStatus.textContent=pianoStatus.textContent=pedalStatus.textContent="Off.";
+    status.textContent="My controls released locally; required Mac acknowledgments received. MIDI/audio output not confirmed. Enable controls again to play.";
+    syncControls();return true;
+  }
+  function releaseMyControls(){
+    if(!admitted||!caps||releasingAll)return;
+    releasingAll=true;const now=performance.now();
+    // Cancel unsent onsets; retain the state of every already sent owner.
+    pointer=null;position=null;dot.hidden=true;touchQueue=touchSent?[{kind:"release",at:now}]:[];
+    drumEnabled=false;drumOwners.clear();drumDesired=0;drumQueue=[];drumEmergency=drumSent!==0;
+    pianoEnabled=false;pianoOwners.clear();pianoDesired=0;pianoQueue=[];pianoEmergency=pianoSent!==0;
+    pedalEnabled=false;pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;
+    drumStatus.textContent=pianoStatus.textContent=pedalStatus.textContent="Off; releasing sent controls.";
+    permissionEpoch++;window.removeEventListener("deviceorientation",orientation);
+    if(mode==="arming"||mode==="active"||mode==="releasing"){mode="releasing";sample=null;motionStatus.textContent="Releasing…";}
+    else resetMotion("Off.");
+    for(const s of streams){
+      s.epoch++;
+      if(s.mode==="arming"||s.mode==="active"||s.mode==="releasing"){s.mode="releasing";s.sample=null;s.status.textContent="Releasing…";}
+      else resetInertial(s,"Off.");
+    }
+    syncInertialListener();workloadRefusal="";
+    status.textContent="Releasing my controls; unsent inputs canceled…";
+    releaseAllTimer=setTimeout(()=>close("Release not fully acknowledged. Mac cleanup not confirmed. Request a new invitation."),350);
+    syncControls();if(!finishGlobalRelease())tick();
+  }
   // This page is served only with the compatible host implementation.
   const mappingV8=true,mappingLabelsV8=true;
   let mappingStage=null,mappingRows=null,mappingLabels=new Map(),mappingTimer=null,mappingBudget=null;
@@ -371,7 +403,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     return discrete===0?sensors<=3:discrete===1&&sensors<=2;
   }
   function workloadAllows(group){
-    return experimentalWorkload||conservativeCombination(workloadMask()|workloadBits[group]);
+    return !releasingAll&&(experimentalWorkload||conservativeCombination(workloadMask()|workloadBits[group]));
   }
   function requestWorkload(group){
     if(workloadAllows(group)){workloadRefusal="";return true;}
@@ -381,7 +413,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function syncWorkload(){
     const mask=workloadMask();
     get("workloadSection").hidden=!caps;
-    workloadMode.disabled=!admitted||!caps||mask!==0||pending;
+    workloadMode.disabled=!admitted||!caps||mask!==0||pending||releasingAll;
     workloadMode.textContent=experimentalWorkload?"Use conservative combinations":"Enable experimental combinations";
     workloadMode.setAttribute("aria-pressed",String(experimentalWorkload));
     const description=experimentalWorkload?"Experimental combinations. Performance may be interrupted.":"Conservative combinations. No physical latency guarantee.";
@@ -572,7 +604,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }
   }
   async function startInertial(s){
-    if(!admitted||!caps?.[s.kind]||s.mode!=="idle"||streams.some(x=>x.mode==="requesting")||mode==="requesting")return;
+    if(releasingAll||!admitted||!caps?.[s.kind]||s.mode!=="idle"||streams.some(x=>x.mode==="requesting")||mode==="requesting")return;
     if(!window.isSecureContext||typeof window.DeviceMotionEvent==="undefined"){s.status.textContent="DeviceMotion unavailable.";return;}
     if(!requestWorkload(s.kind))return;
     const epoch=++s.epoch;s.mode="requesting";s.status.textContent="Waiting for permission…";syncControls();
@@ -592,7 +624,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function syncControls(){
     pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncWorkload();
-    const asking=mode==="requesting"||streams.some(s=>s.mode==="requesting");
+    releaseAll.disabled=!admitted||!caps||releasingAll;
+    const asking=releasingAll||mode==="requesting"||streams.some(s=>s.mode==="requesting");
+    if(releasingAll){drumEnable.disabled=true;pianoEnable.disabled=true;pedalEnable.disabled=true;}
     motionStart.disabled=!admitted||!caps?.tilt||mode!=="idle"||asking;
     for(const s of streams){s.start.disabled=!admitted||!caps?.[s.kind]||s.mode!=="idle"||asking;s.stop.disabled=!admitted||s.mode==="idle"||s.mode==="releasing";}
     motionStop.disabled=!admitted||mode==="idle"||mode==="releasing";
@@ -613,7 +647,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(neutral){let delta=((beta-neutral.beta+540)%360)-180;meter.value=Math.max(0,Math.min(1,0.5+delta/90));}
   }
   async function startMotion(){
-    if(!admitted||!caps?.tilt||mode!=="idle"||streams.some(s=>s.mode==="requesting"))return;
+    if(releasingAll||!admitted||!caps?.tilt||mode!=="idle"||streams.some(s=>s.mode==="requesting"))return;
     if(!window.isSecureContext||typeof window.DeviceOrientationEvent==="undefined"){
       motionStatus.textContent="Orientation unavailable in this secure browser.";return;
     }
@@ -638,7 +672,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
-    const old=ws;ws=null;admitted=false;caps=null;clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
+    const old=ws;ws=null;admitted=false;caps=null;releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
     if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();syncControls();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
@@ -680,6 +714,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(pianoQueue.length&&now-pianoQueue[0].at>=150){close("Piano input delayed. Reconnect explicitly.");return;}
     if(pedalQueue.length&&now-pedalQueue[0].at>=150){close("Pedal input delayed. Reconnect explicitly.");return;}
     if(pending)return;
+    if(releasingAll&&finishGlobalRelease())return;
     // Bound sends before dequeue, including releases.
     if(now-lastSend<13){if(paceTimer===null)paceTimer=setTimeout(()=>{paceTimer=null;tick();},13-(now-lastSend));return;}
     // Release takes precedence over new samples; one frame per ACK.
@@ -691,6 +726,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(mode==="releasing")releases.push({due:due(lastTiltSend),run:()=>send("motionRelease")});
     for(const s of streams)if(s.mode==="releasing")releases.push({due:due(s.last),run:()=>send(s.kind+"Release")});
     if(releases.length){releases.reduce((a,b)=>a.due<=b.due?a:b).run();return;}
+    if(releasingAll){close("Release state incomplete. Mac cleanup not confirmed. Request a new invitation.");return;}
     const ready=[];
     if(pedalQueue.length&&now-lastPedalSend>=25)ready.push({last:lastPedalSend,edge:pedalQueue[0].at,run:()=>sendPedals(pedalQueue.shift().snapshot)});
     else if(!pedalQueue.length&&pedalMask!==0&&now-lastPedalSend>=50)ready.push({last:lastPedalSend,run:()=>{pedalDirty=false;sendPedals(pedalSnapshot());}});
@@ -758,7 +794,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         if(kind===s.kind+"Arm"&&s.mode==="arming"){s.mode="active";s.status.textContent="Active. Release when finished.";}
         if(kind===s.kind+"Release")resetInertial(s,"Released.");
       }
-      syncControls();tick();
+      syncControls();if(!finishGlobalRelease())tick();
     };
     socket.onerror=()=>{key.fill(0);if(ws===socket)close("TLS or connection failed. Do not bypass certificate validation.");};
     socket.onclose=()=>{key.fill(0);if(ws===socket)close("Disconnected. Request a new invitation.");};
@@ -771,7 +807,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     dot.hidden=false;dot.style.left=(position.x*100)+"%";dot.style.top=((1-position.y)*100)+"%";return true;
   }
   pad.addEventListener("pointerdown",e=>{
-    if(!admitted||!caps?.touch||pointer!==null||e.button!==0)return;
+    if(releasingAll||!admitted||!caps?.touch||pointer!==null||e.button!==0)return;
     if(!requestWorkload("touch"))return;
     e.preventDefault();pointer=e.pointerId;try{pad.setPointerCapture(pointer);}catch{close("Pointer capture failed.");return;}
     if(!move(e))return;syncControls();queueTouch("touch",{...position});
@@ -786,7 +822,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   // let host disconnect/watchdog release already delivered owners.
   for(const event of ["pointercancel","lostpointercapture"])pad.addEventListener(event,e=>{if(e.pointerId===pointer)close("Touch cancelled. Reconnect explicitly.");});
   drumEnable.addEventListener("click",()=>{
-    if(!admitted||!caps?.drums)return;
+    if(releasingAll||!admitted||!caps?.drums)return;
     if(!drumEnabled&&!requestWorkload("drums"))return;
     drumEnabled=!drumEnabled;
     if(!drumEnabled)releaseDrums();
@@ -807,7 +843,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     b.addEventListener("blur",()=>drumUp("k"+index));
   });
   pianoEnable.addEventListener("click",()=>{
-    if(!admitted||!caps?.piano)return;
+    if(releasingAll||!admitted||!caps?.piano)return;
     if(!pianoEnabled&&!requestWorkload("piano"))return;
     pianoEnabled=!pianoEnabled;
     if(!pianoEnabled)releasePiano();
@@ -831,7 +867,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     b.addEventListener("blur",()=>pianoUp("k"+i));
   });
   pedalEnable.addEventListener("click",()=>{
-    if(!admitted||!caps?.pedals)return;
+    if(releasingAll||!admitted||!caps?.pedals)return;
     if(!pedalEnabled&&!requestWorkload("pedals"))return;
     pedalEnabled=!pedalEnabled;
     if(!pedalEnabled)releasePedals();
@@ -842,9 +878,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   pedalToggles.forEach((b,i)=>b.addEventListener("click",()=>pedalToggle(i)));
   pedalSliders.forEach((b,i)=>b.addEventListener("input",()=>pedalMove(i)));
   workloadMode.addEventListener("click",()=>{
-    if(!admitted||!caps||workloadMask()!==0||pending)return;
+    if(releasingAll||!admitted||!caps||workloadMask()!==0||pending)return;
     experimentalWorkload=!experimentalWorkload;workloadRefusal="";syncControls();
   });
+  releaseAll.addEventListener("click",releaseMyControls);
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);
   for(const s of streams){s.start.addEventListener("click",()=>startInertial(s));s.stop.addEventListener("click",()=>stopInertial(s));}
