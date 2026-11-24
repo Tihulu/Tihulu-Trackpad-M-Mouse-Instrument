@@ -142,6 +142,10 @@ public final class MIDIHapticService: @unchecked Sendable {
     private let renderFence = HapticSourceFence()
     private var inputHapticsEnabled = true
 
+    private enum OutgoingNoteOwner: Hashable {
+        case touch(TouchKey), legacyTouch, performance(NoteKey)
+    }
+    private var noteOwners = LegacyNoteOwners<OutgoingNoteOwner>()
     private var outgoingTouches: [TouchKey: OutgoingTouch] = [:]
     private var touchOutputNote: Int?
     private var touchOutputChannel = 0
@@ -242,6 +246,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         renderFence.revoke()
         releaseAllOutgoingSustain()
         endAllTouchOutput()
+        sendOwnedNotes(noteOwners.releaseAll())
 
         lock.lock()
         enabled = false
@@ -280,6 +285,15 @@ public final class MIDIHapticService: @unchecked Sendable {
         inputHapticsEnabled = enabled
         lock.unlock()
         if !enabled { renderFence.drain() }
+    }
+
+    // Called from the existing serialized outgoing MIDI path. Incoming
+    // CoreMIDI notes have a separate ledger and never enter these owners.
+    private func sendOwnedNotes(_ commands: [SensorCommand]) {
+        for c in commands {
+            sendMIDI1(status:(c.value == 0 ? 0x80 : 0x90) | c.destination.channel,
+                      data1:c.destination.number,data2:c.value)
+        }
     }
 
     public func sendTouchStates(
@@ -328,7 +342,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         let releasedKeys = outgoingTouches.keys.filter { !desiredKeys.contains($0) }
         for key in releasedKeys {
             guard let outgoing = outgoingTouches.removeValue(forKey: key) else { continue }
-            sendMIDI1(status: 0x80 | outgoing.channel, data1: outgoing.note, data2: 0)
+            sendOwnedNotes(noteOwners.release(.touch(key)))
             if outgoing.fretless {
                 sendPitchBend(8192, channel: outgoing.channel)
             }
@@ -365,14 +379,14 @@ public final class MIDIHapticService: @unchecked Sendable {
 
                 if let existing = outgoingTouches[key] {
                     if existing.note != anchor || !existing.fretless {
-                        sendMIDI1(status: 0x80 | existing.channel, data1: existing.note, data2: 0)
+                        sendOwnedNotes(noteOwners.release(.touch(key)))
                         sendPitchBendRange(semitones: bendRange, channel: channel)
-                        sendMIDI1(status: 0x90 | channel, data1: anchor, data2: state.velocity)
+                        sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity))))
                         outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true)
                     }
                 } else {
                     sendPitchBendRange(semitones: bendRange, channel: channel)
-                    sendMIDI1(status: 0x90 | channel, data1: anchor, data2: state.velocity)
+                    sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity))))
                     outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true)
                 }
 
@@ -387,12 +401,12 @@ public final class MIDIHapticService: @unchecked Sendable {
                 let note = max(0, min(127, state.quantizedMIDI))
                 if let existing = outgoingTouches[key] {
                     if existing.note != note || existing.fretless {
-                        sendMIDI1(status: 0x80 | existing.channel, data1: existing.note, data2: 0)
-                        sendMIDI1(status: 0x90 | channel, data1: note, data2: state.velocity)
+                        sendOwnedNotes(noteOwners.release(.touch(key)))
+                        sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:note,velocity:max(1,min(127,state.velocity))))
                         outgoingTouches[key] = .init(note: note, channel: channel, fretless: false)
                     }
                 } else {
-                    sendMIDI1(status: 0x90 | channel, data1: note, data2: state.velocity)
+                    sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:note,velocity:max(1,min(127,state.velocity))))
                     outgoingTouches[key] = .init(note: note, channel: channel, fretless: false)
                 }
             }
@@ -411,8 +425,8 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     public func endAllTouchOutput() {
-        for (_, outgoing) in outgoingTouches {
-            sendMIDI1(status: 0x80 | outgoing.channel, data1: outgoing.note, data2: 0)
+        for (key, outgoing) in outgoingTouches {
+            sendOwnedNotes(noteOwners.release(.touch(key)))
             if outgoing.fretless {
                 sendPitchBend(8192, channel: outgoing.channel)
             }
@@ -592,7 +606,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     /// Sends an explicit note from the Touch Bar or on-screen performance strip.
-    /// A direct note-off (not zero-velocity note-on) is sent for every release.
+    /// A direct note-off is sent when the last owner of the note releases.
     public func sendPerformanceNote(note: Int, velocity: Int, isOn: Bool, channel: Int) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
@@ -601,11 +615,12 @@ public final class MIDIHapticService: @unchecked Sendable {
         let safeNote = max(0, min(127, note))
         let safeVelocity = max(0, min(127, velocity))
         let safeChannel = max(0, min(15, channel))
-        sendMIDI1(
-            status: (isOn ? 0x90 : 0x80) | safeChannel,
-            data1: safeNote,
-            data2: isOn ? safeVelocity : 0
-        )
+        let owner = OutgoingNoteOwner.performance(.init(channel:safeChannel,note:safeNote))
+        if isOn && safeVelocity > 0 {
+            sendOwnedNotes(noteOwners.press(owner,channel:safeChannel,note:safeNote,velocity:safeVelocity))
+        } else {
+            sendOwnedNotes(noteOwners.release(owner))
+        }
     }
 
     public func sendChannelPressure(_ value: Int, channel: Int) {
@@ -647,7 +662,7 @@ public final class MIDIHapticService: @unchecked Sendable {
                 touchOutputChannel = safeChannel
                 touchOutputFretless = true
                 sendPitchBendRange(semitones: 12, channel: safeChannel)
-                sendMIDI1(status: 0x90 | safeChannel, data1: centerNote, data2: safeVelocity)
+                sendOwnedNotes(noteOwners.press(.legacyTouch,channel:safeChannel,note:centerNote,velocity:safeVelocity))
                 touchOutputNote = centerNote
             }
 
@@ -660,15 +675,15 @@ public final class MIDIHapticService: @unchecked Sendable {
                 endTouchOutput()
                 touchOutputChannel = safeChannel
                 touchOutputFretless = false
-                sendMIDI1(status: 0x90 | safeChannel, data1: note, data2: safeVelocity)
+                sendOwnedNotes(noteOwners.press(.legacyTouch,channel:safeChannel,note:note,velocity:safeVelocity))
                 touchOutputNote = note
             }
         }
     }
 
     public func endTouchOutput() {
-        guard let note = touchOutputNote else { return }
-        sendMIDI1(status: 0x80 | touchOutputChannel, data1: note, data2: 0)
+        guard touchOutputNote != nil else { return }
+        sendOwnedNotes(noteOwners.release(.legacyTouch))
         if touchOutputFretless {
             sendPitchBend(8192, channel: touchOutputChannel)
         }
