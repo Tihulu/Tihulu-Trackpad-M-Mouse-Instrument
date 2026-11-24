@@ -38,20 +38,25 @@ public struct AirDualHandPerformance: Sendable {
     }
 
     /// Shared routing for live camera and synthetic frame debugging.
-    static func route(slot: Int, previous: Int?, helper: AirHandSample,
+    static func route(slot: Int?, previous: Int?, helper: AirHandSample,
                       session: UUID, time: Double, router: inout SensorRouter,
                       sequence: inout UInt64) -> [SensorCommand] {
-        guard (1...5).contains(slot) else { return [] }
+        guard slot.map({ (1...5).contains($0) }) ?? true else { return [] }
         var commands: [SensorCommand] = []
         if let previous, previous != slot, (1...5).contains(previous) {
             commands += router.releaseSignal(session: session, signal: signals[previous - 1])
         }
-        for (signal,value): (SensorSignal,Double) in [(.x,helper.x),(.y,helper.y),(.gesture,helper.aperture),(.contact,1)] {
+        if slot == nil && previous != nil {
+            commands += router.releaseSignal(session: session, signal: .contact)
+        }
+        var values: [(SensorSignal,Double)] = [(.x,helper.x),(.y,helper.y),(.gesture,helper.aperture)]
+        if slot != nil { values.append((.contact,1)) }
+        for (signal,value) in values {
             sequence &+= 1
             commands += router.ingest(.init(session: session, signal: signal, value: value,
                                              sequence: sequence, timestamp: time), now: time)
         }
-        if previous != slot {
+        if let slot, previous != slot {
             sequence &+= 1
             commands += router.ingest(.init(session: session, signal: signals[slot - 1], value: 1,
                                              sequence: sequence, timestamp: time), now: time)
@@ -63,6 +68,37 @@ public struct AirDualHandPerformance: Sendable {
         guard signals.contains(route.signal) else { return true }
         return route.source == .camera && route.destination.kind == .note &&
             (route.calibration.apply(1) ?? -1) >= route.threshold
+    }
+
+    public static let helperSignals: Set<SensorSignal> = [.x,.y,.gesture]
+
+    public static func hasHelperRoutes(_ routes: [SensorMapping]) -> Bool {
+        routes.contains { $0.source == .camera && helperSignals.contains($0.signal) &&
+            ContinuousResponse.isContinuous($0.destination) }
+    }
+
+    /// In dual-hand mode the free helper axes must never trigger a note.
+    public static func permitsCombination(_ routes: [SensorMapping]) -> Bool {
+        guard routes.contains(where: { $0.source == .camera && signals.contains($0.signal) }) else { return true }
+        return routes.allSatisfy { route in
+            guard route.source == .camera && helperSignals.contains(route.signal) else { return true }
+            return ContinuousResponse.isContinuous(route.destination)
+        }
+    }
+
+    public static func helperRoutes(channel: Int = 0) -> [SensorMapping] {
+        guard (0...15).contains(channel) else { return [] }
+        return [
+            .init(id: "air-helper-bend-\(channel)", source: .camera, signal: .x,
+                  destination: .init(.pitchBend, channel: channel),
+                  response: .init(smoothingMS: 25)),
+            .init(id: "air-helper-expression-\(channel)", source: .camera, signal: .y,
+                  destination: .init(.controlChange, channel: channel, number: 11),
+                  response: .init(smoothingMS: 35)),
+            .init(id: "air-helper-wah-\(channel)", source: .camera, signal: .gesture,
+                  destination: .init(.controlChange, channel: channel, number: 74),
+                  response: .init(smoothingMS: 30))
+        ]
     }
 
     public static func routes(channel: Int = 0) -> [SensorMapping] {
