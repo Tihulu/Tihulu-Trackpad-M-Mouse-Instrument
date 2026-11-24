@@ -184,9 +184,12 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     public func start(shortcut: PerformanceCaptureShortcut, requestPermissions: Bool = false) throws {
         setShortcut(shortcut)
         lock.lock()
-        let alreadyListening = listening
+        let existingPort = listening ? eventTap : nil
         lock.unlock()
-        if alreadyListening { return }
+        if let existingPort {
+            if CGEvent.tapIsEnabled(tap: existingPort) { return }
+            stop()
+        }
 
         guard AXIsProcessTrusted() else {
             // The click-sustain monitor can be started while pointer capture is
@@ -327,6 +330,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         inputThread = nil
         listening = false
         captured = false
+        captureHotkeyEnabled = false
         // Retain the last failure reason for diagnosis; do not erase it.
         lock.unlock()
 
@@ -414,6 +418,10 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             if matches && hotkeyEnabled {
                 if type == .keyDown, !repeatKey {
                     lock.lock()
+                    guard listening && captureHotkeyEnabled && shortcut.matches(event) else {
+                        lock.unlock()
+                        return passthrough
+                    }
                     shortcutMatches &+= 1
                     captured.toggle()
                     let newCaptureState = captured
