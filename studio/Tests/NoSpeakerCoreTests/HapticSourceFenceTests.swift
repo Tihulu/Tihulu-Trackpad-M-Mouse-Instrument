@@ -62,3 +62,31 @@ import Testing
     fence.drain()
     #expect(fence.submit(next) {})
 }
+
+
+@Test func sourceFenceDrainWaitsForSubmissionWithoutRevokingLease() throws {
+    let fence = HapticSourceFence()
+    let token = fence.begin()
+    let entered = DispatchSemaphore(value:0)
+    let release = DispatchSemaphore(value:0)
+    let attempting = DispatchSemaphore(value:0)
+    let drained = DispatchSemaphore(value:0)
+    defer { release.signal() }
+    Thread.detachNewThread {
+        fence.submit(token) {
+            entered.signal()
+            _ = release.wait(timeout:.now()+5)
+        }
+    }
+    try #require(entered.wait(timeout:.now()+5) == .success)
+    Thread.detachNewThread {
+        attempting.signal()
+        fence.drain()
+        drained.signal()
+    }
+    try #require(attempting.wait(timeout:.now()+5) == .success)
+    #expect(drained.wait(timeout:.now() + .milliseconds(50)) == .timedOut)
+    release.signal()
+    try #require(drained.wait(timeout:.now()+5) == .success)
+    #expect(fence.submit(token) {})
+}

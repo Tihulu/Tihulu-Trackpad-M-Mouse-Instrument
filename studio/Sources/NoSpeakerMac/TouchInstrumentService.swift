@@ -143,6 +143,14 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) }
     }
 
+    // Volume-only changes do not discard held voices. All other changes
+    // conservatively invalidate old mapped states and pending percussion.
+    func requiresHapticReset(comparedTo previous: Self) -> Bool {
+        var old = previous
+        old.masterLevel = masterLevel
+        return old != self
+    }
+
     public var hasValidSampleDomain: Bool {
         TouchSampleDomain.validConfiguration(root:baseMIDINote,width:zoneWidth,span:pitchSpanSemitones,
                                              threshold:pressThreshold,level:masterLevel)
@@ -227,6 +235,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
     private var configuration = TouchInstrumentConfiguration()
     private var sampleRevision: UInt64 = 0
+    private var renderRevision: UInt64 = 0
     private var frameSequence: UInt64 = 0
     private var publicationSequence: UInt64 = 0
     private var lastFrameBySurface: [TouchSurfaceKind:UInt64] = [:]
@@ -244,6 +253,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     // Accessed only on the serial render queue.
     private var drumPriorityUntil = 0.0
     private var drumRenderToken: UUID?
+    private var drumRenderRevision: UInt64?
     private var renderTimer: DispatchSourceTimer?
     private let renderFence = HapticSourceFence()
     private let renderQueue = DispatchQueue(
@@ -265,13 +275,14 @@ public final class TouchInstrumentService: @unchecked Sendable {
     public func startStampedPreview(configuration: TouchInstrumentConfiguration,
         onPerformance: @escaping @Sendable ([TouchPerformanceState],TouchSnapshotStamp) -> Void) throws {
         lock.lock()
-        applyConfigurationLocked(configuration)
+        let changed = applyConfigurationLocked(configuration)
         self.performanceHandler = onPerformance
         let needsStart = !monitoring
         let token = needsStart ? UUID() : monitoringToken
         monitoringToken = token
         monitoring = true
         lock.unlock()
+        if changed { renderFence.drain() }
 
         guard needsStart, let token else { return }
 
@@ -302,21 +313,30 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
     public func update(configuration: TouchInstrumentConfiguration) {
         lock.lock()
-        applyConfigurationLocked(configuration)
+        let changed = applyConfigurationLocked(configuration)
         lock.unlock()
+        // Never hold the state lock while draining the source fence.
+        if changed { renderFence.drain() }
     }
 
     // Caller holds lock. Invalid settings cannot retain old cached notes.
-    private func applyConfigurationLocked(_ next: TouchInstrumentConfiguration) {
-        if configuration != next { invalidateSamplesLocked() }
-        configuration = next
-        if !next.hasValidSampleDomain || next.mappedMIDINotes.isEmpty {
+    private func applyConfigurationLocked(_ next: TouchInstrumentConfiguration) -> Bool {
+        let changed = configuration != next
+        if changed {
+            invalidateSamplesLocked()
+            renderRevision &+= 1
+        }
+        if next.requiresHapticReset(comparedTo:configuration) ||
+            !next.hasValidSampleDomain || next.mappedMIDINotes.isEmpty {
             latestStatesBySurface.removeAll()
             liveHapticStates.removeAll()
             sustainedHapticStates.removeAll()
             activeDrumContacts.removeAll()
             pendingDrumHits.removeAll()
+            sustainActive = false
         }
+        configuration = next
+        return changed
     }
 
     public var currentSampleRevision: UInt64 {
@@ -338,7 +358,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     public func setActive(_ active: Bool) {
         if !active { renderFence.revoke() }
         lock.lock()
-        if self.active != active { invalidateSamplesLocked() }
+        if self.active != active { invalidateSamplesLocked(); renderRevision &+= 1 }
         self.active = active
         if !active {
             sustainActive = false
@@ -368,6 +388,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
     /// the last finger lifts. No playback is performed while Preview is idle.
     public func setSustainActive(_ isOn: Bool) {
         lock.lock()
+        let changed = sustainActive != isOn
+        if changed { renderRevision &+= 1 }
         sustainActive = isOn
         if isOn {
             for state in liveHapticStates where configuration.output(for: state.surface).sendsHaptics && configuration.instrument(for: state.surface) == .melodic {
@@ -377,6 +399,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             sustainedHapticStates.removeAll()
         }
         lock.unlock()
+        if changed && !isOn { renderFence.drain() }
     }
 
     public func stopPreview() {
@@ -525,25 +548,26 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
     private func renderHapticFrame(token: UUID) {
         var snapshot: (TouchInstrumentConfiguration, [TouchPerformanceState],
-                        [String: TouchPerformanceState], Bool, [HapticFrame])?
+                        [String: TouchPerformanceState], Bool, [HapticFrame], UInt64)?
         renderFence.submit(token) {
             lock.lock()
             defer { lock.unlock() }
             guard active && configuration.localHapticSound else { return }
             snapshot = (configuration, liveHapticStates, sustainedHapticStates,
-                        sustainActive, pendingDrumHits)
+                        sustainActive, pendingDrumHits, renderRevision)
             pendingDrumHits.removeAll(keepingCapacity: true)
         }
-        guard let (config, current, sustained, isSustained, hits) = snapshot else { return }
-        if drumRenderToken != token {
+        guard let (config, current, sustained, isSustained, hits, revision) = snapshot else { return }
+        if drumRenderToken != token || drumRenderRevision != revision {
             drumRenderToken = token
+            drumRenderRevision = revision
             drumPriorityUntil = 0
         }
 
         let now = ProcessInfo.processInfo.systemUptime
         if !hits.isEmpty {
             for hit in hits {
-                guard submitFrame(hit, level: config.masterLevel, token: token) else { return }
+                guard submitFrame(hit, level: config.masterLevel, token: token, revision:revision) else { return }
             }
             drumPriorityUntil = now + (hits.map(\.durationMS).max() ?? 0) / 1000
             return
@@ -585,18 +609,23 @@ public final class TouchInstrumentService: @unchecked Sendable {
             tones: tones,
             durationMS: 28,
             level: min(1, max(0.15, level) * config.masterLevel)
-        ), level: 1, token: token)
+        ), level: 1, token: token, revision:revision)
     }
 
     @discardableResult
-    private func submitFrame(_ frame: HapticFrame, level: Double, token: UUID) -> Bool {
+    private func submitFrame(_ frame: HapticFrame, level: Double, token: UUID, revision: UInt64) -> Bool {
+        var submitted = false
         renderFence.submit(token) {
             lock.lock()
-            let allowed = active && configuration.localHapticSound
+            let allowed = active && configuration.localHapticSound && renderRevision == revision
             lock.unlock()
             guard allowed else { return }
-            try? driver.play(frame, masterLevel: level)
+            do {
+                try driver.play(frame, masterLevel: level)
+                submitted = true
+            } catch { return }
         }
+        return submitted
     }
 }
 #endif

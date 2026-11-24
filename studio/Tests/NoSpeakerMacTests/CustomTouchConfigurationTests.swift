@@ -38,4 +38,19 @@ import NoSpeakerCore
     config.zoneWidth = 1
     #expect(!config.mappedMIDINotes.isEmpty)
 }
+
+@Test func touchHapticResetDistinguishesVolumeFromMappingChanges() {
+    let previous = TouchInstrumentConfiguration()
+    var next = previous
+    next.masterLevel = 0.3
+    #expect(!next.requiresHapticReset(comparedTo:previous))
+    next.baseMIDINote = 60
+    #expect(next.requiresHapticReset(comparedTo:previous))
+    next = previous
+    next.fretless.toggle()
+    #expect(next.requiresHapticReset(comparedTo:previous))
+    next = previous
+    next.trackpadOutput = .midiInstrument
+    #expect(next.requiresHapticReset(comparedTo:previous))
+}
 #endif
