@@ -76,3 +76,15 @@ import Testing
     #expect(abs(frame.tones[0].frequencyHz - nominal * pow(2, 25.0/1200)) < 0.000001)
     #expect(NoteHapticRenderer.frame(notes: [60], velocity: 100, centsByPitchClass: [0:100]) == nil)
 }
+
+@Test func exactCentsImportRejectsUnrepresentableDegreesAndRoundTrips() throws {
+    let scale = try #require(CustomScale.fromDegreeCents("0, 181, 355, 500, 700, 929, 1100, 1200",name:"Experiment"))
+    #expect(scale.intervals == [0,2,4,5,7,9,11])
+    #expect(scale.centOffsets == [2:-19,4:-45,9:29])
+    #expect(scale.degreeCents == [0,181,355,500,700,929,1100])
+    let text = scale.degreeCents.map(String.init).joined(separator:",")
+    #expect(CustomScale.fromDegreeCents(text,name:scale.name) == scale)
+    for invalid in ["0,50,100","0,10,100","0,101,120","0,200,100","0,1200","0,1180","0,NaN","0,200,200","-1,200"] {
+        #expect(CustomScale.fromDegreeCents(invalid,name:"Invalid") == nil)
+    }
+}

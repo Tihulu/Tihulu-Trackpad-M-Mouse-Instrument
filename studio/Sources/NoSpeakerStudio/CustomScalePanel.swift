@@ -6,6 +6,8 @@ struct CustomScalePanel: View {
     @EnvironmentObject private var studio: StudioController
     @State private var draft = CustomScale()
     @State private var editing = false
+    @State private var centsText = ""
+    @State private var centsError = ""
 
     var body: some View {
         GroupBox("Scale & tuning editor") {
@@ -17,6 +19,8 @@ struct CustomScalePanel: View {
                         var next = CustomScale()
                         next.intervals = studio.chordBank.scale.intervals
                         draft = studio.chordBank.customScale ?? next
+                        centsText = draft.degreeCents.map(String.init).joined(separator:", ")
+                        centsError = ""
                         editing = true
                     }
                     if studio.chordBank.customScale != nil {
@@ -49,6 +53,28 @@ struct CustomScalePanel: View {
                 TextField("Scale name", text: $draft.name)
                 Text("Select at least two degrees including the root. Adjust each selected degree by ±49 cents from its nominal semitone.")
                     .font(.caption).foregroundStyle(.secondary)
+                GroupBox("Import exact degree cents") {
+                    VStack(alignment:.leading,spacing:6) {
+                        TextField("0, 200, 375, 500, 700, 900, 1100",text:$centsText)
+                        HStack {
+                            Button("Use cents list") {
+                                guard let next = CustomScale.fromDegreeCents(centsText,name:draft.name,
+                                    allowEqualTemperedMIDI:draft.allowEqualTemperedMIDI) else {
+                                    centsError = "Not representable losslessly. Use distinct semitone anchors, ±49 cents; for dense or 50-cent steps use custom string frets."
+                                    return
+                                }
+                                draft = next; centsError = ""
+                            }
+                            Button("Copy current degrees into field") {
+                                centsText = draft.degreeCents.map(String.init).joined(separator:", ")
+                                centsError = ""
+                            }
+                        }
+                        if !centsError.isEmpty { Text(centsError).font(.caption).foregroundStyle(.orange) }
+                        Text("Increasing root-relative integer cents, starting at 0. Optional final 1200. No automatic rounding or makam claim.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(4)
+                }
                 ScrollView {
                     VStack(spacing: 6) {
                         ForEach(0..<12, id: \.self) { degree in degreeRow(degree) }
