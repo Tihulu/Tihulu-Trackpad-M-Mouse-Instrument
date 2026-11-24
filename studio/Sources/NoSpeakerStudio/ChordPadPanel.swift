@@ -91,46 +91,10 @@ struct ChordPadPanel: View {
                     }.padding(8).disabled(studio.chordArmed)
                 }
             } else {
-                Text(studio.chordBank.scale.rawValue + " · " + studio.chordBank.effectiveOutput.rawValue + " · " + (studio.chordBank.latch ? "Latch" : "Timed gate") + " · Ch " + String(studio.chordBank.channel))
+                Text(compactSummary)
                     .font(.caption).foregroundStyle(.secondary)
             }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: compact ? 8 : 4), spacing: 8) {
-                ForEach(0..<ChordBank.padCount, id: \.self) { slot in
-                    if let pad = studio.chordBank.pad(at: slot) {
-                        VStack(spacing: 4) {
-                            Button { studio.triggerChordPad(slot) } label: {
-                                VStack(spacing: 4) {
-                                    Text(pad.name).font(.headline).lineLimit(1)
-                                    if !compact { Text(pad.noteNames).font(.caption).lineLimit(2) }
-                                    Text(studio.chordBank.overrides[slot] == nil ? "Pad \(slot + 1)" : "Custom \(slot + 1)")
-                                        .font(.caption2)
-                                }.frame(maxWidth: .infinity, minHeight: compact ? 38 : 64)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(studio.chordActiveSlots.contains(slot) ? .green : .accentColor)
-                            .disabled(!studio.chordArmed)
-                            .accessibilityLabel("Chord pad \(slot + 1), " + pad.name + ", " + pad.noteNames)
-                            if !compact {
-                                HStack {
-                                    Button("Assign") {
-                                        editSlot = slot
-                                        customName = pad.name
-                                        customNotes = pad.notes.map(String.init).joined(separator: ", ")
-                                        editError = ""
-                                    }
-                                    if studio.chordBank.overrides[slot] != nil {
-                                        Button("Reset") {
-                                            var bank = studio.chordBank
-                                            bank.overrides.removeValue(forKey: slot)
-                                            studio.updateChordBank(bank)
-                                        }
-                                    }
-                                }.disabled(studio.chordArmed)
-                            }
-                        }
-                    }
-                }
-            }
+            padGrid
             if !compact {
                 Text("Custom chords stay fixed when you change the scale. Disarm before editing. Settings are saved locally; no notes or output resume on launch.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -152,6 +116,64 @@ struct ChordPadPanel: View {
             }.padding(24).frame(width: 420)
         }
         .onDisappear { studio.releaseChordPads() }
+    }
+
+    private var compactSummary: String {
+        let bank = studio.chordBank
+        return [bank.scale.rawValue, bank.effectiveOutput.rawValue,
+                bank.latch ? "Latch" : "Timed gate", "Ch " + String(bank.channel)].joined(separator: " · ")
+    }
+
+    private var padGrid: some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: compact ? 8 : 4)
+        return LazyVGrid(columns: columns, spacing: 8) {
+            ForEach(0..<ChordBank.padCount, id: \.self) { slot in
+                if let pad = studio.chordBank.pad(at: slot) {
+                    padCell(slot: slot, pad: pad)
+                }
+            }
+        }
+    }
+
+    private func padCell(slot: Int, pad: ChordPad) -> some View {
+        let isCustom = studio.chordBank.overrides[slot] != nil
+        let label = (isCustom ? "Custom " : "Pad ") + String(slot + 1)
+        let active = studio.chordActiveSlots.contains(slot)
+        let accessibility = "Chord pad " + String(slot + 1) + ", " + pad.name + ", " + pad.noteNames
+        return VStack(spacing: 4) {
+            Button { studio.triggerChordPad(slot) } label: {
+                VStack(spacing: 4) {
+                    Text(pad.name).font(.headline).lineLimit(1)
+                    if !compact { Text(pad.noteNames).font(.caption).lineLimit(2) }
+                    Text(label).font(.caption2)
+                }.frame(maxWidth: .infinity, minHeight: compact ? 38 : 64)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(active ? Color.green : Color.accentColor)
+            .disabled(!studio.chordArmed)
+            .accessibilityLabel(accessibility)
+            if !compact {
+                padEditorButtons(slot: slot, pad: pad, isCustom: isCustom)
+            }
+        }
+    }
+
+    private func padEditorButtons(slot: Int, pad: ChordPad, isCustom: Bool) -> some View {
+        HStack {
+            Button("Assign") {
+                editSlot = slot
+                customName = pad.name
+                customNotes = pad.notes.map(String.init).joined(separator: ", ")
+                editError = ""
+            }
+            if isCustom {
+                Button("Reset") {
+                    var bank = studio.chordBank
+                    bank.overrides.removeValue(forKey: slot)
+                    studio.updateChordBank(bank)
+                }
+            }
+        }.disabled(studio.chordArmed)
     }
 
     private func saveCustom() {
