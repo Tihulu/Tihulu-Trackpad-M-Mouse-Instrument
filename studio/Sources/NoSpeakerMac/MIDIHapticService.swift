@@ -111,6 +111,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         var note: Int
         var channel: Int
         var fretless: Bool
+        var mpe: Bool
     }
 
     private let driver: HapticTrackpadDriver
@@ -154,6 +155,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     // Main-actor callers serialize outgoing control changes; the service
     // lock protects state shared with the incoming MIDI render path.
     private var sustainOwners = LegacySustainOwners()
+    private var mpeChannels = LegacyMPEChannelPool()
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
 
@@ -342,10 +344,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         let releasedKeys = outgoingTouches.keys.filter { !desiredKeys.contains($0) }
         for key in releasedKeys {
             guard let outgoing = outgoingTouches.removeValue(forKey: key) else { continue }
-            sendOwnedNotes(noteOwners.release(.touch(key)))
-            if outgoing.fretless {
-                sendPitchBend(8192, channel: outgoing.channel)
-            }
+            releaseOutgoingTouch(key,outgoing:outgoing)
         }
 
         for state in desired {
@@ -362,9 +361,8 @@ public final class MIDIHapticService: @unchecked Sendable {
                 // Lower-zone MPE member channels, skipping the GM percussion
                 // channel even when drum and pitched surfaces run together.
                 let used = Set(outgoingTouches.values.map(\.channel))
-                guard let free = (1...15).first(where: {
-                    $0 != GMDrumPads.midiChannel && !used.contains($0)
-                }) else { continue }
+                    .union(noteOwners.active.map(\.channel))
+                guard let free = mpeChannels.next(occupied:used,sustained:outgoingSustainChannels()) else { continue }
                 channel = free
             } else {
                 channel = safeMelodicChannel
@@ -382,12 +380,12 @@ public final class MIDIHapticService: @unchecked Sendable {
                         sendOwnedNotes(noteOwners.release(.touch(key)))
                         sendPitchBendRange(semitones: bendRange, channel: channel)
                         sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity))))
-                        outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true)
+                        outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true, mpe: midiMode == .mpe)
                     }
                 } else {
                     sendPitchBendRange(semitones: bendRange, channel: channel)
                     sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity))))
-                    outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true)
+                    outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true, mpe: midiMode == .mpe)
                 }
 
                 let delta = max(-Double(bendRange),
@@ -403,11 +401,11 @@ public final class MIDIHapticService: @unchecked Sendable {
                     if existing.note != note || existing.fretless {
                         sendOwnedNotes(noteOwners.release(.touch(key)))
                         sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:note,velocity:max(1,min(127,state.velocity))))
-                        outgoingTouches[key] = .init(note: note, channel: channel, fretless: false)
+                        outgoingTouches[key] = .init(note: note, channel: channel, fretless: false, mpe: midiMode == .mpe && !drums)
                     }
                 } else {
                     sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:note,velocity:max(1,min(127,state.velocity))))
-                    outgoingTouches[key] = .init(note: note, channel: channel, fretless: false)
+                    outgoingTouches[key] = .init(note: note, channel: channel, fretless: false, mpe: midiMode == .mpe && !drums)
                 }
             }
 
@@ -424,12 +422,26 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
     }
 
+    private func outgoingSustainChannels() -> Set<Int> {
+        lock.lock(); defer { lock.unlock() }
+        return sustainOwners.active
+    }
+
+    private func releaseOutgoingTouch(_ key: TouchKey, outgoing: OutgoingTouch) {
+        sendOwnedNotes(noteOwners.release(.touch(key)))
+        let neutral = outgoing.mpe
+            ? mpeChannels.retire(channel:outgoing.channel,
+                                 sustained:outgoingSustainChannels().contains(outgoing.channel),
+                                 fretless:outgoing.fretless)
+            : outgoing.fretless
+        if neutral && !noteOwners.active.contains(where:{ $0.channel == outgoing.channel }) {
+            sendPitchBend(8192,channel:outgoing.channel)
+        }
+    }
+
     public func endAllTouchOutput() {
         for (key, outgoing) in outgoingTouches {
-            sendOwnedNotes(noteOwners.release(.touch(key)))
-            if outgoing.fretless {
-                sendPitchBend(8192, channel: outgoing.channel)
-            }
+            releaseOutgoingTouch(key,outgoing:outgoing)
         }
         outgoingTouches.removeAll()
         endTouchOutput()
@@ -438,6 +450,11 @@ public final class MIDIHapticService: @unchecked Sendable {
     private func sendSustainTransitions(_ commands: [SensorCommand]) {
         for command in commands {
             sendControlChange(controller:64,value:command.value,channel:command.destination.channel)
+        }
+        for channel in mpeChannels.pedalChanged(sustained:outgoingSustainChannels()) {
+            if !noteOwners.active.contains(where:{ $0.channel == channel }) {
+                sendPitchBend(8192,channel:channel)
+            }
         }
     }
 
