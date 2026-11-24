@@ -64,6 +64,7 @@ final class StudioController: ObservableObject {
     @Published var patchCameraDeviceID = ""
     @Published var patchCameraOrientation: AirControlOrientation = .upright
     @Published var patchCameraMirrorX = false
+    @Published var patchCameraSwapRoles = false
     @Published private(set) var patchCameraStatus = "Camera OFF"
     @Published private(set) var patchCameraHand: AirHandSample?
     var patchCameraCalibrationAvailable: Bool { patchRunning && patchPhysical && !patchMIDIEnabled && patchCameraHand != nil }
@@ -356,7 +357,9 @@ final class StudioController: ObservableObject {
                     airTracking.reset()
                     patchCameraLastFrame = ProcessInfo.processInfo.systemUptime
                     patchCameraReceivedFrame = false
-                    camera.start(deviceID: patchCameraDeviceID)
+                    camera.start(deviceID: patchCameraDeviceID,
+                                 dualMode: instrumentPatch.routes.contains { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) },
+                                 swapRoles: patchCameraSwapRoles)
                 }
                 if let remoteTransport {
                     patchRemoteBridge = RemoteHostBridge()
@@ -531,12 +534,26 @@ final class StudioController: ObservableObject {
             for event in camera.drain() {
                 guard patchRunning else { return }
                 switch event {
-                case .ready: patchCameraStatus = "Camera running · show one hand"
+                case .ready: patchCameraStatus = "Camera running · show configured hands"
                 case .fault(let message):
                     stopInstrumentPatch()
                     patchCameraStatus = message
                     patchStatus = message
                     return
+                case .dualFrame(let count, let confidence, let helper, let time):
+                    guard now >= time, now - time < 0.25 else {
+                        recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: nil, confidence: 0, helper: nil, hostTime: time, now: now))
+                        patchCameraHand = nil
+                        patchCameraStatus = "Stale dual-hand frame · controls released"
+                        continue
+                    }
+                    patchCameraReceivedFrame = true
+                    patchCameraLastFrame = time
+                    let oriented = helper?.oriented(patchCameraOrientation, mirrorX: patchCameraMirrorX)
+                    patchCameraHand = oriented
+                    patchCameraStatus = count.map { "Chord fingers: \($0) · pinch helper to play" } ?? "Two reliable hands required"
+                    recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: count, confidence: confidence,
+                                                                            helper: oriented, hostTime: time, now: now))
                 case .frame(let hand, let time):
                     guard now >= time, now - time < PhysicalPatchRuntime.timeout else {
                         stopInstrumentPatch()
