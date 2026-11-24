@@ -47,6 +47,9 @@ struct ChordPadPanel: View {
                 Text("Chord Pads").font(compact ? .headline : .largeTitle.bold())
                 Spacer()
                 Text(studio.chordStatus).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                if studio.progressionRunning {
+                    Button("Stop progression") { studio.stopChordProgression() }
+                }
                 Button(studio.chordArmed ? "Disarm" : "Arm Output") {
                     if studio.chordArmed { studio.disarmChordPads() }
                     else { studio.armChordPads() }
@@ -111,6 +114,7 @@ struct ChordPadPanel: View {
             }
             padGrid
             if !compact {
+                ChordProgressionPanel()
                 Text("Custom chords stay fixed when you change the scale. Disarm before editing. Settings are saved locally; no notes or output resume on launch.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -130,7 +134,7 @@ struct ChordPadPanel: View {
                 }
             }.padding(24).frame(width: 420)
         }
-        .onDisappear { studio.releaseChordPads() }
+        .onDisappear { studio.releaseManualChordPadsOnDisappear() }
     }
 
     private var compactSummary: String {
