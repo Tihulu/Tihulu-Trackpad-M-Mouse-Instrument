@@ -345,3 +345,12 @@ test("pace wake cannot resurrect closed connection",()=>{
   const a=setup();a.elements.pad.emit("pointerdown",xyEvent(1));a.elements.pad.emit("pointerup",xyEvent(1));a.ack(1);
   a.window.emit("pagehide");a.step(50);assert.equal(a.socket.frames.length,1);assert.equal(a.socket.closed,true);
 });
+
+test("manifest rejects fractional or exponent bitsets and BOM",()=>{
+  const valid=JSON.stringify(fullManifest);
+  for(const bad of [valid.replace('"drums":255','"drums":254.999999999999999999'),
+    valid.replace('"piano":67108863','"piano":1e-999'),valid.replace('"version":7','"version":7.0'),
+    valid.replace('"pedals":63','"pedals":6.3e1'),"\uFEFF"+valid]){
+    const a=setup("granted",bad);assert.equal(a.socket.closed,true);assert.equal(a.elements.touchSection.hidden,true);
+  }
+});
