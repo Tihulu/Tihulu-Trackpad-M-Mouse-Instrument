@@ -53,3 +53,99 @@ private func capacityPair(_ runtime: inout PhysicalPatchRuntime, _ source: Senso
     _ = runtime.stop()
     #expect(runtime.reservedRemoteSessions == 0)
 }
+
+
+private func budgetFrame(_ sequence: Int, _ version: Int, _ kind: String, _ payload: String = "") -> Data {
+    Data(("{\"version\":\(version),\"sequence\":\(sequence),\"kind\":\"\(kind)\"" + payload + "}").utf8)
+}
+
+@Test func remoteBudgetActuallyAllocatesAllSixteenSessionsAndPreservesSharedNote() throws {
+    let note = SensorDestination(.note,number:60)
+    let locals: [SensorMapping] = [
+        .init(id:"local-trackpad",source:.trackpad,signal:.contact,destination:note),
+        .init(id:"local-mouse",source:.magicMouse,signal:.contact,destination:note),
+        .init(id:"local-lid",source:.lid,signal:.angle,destination:.init(.controlChange,number:20)),
+        .init(id:"local-bar",source:.touchBar,signal:.x,destination:.init(.controlChange,number:21)),
+        .init(id:"local-camera",source:.camera,signal:.contact,destination:note)
+    ]
+    var runtime = PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:capacityRoutes(.phone,all:true) + capacityRoutes(.tablet,all:false) + locals),allowRemote:true)
+    let phone = try capacityPair(&runtime,.phone,1)
+    let tablet = try capacityPair(&runtime,.tablet,1.01)
+    #expect(runtime.reservedRemoteSessions == 11)
+    #expect(runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1.02,now:1.02) == [.init(note,value:100)])
+    #expect(runtime.receive(source:.magicMouse,x:0.5,y:0.5,size:0.5,hostTime:1.02,now:1.02).isEmpty)
+    _ = runtime.receiveScalar(source:.lid,value:0.5,hostTime:1.02,now:1.02)
+    _ = runtime.receiveScalar(source:.touchBar,value:0.5,hostTime:1.02,now:1.02)
+    let hand = try #require(AirHandSample(thumb:.init(x:0.2,y:0.4,confidence:1),
+        index:.init(x:0.3,y:0.4,confidence:1),wrist:.init(x:0.3,y:0.1,confidence:1),
+        middleBase:.init(x:0.3,y:0.3,confidence:1)))
+    #expect(runtime.receiveHand(hand,hostTime:1.02,now:1.02).isEmpty)
+    #expect(runtime.activeRouterSessionCount == 5)
+    let touch = ",\"x\":0.5,\"y\":0.5"
+    let tilt = ",\"alpha\":0,\"beta\":0,\"gamma\":0"
+    let tilted = ",\"alpha\":0,\"beta\":20,\"gamma\":0"
+    let accel = ",\"x\":10,\"y\":0,\"z\":0"
+    let rotation = ",\"x\":180,\"y\":0,\"z\":0"
+    let frames = [
+        budgetFrame(1,1,"touch",touch),budgetFrame(2,2,"orientationArm",tilt),
+        budgetFrame(3,2,"orientation",tilted),budgetFrame(4,3,"accelerationArm",accel),
+        budgetFrame(5,3,"acceleration",accel),budgetFrame(6,3,"rotationArm",rotation),
+        budgetFrame(7,3,"rotation",rotation)
+    ]
+    for (i,frame) in frames.enumerated() {
+        let result = runtime.receiveRemote(phone,bytes:frame,now:1.03+Double(i)*0.01)
+        if case .accepted = result {} else { Issue.record("Phone stream refused") }
+    }
+    for (i,frame) in [
+        budgetFrame(8,4,"drumPads",",\"mask\":1"),
+        budgetFrame(9,5,"pianoKeys",",\"mask\":1"),
+        budgetFrame(10,6,"pedalboard",",\"mask\":1,\"levels\":[0.5,0,0,0,0,0]")
+    ].enumerated() {
+        if case .accepted = runtime.receiveRemote(phone,bytes:frame,now:1.10+Double(i)*0.01) {} else { Issue.record("Phone discrete stream refused") }
+    }
+    #expect(runtime.activeRouterSessionCount == 12)
+    for (i,frame) in frames.enumerated() {
+        if case .accepted = runtime.receiveRemote(tablet,bytes:frame,now:1.13+Double(i)*0.01) {} else { Issue.record("Tablet stream refused") }
+    }
+    #expect(runtime.activeRouterSessionCount == SensorRouter.maxSessions)
+    #expect(runtime.activeSources.count == 5)
+    #expect(throws:RemoteTouchError.capacity) { try capacityPair(&runtime,.tablet,1.21) }
+    #expect(runtime.activeRouterSessionCount == 16 && runtime.remotePeerIDs == [phone,tablet])
+    let revoked = runtime.revokeRemote(phone)
+    #expect(!revoked.contains(.init(note,value:0)))
+    #expect(runtime.activeRouterSessionCount == 9)
+    #expect(runtime.revokeRemote(phone).isEmpty)
+    #expect(!runtime.disableRemote().contains(.init(note,value:0)))
+    #expect(runtime.activeRouterSessionCount == 5 && runtime.reservedRemoteSessions == 0)
+    let expired = runtime.expire(now:1.5)
+    #expect(expired.filter { $0 == .init(note,value:0) }.count == 1)
+    #expect(runtime.activeRouterSessionCount == 0 && runtime.activeSources.isEmpty)
+    #expect(runtime.stop().isEmpty)
+}
+
+@Test func remotePeerLimitConsumesValidRefusedInvitationWithoutEviction() throws {
+    var runtime = PhysicalPatchRuntime()
+    let note = SensorDestination(.note,number:60)
+    try runtime.configure(.init(routes:[.init(id:"shared",source:.phone,signal:.contact,destination:note)]),allowRemote:true)
+    var peers: [UUID] = []
+    for i in 0..<4 {
+        let id = try capacityPair(&runtime,.phone,1+Double(i)*0.01)
+        peers.append(id)
+        let result = runtime.receiveRemote(id,bytes:budgetFrame(1,1,"touch",",\"x\":0.5,\"y\":0.5"),now:1.05+Double(i)*0.01)
+        #expect(result == .accepted(i == 0 ? [.init(note,value:100)] : []))
+    }
+    let key = Data(repeating:99,count:32)
+    try runtime.issueRemotePairing(secret:key,source:.phone,now:1.1,mappingDetails:true)
+    #expect(throws:RemoteTouchError.capacity) { try runtime.admitRemote(secret:key,now:1.11) }
+    #expect(runtime.remotePeerIDs == Set(peers))
+    #expect(runtime.activeRouterSessionCount == 4)
+    #expect(runtime.revokeRemote(peers[0]).isEmpty)
+    #expect(throws:RemoteTouchError.invalidPairing) { try runtime.admitRemote(secret:key,now:1.12) }
+    let replacement = try capacityPair(&runtime,.phone,1.13)
+    #expect(runtime.remotePeerIDs.count == 4)
+    #expect(runtime.receiveRemote(replacement,bytes:budgetFrame(1,1,"touch",",\"x\":0.5,\"y\":0.5"),now:1.14) == .accepted([]))
+    #expect(runtime.expire(now:1.6).filter { $0 == .init(note,value:0) }.count == 1)
+    #expect(runtime.activeRouterSessionCount == 0 && runtime.remotePeerIDs.isEmpty)
+    #expect(runtime.expire(now:1.7).isEmpty)
+}
