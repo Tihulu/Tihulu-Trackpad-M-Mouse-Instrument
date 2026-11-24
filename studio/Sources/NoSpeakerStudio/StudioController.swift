@@ -1265,7 +1265,7 @@ final class StudioController: ObservableObject {
             hingeSensorStatus = "Stop Builder lid input before using independent Tilt."
             return
         }
-        if enable && !allowOtherPerformance() { return }
+        if enable && !allowLivePerformance() { return }
         if !enable {
             hingeSensor?.stop()
             hingeSensor = nil
@@ -1528,7 +1528,7 @@ final class StudioController: ObservableObject {
     }
 
     func speak(_ text: String, voice: String?) {
-        guard allowOtherPerformance() else { return }
+        guard allowRenderedPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine(), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let token = beginPlaybackRequest()
@@ -1642,7 +1642,7 @@ final class StudioController: ObservableObject {
     }
 
     func playGrooveClip(loop: Bool, makeClip: () throws -> MIDIClip) {
-        guard allowOtherPerformance() else { return }
+        guard allowRenderedPerformance() else { return }
         guard !touchRunning, !midiRunning, !midiHelperRunning, !liveHingeEnabled else {
             lastError = "Stop other live performances before starting groove haptic playback."
             return
@@ -1662,7 +1662,7 @@ final class StudioController: ObservableObject {
     }
 
     func playNotes(_ steps: [NoteStep], length: Int = 16, loop: Bool = false) {
-        guard allowOtherPerformance() else { return }
+        guard allowRenderedPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         guard let duration = PlaybackTimeline.patternDuration(bpm: bpm, stepsPerBeat: 4, length: length) else {
@@ -1677,7 +1677,7 @@ final class StudioController: ObservableObject {
     }
 
     func playDrums(_ hits: [DrumStep], length: Int = 16, loop: Bool = false) {
-        guard allowOtherPerformance() else { return }
+        guard allowRenderedPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         guard let duration = PlaybackTimeline.patternDuration(bpm: bpm, stepsPerBeat: 4, length: length) else {
@@ -1691,14 +1691,22 @@ final class StudioController: ObservableObject {
 
     func stopPlayback() {
         stopLiveSequence()
+        stopRenderedPlayback()
+    }
+
+    /// Voice/audio Stop must not terminate an independent MIDI sequence.
+    /// Combined sequencer output is stopped through its own owner.
+    func stopRenderedPlayback() {
+        guard !sequenceOwnsHaptics else { return }
+        let needsStop = renderedOutputPolicy.needsRenderedStop
         renderGeneration &+= 1
         cancelStartupGreeting()
-        playback?.stop(closeDriver: false)
+        if needsStop { playback?.stop(closeDriver: false) }
         isPlaying = false
     }
 
     func testTone(frequency: Double) {
-        guard allowOtherPerformance() else { return }
+        guard allowRenderedPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         guard frequency.isFinite, frequency > 0 else { return }
@@ -1709,7 +1717,7 @@ final class StudioController: ObservableObject {
     }
 
     func sweep() {
-        guard allowOtherPerformance() else { return }
+        guard allowRenderedPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         var events: [ScheduledHapticEvent] = []
@@ -1880,7 +1888,7 @@ final class StudioController: ObservableObject {
         midiChannel: Int = 0,
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
-        guard allowOtherPerformance() else { return }
+        guard allowLivePerformance() else { return }
         guard configuration.permitsMelodicMIDI else {
             lastError = "Custom cent offsets require Trackpad output or explicit equal-tempered MIDI approximation in the Scale Editor. Drum MIDI is unaffected."
             return
@@ -1906,6 +1914,7 @@ final class StudioController: ObservableObject {
 
         if midiOut, !midiRunning {
             startMIDI()
+            guard midiRunning else { return }
         }
 
         touch.setActive(true)
@@ -1979,7 +1988,7 @@ final class StudioController: ObservableObject {
     }
 
     func startMIDI() {
-        guard allowOtherPerformance() else { return }
+        guard allowLivePerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine(), let midi else { return }
         do {
@@ -2082,7 +2091,7 @@ final class StudioController: ObservableObject {
         trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold,
         trackpadSustainSensor: TrackpadSustainSensor = .contactSize
     ) {
-        guard allowOtherPerformance() else { return }
+        guard allowLivePerformance() else { return }
         cancelStartupGreeting()
         let newSustainSettings = MIDIHelperSustainSettings(
             trackpadEnabled: trackpadSustainEnabled,
@@ -2133,6 +2142,7 @@ final class StudioController: ObservableObject {
 
         if !midiRunning {
             startMIDI()
+            guard midiRunning else { return }
         }
         midi?.setInputHapticsEnabled(localSound)
         midiHelperRunning = true
@@ -2408,7 +2418,7 @@ final class StudioController: ObservableObject {
     }
 
     func playMIDIFile(_ url: URL) {
-        guard allowOtherPerformance() else { return }
+        guard allowRenderedPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         let token = beginPlaybackRequest()
@@ -2422,7 +2432,7 @@ final class StudioController: ObservableObject {
     }
 
     func playAudioFile(_ url: URL, profile: AudioHapticProfile? = nil) {
-        guard allowOtherPerformance() else { return }
+        guard allowRenderedPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         currentFileName = url.lastPathComponent
@@ -2511,6 +2521,29 @@ final class StudioController: ObservableObject {
             self.speakerTask = nil
             if self.engineReady { self.engineStatus = "Force Touch trackpad ready" }
         }
+    }
+
+    private var renderedOutputPolicy: RenderedOutputPolicy {
+        .init(rendered:isPlaying,touch:touchRunning,bridge:midiRunning,
+              helper:midiHelperRunning,hinge:liveHingeEnabled)
+    }
+
+    private func allowRenderedPerformance() -> Bool {
+        guard allowOtherPerformance() else { return false }
+        guard renderedOutputPolicy.permitsRenderedStart else {
+            lastError = "Stop live Touch, MIDI Bridge, Helper or Tilt before rendered playback. The haptic motor is shared."
+            return false
+        }
+        return true
+    }
+
+    private func allowLivePerformance() -> Bool {
+        guard allowOtherPerformance() else { return false }
+        guard renderedOutputPolicy.permitsLiveStart else {
+            lastError = "Stop rendered playback before starting live performance."
+            return false
+        }
+        return true
     }
 
     private func allowOtherPerformance() -> Bool {

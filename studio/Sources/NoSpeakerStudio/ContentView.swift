@@ -668,7 +668,7 @@ private struct VoiceModeView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(voices.isEmpty)
 
-                    Button("Stop") { studio.stopPlayback() }
+                    Button("Stop") { studio.stopRenderedPlayback() }
                 }
 
                 if voices.isEmpty {
@@ -2089,7 +2089,7 @@ private struct AudioFileModeView: View {
             PageHeader(title: "Audio File", subtitle: "Drop a song or recording and reinterpret it as haptic sound.")
             Picker("Conversion Profile", selection: $studio.activeProfile) { ForEach(AudioHapticProfile.allCases) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented)
             DropFileView(title: "Drop audio or MIDI here", subtitle: "WAV · AIFF · MP3 · M4A · MIDI") { studio.handleDroppedFile($0) }
-            HStack { Text(studio.currentFileName).foregroundStyle(.secondary); Spacer(); Button("Open Audio File…") { importing = true }; Button("Stop") { studio.stopPlayback() } }
+            HStack { Text(studio.currentFileName).foregroundStyle(.secondary); Spacer(); Button("Open Audio File…") { importing = true }; Button("Stop") { studio.stopRenderedPlayback() } }
             Spacer()
         }.padding(28)
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in if case .success(let url) = result { studio.playAudioFile(url) } }
