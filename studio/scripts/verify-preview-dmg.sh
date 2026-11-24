@@ -24,7 +24,15 @@ cleanup() {
     rmdir "$MOUNT"
 }
 MOUNTED=no
-trap cleanup EXIT
+# Preserve a verification failure; also fail a successful inspection when
+# detach or removal fails. A plain EXIT trap returning 1 is not sufficient.
+finish() {
+    status=$?
+    trap - EXIT
+    cleanup || status=1
+    exit "$status"
+}
+trap finish EXIT
 trap 'exit 1' HUP INT TERM
 hdiutil attach "$DMG" -readonly -nobrowse -mountpoint "$MOUNT" -quiet
 MOUNTED=yes
@@ -42,4 +50,7 @@ plutil -lint "$PLIST"
 [ -x "$APP/Contents/MacOS/NoSpeakerStudio" ] || fail "missing executable"
 [ -s "$APP/Contents/Resources/TihuluInstrument.icns" ] || fail "missing icon"
 codesign --verify --deep --strict --verbose=2 "$APP"
+# Successful inspection still requires a successful detach.
+trap - EXIT
+cleanup || exit 1
 printf 'Verified isolated preview bundle at checkout %s\n' "$EXPECTED_SHA"

@@ -7,3 +7,6 @@ Verified #132 initial shared core run 45453613288 passed all 277 Swift tests, in
 
 ## Native compile remediation
 The #130 macOS job 138649871697 failed at StudioController.swift:1900:14 because the nonoptional `touch` binding created by `guard let touch` was accessed with optional chaining. The same source defect was present in #132. Removed the optional chaining at that exact site; other optional properties remain unchanged. Latest #132 predecessor f657a5438a2e061fb1b5e9e56e4e0916af97301e passed 278 shared Swift tests (run 45454234651). New native verification required; the previous native failure is not reclassified as PASS.
+
+## Preview inspection teardown
+A minimal local POSIX shell reproduction (sh and bash) of trap 'false' EXIT; exit 0 returned status 0. The preview verifier now explicitly propagates detach/removal failure and prints success only after cleanup. The native mount/detach path still requires CI. No installation, signing-policy or stable identity change.
