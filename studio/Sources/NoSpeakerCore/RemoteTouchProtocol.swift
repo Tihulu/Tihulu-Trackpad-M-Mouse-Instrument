@@ -4,31 +4,44 @@ public enum RemoteTouchError: Error, Equatable {
     case invalidFrame, invalidPairing, unavailable, capacity
 }
 
-/// Versioned touch-only schema. Clients cannot specify MIDI targets or clocks.
+/// V1 touch and V2 relative orientation. Clients cannot specify MIDI targets or clocks.
 public struct RemoteTouchFrame: Decodable, Equatable, Sendable {
-    public enum Kind: String, Decodable, Sendable { case touch, release, heartbeat }
+    public enum Kind: String, Decodable, Sendable { case touch, release, heartbeat, orientationArm, orientation, motionRelease }
     public let version: Int
     public let sequence: UInt64
     public let kind: Kind
     public let x: Double?
     public let y: Double?
+    public let alpha: Double?
+    public let beta: Double?
+    public let gamma: Double?
+    public var angles: RemoteOrientation? {
+        guard let alpha, let beta, let gamma else { return nil }
+        return RemoteOrientation(alpha: alpha, beta: beta, gamma: gamma)
+    }
     public static let maximumBytes = 256
 
     public static func read(_ bytes: Data) throws -> Self {
         guard !bytes.isEmpty, bytes.count <= maximumBytes,
               let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
               let frame = try? JSONDecoder().decode(Self.self, from: bytes),
-              frame.version == 1, (1...9_007_199_254_740_991).contains(frame.sequence)
+              (1...9_007_199_254_740_991).contains(frame.sequence)
         else { throw RemoteTouchError.invalidFrame }
         let keys = Set(object.keys)
         let common: Set<String> = ["version","sequence","kind"]
         switch frame.kind {
         case .touch:
-            guard keys == common.union(["x","y"]), let x = frame.x, let y = frame.y,
+            guard frame.version == 1, keys == common.union(["x","y"]), let x = frame.x, let y = frame.y,
                   x.isFinite, y.isFinite, (0...1).contains(x), (0...1).contains(y)
             else { throw RemoteTouchError.invalidFrame }
         case .release, .heartbeat:
-            guard keys == common else { throw RemoteTouchError.invalidFrame }
+            guard frame.version == 1, keys == common else { throw RemoteTouchError.invalidFrame }
+        case .orientationArm, .orientation:
+            guard frame.version == 2, keys == common.union(["alpha","beta","gamma"]),
+                  let angles = frame.angles, abs(angles.beta) <= 80, abs(angles.gamma) <= 80
+            else { throw RemoteTouchError.invalidFrame }
+        case .motionRelease:
+            guard frame.version == 2, keys == common else { throw RemoteTouchError.invalidFrame }
         }
         return frame
     }
@@ -66,6 +79,9 @@ struct RemotePairingGate: Sendable {
 struct RemoteTouchPeer: Sendable {
     let source: SensorSource
     var routerSession: UUID?
+    var motionSession: UUID?
+    var tilt: RemoteTiltCalibration?
+    var motionFreshness = RemoteMotionFreshness()
     private var lastSeen: Double
     private var lastSequence: UInt64 = 0
     private var windowStart: Double
@@ -77,11 +93,11 @@ struct RemoteTouchPeer: Sendable {
     }
     func expired(now: Double) -> Bool {
         !now.isFinite || now < lastSeen ||
-        now-lastSeen >= (routerSession == nil ? 2.0 : 0.35)
+        now-lastSeen >= (routerSession == nil && tilt == nil ? 2.0 : 0.35)
     }
     mutating func accept(_ frame: RemoteTouchFrame, now: Double) -> Bool {
         guard !expired(now: now), frame.sequence > lastSequence,
-              frame.kind != .heartbeat || routerSession == nil else { return false }
+              frame.kind != .heartbeat || (routerSession == nil && tilt == nil) else { return false }
         if now-windowStart >= 1 { windowStart = now; count = 0 }
         guard count < 90 else { return false }
         count += 1
