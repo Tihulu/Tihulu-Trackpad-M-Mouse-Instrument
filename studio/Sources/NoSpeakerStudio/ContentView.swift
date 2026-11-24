@@ -1651,13 +1651,29 @@ private struct MIDIHelperView: View {
                                 Toggle("Send Helper to DAW (MIDI Out)", isOn: $sendToDAW)
                                 Toggle("Local Trackpad Sound for Incoming MIDI", isOn: $localSound)
                                 Stepper("Target Channel \(targetChannel)", value: $targetChannel, in: 1...16)
+                                if let target = studio.activeTouchControlChannel {
+                                    Button("Use active Touch MIDI channel \(target + 1)") { targetChannel = target + 1 }
+                                        .disabled(studio.midiHelperRunning)
+                                } else if studio.touchRunning {
+                                    Text("No standard melodic MIDI target. MPE, drums and haptic-only output require different routing.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Button("Wah preset · Y → CC4") {
+                                    vibratoEnabled = true
+                                    vibratoCC = 4
+                                    pitchBendEnabled = false
+                                    expressionEnabled = false
+                                    if let target = studio.activeTouchControlChannel { targetChannel = target + 1 }
+                                }.disabled(studio.midiHelperRunning)
+                                Text("CC4 requires DAW MIDI Learn. For shared fretted pitch bend disable conflicting controls; frets, fretless pitch and MPE ownership are not replaced by this preset.")
+                                    .font(.caption).foregroundStyle(.secondary)
                                 Picker("Pitch Bend Range", selection: $pitchBendRange) {
                                     Text("±2 semitones").tag(2)
                                     Text("±5 semitones").tag(5)
                                     Text("±12 semitones").tag(12)
                                     Text("±24 semitones").tag(24)
                                 }
-                                Picker("Vibrato CC", selection: $vibratoCC) {
+                                Picker("Y / Vertical CC", selection: $vibratoCC) {
                                     if !HelperCCPolicy.permits(vibratoCC) {
                                         Text("CC \(vibratoCC) · Reserved").tag(vibratoCC)
                                     }
@@ -1700,7 +1716,7 @@ private struct MIDIHelperView: View {
                                     Label("X / Horizontal → Pitch Bend", systemImage: "arrow.left.and.right")
                                 }
                                 if vibratoEnabled {
-                                    Label("Y / Vertical → Vibrato / Modulation", systemImage: "arrow.up.and.down")
+                                    Label("Y / Vertical → CC \(vibratoCC)" + (vibratoCC == 4 ? " · Wah" : ""), systemImage: "arrow.up.and.down")
                                 }
                                 if expressionEnabled {
                                     Label("Contact Size → CC11 Expression", systemImage: "circle.dotted")
@@ -2269,6 +2285,22 @@ private struct TouchBarModeView: View {
                     }.padding(8)
                 }
                 TouchBarOutputSettings()
+                GroupBox("Shared MIDI target") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let target = studio.activeTouchControlChannel {
+                            Button("Use active Touch MIDI channel \(target + 1)") {
+                                setProfile { profile in
+                                    profile.channel = target
+                                    profile.musicalOutput = .midi
+                                }
+                            }.disabled(studio.touchBarOutputArmed)
+                        } else {
+                            Text("Start a standard melodic Touch MIDI instrument to copy its actual channel.")
+                        }
+                        Text("Uses the existing shared MIDI source. Route it to the same DAW instrument. Wah CC4 requires MIDI Learn; haptic-only Wah and independent MPE bend mixing are not implemented. Channel is copied, not followed automatically.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8)
+                }
                 GroupBox("Touch Bar layout · Customize simultaneous zones") {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Choose the zones to display in your preferred order. Native Touch Bar controls appear on supported MacBook Pro models; the on-screen strip works everywhere.")
@@ -2357,7 +2389,7 @@ private struct TouchBarModeView: View {
                                         }
                                     }
                                 }
-                            case .fretless, .pitchBend, .vibrato, .expression, .filter:
+                            case .fretless, .pitchBend, .vibrato, .expression, .filter, .wah:
                                 TouchBarSliderPad(zone: zone)
                             }
                         }
@@ -2368,7 +2400,7 @@ private struct TouchBarModeView: View {
 
                 GroupBox("Screen hinge as an instrument · Calibration simulator") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Map screen opening to filter, expression, vibrato or pitch bend. Live hardware detection is experimental, manual-only and may be unsupported on Touch Bar MacBooks; use the simulator if no compatible sensor is available.")
+                        Text("Map screen opening to wah (CC4), filter, expression, vibrato or pitch bend. Live hardware detection is experimental, manual-only and may be unsupported on Touch Bar MacBooks; use the simulator if no compatible sensor is available.")
                             .font(.callout).foregroundStyle(.secondary)
                         Toggle("Enable Live Hinge Angle Sensor (Experimental)", isOn: Binding(
                             get: { studio.liveHingeEnabled },

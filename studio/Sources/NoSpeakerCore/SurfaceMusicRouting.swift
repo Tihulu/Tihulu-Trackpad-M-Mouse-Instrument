@@ -83,3 +83,18 @@ public enum DrumPadLayout: String, CaseIterable, Identifiable, Sendable, Codable
         }
     }
 }
+
+/// Shared channel resolution used by note production and explicit controller
+/// target selection. Standard MIDI only; MPE member routing is separate.
+public enum SurfaceMIDIChannel {
+    public static func melodic(base: Int, hasMIDIDrums: Bool) -> Int {
+        let selected = max(0, min(15, base))
+        return hasMIDIDrums && selected == GMDrumPads.midiChannel ? 0 : selected
+    }
+
+    public static func controlTarget(base: Int, hasMIDIDrums: Bool,
+                                     hasMIDIMelody: Bool, isMPE: Bool) -> Int? {
+        guard hasMIDIMelody, !isMPE else { return nil }
+        return melodic(base: base, hasMIDIDrums: hasMIDIDrums)
+    }
+}

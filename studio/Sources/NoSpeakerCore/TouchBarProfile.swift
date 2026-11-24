@@ -10,6 +10,7 @@ public enum TouchBarZone: String, CaseIterable, Codable, Identifiable, Sendable 
     case expression = "Expression"
     case sustain = "Sustain"
     case filter = "Filter Cutoff"
+    case wah = "Wah (CC4)"
 
     public var id: String { rawValue }
 }
@@ -23,6 +24,7 @@ public enum TouchBarSustainMode: String, CaseIterable, Codable, Identifiable, Se
 public enum TiltMIDITarget: String, CaseIterable, Codable, Identifiable, Sendable {
     case disabled = "Disabled"
     case filter = "CC74 Filter"
+    case wah = "CC4 Wah"
     case expression = "CC11 Expression"
     case vibrato = "CC1 Vibrato"
     case pitchBend = "Pitch Bend"
@@ -83,6 +85,7 @@ public struct TouchBarProfile: Codable, Equatable, Sendable {
         switch tiltTarget {
         case .disabled: return nil
         case .filter: zone = .filter; value = 0
+        case .wah: zone = .wah; value = 0
         case .vibrato: zone = .vibrato; value = 0
         case .expression: zone = .expression; value = 1
         case .pitchBend: zone = .pitchBend; value = 0.5

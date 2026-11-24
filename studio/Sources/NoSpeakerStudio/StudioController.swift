@@ -1018,6 +1018,21 @@ final class StudioController: ObservableObject {
         prepareEngine()
     }
 
+    /// Snapshot of the active standard melodic MIDI route. A copy is explicit;
+    /// never guess a per-note MPE member or a percussion destination.
+    var activeTouchControlChannel: Int? {
+        guard touchRunning, touchMIDIOutEnabled, midiRunning else { return nil }
+        let surfaces = currentTouchConfiguration.selectedSurfaces.filter {
+            currentTouchConfiguration.output(for: $0).sendsMIDI
+        }
+        return SurfaceMIDIChannel.controlTarget(
+            base: touchMIDIChannel,
+            hasMIDIDrums: surfaces.contains { currentTouchConfiguration.instrument(for: $0) == .drums },
+            hasMIDIMelody: surfaces.contains { currentTouchConfiguration.instrument(for: $0) == .melodic },
+            isMPE: touchMIDIMode == .mpe
+        )
+    }
+
     func installTouchBar() {
         if touchBarBridge == nil {
             let bridge = StudioTouchBarBridge()
@@ -1096,7 +1111,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarValue(_ zone: TouchBarZone, normalized value: Double, releaseOnly: Bool = false) {
-        guard value.isFinite, [.pitchBend, .fretless, .vibrato, .expression, .filter].contains(zone) else { return }
+        guard value.isFinite, [.pitchBend, .fretless, .vibrato, .expression, .filter, .wah].contains(zone) else { return }
         if touchBarProfile.effectiveOutput.sendsHaptics {
             guard touchBarOutputArmed, value.isFinite else { return }
             let safe = min(1, max(0, value))
@@ -1109,8 +1124,10 @@ final class StudioController: ObservableObject {
             case .expression:
                 touchBarLocalState.setExpression(safe)
                 commands = [.init(.init(.controlChange, channel: channel, number: 11), value: Int((safe * 127).rounded()))]
-            case .vibrato, .filter:
-                commands = [.init(.init(.controlChange, channel: channel, number: zone == .vibrato ? 1 : 74), value: Int((safe * 127).rounded()))]
+            case .vibrato, .filter, .wah:
+                if zone == .wah && !touchBarProfile.effectiveOutput.sendsMIDI { return }
+                let cc = zone == .vibrato ? 1 : (zone == .wah ? 4 : 74)
+                commands = [.init(.init(.controlChange, channel: channel, number: cc), value: Int((safe * 127).rounded()))]
             case .keys, .chords, .sustain: break
             }
             if deliverTouchBarCommands(commands) { updateTouchBarHaptics() }
@@ -1132,6 +1149,8 @@ final class StudioController: ObservableObject {
             midi?.sendTouchBarControl(.init(.controlChange,channel:channel,number:11),value:Int((safe*127).rounded()))
         case .filter:
             midi?.sendTouchBarControl(.init(.controlChange,channel:channel,number:74),value:Int((safe*127).rounded()))
+        case .wah:
+            midi?.sendTouchBarControl(.init(.controlChange,channel:channel,number:4),value:Int((safe*127).rounded()))
         case .keys, .chords, .sustain:
             break
         }
@@ -1348,6 +1367,7 @@ final class StudioController: ObservableObject {
         switch touchBarProfile.tiltTarget {
         case .disabled: break
         case .filter: touchBarValue(.filter, normalized: value)
+        case .wah: touchBarValue(.wah, normalized: value)
         case .expression: touchBarValue(.expression, normalized: value)
         case .vibrato: touchBarValue(.vibrato, normalized: value)
         case .pitchBend: touchBarValue(.pitchBend, normalized: value)

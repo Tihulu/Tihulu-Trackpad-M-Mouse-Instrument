@@ -363,9 +363,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             configuration.instrument(for: $0) == .drums &&
             configuration.output(for: $0).sendsMIDI
         }
-        let selectedBase = max(0, min(15, baseChannel))
-        let safeMelodicChannel = anyDrums && selectedBase == GMDrumPads.midiChannel
-            ? 0 : selectedBase
+        let safeMelodicChannel = SurfaceMIDIChannel.melodic(base: baseChannel, hasMIDIDrums: anyDrums)
 
         var desired = states.filter {
             $0.isDown && $0.continuousMIDI.isFinite && $0.vibrato.isFinite &&

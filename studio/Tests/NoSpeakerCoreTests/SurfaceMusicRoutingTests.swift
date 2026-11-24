@@ -50,3 +50,15 @@ import Testing
     }
     #expect(HapticPatternRenderer.drumFrame(midiNote: 0, velocity: 0.8) == nil)
 }
+
+@Test func standardTouchControlTargetMatchesNoteChannel() {
+    for base in -1...16 {
+        for drums in [false,true] {
+            let expected = drums && base == 9 ? 0 : min(15,max(0,base))
+            #expect(SurfaceMIDIChannel.melodic(base:base,hasMIDIDrums:drums) == expected)
+            #expect(SurfaceMIDIChannel.controlTarget(base:base,hasMIDIDrums:drums,hasMIDIMelody:true,isMPE:false) == expected)
+            #expect(SurfaceMIDIChannel.controlTarget(base:base,hasMIDIDrums:drums,hasMIDIMelody:false,isMPE:false) == nil)
+            #expect(SurfaceMIDIChannel.controlTarget(base:base,hasMIDIDrums:drums,hasMIDIMelody:true,isMPE:true) == nil)
+        }
+    }
+}

@@ -166,7 +166,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             }
             item.view = slider
             return item
-        case .pitchBend, .vibrato, .expression, .filter:
+        case .pitchBend, .vibrato, .expression, .filter, .wah:
             let item = NSCustomTouchBarItem(identifier: identifier)
             item.customizationLabel = zone.rawValue
             let slider = PerformanceTouchSlider(
@@ -188,6 +188,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             case .vibrato: 3
             case .expression: 4
             case .filter: 5
+            case .wah: 6
             default: 0
             }
             // Preserve the control label and continuous/latched behavior.
@@ -236,6 +237,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         case 3: zone = .vibrato
         case 4: zone = .expression
         case 5: zone = .filter
+        case 6: zone = .wah
         default: return
         }
         controller.recordNativeTouchBarInput()
