@@ -230,7 +230,7 @@ struct InstrumentBuilderView: View {
                             }.disabled(studio.patchRunning)
                             .onChange(of:syntheticSource) { _ in if !studio.patchRunning { sendMIDI = false } }
                             if syntheticSource != nil {
-                                Text("Only the selected source is simulated. Other sources are native. Leaving this page releases simulated controls; a stalled UI lease expires in 350 ms. Remote is not available in this initial Hybrid mode.")
+                                Text("Only the selected source is simulated. Other sources are native. Leaving this page releases simulated controls; a stalled UI lease expires in 350 ms. For paired phone/tablet routes, start through the Remote TLS panel.")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }
@@ -259,8 +259,8 @@ struct InstrumentBuilderView: View {
                                 }.disabled(studio.patchRunning)
                             }
                         }
-                        if physical && syntheticSource == nil && draft.routes.contains(where: { $0.source == .phone || $0.source == .tablet }) {
-                            RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI)
+                        if physical && draft.routes.contains(where: { $0.source == .phone || $0.source == .tablet }) {
+                            RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI, syntheticSource:syntheticSource)
                         }
                         if physical && !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(draft,synthetic:$0) } ?? PhysicalPatchRuntime.supports(draft)) {
                             Text("Normal native mode supports local surfaces, lid, ribbon and camera. For valid phone/tablet touch, piano, drum pads, pedalboard and motion routes, use the Remote panel above. Other unsupported signals remain simulation-only.")

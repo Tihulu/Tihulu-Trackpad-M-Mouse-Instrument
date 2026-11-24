@@ -9,6 +9,7 @@ struct RemoteLoopbackPanel: View {
     @EnvironmentObject private var studio: StudioController
     let patch: InstrumentPatch
     let sendMIDI: Bool
+    var syntheticSource: SensorSource? = nil
     @State private var identities: [RemoteTLSIdentityChoice] = []
     @State private var selected: UUID?
     @State private var source: SensorSource = .phone
@@ -81,10 +82,10 @@ struct RemoteLoopbackPanel: View {
                             let transport = try choice.makeLoopbackTransport(endpoint: endpoint)
                             let page = try choice.makeLoopbackPageServer(endpoint: endpoint)
                             studio.updateInstrumentPatch(patch)
-                            studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: true, remoteTransport: transport, remotePage: page)
+                            studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: true, remoteTransport: transport, remotePage: page,synthetic:syntheticSource)
                             message = ""
                         } catch { message = error.localizedDescription }
-                    }.disabled(selected == nil || endpoint == nil || (lan && (!confirmedLAN || !studio.remoteLoopbackVerified)) || !PhysicalPatchRuntime.supports(patch, allowRemote: true))
+                    }.disabled(selected == nil || endpoint == nil || (lan && (!confirmedLAN || !studio.remoteLoopbackVerified)) || !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(patch,synthetic:$0,allowRemote:true) } ?? PhysicalPatchRuntime.supports(patch,allowRemote:true)))
                     Text(sendMIDI ? "MIDI ON: if XY is mapped, diagnostic touch may sound notes. Use a separate DAW instrument." :
                          "MIDI OFF: mapped diagnostic touch commands appear in the monitor without sending to DAW. Non-XY sources use an idle heartbeat.")
                         .font(.caption)

@@ -193,3 +193,61 @@ private func budgetFrame(_ sequence: Int, _ version: Int, _ kind: String, _ payl
         #expect(runtime.remotePeerIDs.isEmpty)
     }
 }
+
+@Test func hybridRemoteFullBudgetAndSharedNoteIsolation() throws {
+    let note = SensorDestination(.note,number:60)
+    let locals:[SensorMapping] = [
+        .init(id:"track",source:.trackpad,signal:.contact,destination:note),
+        .init(id:"mouse",source:.magicMouse,signal:.contact,destination:note),
+        .init(id:"synthetic",source:.external,signal:.contact,destination:note),
+        .init(id:"bar",source:.touchBar,signal:.x,destination:.init(.controlChange,number:21)),
+        .init(id:"camera",source:.camera,signal:.contact,destination:note)]
+    let routes = locals + capacityRoutes(.phone,all:true) + capacityRoutes(.tablet,all:false)
+    let patch = InstrumentPatch(routes:routes)
+    #expect(PhysicalPatchRuntime.supportsHybrid(patch,synthetic:.external,allowRemote:true))
+    #expect(!PhysicalPatchRuntime.supportsHybrid(patch,synthetic:.external))
+    #expect(!PhysicalPatchRuntime.supportsHybrid(.init(routes:routes+[.init(id:"sixth",source:.lid,signal:.angle,destination:.init(.pitchBend))]),synthetic:.external,allowRemote:true))
+    var runtime = PhysicalPatchRuntime()
+    try runtime.configure(patch,allowRemote:true,synthetic:.external)
+    let phone = try capacityPair(&runtime,.phone,1)
+    let tablet = try capacityPair(&runtime,.tablet,1.01)
+    #expect(runtime.reservedRemoteSessions == 11)
+    let input = PatchSimulation.Input(source:.external,signal:.contact)
+    #expect(runtime.sendHybrid(input,value:1,now:1.02) == [.init(note,value:100)])
+    #expect(runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1.02,now:1.02).isEmpty)
+    _ = runtime.receive(source:.magicMouse,x:0.5,y:0.5,size:0.5,hostTime:1.02,now:1.02)
+    _ = runtime.receiveScalar(source:.touchBar,value:0.5,hostTime:1.02,now:1.02)
+    _ = runtime.receiveHand(AirHandSample.debugSample(x:0.5,y:0.5,aperture:0.8),hostTime:1.02,now:1.02)
+    #expect(runtime.activeRouterSessionCount == 5)
+    let frames = [
+        budgetFrame(1,1,"touch",",\"x\":0.5,\"y\":0.5"),
+        budgetFrame(2,2,"orientationArm",",\"alpha\":0,\"beta\":0,\"gamma\":0"),
+        budgetFrame(3,2,"orientation",",\"alpha\":0,\"beta\":20,\"gamma\":0"),
+        budgetFrame(4,3,"accelerationArm",",\"x\":10,\"y\":0,\"z\":0"),
+        budgetFrame(5,3,"acceleration",",\"x\":10,\"y\":0,\"z\":0"),
+        budgetFrame(6,3,"rotationArm",",\"x\":180,\"y\":0,\"z\":0"),
+        budgetFrame(7,3,"rotation",",\"x\":180,\"y\":0,\"z\":0")]
+    for (i,frame) in frames.enumerated() {
+        if case .accepted = runtime.receiveRemote(phone,bytes:frame,now:1.03+Double(i)*0.01) {} else { Issue.record("Phone stream refused") }
+    }
+    for (i,frame) in [
+        budgetFrame(8,4,"drumPads",",\"mask\":1"),
+        budgetFrame(9,5,"pianoKeys",",\"mask\":1"),
+        budgetFrame(10,6,"pedalboard",",\"mask\":1,\"levels\":[0.5,0,0,0,0,0]")
+    ].enumerated() {
+        if case .accepted = runtime.receiveRemote(phone,bytes:frame,now:1.10+Double(i)*0.01) {} else { Issue.record("Discrete stream refused") }
+    }
+    for (i,frame) in frames.enumerated() {
+        if case .accepted = runtime.receiveRemote(tablet,bytes:frame,now:1.13+Double(i)*0.01) {} else { Issue.record("Tablet stream refused") }
+    }
+    #expect(runtime.activeRouterSessionCount == 16)
+    #expect(throws:RemoteTouchError.capacity) { try capacityPair(&runtime,.phone,1.21) }
+    #expect(!runtime.releaseHybridSource().contains(.init(note,value:0)))
+    #expect(runtime.activeRouterSessionCount == 15)
+    #expect(runtime.sendHybrid(input,value:1,now:1.22).isEmpty)
+    #expect(runtime.activeRouterSessionCount == 16)
+    #expect(!runtime.disableRemote().contains(.init(note,value:0)))
+    #expect(runtime.activeRouterSessionCount == 5)
+    #expect(runtime.expire(now:1.6).filter { $0 == .init(note,value:0) }.count == 1)
+    #expect(runtime.activeRouterSessionCount == 0)
+}

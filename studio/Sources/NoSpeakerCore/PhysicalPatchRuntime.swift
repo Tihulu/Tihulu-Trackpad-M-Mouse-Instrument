@@ -84,20 +84,23 @@ public struct PhysicalPatchRuntime: Sendable {
 
     /// One explicitly substituted source. Never simulate a live camera or a
     /// paired network stream, and never enlarge the local reservation.
-    public static func supportsHybrid(_ patch:InstrumentPatch, synthetic:SensorSource) -> Bool {
+    public static func supportsHybrid(_ patch:InstrumentPatch, synthetic:SensorSource, allowRemote:Bool = false) -> Bool {
+        let sources = Set(patch.routes.map(\.source))
+        let remote = sources.intersection([.phone,.tablet])
         guard patch.isValid,[SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external].contains(synthetic),
-              Set(patch.routes.map(\.source)).count <= reservedLocalSessions else { return false }
+              sources.subtracting(remote).count <= reservedLocalSessions,
+              allowRemote == !remote.isEmpty else { return false }
         let syntheticRoutes = patch.routes.filter { $0.source == synthetic }
         let simple:Set<SensorSignal> = [.x,.y,.contact,.contactSize,.pressure,.angle,.speed,.gesture,.expression]
         guard !syntheticRoutes.isEmpty,syntheticRoutes.allSatisfy({ simple.contains($0.signal) }) else { return false }
         let native = InstrumentPatch(name:patch.name,routes:patch.routes.filter { $0.source != synthetic })
-        return supports(native)
+        return supports(native,allowRemote:allowRemote)
     }
 
     public mutating func configure(_ patch: InstrumentPatch, allowRemote: Bool = false,
                                    synthetic:SensorSource? = nil) throws {
         guard sessions.isEmpty, remotePeers.isEmpty, hybridSession == nil,
-              synthetic.map({ !allowRemote && Self.supportsHybrid(patch,synthetic:$0) }) ?? Self.supports(patch, allowRemote:allowRemote)
+              synthetic.map({ Self.supportsHybrid(patch,synthetic:$0,allowRemote:allowRemote) }) ?? Self.supports(patch, allowRemote:allowRemote)
               else { throw SensorRouterError.invalidMappings }
         var projections: [SensorSource:RemoteMappingProjection] = [:]
         if allowRemote {

@@ -269,8 +269,8 @@ final class StudioController: ObservableObject {
                               remotePage: RemoteLoopbackPageServer? = nil,
                               synthetic:SensorSource? = nil) {
         guard !patchRunning else { return }
-        guard synthetic == nil || (physical && remoteTransport == nil && remotePage == nil) else {
-            patchStatus = "Hybrid requires local native inputs; Remote is not enabled in this mode."
+        guard synthetic == nil || physical else {
+            patchStatus = "Hybrid requires native input mode."
             return
         }
         let sources = Set(instrumentPatch.routes.map(\.source)).subtracting(synthetic.map { [$0] } ?? [])
@@ -283,7 +283,7 @@ final class StudioController: ObservableObject {
             return
         }
         if physical {
-            guard synthetic.map({ PhysicalPatchRuntime.supportsHybrid(instrumentPatch,synthetic:$0) }) ?? PhysicalPatchRuntime.supports(instrumentPatch, allowRemote:remoteTransport != nil) else {
+            guard synthetic.map({ PhysicalPatchRuntime.supportsHybrid(instrumentPatch,synthetic:$0,allowRemote:remoteTransport != nil) }) ?? PhysicalPatchRuntime.supports(instrumentPatch, allowRemote:remoteTransport != nil) else {
                 patchStatus = "Unsupported live source or signal. Use Simulation or edit the routes."
                 return
             }
