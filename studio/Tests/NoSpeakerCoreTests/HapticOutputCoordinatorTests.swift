@@ -110,26 +110,34 @@ private final class MockHapticSink: @unchecked Sendable {
     let returnPermit = DispatchSemaphore(value: 0)
     let finished = DispatchSemaphore(value: 0)
     let retirement = DispatchSemaphore(value: 0)
+    let attempting = DispatchSemaphore(value: 0)
+    let permitted = DispatchSemaphore(value: 0)
+    defer { returnPermit.signal() }
     let output = HapticOutputCoordinator(clock: { clock.read() }, sink: { _ in
         entered.signal()
-        _ = returnPermit.wait(timeout: .now() + 3)
+        if returnPermit.wait(timeout: .now() + 15) == .success {
+            permitted.signal()
+        }
     })
     let lease = try output.begin(.chords)
     let frame = try #require(NoteHapticRenderer.frame(notes: [60], velocity: 90))
     #expect(output.submit(frame, from: lease))
-    DispatchQueue.global().async {
+    Thread.detachNewThread {
         _ = try? output.tick()
         finished.signal()
     }
-    #expect(entered.wait(timeout: .now() + 2) == .success)
-    DispatchQueue.global().async {
+    try #require(entered.wait(timeout: .now() + 5) == .success)
+    Thread.detachNewThread {
+        attempting.signal()
         output.retire()
         retirement.signal()
     }
-    #expect(retirement.wait(timeout: .now() + .milliseconds(30)) == .timedOut)
+    try #require(attempting.wait(timeout: .now() + 5) == .success)
+    #expect(retirement.wait(timeout: .now() + .milliseconds(50)) == .timedOut)
     returnPermit.signal()
-    #expect(finished.wait(timeout: .now() + 2) == .success)
-    #expect(retirement.wait(timeout: .now() + 2) == .success)
+    try #require(permitted.wait(timeout: .now() + 5) == .success)
+    try #require(finished.wait(timeout: .now() + 5) == .success)
+    try #require(retirement.wait(timeout: .now() + 5) == .success)
     #expect(!output.submit(frame, from: lease))
     #expect(!(try output.tick()))
 }
