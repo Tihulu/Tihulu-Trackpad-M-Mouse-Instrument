@@ -128,6 +128,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pad{position:relative;height:clamp(180px,42vh,340px);border:1px solid #888;border-radius:12px;background:linear-gradient(90deg,transparent 49.7%,#454545 50%,transparent 50.3%),linear-gradient(transparent 49.7%,#454545 50%,transparent 50.3%),#252525;touch-action:none;user-select:none;display:grid;place-items:center}
 #pad[aria-disabled=true]{opacity:.45}#dot{position:absolute;width:22px;height:22px;background:#e34f4f;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}#dot[hidden]{display:none}
 #status{min-height:2.8em}small{color:#bdbdbd}
+#drumGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}#drumGrid button{margin:0;min-height:80px;padding:8px;touch-action:none;user-select:none;overflow-wrap:anywhere}#drumGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5} @media(max-width:420px){#drumGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style></head>
 <body><h1>TIHULU Remote</h1><p>Local touch &amp; tilt controller · Experimental</p>
 <label for="secret">One-time invitation (64 hexadecimal characters)</label>
@@ -136,6 +137,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <p id="status" role="status" aria-live="polite">Not connected.</p>
 <div id="pad" aria-label="XY touch surface" aria-disabled="true"><span>Touch and move</span><div id="dot" hidden></div></div>
 <p><small>X and Y control the mapped instrument. Lift to release. One contact only.</small></p>
+<section aria-labelledby="drum-title"><h2 id="drum-title">Drum Pads</h2>
+<p>Add the eight-pad preset for the paired device in the Mac Instrument Builder first. Pad labels show default General MIDI mappings; custom mappings are set on the Mac.</p>
+<button id="drumEnable" disabled>Enable drum pads</button><button id="drumRelease" disabled>Release all pads</button>
+<p id="drumStatus" role="status">Off.</p><div id="drumGrid"><button id="drum0" type="button" aria-pressed="false" disabled>1 · Kick</button><button id="drum1" type="button" aria-pressed="false" disabled>2 · Snare</button><button id="drum2" type="button" aria-pressed="false" disabled>3 · Closed Hi-Hat</button><button id="drum3" type="button" aria-pressed="false" disabled>4 · Open Hi-Hat</button><button id="drum4" type="button" aria-pressed="false" disabled>5 · Low Tom</button><button id="drum5" type="button" aria-pressed="false" disabled>6 · High Tom</button><button id="drum6" type="button" aria-pressed="false" disabled>7 · Crash</button><button id="drum7" type="button" aria-pressed="false" disabled>8 · Ride</button></div>
+<small>Multiple fingers supported. Hold a pad to sustain its note; lift to release. Fixed host velocity, no pressure sensing. Release all clears pending hits.</small></section>
 <section aria-labelledby="tilt-title"><h2 id="tilt-title">Pocket Wah / Tilt</h2>
 <p>First map a phone or tablet tilt axis on the Mac. Hold the phone comfortably, nearly upright or flat but away from extreme angles, then enable and calibrate. Touch and tilt can be used together. Release either control independently.</p>
 <button id="motionStart" disabled>Enable &amp; calibrate tilt</button><button id="motionStop" disabled>Release tilt</button>
@@ -159,6 +165,33 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const motionStart=get("motionStart"), motionStop=get("motionStop"), meter=get("tiltMeter"), motionStatus=get("motionStatus");
   let mode="idle", sample=null, neutral=null, sampleAt=0, sentAt=-1, permissionEpoch=0, waitingSince=0, pendingKind=null;
   let lastTouchSend=-Infinity,lastTiltSend=-Infinity;
+  const drumButtons=Array.from({length:8},(_,i)=>get("drum"+i));
+  const drumEnable=get("drumEnable"),drumRelease=get("drumRelease"),drumStatus=get("drumStatus");
+  let drumEnabled=false,drumOwners=new Map(),drumQueue=[],drumDesired=0,drumSent=0,lastDrumSend=-Infinity,drumEmergency=false;
+  function syncDrums(){
+    drumEnable.disabled=!admitted;drumEnable.textContent=drumEnabled?"Disable drum pads":"Enable drum pads";
+    drumRelease.disabled=!admitted||(!drumDesired&&!drumSent&&!drumQueue.length);
+    drumButtons.forEach((b,i)=>{b.disabled=!admitted||!drumEnabled;b.setAttribute("aria-pressed",String(Boolean(drumDesired&(1<<i))));});
+  }
+  function resetDrums(){drumEnabled=false;drumOwners.clear();drumQueue=[];drumDesired=0;drumSent=0;lastDrumSend=-Infinity;drumEmergency=false;drumStatus.textContent="Off.";syncDrums();}
+  function drumChanged(){
+    let mask=0;for(const index of drumOwners.values())mask|=1<<index;
+    if(mask===drumDesired)return;
+    drumDesired=mask;
+    if(drumQueue.length>=8){close("Drum input backlog. Reconnect explicitly.");return;}
+    drumQueue.push({mask,at:performance.now()});syncDrums();tick();
+  }
+  function releaseDrums(){
+    drumOwners.clear();drumDesired=0;drumQueue=[];
+    drumEmergency=drumSent!==0;syncDrums();tick();
+  }
+  function drumDown(owner,index){
+    if(!admitted||!drumEnabled||drumEmergency||drumOwners.has(owner))return;
+    if(drumOwners.size>=16){close("Too many drum contacts. Reconnect explicitly.");return;}
+    drumOwners.set(owner,index);drumChanged();
+  }
+  function drumUp(owner){if(drumOwners.delete(owner))drumChanged();}
+  function sendDrum(mask){send("drumPads",{mask});}
   function inertialState(kind,prefix,limit,scale){return {kind,start:get(prefix+"Start"),stop:get(prefix+"Stop"),meter:get(prefix+"Meter"),status:get(prefix+"Status"),limit,scale,mode:"idle",epoch:0,sample:null,at:0,sent:-1,last:-Infinity,waiting:0};}
   const streams=[inertialState("acceleration","accel",100,20),inertialState("rotation","rotation",2000,360)];
   const capturing=s=>["waiting","arming","active"].includes(s.mode);
@@ -202,7 +235,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     s.epoch++;s.mode="releasing";s.sample=null;s.status.textContent="Releasing…";syncInertialListener();syncControls();tick();
   }
   function syncControls(){
-    pad.setAttribute("aria-disabled",String(!admitted));
+    pad.setAttribute("aria-disabled",String(!admitted));syncDrums();
     const asking=mode==="requesting"||streams.some(s=>s.mode==="requesting");
     motionStart.disabled=!admitted||mode!=="idle"||asking;
     for(const s of streams){s.start.disabled=!admitted||s.mode!=="idle"||asking;s.stop.disabled=!admitted||s.mode==="idle"||s.mode==="releasing";}
@@ -249,7 +282,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
     const old=ws;ws=null;admitted=false;pending=false;sequence=0;pointer=null;position=null;releaseDue=false;
-    clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");
+    clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
   }
@@ -259,9 +292,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(ws.bufferedAmount>256){close("Backlog. Controls released by host watchdog.");return;}
     const motion=kind==="orientationArm"||kind==="orientation"||kind==="motionRelease";
     const inertial=streams.find(s=>kind===s.kind||kind===s.kind+"Arm"||kind===s.kind+"Release");
-    const frame={version:inertial?3:motion?2:1,sequence:++sequence,kind};
-    if(axes){if(motion){frame.alpha=axes.alpha;frame.beta=axes.beta;frame.gamma=axes.gamma;}else{frame.x=axes.x;frame.y=axes.y;if(inertial)frame.z=axes.z;}}
+    const drum=kind==="drumPads";
+    const frame={version:drum?4:inertial?3:motion?2:1,sequence:++sequence,kind};
+    if(drum){frame.mask=axes.mask;}
+    else if(axes){if(motion){frame.alpha=axes.alpha;frame.beta=axes.beta;frame.gamma=axes.gamma;}else{frame.x=axes.x;frame.y=axes.y;if(inertial)frame.z=axes.z;}}
     pending=true;pendingKind=kind;lastSend=performance.now();
+    if(drum){lastDrumSend=lastSend;drumSent=axes.mask;}
     if(kind==="touch")lastTouchSend=lastSend;
     if(kind==="orientationArm"||kind==="orientation")lastTiltSend=lastSend;
     if(inertial&&kind!==inertial.kind+"Release")inertial.last=lastSend;
@@ -277,13 +313,17 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if(s.mode==="waiting"&&now-s.waiting>=3000)resetInertial(s,"No valid sensor data. Check device support.");
       if((s.mode==="arming"||s.mode==="active")&&now-s.at>=250){close(s.kind+" stopped. Reconnect explicitly.");return;}
     }
+    if(drumQueue.length&&now-drumQueue[0].at>=150){close("Drum input delayed. Reconnect explicitly.");return;}
     if(pending)return;
     // Release takes precedence over new samples; one frame per ACK.
+    if(drumEmergency){drumEmergency=false;sendDrum(0);return;}
     if(releaseDue){releaseDue=false;send("release");return;}
     if(mode==="releasing"){send("motionRelease");return;}
     const releasing=streams.find(s=>s.mode==="releasing");
     if(releasing){send(releasing.kind+"Release");return;}
     const ready=[];
+    if(drumQueue.length&&now-lastDrumSend>=25)ready.push({last:lastDrumSend,run:()=>sendDrum(drumQueue.shift().mask)});
+    else if(drumSent!==0&&!drumQueue.length&&now-lastDrumSend>=50)ready.push({last:lastDrumSend,run:()=>sendDrum(drumSent)});
     if(pointer!==null&&position&&now-lastTouchSend>=50)ready.push({last:lastTouchSend,run:()=>send("touch",position)});
     if(mode==="waiting"&&sample&&now-sampleAt<150)ready.push({last:-Infinity,run:()=>{
       neutral={...sample};sentAt=sampleAt;mode="arming";motionStatus.textContent="Calibrating…";send("orientationArm",sample);
@@ -300,7 +340,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     // One ACK lane, oldest serviced eligible stream wins; ties favor the
     // later candidate (preserves tilt's initial refresh priority).
     if(ready.length){ready.reduce((a,b)=>a.last<b.last?a:b).run();return;}
-    if(pointer===null&&mode!=="active"&&mode!=="arming"&&!streams.some(s=>s.mode==="active"||s.mode==="arming")&&now-lastSend>=500)send("heartbeat");
+    if(pointer===null&&drumSent===0&&!drumQueue.length&&mode!=="active"&&mode!=="arming"&&!streams.some(s=>s.mode==="active"||s.mode==="arming")&&now-lastSend>=500)send("heartbeat");
   }
   connect.addEventListener("click",()=>{
     if(ws)return;
@@ -327,7 +367,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         if(kind===s.kind+"Arm"&&s.mode==="arming"){s.mode="active";s.status.textContent="Active. Release when finished.";}
         if(kind===s.kind+"Release")resetInertial(s,"Released.");
       }
-      syncControls();if(releaseDue||mode==="releasing"||streams.some(s=>s.mode==="releasing"))tick();
+      syncControls();if(drumEmergency||drumQueue.length||releaseDue||mode==="releasing"||streams.some(s=>s.mode==="releasing"))tick();
     };
     socket.onerror=()=>{key.fill(0);if(ws===socket)close("TLS or connection failed. Do not bypass certificate validation.");};
     socket.onclose=()=>{key.fill(0);if(ws===socket)close("Disconnected. Request a new invitation.");};
@@ -349,10 +389,29 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pointer=null;position=null;dot.hidden=true;releaseDue=true;syncControls();tick();
   }
   for(const event of ["pointerup","pointercancel","lostpointercapture"])pad.addEventListener(event,lift);
+  drumEnable.addEventListener("click",()=>{
+    if(!admitted)return;
+    drumEnabled=!drumEnabled;
+    if(!drumEnabled)releaseDrums();
+    drumStatus.textContent=drumEnabled?"Enabled. Use only with the mapped Mac preset.":"Off.";
+    syncDrums();
+  });
+  drumRelease.addEventListener("click",releaseDrums);
+  drumButtons.forEach((b,index)=>{
+    b.addEventListener("pointerdown",e=>{
+      if(!admitted||!drumEnabled||e.button!==0)return;
+      e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{close("Drum pointer capture failed.");return;}
+      drumDown("p"+e.pointerId,index);
+    });
+    for(const name of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(name,e=>drumUp("p"+e.pointerId));
+    b.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();if(!e.repeat)drumDown("k"+index,index);}});
+    b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();drumUp("k"+index);}});
+    b.addEventListener("blur",()=>drumUp("k"+index));
+  });
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);
   for(const s of streams){s.start.addEventListener("click",()=>startInertial(s));s.stop.addEventListener("click",()=>stopInertial(s));}
-  function rotated(){if(ws&&(mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
+  function rotated(){if(ws&&(drumDesired!==0||drumSent!==0||drumQueue.length||mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
   window.addEventListener("orientationchange",rotated);
   if(window.screen&&window.screen.orientation&&typeof window.screen.orientation.addEventListener==="function")window.screen.orientation.addEventListener("change",rotated);
   disconnect.addEventListener("click",()=>close("Disconnected. Host releases owned controls."));
