@@ -1,0 +1,13 @@
+/// Determines whether an existing touch voice must release its old note and
+/// allocate a new member. Configuration and note changes under sustain must
+/// not retune the previously released note through a reused MPE channel.
+public enum LegacyTouchTransition {
+    public static func requiresNewVoice(oldNote: Int, oldFretless: Bool, oldMPE: Bool,
+                                        oldChannel: Int, newNote: Int, newFretless: Bool,
+                                        newMPE: Bool, standardChannel: Int,
+                                        sustained: Bool) -> Bool {
+        oldMPE != newMPE || oldFretless != newFretless ||
+            (!newMPE && oldChannel != standardChannel) ||
+            (oldMPE && sustained && oldNote != newNote)
+    }
+}
