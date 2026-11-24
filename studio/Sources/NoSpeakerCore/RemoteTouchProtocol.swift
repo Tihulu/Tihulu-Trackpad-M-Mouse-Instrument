@@ -89,18 +89,20 @@ struct RemotePairingGate: Sendable {
     private var source: SensorSource?
     private var issuedAt = 0.0
     private var mappingDetails = false
-    mutating func issue(secret: Data, source: SensorSource, now: Double, mappingDetails: Bool = false) throws {
+    private var mappingLabels = false
+    mutating func issue(secret: Data, source: SensorSource, now: Double, mappingDetails: Bool = false, mappingLabels: Bool = false) throws {
         guard secret.count == 32, source == .phone || source == .tablet,
               now.isFinite, now >= 0 else { throw RemoteTouchError.invalidPairing }
         pending = secret
         self.source = source
         self.mappingDetails = mappingDetails
+        self.mappingLabels = mappingDetails && mappingLabels
         issuedAt = now
     }
     mutating func consume(secret: Data, now: Double) throws -> SensorSource {
         try consumeWithConsent(secret:secret,now:now).source
     }
-    mutating func consumeWithConsent(secret: Data, now: Double) throws -> (source: SensorSource, mappingDetails: Bool) {
+    mutating func consumeWithConsent(secret: Data, now: Double) throws -> (source: SensorSource, mappingDetails: Bool, mappingLabels: Bool) {
         guard let pending, let source, now.isFinite, now >= issuedAt,
               now-issuedAt < 60 else {
             clear()
@@ -110,11 +112,11 @@ struct RemotePairingGate: Sendable {
         var difference: UInt8 = 0
         for (a,b) in zip(pending,secret) { difference |= a ^ b }
         guard difference == 0 else { throw RemoteTouchError.invalidPairing }
-        let consent = mappingDetails
+        let consent = (source,mappingDetails,mappingLabels)
         clear()
-        return (source,consent)
+        return consent
     }
-    mutating func clear() { pending = nil; source = nil; issuedAt = 0; mappingDetails = false }
+    mutating func clear() { pending = nil; source = nil; issuedAt = 0; mappingDetails = false; mappingLabels = false }
 }
 
 struct RemoteInertialStream: Sendable {
@@ -130,6 +132,7 @@ struct RemoteInertialStream: Sendable {
 struct RemoteTouchPeer: Sendable {
     let source: SensorSource
     let mappingDetails: Bool
+    let mappingLabels: Bool
     var capabilitiesSeen = false
     var performanceStarted = false
     var mappingStarted: Double?
@@ -156,9 +159,10 @@ struct RemoteTouchPeer: Sendable {
     private var lastSequence: UInt64 = 0
     private var windowStart: Double
     private var count = 0
-    init(source: SensorSource, now: Double, mappingDetails: Bool = false) {
+    init(source: SensorSource, now: Double, mappingDetails: Bool = false, mappingLabels: Bool = false) {
         self.source = source
         self.mappingDetails = mappingDetails
+        self.mappingLabels = mappingDetails && mappingLabels
         lastSeen = now
         windowStart = now
     }
