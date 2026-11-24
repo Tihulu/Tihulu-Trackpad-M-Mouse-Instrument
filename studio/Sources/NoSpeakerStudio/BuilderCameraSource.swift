@@ -18,19 +18,33 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
     private var events: [Event] = []
     private var closed = false
     private var overflow = false
+    private var stopped = false
     // Queue confined:
     private var capture: AVCaptureSession?
     private let request = VNDetectHumanHandPoseRequest()
     private var lastFrame = -1.0
+    private var observers: [NSObjectProtocol] = []
 
     static var authorization: AVAuthorizationStatus { AVCaptureDevice.authorizationStatus(for: .video) }
 
-    func start() {
+    struct Choice: Identifiable, Equatable, Sendable {
+        let id: String
+        let name: String
+    }
+
+    static func choices() -> [Choice] {
+        AVCaptureDevice.devices(for: .video).map { .init(id: $0.uniqueID, name: $0.localizedName) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    func start(deviceID: String) {
         queue.async { [self] in
             guard !isClosed else { return }
             do {
                 guard Self.authorization == .authorized else { throw CameraError.permission }
-                guard let device = AVCaptureDevice.default(for: .video) else { throw CameraError.unavailable }
+                let device = deviceID.isEmpty ? AVCaptureDevice.default(for: .video) :
+                    AVCaptureDevice.devices(for: .video).first { $0.uniqueID == deviceID }
+                guard let device else { throw CameraError.unavailable }
                 let session = AVCaptureSession()
                 session.beginConfiguration()
                 if session.canSetSessionPreset(.vga640x480) { session.sessionPreset = .vga640x480 }
@@ -46,13 +60,19 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
                 request.maximumHandCount = 2
                 guard !isClosed else { return }
                 capture = session
+                let center = NotificationCenter.default
+                observers.append(center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil) { [weak self] _ in
+                    self?.push(.fault("Camera runtime error. Restart explicitly."))
+                })
+                observers.append(center.addObserver(forName: AVCaptureDevice.wasDisconnectedNotification, object: device, queue: nil) { [weak self] _ in
+                    self?.push(.fault("Selected camera disconnected. Restart explicitly."))
+                })
                 session.startRunning()
-                guard !isClosed else { session.stopRunning(); capture = nil; return }
+                guard !isClosed else { tearDown(); return }
                 guard session.isRunning else { throw CameraError.configuration }
                 push(.ready)
             } catch {
-                capture?.stopRunning()
-                capture = nil
+                tearDown()
                 push(.fault(error.localizedDescription))
             }
         }
@@ -64,9 +84,23 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
         events.removeAll()
         lock.unlock()
         queue.async { [self] in
-            capture?.stopRunning()
-            capture = nil
+            tearDown()
+            lock.lock()
+            stopped = true
+            lock.unlock()
         }
+    }
+
+    private func tearDown() {
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+        observers.removeAll()
+        capture?.stopRunning()
+        capture = nil
+    }
+
+    var isStopped: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return stopped
     }
 
     private var isClosed: Bool {
@@ -122,7 +156,7 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
         var errorDescription: String? {
             switch self {
             case .permission: "Camera permission is not granted."
-            case .unavailable: "No default video camera is available."
+            case .unavailable: "Selected video camera is unavailable. Refresh the camera list."
             case .configuration: "Could not start the camera."
             }
         }

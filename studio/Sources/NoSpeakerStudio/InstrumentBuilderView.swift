@@ -65,6 +65,29 @@ struct InstrumentBuilderView: View {
                         }.pickerStyle(.segmented).disabled(studio.patchRunning)
                         Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)
                             .disabled(studio.patchRunning)
+                        if physical && draft.routes.contains(where: { $0.source == .camera }) {
+                            DisclosureGroup("Camera setup") {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    HStack {
+                                        Picker("Camera", selection: $studio.patchCameraDeviceID) {
+                                            Text("System default").tag("")
+                                            if !studio.patchCameraDeviceID.isEmpty &&
+                                                !studio.patchCameraChoices.contains(where: { $0.id == studio.patchCameraDeviceID }) {
+                                                Text("Selected camera unavailable").tag(studio.patchCameraDeviceID)
+                                            }
+                                            ForEach(studio.patchCameraChoices) { Text($0.name).tag($0.id) }
+                                        }
+                                        Button("Refresh") { studio.refreshBuilderCameras() }
+                                    }
+                                    Picker("Control orientation", selection: $studio.patchCameraOrientation) {
+                                        ForEach(AirControlOrientation.allCases) { Text($0.rawValue).tag($0) }
+                                    }
+                                    Toggle("Mirror horizontal control", isOn: $studio.patchCameraMirrorX)
+                                    Text("Rotates the derived X/Y controls only. Recalibrate after changing camera or orientation. Selection stays local to this app session.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }.disabled(studio.patchRunning)
+                            }
+                        }
                         if physical && !PhysicalPatchRuntime.supports(draft) {
                             Text("Native mode supports Trackpad/external touch, lid angle, Touch Bar X ribbon and camera X/Y/gesture/contact. Other sources remain simulation-only.")
                                 .font(.caption).foregroundStyle(.orange)
@@ -143,7 +166,7 @@ struct InstrumentBuilderView: View {
         .sheet(isPresented: $showLayout) { PerformanceLayoutEditor(patch: $draft) }
         .onAppear {
             draft = studio.instrumentPatch
-            if studio.patchRunning { physical = studio.patchPhysical }
+            if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled }
         }
         .onDisappear {
             if !studio.patchPhysical { studio.stopInstrumentPatch() }
