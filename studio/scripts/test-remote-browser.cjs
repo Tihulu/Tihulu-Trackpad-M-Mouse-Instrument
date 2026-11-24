@@ -8,7 +8,7 @@ const script=source.split('private static let script = #"""')[1].split('"""#')[0
   .replaceAll("__REMOTE_ORIGIN__","https://local.test").replaceAll("__REMOTE_SOCKET__","wss://local.test");
 const fullManifest={kind:"capabilities",version:7,touch:true,tilt:true,acceleration:true,rotation:true,airDrums:true,drums:255,piano:67108863,pedals:63};
 function setup(permission="granted",manifest=fullManifest){
-  let time=1000, ticker, socket;
+  let time=1000, ticker, socket, nextTimer=0;const timers=new Map();
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
@@ -18,15 +18,15 @@ function setup(permission="granted",manifest=fullManifest){
   class WS{
     static OPEN=1;
     constructor(){socket=this;this.readyState=1;this.bufferedAmount=0;this.protocol="tihulu-touch-v1";this.frames=[];}
-    send(data){if(typeof data==="string")this.frames.push(JSON.parse(data));}
+    send(data){if(typeof data==="string"){this.frames.push(JSON.parse(data));this.sentAt=time;(this.sendTimes??=[]).push(time);}}
     close(){this.closed=true;}
   }
   vm.runInNewContext(script,{document,window,location:{origin:"https://local.test"},WebSocket:WS,performance:{now:()=>time},
-    setTimeout:()=>1,clearTimeout(){},setInterval:f=>(ticker=f,1),clearInterval(){ticker=null;}});
+    setTimeout:(f,ms)=>{const id=++nextTimer;timers.set(id,{f,at:time+ms});return id;},clearTimeout:id=>timers.delete(id),setInterval:f=>(ticker=f,1),clearInterval(){ticker=null;}});
   elements.secret.value="aa".repeat(32);elements.connect.emit("click");socket.onopen();socket.onmessage({data:"admitted"});
   const query=socket.frames.shift();
-  if(manifest!==null)socket.onmessage({data:typeof manifest==="string"?manifest:JSON.stringify(manifest)});
-  return {query,elements,window,document,socket,step(ms=25){time+=ms;ticker?.()},ack(){socket.onmessage({data:"accepted"})},
+  time+=13;if(manifest!==null)socket.onmessage({data:typeof manifest==="string"?manifest:JSON.stringify(manifest)});
+  return {query,elements,window,document,socket,step(ms=25){time+=ms;for(const [id,t] of [...timers])if(t.at<=time&&timers.delete(id))t.f();ticker?.()},ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
     orientation(beta=0){window.emit("deviceorientation",{alpha:0,beta,gamma:0})}};
 }
 test("permission denial never attaches listener or sends motion",async()=>{
@@ -93,11 +93,11 @@ test("gravity-only data does not arm acceleration",async()=>{
 test("independent inertial permission, v3 arms, samples and releases",async()=>{
   const a=setup();await a.elements.accelStart.emit("click");await a.elements.rotationStart.emit("click");
   const motion=()=>a.window.emit("devicemotion",{acceleration:{x:10,y:0,z:0},rotationRate:{alpha:180,beta:0,gamma:0}});
-  motion();a.step();assert.equal(a.socket.frames.at(-1).kind,"rotationArm");a.ack();
-  a.step();assert.equal(a.socket.frames.at(-1).kind,"accelerationArm");a.ack();
-  motion();a.step(50);assert.equal(a.socket.frames.at(-1).kind,"rotation");
-  assert.equal(a.socket.frames.at(-1).version,3);assert.equal(a.socket.frames.at(-1).x,180);a.ack();
-  a.step();assert.equal(a.socket.frames.at(-1).kind,"acceleration");a.ack();
+  motion();a.step();assert.equal(a.socket.frames.at(-1).kind,"accelerationArm");a.ack();
+  a.step();assert.equal(a.socket.frames.at(-1).kind,"rotationArm");a.ack();
+  motion();a.step(50);assert.equal(a.socket.frames.at(-1).kind,"acceleration");
+  assert.equal(a.socket.frames.at(-1).version,3);assert.equal(a.socket.frames.at(-1).x,10);a.ack();
+  a.step();assert.equal(a.socket.frames.at(-1).kind,"rotation");a.ack();
   a.elements.accelStop.emit("click");assert.equal(a.socket.frames.at(-1).kind,"accelerationRelease");a.ack();
   assert.equal(a.window.events.has("devicemotion"),true);
   motion();a.step(50);assert.equal(a.socket.frames.at(-1).kind,"rotation");a.ack();
@@ -310,7 +310,7 @@ test("rapid XY taps retain ordered onsets and releases",()=>{
   const a=setup();a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
   for(const id of [2,3]){a.elements.pad.emit("pointerdown",xyEvent(id,id*10));a.elements.pad.emit("pointerup",xyEvent(id));}
   for(let i=0;i<5;i++)a.ack();
-  assert.deepEqual(a.socket.frames.map(f=>f.kind),["pianoKeys","touch","release","touch","release"]);
+  assert.deepEqual(a.socket.frames.filter(f=>f.kind!=="pianoKeys").map(f=>f.kind),["touch","release","touch","release"]);
   assert.equal(a.socket.frames[1].x,0.2);assert.equal(a.socket.frames[3].x,0.3);
 });
 test("stale queued XY edge closes rather than replaying delayed onset",()=>{
@@ -327,4 +327,21 @@ test("XY queue overflow closes without playing stale taps",()=>{
   const a=setup();a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
   for(let id=2;id<=6;id++){a.elements.pad.emit("pointerdown",xyEvent(id));a.elements.pad.emit("pointerup",xyEvent(id));}
   assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+
+test("fast ACK cannot bypass 13 ms send pacing",()=>{
+  const a=setup();a.elements.pad.emit("pointerdown",xyEvent(1));a.elements.pad.emit("pointerup",xyEvent(1));
+  a.ack(1);assert.equal(a.socket.frames.length,1);
+  a.step(11);assert.equal(a.socket.frames.length,1);
+  a.step(1);assert.equal(a.socket.frames.at(-1).kind,"release");
+  assert.equal(a.socket.sendTimes.at(-1)-a.socket.sendTimes.at(-2),13);a.ack();
+});
+test("missing ACK closes at existing deadline and cancels queued touch",()=>{
+  const a=setup();a.elements.pad.emit("pointerdown",xyEvent(1));
+  a.step(219);assert.equal(a.socket.closed,undefined);
+  a.step(1);assert.equal(a.socket.closed,true);
+});
+test("pace wake cannot resurrect closed connection",()=>{
+  const a=setup();a.elements.pad.emit("pointerdown",xyEvent(1));a.elements.pad.emit("pointerup",xyEvent(1));a.ack(1);
+  a.window.emit("pagehide");a.step(50);assert.equal(a.socket.frames.length,1);assert.equal(a.socket.closed,true);
 });
