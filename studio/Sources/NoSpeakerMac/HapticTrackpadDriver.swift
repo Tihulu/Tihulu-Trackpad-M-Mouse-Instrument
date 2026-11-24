@@ -11,6 +11,7 @@ public enum HapticDriverError: LocalizedError {
     case noTrackpad
     case noHapticTrackpad
     case actuatorOpenFailed
+    case actuationCreationFailed
 
     public var errorDescription: String? {
         switch self {
@@ -19,6 +20,7 @@ public enum HapticDriverError: LocalizedError {
         case .noTrackpad: return "No compatible trackpad was found."
         case .noHapticTrackpad: return "A trackpad was found, but its haptic actuator could not be opened."
         case .actuatorOpenFailed: return "The trackpad haptic actuator could not be opened."
+        case .actuationCreationFailed: return "The trackpad framework could not create a haptic frame."
         }
     }
 }
@@ -339,7 +341,7 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
                 ] as [String: Any]
             }
         ]
-        guard let actuation = actuationCreate(shape as CFDictionary, 0) else { return }
+        guard let actuation = actuationCreate(shape as CFDictionary, 0) else { throw HapticDriverError.actuationCreationFailed }
         _ = actuationPlay(actuation, motorPointer, 0, Float(frame.level), 0)
         Unmanaged<AnyObject>.fromOpaque(actuation).release()
     }

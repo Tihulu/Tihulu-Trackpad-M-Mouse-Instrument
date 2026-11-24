@@ -2086,7 +2086,8 @@ private struct TouchBarOutputSettings: View {
                         Button("Release All") { studio.releaseOptionalTouchBarNotes() }
                         Text(studio.touchBarOutputStatus).font(.caption)
                     }
-                    Text("Trackpad supports notes, fretless bend, expression and sustain. Vibrato/filter are MIDI controls in Both. Both uses the TIHULU Touch Bar source. The motor is reserved while armed; disarm before another haptic session.")
+                    SharedNoteOutputSetting()
+                    Text("Trackpad supports notes, fretless bend, expression and sustain. Vibrato/filter are MIDI controls in Both. Both uses the TIHULU Touch Bar source. Other legacy haptic engines require disarming first.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     Text("Existing MIDI bridge behavior; no new haptic session is started.")

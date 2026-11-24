@@ -3,6 +3,20 @@ import Foundation
 import SwiftUI
 import NoSpeakerCore
 
+struct SharedNoteOutputSetting: View {
+    @EnvironmentObject private var studio: StudioController
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Shared Chord Pads + Touch Bar (experimental)", isOn: Binding(
+                get: { studio.sharedNoteOutputEnabled },
+                set: { studio.setSharedNoteOutputEnabled($0) }
+            )).disabled(studio.liveNoteOwnsHaptics)
+            Text("Off by default. Enable before arming either Trackpad/Both output. Both share a six-tone budget. Use the chord strip beside the Touch Bar controls; other haptic engines remain exclusive. Panic resets this setting.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
 struct ChordPadPanel: View {
     @EnvironmentObject private var studio: StudioController
     let compact: Bool
@@ -54,7 +68,8 @@ struct ChordPadPanel: View {
                         )) {
                             ForEach(MusicalOutput.allCases) { Text($0.rawValue).tag($0) }
                         }.pickerStyle(.segmented).disabled(studio.chordArmed)
-                        Text("Trackpad uses up to six tones with octave folding. MIDI retains the complete voicing. The shared motor is reserved while Trackpad or Both is armed; other haptic performances require disarming first.")
+                        SharedNoteOutputSetting()
+                        Text("Trackpad uses up to six tones with octave folding. MIDI retains the complete voicing. Other legacy haptic performances require disarming first.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }

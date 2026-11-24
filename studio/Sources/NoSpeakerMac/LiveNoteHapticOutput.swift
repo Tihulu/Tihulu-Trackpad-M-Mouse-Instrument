@@ -7,17 +7,29 @@ import NoSpeakerCore
 /// The host must reserve the shared actuator before creating this output.
 public final class LiveNoteHapticOutput: @unchecked Sendable {
     private let driver: HapticTrackpadDriver
+    private let shared: SharedLiveNoteOutput?
+    private let sourceKind: HapticMixSource
+    private var lease: HapticMixLease?
     private let queue = DispatchQueue(label: "com.tihulu.live-note-haptics", qos: .userInitiated)
     private var timer: DispatchSourceTimer?
     private var frame: HapticFrame?
     private var masterLevel = 0.75
     private var failure: (@Sendable (String) -> Void)?
 
-    public init(driver: HapticTrackpadDriver) { self.driver = driver }
+    public init(driver: HapticTrackpadDriver, shared: SharedLiveNoteOutput? = nil,
+                sourceKind: HapticMixSource = .chords) {
+        self.driver = driver
+        self.shared = shared
+        self.sourceKind = sourceKind
+    }
 
-    public func start(onFailure: @escaping @Sendable (String) -> Void) {
-        queue.sync {
-            guard timer == nil else { return }
+    public func start(onFailure: @escaping @Sendable (String) -> Void) throws {
+        try queue.sync {
+            guard timer == nil, lease == nil else { return }
+            if let shared {
+                lease = try shared.begin(sourceKind, onFailure: onFailure)
+                return
+            }
             failure = onFailure
             let source = DispatchSource.makeTimerSource(queue: queue)
             source.schedule(deadline: .now(), repeating: .milliseconds(18), leeway: .milliseconds(2))
@@ -29,13 +41,22 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
 
     public func update(frame: HapticFrame?, masterLevel: Double) {
         queue.sync {
+            if let shared, let lease {
+                shared.update(lease, frame: frame, level: masterLevel)
+                return
+            }
+            guard timer != nil else { return }
             self.frame = frame
             self.masterLevel = masterLevel.isFinite ? min(1, max(0, masterLevel)) : 0
         }
     }
 
     public func stop() {
-        queue.sync { clear() }
+        queue.sync {
+            if let shared, let lease { shared.release(lease) }
+            lease = nil
+            clear()
+        }
     }
 
     private func clear() {

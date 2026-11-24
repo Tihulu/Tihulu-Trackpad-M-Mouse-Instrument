@@ -30,6 +30,8 @@ final class StudioController: ObservableObject {
     @Published private(set) var chordStatus = "Output off"
     private let chordOutput = ChordMIDIOutput()
     private var chordHaptics: LiveNoteHapticOutput?
+    @Published private(set) var sharedNoteOutputEnabled = false
+    private var sharedNoteOutput: SharedLiveNoteOutput?
     private var chordHapticToken: UUID?
     private var renderGeneration: UInt64 = 0
     private var engineGeneration: UInt64 = 0
@@ -139,6 +141,25 @@ final class StudioController: ObservableObject {
         }
     }
 
+    func setSharedNoteOutputEnabled(_ enabled: Bool) {
+        guard !liveNoteOwnsHaptics else { return }
+        sharedNoteOutputEnabled = enabled
+    }
+
+    private func makeLiveNoteOutput(driver: HapticTrackpadDriver, source: HapticMixSource) -> LiveNoteHapticOutput {
+        if sharedNoteOutputEnabled {
+            if sharedNoteOutput == nil { sharedNoteOutput = SharedLiveNoteOutput(driver: driver) }
+            return LiveNoteHapticOutput(driver: driver, shared: sharedNoteOutput, sourceKind: source)
+        }
+        return LiveNoteHapticOutput(driver: driver, sourceKind: source)
+    }
+
+    private func releaseSharedOutputIfIdle() {
+        guard chordHaptics == nil, touchBarHaptics == nil else { return }
+        sharedNoteOutput?.retire()
+        sharedNoteOutput = nil
+    }
+
     func armChordPads() {
         guard !chordArmed else { return }
         releaseChordPads()
@@ -148,7 +169,7 @@ final class StudioController: ObservableObject {
         }
         let selected = chordBank.effectiveOutput
         if selected.sendsHaptics {
-            guard !touchBarOwnsHaptics, !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
+            guard (!touchBarOwnsHaptics || sharedNoteOutputEnabled), !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
                   !isPlaying, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
                 chordStatus = "Stop other haptic performances and the MIDI bridge first, or choose MIDI only."
                 return
@@ -160,16 +181,14 @@ final class StudioController: ObservableObject {
                 chordStatus = "Force Touch output unavailable. MIDI-only mode remains available."
                 return
             }
-            chordHaptics = LiveNoteHapticOutput(driver: driver)
+            chordHaptics = makeLiveNoteOutput(driver: driver, source: .chords)
         }
         do {
             if selected.sendsMIDI { try chordOutput.open() }
-            chordArmed = true
-            chordStatus = selected.rawValue + " ready"
             if selected.sendsHaptics {
                 let token = UUID()
                 chordHapticToken = token
-                chordHaptics?.start { [weak self] message in
+                try chordHaptics?.start { [weak self] message in
                     Task { @MainActor in
                         guard let self, self.chordHapticToken == token else { return }
                         self.disarmChordPads()
@@ -177,9 +196,13 @@ final class StudioController: ObservableObject {
                     }
                 }
             }
+            chordArmed = true
+            chordStatus = selected.rawValue + (selected.sendsHaptics && sharedNoteOutputEnabled ? " ready (shared experimental)" : " ready")
         } catch {
+            chordHapticToken = nil
             chordHaptics?.stop()
             chordHaptics = nil
+            releaseSharedOutputIfIdle()
             chordStatus = error.localizedDescription
         }
     }
@@ -250,6 +273,7 @@ final class StudioController: ObservableObject {
             chordHapticToken = nil
             chordHaptics?.stop()
             chordHaptics = nil
+            releaseSharedOutputIfIdle()
             chordArmed = false
             chordStatus = "Some MIDI releases failed. Reset the receiving DAW and retry Release All."
         }
@@ -259,6 +283,7 @@ final class StudioController: ObservableObject {
         chordHapticToken = nil
         chordHaptics?.stop()
         chordHaptics = nil
+        releaseSharedOutputIfIdle()
         releaseChordPads()
         chordArmed = false
         if chordOutstanding.isEmpty { chordStatus = "Output off" }
@@ -431,7 +456,7 @@ final class StudioController: ObservableObject {
 
     func armTouchBarOutput() {
         guard touchBarProfile.effectiveOutput.sendsHaptics, !touchBarOutputArmed else { return }
-        guard !chordOwnsHaptics, !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
+        guard (!chordOwnsHaptics || sharedNoteOutputEnabled), !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
               !isPlaying, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
             touchBarOutputStatus = "Stop other haptic sessions and the MIDI bridge first."
             return
@@ -460,20 +485,24 @@ final class StudioController: ObservableObject {
                     }
                 }
             }
-            let output = LiveNoteHapticOutput(driver: driver)
+            let output = makeLiveNoteOutput(driver: driver, source: .touchBar)
             touchBarHaptics = output
-            touchBarOutputArmed = true
             let token = UUID()
             touchBarOutputToken = token
-            touchBarOutputStatus = touchBarProfile.effectiveOutput.rawValue + " ready"
-            output.start { [weak self] message in
+            try output.start { [weak self] message in
                 Task { @MainActor in
                     guard let self, self.touchBarOutputToken == token else { return }
                     self.disarmTouchBarOutput()
                     self.touchBarOutputStatus = "Trackpad output failed: " + message
                 }
             }
+            touchBarOutputArmed = true
+            touchBarOutputStatus = touchBarProfile.effectiveOutput.rawValue + (sharedNoteOutputEnabled ? " ready (shared experimental)" : " ready")
         } catch {
+            touchBarOutputToken = nil
+            touchBarHaptics?.stop()
+            touchBarHaptics = nil
+            releaseSharedOutputIfIdle()
             touchBarOutputStatus = error.localizedDescription
         }
     }
@@ -521,6 +550,7 @@ final class StudioController: ObservableObject {
             touchBarOutputToken = nil
             touchBarHaptics?.stop()
             touchBarHaptics = nil
+            releaseSharedOutputIfIdle()
             touchBarOutputArmed = false
             touchBarOutputStatus = "Some MIDI releases failed; reset the receiving DAW."
         }
@@ -530,6 +560,7 @@ final class StudioController: ObservableObject {
         touchBarOutputToken = nil
         touchBarHaptics?.stop()
         touchBarHaptics = nil
+        releaseSharedOutputIfIdle()
         releaseOptionalTouchBarNotes()
         touchBarOutputArmed = false
         if touchBarOutstanding.isEmpty { touchBarOutputStatus = "Optional Trackpad output off" }
@@ -663,6 +694,9 @@ final class StudioController: ObservableObject {
         engineGeneration &+= 1
         disarmTouchBarOutput()
         disarmChordPads()
+        sharedNoteOutput?.retire()
+        sharedNoteOutput = nil
+        sharedNoteOutputEnabled = false
         renderGeneration &+= 1
         cancelStartupGreeting()
         enableLiveHinge(false)
