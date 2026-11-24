@@ -35,7 +35,7 @@ final class StudioController: ObservableObject {
     private var patchSimulation = PatchSimulation()
     private var patchLedger = PatchOutputLedger()
     private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
-    private var patchMIDIEnabled = false
+    @Published private(set) var patchMIDIEnabled = false
     @Published private(set) var patchPhysical = false
     @Published private(set) var patchActiveSurfaces: Set<SensorSource> = []
     private var patchPhysicalRuntime = PhysicalPatchRuntime()
@@ -43,6 +43,14 @@ final class StudioController: ObservableObject {
     private var patchWatchdog: Task<Void, Never>?
     private var patchHinge: MacBookHingeAngleSource?
     private var patchCamera: BuilderCameraSource?
+    private var retiringPatchCamera: BuilderCameraSource?
+    private var airTracking = AirTrackingGate()
+    private var patchCameraLastFrame: Double = 0
+    private var patchCameraReceivedFrame = false
+    @Published private(set) var patchCameraChoices: [BuilderCameraSource.Choice] = []
+    @Published var patchCameraDeviceID = ""
+    @Published var patchCameraOrientation: AirControlOrientation = .upright
+    @Published var patchCameraMirrorX = false
     @Published private(set) var patchCameraStatus = "Camera OFF"
     @Published private(set) var patchCameraHand: AirHandSample?
     var patchCameraCalibrationAvailable: Bool { patchRunning && patchPhysical && !patchMIDIEnabled && patchCameraHand != nil }
@@ -188,6 +196,11 @@ final class StudioController: ObservableObject {
         UserDefaults.standard.set(data, forKey: "TIHULU.instrumentPatch.v1")
     }
 
+    func refreshBuilderCameras() {
+        guard !patchRunning else { return }
+        patchCameraChoices = BuilderCameraSource.choices()
+    }
+
     func startInstrumentPatch(sendMIDI: Bool, physical: Bool = false) {
         guard !patchRunning else { return }
         let sources = Set(instrumentPatch.routes.map(\.source))
@@ -198,6 +211,11 @@ final class StudioController: ObservableObject {
                 return
             }
             if sources.contains(.camera) {
+                if let retiringPatchCamera, !retiringPatchCamera.isStopped {
+                    patchStatus = "Previous camera is stopping. Start again once released."
+                    return
+                }
+                retiringPatchCamera = nil
                 switch BuilderCameraSource.authorization {
                 case .authorized: break
                 case .notDetermined:
@@ -281,7 +299,10 @@ final class StudioController: ObservableObject {
                     let camera = BuilderCameraSource()
                     patchCamera = camera
                     patchCameraStatus = "Starting camera · local hand tracking"
-                    camera.start()
+                    airTracking.reset()
+                    patchCameraLastFrame = ProcessInfo.processInfo.systemUptime
+                    patchCameraReceivedFrame = false
+                    camera.start(deviceID: patchCameraDeviceID)
                 }
                 startPatchWatchdog()
             }
@@ -347,6 +368,12 @@ final class StudioController: ObservableObject {
         }
         guard patchRunning else { return }
         if let camera = patchCamera {
+            if BuilderCameraSource.authorization != .authorized {
+                stopInstrumentPatch()
+                patchCameraStatus = "Camera permission lost. Restart explicitly."
+                patchStatus = patchCameraStatus
+                return
+            }
             for event in camera.drain() {
                 guard patchRunning else { return }
                 switch event {
@@ -357,11 +384,29 @@ final class StudioController: ObservableObject {
                     patchStatus = message
                     return
                 case .frame(let hand, let time):
-                    guard now >= time, now - time < PhysicalPatchRuntime.timeout else { continue }
-                    patchCameraHand = hand
-                    patchCameraStatus = hand == nil ? "No reliable single hand" : "One hand tracked"
-                    recordPatchCommands(patchPhysicalRuntime.receiveHand(hand, hostTime: time, now: now))
+                    guard now >= time, now - time < PhysicalPatchRuntime.timeout else {
+                        stopInstrumentPatch()
+                        patchCameraStatus = "Stale camera frames. Restart explicitly."
+                        patchStatus = patchCameraStatus
+                        return
+                    }
+                    patchCameraReceivedFrame = true
+                    patchCameraLastFrame = time
+                    let oriented = hand?.oriented(patchCameraOrientation, mirrorX: patchCameraMirrorX)
+                    let accepted = airTracking.accept(oriented, at: time, now: now)
+                    patchCameraHand = accepted
+                    patchCameraStatus = accepted != nil ? "One hand tracked" :
+                        (hand == nil ? "No reliable single hand" : "Acquiring hand")
+                    recordPatchCommands(patchPhysicalRuntime.receiveHand(accepted, hostTime: time, now: now))
                 }
+            }
+            guard patchRunning else { return }
+            let limit = patchCameraReceivedFrame ? 2.0 : 8.0
+            if now - patchCameraLastFrame >= limit {
+                stopInstrumentPatch()
+                patchCameraStatus = "Camera stopped delivering fresh frames. Restart explicitly."
+                patchStatus = patchCameraStatus
+                return
             }
         }
         guard patchRunning else { return }
@@ -369,6 +414,9 @@ final class StudioController: ObservableObject {
         recordPatchCommands(expired)
         if patchCamera != nil && !patchPhysicalRuntime.activeSources.contains(.camera) {
             patchCameraHand = nil
+            if now - patchCameraLastFrame >= PhysicalPatchRuntime.timeout {
+                airTracking.reset()
+            }
             if patchCameraStatus == "One hand tracked" { patchCameraStatus = "Tracking lost · controls released" }
         }
         guard patchRunning else { return }
@@ -446,8 +494,12 @@ final class StudioController: ObservableObject {
         let hadNativeBar = patchNativeBar
         patchNativeToken = nil
         patchNativeBar = false
-        patchCamera?.stop()
+        if let camera = patchCamera {
+            retiringPatchCamera = camera
+            camera.stop()
+        }
         patchCamera = nil
+        airTracking.reset()
         patchCameraHand = nil
         patchCameraStatus = "Camera OFF"
         patchHinge?.stop()
