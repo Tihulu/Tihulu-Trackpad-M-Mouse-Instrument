@@ -112,6 +112,7 @@ final class StudioController: ObservableObject {
     private var touchBarOutputLedger = TouchBarOutputLedger()
     private var touchBarOutputToken: UUID?
     private var nativePianoTokens: [Int: UUID] = [:]
+    private(set) var touchBarGestureEpoch = TouchBarGestureEpoch()
     var touchBarOwnsHaptics: Bool { touchBarOutputArmed }
     var liveNoteOwnsHaptics: Bool { chordOwnsHaptics || touchBarOwnsHaptics }
     @Published private(set) var chordProgression = StudioController.readChordProgression()
@@ -1036,6 +1037,7 @@ final class StudioController: ObservableObject {
     }
 
     func releaseTouchBarNotes() {
+        touchBarGestureEpoch.invalidate()
         nativePianoTokens.removeAll()
         releaseOptionalTouchBarNotes()
         for command in midiTouchBarNotes.reset(channel:touchBarProfile.channel) {
@@ -1218,6 +1220,9 @@ final class StudioController: ObservableObject {
         // optional output. Otherwise an app-focus change could strand a note.
         guard touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed ||
               !touchBarOutputLedger.isEmpty else { return }
+        if touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed {
+            touchBarGestureEpoch.invalidate()
+        }
         nativePianoTokens.removeAll()
         let channel = touchBarProfile.channel
         _ = touchBarLocalState.reset(channel: channel)

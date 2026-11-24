@@ -2301,12 +2301,7 @@ private struct TouchBarModeView: View {
                                 HStack {
                                     Text("Sustain").frame(width: 115, alignment: .leading)
                                     if studio.touchBarProfile.sustainMode == .hold {
-                                        Button(studio.touchBarSustainOn ? "HOLDING" : "Press & hold") {}
-                                            .onLongPressGesture(
-                                                minimumDuration: 0,
-                                                pressing: { studio.touchBarSustainPressed($0) },
-                                                perform: {}
-                                            )
+                                        TouchBarHoldSustainPad()
                                     } else {
                                         Button(studio.touchBarSustainOn ? "Sustain ON" : "Sustain OFF") {
                                             studio.touchBarSustainPressed(true)
@@ -2378,29 +2373,77 @@ private struct TouchBarModeView: View {
     }
 }
 
+private struct TouchBarHoldSustainPad: View {
+    @EnvironmentObject private var studio: StudioController
+    @State private var gesture: UInt64?
+    var body: some View {
+        Button(studio.touchBarSustainOn ? "HOLDING" : "Press & hold") {}
+            .onLongPressGesture(minimumDuration: 0, pressing: { pressed in
+                if pressed {
+                    guard gesture == nil else { return }
+                    gesture = studio.touchBarGestureEpoch.revision
+                    studio.touchBarSustainPressed(true)
+                } else if let captured = gesture {
+                    gesture = nil
+                    if studio.touchBarGestureEpoch.accepts(captured) { studio.touchBarSustainPressed(false) }
+                }
+            }, perform: {})
+            .onDisappear {
+                if let captured = gesture, studio.touchBarGestureEpoch.accepts(captured) {
+                    studio.touchBarSustainPressed(false)
+                }
+                gesture = nil
+            }
+    }
+}
+
 private struct TouchBarSliderPad: View {
     @EnvironmentObject private var studio: StudioController
     let zone: TouchBarZone
     @State private var value = 0.5
+    @State private var gesture: UInt64?
 
     var body: some View {
         HStack {
             Text(zone.rawValue).frame(width: 115, alignment: .leading)
             Slider(value: Binding(get: { value }, set: { next in
+                guard studio.touchBarGestureEpoch.permitsSample(captured:gesture) else { return }
                 value = next
                 studio.touchBarValue(zone, normalized: next)
             }), in: 0...1, onEditingChanged: { editing in
-                if zone == .fretless {
-                    // Fretless keyboard is a playable base note with a
-                    // continuously changing pitch bend, not an inert slider.
-                    studio.touchBarKey(studio.touchBarProfile.baseNote, pressed: editing, owner: .screenRibbon)
-                }
-                if !editing && (zone == .pitchBend || zone == .fretless) {
-                    value = 0.5
-                    studio.touchBarValue(zone, normalized: 0.5, releaseOnly: true)
+                if editing {
+                    guard gesture == nil else { return }
+                    gesture = studio.touchBarGestureEpoch.revision
+                    if zone == .fretless {
+                        studio.touchBarKey(studio.touchBarProfile.baseNote, pressed: true, owner: .screenRibbon)
+                    }
+                } else if let captured = gesture {
+                    gesture = nil
+                    guard studio.touchBarGestureEpoch.accepts(captured) else {
+                        if zone == .pitchBend || zone == .fretless { value = 0.5 }
+                        return
+                    }
+                    if zone == .fretless {
+                        studio.touchBarKey(studio.touchBarProfile.baseNote, pressed: false, owner: .screenRibbon)
+                    }
+                    if zone == .pitchBend || zone == .fretless {
+                        value = 0.5
+                        studio.touchBarValue(zone, normalized: 0.5, releaseOnly: true)
+                    }
                 }
             })
             Text("\(Int(value * 100))%").monospacedDigit().frame(width: 60)
+        }
+        .onDisappear {
+            if let captured = gesture, studio.touchBarGestureEpoch.accepts(captured) {
+                if zone == .fretless {
+                    studio.touchBarKey(studio.touchBarProfile.baseNote, pressed:false,owner:.screenRibbon)
+                }
+                if zone == .pitchBend || zone == .fretless {
+                    studio.touchBarValue(zone,normalized:0.5,releaseOnly:true)
+                }
+            }
+            gesture = nil
         }
     }
 }
@@ -2410,6 +2453,7 @@ private struct TouchBarNotePad: View {
     let note: Int
     let label: String
     @State private var isDown = false
+    @State private var gesture: UInt64?
 
     var body: some View {
         Text(label)
@@ -2422,19 +2466,26 @@ private struct TouchBarNotePad: View {
                 .onChanged { _ in
                     if !isDown {
                         isDown = true
+                        gesture = studio.touchBarGestureEpoch.revision
                         studio.touchBarKey(note, pressed: true)
                     }
                 }
                 .onEnded { _ in
                     if isDown {
-                        isDown = false
-                        studio.touchBarKey(note, pressed: false)
+                        release()
                     }
                 }
             )
-            .onDisappear {
-                if isDown { studio.touchBarKey(note, pressed: false) }
-            }
+            .onDisappear { release() }
+    }
+
+    private func release() {
+        let captured = gesture
+        gesture = nil
+        isDown = false
+        if let captured, studio.touchBarGestureEpoch.accepts(captured) {
+            studio.touchBarKey(note, pressed: false)
+        }
     }
 }
 
