@@ -227,11 +227,14 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
     private var configuration = TouchInstrumentConfiguration()
     private var sampleRevision: UInt64 = 0
+    private var frameSequence: UInt64 = 0
+    private var publicationSequence: UInt64 = 0
+    private var lastFrameBySurface: [TouchSurfaceKind:UInt64] = [:]
     private var monitoring = false
     private var monitoringToken: UUID?
     private var patchMailbox: PatchSurfaceMailbox?
     private var active = false
-    private var performanceHandler: (@Sendable ([TouchPerformanceState]) -> Void)?
+    private var performanceHandler: (@Sendable ([TouchPerformanceState],TouchSnapshotStamp) -> Void)?
     private var latestStatesBySurface: [TouchSurfaceKind: [TouchPerformanceState]] = [:]
     private var liveHapticStates: [TouchPerformanceState] = []
     private var sustainedHapticStates: [String: TouchPerformanceState] = [:]
@@ -256,6 +259,11 @@ public final class TouchInstrumentService: @unchecked Sendable {
         configuration: TouchInstrumentConfiguration,
         onPerformance: @escaping @Sendable ([TouchPerformanceState]) -> Void
     ) throws {
+        try startStampedPreview(configuration:configuration) { states,_ in onPerformance(states) }
+    }
+
+    public func startStampedPreview(configuration: TouchInstrumentConfiguration,
+        onPerformance: @escaping @Sendable ([TouchPerformanceState],TouchSnapshotStamp) -> Void) throws {
         lock.lock()
         applyConfigurationLocked(configuration)
         self.performanceHandler = onPerformance
@@ -300,7 +308,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
     // Caller holds lock. Invalid settings cannot retain old cached notes.
     private func applyConfigurationLocked(_ next: TouchInstrumentConfiguration) {
-        if configuration != next { sampleRevision &+= 1 }
+        if configuration != next { invalidateSamplesLocked() }
         configuration = next
         if !next.hasValidSampleDomain || next.mappedMIDINotes.isEmpty {
             latestStatesBySurface.removeAll()
@@ -311,10 +319,26 @@ public final class TouchInstrumentService: @unchecked Sendable {
         }
     }
 
+    public var currentSampleRevision: UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return sampleRevision
+    }
+
+    public func invalidatePendingSamples() {
+        lock.lock(); defer { lock.unlock() }
+        invalidateSamplesLocked()
+    }
+
+    private func invalidateSamplesLocked() {
+        sampleRevision &+= 1
+        latestStatesBySurface.removeAll()
+        lastFrameBySurface.removeAll()
+    }
+
     public func setActive(_ active: Bool) {
         if !active { renderFence.revoke() }
         lock.lock()
-        if self.active != active { sampleRevision &+= 1 }
+        if self.active != active { invalidateSamplesLocked() }
         self.active = active
         if !active {
             sustainActive = false
@@ -394,6 +418,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
         guard monitoring, monitoringToken == token else { lock.unlock(); return }
         let config = configuration
         let revision = sampleRevision
+        frameSequence &+= 1
+        let frameID = frameSequence
         let isActive = active
         let callback = performanceHandler
         // Submit under the subscription lock to serialize detachment with
@@ -456,19 +482,22 @@ public final class TouchInstrumentService: @unchecked Sendable {
         }
 
         lock.lock()
-        guard monitoring, monitoringToken == token, sampleRevision == revision else { lock.unlock(); return }
+        guard monitoring, monitoringToken == token, sampleRevision == revision,
+              frameID > (lastFrameBySurface[frame.surface] ?? 0) else { lock.unlock(); return }
+        lastFrameBySurface[frame.surface] = frameID
+        publicationSequence &+= 1
+        let stamp = TouchSnapshotStamp(revision:revision,sequence:publicationSequence)
         latestStatesBySurface[frame.surface] = states.filter(\.isTouching)
         let combined = TouchSurfaceKind.allCases
             .filter { config.surfaceSelection.accepts($0) }
             .flatMap { latestStatesBySurface[$0] ?? [] }
-        lock.unlock()
-        callback?(combined)
-
-        guard isActive else { return }
-        lock.lock()
-        // A preview is never a percussion trigger. Only a new active contact
-        // queues a hit; holding/sliding a finger does not retrigger each tick.
-        guard active, monitoring, monitoringToken == token, sampleRevision == revision else { lock.unlock(); return }
+        // Commit the haptic snapshot under the same lock as publication.
+        // A preview is never a percussion trigger.
+        guard isActive && active else {
+            lock.unlock()
+            callback?(combined,stamp)
+            return
+        }
         let liveConfig = configuration
         liveHapticStates = combined.filter { $0.isDown }
         let drums = liveHapticStates.filter {
@@ -491,6 +520,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             }
         }
         lock.unlock()
+        callback?(combined,stamp)
     }
 
     private func renderHapticFrame(token: UUID) {

@@ -74,6 +74,7 @@ final class StudioController: ObservableObject {
     private var patchPadTasks: [PatchSimulation.Input: Task<Void, Never>] = [:]
     private var patchPadTokens: [PatchSimulation.Input: UUID] = [:]
     private var surfaceMonitorToken: UUID?
+    private var surfaceSnapshotCursor = TouchSnapshotCursor()
     @Published private(set) var sequenceRunning = false
     @Published private(set) var sequenceStatus = "Sequencer MIDI idle"
     private let sequenceMIDI = ChordMIDIOutput(name: "TIHULU Sequencer")
@@ -1778,10 +1779,13 @@ final class StudioController: ObservableObject {
             let generation = engineGeneration
             let token = UUID()
             surfaceMonitorToken = token
-            try touch.startPreview(configuration: monitoringConfiguration) { [weak self] states in
+            surfaceSnapshotCursor.reset()
+            try touch.startStampedPreview(configuration: monitoringConfiguration) { [weak self] states,stamp in
                 Task { @MainActor in
                     guard let self, self.engineGeneration == generation,
-                          self.surfaceMonitorToken == token, self.touchPreviewRunning else { return }
+                          self.surfaceMonitorToken == token, self.touchPreviewRunning,
+                          let revision = self.touch?.currentSampleRevision,
+                          self.surfaceSnapshotCursor.accept(stamp,currentRevision:revision) else { return }
                     self.handleSharedSurfaceStates(states)
                 }
             }
@@ -1890,6 +1894,7 @@ final class StudioController: ObservableObject {
         touchMultiTouchEnabled = multiTouch
         touchMIDIChannel = max(0, min(15, midiChannel))
         touchSustainSettings = sustainSettings
+        touch?.invalidatePendingSamples()
         touchSustainState.reset()
 
         if !instrumentPreviewRequested {
@@ -2103,6 +2108,7 @@ final class StudioController: ObservableObject {
             bendRange:pitchBendRange,vibratoCC:vibratoCC,expressionCC:expressionCC)
         let otherMappingChanged = newSustainSettings != helperSustainSettings ||
             assignments != helperAssignments || surfaceSelection != helperSurfaceSelection
+        if !midiHelperRunning || otherMappingChanged || oldRouting != nextRouting { touch?.invalidatePendingSamples() }
         if midiHelperRunning && oldRouting.requiresRelease(before:nextRouting,otherMappingChanged:otherMappingChanged) {
             midi?.resetHelperControls(
                 assignments: helperAssignments,
@@ -2155,6 +2161,7 @@ final class StudioController: ObservableObject {
 
     func stopMIDIHelper() {
         guard midiHelperRunning else { return }
+        touch?.invalidatePendingSamples()
         midi?.releaseHelperSustain()
         helperSustainState.reset()
         midiHelperSustainActive = false
