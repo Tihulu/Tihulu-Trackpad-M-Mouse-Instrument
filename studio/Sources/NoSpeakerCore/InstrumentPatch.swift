@@ -73,7 +73,10 @@ public struct PatchSimulation: Sendable {
     private var airActiveSlot: Int?
     private var airStrum: AirStrumPerformance?
     public var airSelectedSlot: Int? { airDual.trackingReady ? airDual.selectedSlot : nil }
-    public var airSoundingSlot: Int? { airDual.soundingSlot }
+    public var airSoundingSlot: Int? {
+        if let airStrum, !airStrum.hasActivePulses { return nil }
+        return airDual.soundingSlot
+    }
     public var running: Bool { !sessions.isEmpty || hasDualCamera }
     public init() {}
 

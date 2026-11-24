@@ -295,7 +295,9 @@ struct InstrumentBuilderView: View {
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 Text(AirDualHandPerformance.usesDualCamera(draft.routes) ?
-                                     "Dual hand: close chord hand to arm, select 1–5 fingers, pinch helper to play. Open pinch to release notes. Optional helper axes remain active with a valid selection." :
+                                     (AirStrumPerformance.usesStrum(draft.routes) ?
+                                      "Dual hand strings: close chord hand to arm, select 1–5 fingers, pinch helper and sweep X. Open pinch to release all strings." :
+                                      "Dual hand: close chord hand to arm, select 1–5 fingers, pinch helper to play. Open pinch to release notes. Optional helper axes remain active with a valid selection.") :
                                      "Show one hand: X/Y are index fingertip position, gesture is thumb/index aperture relative to palm length, contact is reliable hand presence. Camera permission is required. No image recording or network.")
                                     .font(.caption).foregroundStyle(.secondary)
                                 if let hand = studio.patchCameraHand {

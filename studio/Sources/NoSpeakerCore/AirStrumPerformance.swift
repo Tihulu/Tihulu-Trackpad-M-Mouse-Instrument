@@ -14,12 +14,15 @@ public struct AirStrumPerformance: Sendable {
     private var detector: AirStringCrossing
     private var selected: Int?
     private var deadlines: [SensorSignal:Double] = [:]
+    private let mappedSignals: Set<SensorSignal>
+    public var hasActivePulses: Bool { !deadlines.isEmpty }
 
     public init?(routes: [SensorMapping]) {
         let used = Set(routes.filter { $0.source == .camera }.map(\.signal))
         let count = Self.strings.flatMap { row in row.enumerated().compactMap { used.contains($0.element) ? $0.offset + 1 : nil } }.max() ?? 0
         guard count >= 3, let detector = AirStringCrossing(stringCount: count) else { return nil }
         self.detector = detector
+        mappedSignals = used
     }
 
     public static func isStringSignal(_ signal: SensorSignal) -> Bool {
@@ -81,6 +84,7 @@ public struct AirStrumPerformance: Sendable {
         }
         for hit in detector.observe(position:position,time:time) {
             let signal = Self.strings[slot-1][hit.string]
+            guard mappedSignals.contains(signal) else { continue }
             if deadlines.removeValue(forKey:signal) != nil {
                 commands += router.releaseSignal(session:session,signal:signal)
             }

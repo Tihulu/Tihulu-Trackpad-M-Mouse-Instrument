@@ -48,7 +48,10 @@ public struct PhysicalPatchRuntime: Sendable {
     public init() {}
     public var activeSources: Set<SensorSource> { Set(sessions.keys) }
     public var airSelectedSlot: Int? { airDual.trackingReady ? airDual.selectedSlot : nil }
-    public var airSoundingSlot: Int? { airDual.soundingSlot }
+    public var airSoundingSlot: Int? {
+        if let airStrum, !airStrum.hasActivePulses { return nil }
+        return airDual.soundingSlot
+    }
     // Internal test observation of real router allocation, not a wire metric.
     var activeRouterSessionCount: Int { router.sessionCount }
 
