@@ -42,6 +42,8 @@ public struct PhysicalPatchRuntime: Sendable {
 
     public init() {}
     public var activeSources: Set<SensorSource> { Set(sessions.keys) }
+    // Internal test observation of real router allocation, not a wire metric.
+    var activeRouterSessionCount: Int { router.sessionCount }
 
     public static func supports(_ patch: InstrumentPatch, allowRemote: Bool = false) -> Bool {
         patch.isValid && !patch.routes.isEmpty && patch.routes.allSatisfy {
@@ -173,8 +175,10 @@ public struct PhysicalPatchRuntime: Sendable {
 
     public mutating func admitRemote(secret: Data, now: Double) throws -> UUID {
         guard remoteEnabled else { throw RemoteTouchError.unavailable }
-        guard remotePeers.count < Self.maximumRemotePeers else { throw RemoteTouchError.capacity }
+        // A valid one-time invitation is consumed even when capacity is full.
+        // A wrong secret does not consume a still-valid invitation.
         let invitation = try pairing.consumeWithConsent(secret:secret,now:now)
+        guard remotePeers.count < Self.maximumRemotePeers else { throw RemoteTouchError.capacity }
         let source = invitation.source
         guard supported.contains(source) else { throw RemoteTouchError.unavailable }
         let cost = remoteSessionCost(source)
@@ -447,6 +451,7 @@ public struct PhysicalPatchRuntime: Sendable {
     public mutating func disableRemote() -> [SensorCommand] {
         remoteEnabled = false
         pairing.clear()
+        mappingProjections = [:]
         let ids = remotePeers.keys.sorted { $0.uuidString < $1.uuidString }
         return ids.flatMap { revokeRemote($0) }
     }
@@ -486,6 +491,7 @@ public struct PhysicalPatchRuntime: Sendable {
         drumMasks = [:]
         pianoMasks = [:]
         pedalMasks = [:]
+        mappingProjections = [:]
         remoteEnabled = false
         pairing.clear()
         remotePeers = [:]
