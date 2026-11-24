@@ -501,20 +501,12 @@ public struct PhysicalPatchRuntime: Sendable {
 
     public mutating func expire(now: Double) -> [SensorCommand] {
         guard now.isFinite else { return [] }
-        if airDualEnabled, let last = seen[.camera], now - last >= 0.25 {
-            airDual.reset(); airActiveSlot = nil
-            // The existing 350 ms generic deadline is not extended.
-            var commands = disconnect(.camera)
-            // Continue expiring the other devices in the same watchdog call.
-            commands += expireRemaining(now: now)
-            return commands
-        }
-        return expireRemaining(now: now)
-    }
-
-    private mutating func expireRemaining(now: Double) -> [SensorCommand] {
-        let stale = sessions.keys.filter { now - (seen[$0] ?? 0) >= Self.timeout }
-            .sorted { $0.rawValue < $1.rawValue }
+        let dualExpired = airDualEnabled && (seen[.camera].map { now - $0 >= 0.25 } ?? false)
+        if dualExpired { airDual.reset(); airActiveSlot = nil }
+        // Remove all expired owners atomically, including camera and remote.
+        let stale = sessions.keys.filter {
+            ($0 == .camera && dualExpired) || now - (seen[$0] ?? 0) >= Self.timeout
+        }.sorted { $0.rawValue < $1.rawValue }
         var removed: Set<UUID> = []
         for source in stale {
             if let id = sessions.removeValue(forKey:source) { removed.insert(id) }
