@@ -347,12 +347,12 @@ final class StudioController: ObservableObject {
         }
     }
 
-    func issueBuilderRemoteInvitation(source: SensorSource) throws -> Data {
+    func issueBuilderRemoteInvitation(source: SensorSource, mappingDetails: Bool = false) throws -> Data {
         guard patchRunning, patchPhysical, patchRemoteTransport != nil, var bridge = patchRemoteBridge
         else { throw RemoteTouchError.unavailable }
         let secret = try RemoteLoopbackTransport.invitation()
         try bridge.issue(secret: secret, source: source, now: ProcessInfo.processInfo.systemUptime,
-                         runtime: &patchPhysicalRuntime)
+                         runtime: &patchPhysicalRuntime, mappingDetails: mappingDetails)
         patchRemoteBridge = bridge
         return secret
     }
