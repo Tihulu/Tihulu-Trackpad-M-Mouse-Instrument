@@ -12,7 +12,7 @@ public struct PhysicalPatchRuntime: Sendable {
     private var sequence: UInt64 = 0
     private var motionSources: Set<SensorSource> = []
     private var inertialSignals: [SensorSource: Set<SensorSignal>] = [:]
-    private var strikeSources: Set<SensorSource> = []
+    private var strikeSettings: [SensorSource: AirStrikeDetector.Settings] = [:]
     private static let strikeDuration = 0.06
     private var remoteEnabled = false
     private var pairing = RemotePairingGate()
@@ -47,8 +47,8 @@ public struct PhysicalPatchRuntime: Sendable {
         supported = Set(patch.routes.map(\.source))
         motionSources = Set(patch.routes.filter { [.tiltYaw,.tiltPitch,.tiltRoll].contains($0.signal) }.map(\.source))
         inertialSignals = [:]
-        strikeSources = Set(patch.routes.filter { $0.signal == .airStrike }.map(\.source))
-        for source in strikeSources { inertialSignals[source, default: []].insert(.accelerationMagnitude) }
+        strikeSettings = AirDrumSensitivity.settings(for: patch.routes) ?? [:]
+        for source in strikeSettings.keys { inertialSignals[source, default: []].insert(.accelerationMagnitude) }
         for route in patch.routes where [.accelerationMagnitude,.rotationMagnitude].contains(route.signal) {
             inertialSignals[route.source, default: []].insert(route.signal)
         }
@@ -208,7 +208,11 @@ public struct PhysicalPatchRuntime: Sendable {
             let signal: SensorSignal = frame.kind == .accelerationArm ? .accelerationMagnitude : .rotationMagnitude
             guard inertialSignals[peer.source]?.contains(signal) == true, peer.inertial[signal] == nil
             else { return .close(revokeRemote(id)) }
-            peer.inertial[signal] = .init(lastReceipt: now, session: nil)
+            var stream = RemoteInertialStream(lastReceipt: now, session: nil)
+            if signal == .accelerationMagnitude, let settings = strikeSettings[peer.source] {
+                stream.strikeDetector = AirStrikeDetector(settings: settings)
+            }
+            peer.inertial[signal] = stream
             remotePeers[id] = peer
             return .accepted([])
         case .acceleration, .rotation:
@@ -226,7 +230,7 @@ public struct PhysicalPatchRuntime: Sendable {
             sequence &+= 1
             commands += router.ingest(.init(session: session, signal: signal, value: value,
                                             sequence: sequence, timestamp: now), now: now)
-            if signal == .accelerationMagnitude, strikeSources.contains(peer.source),
+            if signal == .accelerationMagnitude, strikeSettings[peer.source] != nil,
                let strength = stream.strikeDetector.ingest(value, now: now),
                stream.strikeReleaseAt == nil {
                 sequence &+= 1
@@ -292,7 +296,7 @@ public struct PhysicalPatchRuntime: Sendable {
         supported = []
         motionSources = []
         inertialSignals = [:]
-        strikeSources = []
+        strikeSettings = [:]
         remoteEnabled = false
         pairing.clear()
         remotePeers = [:]

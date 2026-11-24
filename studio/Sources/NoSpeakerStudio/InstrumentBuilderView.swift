@@ -15,6 +15,8 @@ struct InstrumentBuilderView: View {
     @State private var showPatchbay = false
     @State private var showLayout = false
     @State private var airRange = AirRangeCapture()
+    @State private var drumPreset: AirDrumPreset = .snare
+    @State private var drumSource: SensorSource = .phone
 
     var body: some View {
         ScrollView {
@@ -39,6 +41,23 @@ struct InstrumentBuilderView: View {
                 }
                 ExpressivePresetPanel(patch: $draft).disabled(studio.patchRunning)
                 AirInstrumentPresetPanel(patch: $draft).disabled(studio.patchRunning)
+                GroupBox("Air Drums · motion percussion") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Picker("Device", selection: $drumSource) {
+                                Text("Phone").tag(SensorSource.phone)
+                                Text("Tablet").tag(SensorSource.tablet)
+                            }
+                            Picker("Drum", selection: $drumPreset) {
+                                ForEach(AirDrumPreset.allCases) { Text($0.label).tag($0) }
+                            }
+                            Button("Add drum route") { addDrumRoute() }
+                                .disabled(draft.routes.count >= SensorRouter.maxMappings)
+                        }
+                        Text("General MIDI channel 10 defaults. Enable acceleration in the paired browser to play. Add one drum per source, or deliberately layer notes using identical strike sensitivity. Map to a drum instrument in your DAW.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8).disabled(studio.patchRunning)
+                }
                 GroupBox("Routes · \(draft.routes.count)/64") {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach($draft.routes) { $route in
@@ -68,7 +87,7 @@ struct InstrumentBuilderView: View {
                                                      signal: .contact, destination: .init(.note, number: 60)))
                         }.disabled(draft.routes.count >= SensorRouter.maxMappings)
                         if !draft.isValid {
-                            Text("Correct invalid names, calibration, thresholds, reserved CC numbers or conflicting release values before saving.")
+                            Text("Correct invalid names, calibration, thresholds, reserved CC numbers, conflicting release values or Air Drums sensitivity before saving.")
                                 .font(.caption).foregroundStyle(.orange)
                         }
                     }.padding(8).disabled(studio.patchRunning)
@@ -221,14 +240,22 @@ struct InstrumentBuilderView: View {
             if ContinuousResponse.isContinuous(route.wrappedValue.destination) {
                 ContinuousResponsePanel(response: route.response, target: route.wrappedValue.destination)
             }
-            DisclosureGroup("Calibration & gate") {
+            DisclosureGroup(route.wrappedValue.signal == .airStrike ? "Strike sensitivity & velocity" : "Calibration & gate") {
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("Invert", isOn: route.calibration.inverted)
                     parameter("Minimum", value: route.calibration.minimum, range: 0...1)
                     parameter("Maximum", value: route.calibration.maximum, range: 0...1)
                     parameter("Dead zone", value: route.calibration.deadZone, range: 0...0.45)
                     parameter("Curve exponent", value: route.calibration.exponent, range: 0.25...4)
-                    if route.wrappedValue.destination.kind == .note || route.wrappedValue.destination.kind == .sustain {
+                    if route.wrappedValue.signal == .airStrike {
+                        parameter("Strike threshold", value: route.threshold, range: 0.10...0.95)
+                        parameter("Reset gap", value: route.hysteresis, range: 0.05...0.5)
+                        Text("Reset threshold: \(max(0, route.wrappedValue.threshold - route.wrappedValue.hysteresis), specifier: "%.2f") · Quiet 80 ms · Retrigger 120 ms")
+                            .font(.caption)
+                        Stepper("Velocity ceiling \(route.wrappedValue.velocity)", value: route.velocity, in: 1...127)
+                        Text("Calibration and curve shape velocity, not onset detection. All strike routes for this source must agree on threshold and reset gap.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if route.wrappedValue.destination.kind == .note || route.wrappedValue.destination.kind == .sustain {
                         parameter("Threshold", value: route.threshold, range: 0.05...1)
                         parameter("Hysteresis", value: route.hysteresis, range: 0...0.5)
                         Stepper("Note velocity \(route.wrappedValue.velocity)", value: route.velocity, in: 1...127)
@@ -236,6 +263,22 @@ struct InstrumentBuilderView: View {
                 }.padding(4)
             }
         }
+    }
+
+    private func addDrumRoute() {
+        var next = draft
+        var route = drumPreset.route(source: drumSource)
+        if let existing = next.routes.first(where: { $0.source == drumSource && $0.signal == .airStrike }) {
+            route.threshold = existing.threshold
+            route.hysteresis = existing.hysteresis
+        }
+        guard !next.routes.contains(where: { $0.source == route.source && $0.signal == .airStrike && $0.destination == route.destination }) else {
+            message = "That drum is already mapped for this source."; return
+        }
+        next.routes.append(route)
+        guard next.isValid else { message = "Cannot add drum: correct existing routes first."; return }
+        draft = next
+        message = "Air Drums route added. Enable acceleration on the paired device."
     }
 
     private func parameter(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
