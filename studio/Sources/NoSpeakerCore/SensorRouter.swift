@@ -8,6 +8,7 @@ public enum SensorSource: String, Codable, CaseIterable, Sendable {
 /// No adapter or device is started by constructing a router.
 public enum SensorSignal: String, Codable, CaseIterable, Sendable {
     case x, y, contact, contactSize, pressure, angle, speed, gesture, expression
+    case airChord1, airChord2, airChord3, airChord4, airChord5
     case tiltYaw, tiltPitch, tiltRoll, accelerationMagnitude, rotationMagnitude, airStrike
     case drumPad1, drumPad2, drumPad3, drumPad4, drumPad5, drumPad6, drumPad7, drumPad8
     case pianoKey0, pianoKey1, pianoKey2, pianoKey3, pianoKey4, pianoKey5, pianoKey6, pianoKey7, pianoKey8
