@@ -43,6 +43,10 @@ final class StudioController: ObservableObject {
     private var patchRemoteBridge: RemoteHostBridge?
     @Published private(set) var patchRemoteReady = false
     @Published private(set) var patchRemotePeers: Set<UUID> = []
+    @Published private(set) var patchRemoteProbeStatus = "Not tested"
+    @Published private(set) var patchRemoteProbeRunning = false
+    private var patchRemoteProbeTask: Task<Void, Never>?
+    private var patchRemoteProbeToken: UUID?
     private var patchMailbox: PatchSurfaceMailbox?
     private var patchWatchdog: Task<Void, Never>?
     private var patchHinge: MacBookHingeAngleSource?
@@ -321,6 +325,7 @@ final class StudioController: ObservableObject {
                     patchRemoteTransport = remoteTransport
                     patchRemoteReady = false
                     patchRemotePeers = []
+                    patchRemoteProbeStatus = "Waiting for loopback listener"
                     remoteTransport.start()
                 }
                 startPatchWatchdog()
@@ -339,6 +344,34 @@ final class StudioController: ObservableObject {
                          runtime: &patchPhysicalRuntime)
         patchRemoteBridge = bridge
         return secret
+    }
+
+    func runBuilderRemoteProbe(source: SensorSource) {
+        guard patchRemoteReady, !patchRemoteProbeRunning else { return }
+        do {
+            let invitation = try issueBuilderRemoteInvitation(source: source)
+            let token = UUID()
+            patchRemoteProbeToken = token
+            patchRemoteProbeRunning = true
+            patchRemoteProbeStatus = "Testing TLS, pairing, touch and release…"
+            patchRemoteProbeTask = Task { [weak self] in
+                do {
+                    try await RemoteLoopbackProbe.run(invitation: invitation)
+                    guard let self, self.patchRemoteProbeToken == token else { return }
+                    self.patchRemoteProbeStatus = "TLS + pairing + touch/release acknowledgments received. Check command monitor."
+                } catch {
+                    guard let self, self.patchRemoteProbeToken == token else { return }
+                    self.patchRemoteProbeStatus = "Loopback test failed. Check certificate trust and listener; no trust bypass."
+                }
+                guard let self, self.patchRemoteProbeToken == token else { return }
+                self.patchPhysicalRuntime.cancelRemotePairing()
+                self.patchRemoteProbeTask = nil
+                self.patchRemoteProbeToken = nil
+                self.patchRemoteProbeRunning = false
+            }
+        } catch {
+            patchRemoteProbeStatus = "Could not issue test invitation. Check mapped source and listener."
+        }
     }
 
     func revokeBuilderRemote(_ connection: UUID) {
@@ -557,6 +590,11 @@ final class StudioController: ObservableObject {
         let hadNativeBar = patchNativeBar
         patchNativeToken = nil
         patchNativeBar = false
+        patchRemoteProbeToken = nil
+        patchRemoteProbeTask?.cancel()
+        patchRemoteProbeTask = nil
+        patchRemoteProbeRunning = false
+        patchRemoteProbeStatus = "Not tested"
         patchRemoteTransport?.stop()
         patchRemoteTransport = nil
         patchRemoteBridge = nil

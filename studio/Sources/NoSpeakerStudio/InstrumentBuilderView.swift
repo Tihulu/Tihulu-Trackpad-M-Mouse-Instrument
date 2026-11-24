@@ -3,6 +3,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 import NoSpeakerCore
+import NoSpeakerMac
 
 struct InstrumentBuilderView: View {
     @EnvironmentObject private var studio: StudioController
@@ -88,8 +89,11 @@ struct InstrumentBuilderView: View {
                                 }.disabled(studio.patchRunning)
                             }
                         }
+                        if physical && draft.routes.contains(where: { $0.source == .phone || $0.source == .tablet }) {
+                            RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI)
+                        }
                         if physical && !PhysicalPatchRuntime.supports(draft) {
-                            Text("Native mode supports Trackpad/external touch, lid angle, Touch Bar X ribbon and camera X/Y/gesture/contact. Other sources remain simulation-only.")
+                            Text("Normal native mode supports local surfaces, lid, ribbon and camera. For mapped phone/tablet X/Y/contact use the separate loopback test above; other remote signals remain simulation-only.")
                                 .font(.caption).foregroundStyle(.orange)
                         }
                         HStack {
@@ -147,7 +151,7 @@ struct InstrumentBuilderView: View {
                             Text("Primary contact per surface; contact size is not measured pressure. The private macOS driver groups compatible external touch surfaces under Magic Mouse; device identity is not verified here. The shared monitor supports independent Touch Instrument and MIDI Helper sessions; route the dedicated MIDI source separately in the DAW. Lift or loss of input releases owned controls. No automatic pointer capture.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Text("Use TIHULU Instrument Builder as a dedicated DAW input if MIDI is enabled. Connect a separate instrument/channel. Stop or Panic releases owned controls. Physical sessions continue across pages; simulation ends when leaving. No network access.")
+                        Text("Use TIHULU Instrument Builder as a dedicated DAW input if MIDI is enabled. Connect a separate instrument/channel. Stop or Panic releases owned controls. Physical sessions continue across pages; simulation ends when leaving. Remote loopback test is explicit and Mac-only.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }
