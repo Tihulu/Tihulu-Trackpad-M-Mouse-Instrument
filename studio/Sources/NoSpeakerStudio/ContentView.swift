@@ -565,7 +565,7 @@ private struct PerformanceOverview: View {
                     launch("Voice", "Render speech on the trackpad", "text.bubble", .voice)
                     launch("Instrument Builder", "Create and test custom sensor-to-MIDI mappings", "point.3.connected.trianglepath.dotted", .mapping)
                 }
-                Text("Instrument Builder supports saved mappings and simulated inputs with optional dedicated MIDI output. Physical sensor adapters, Camera and Remote are planned.")
+                Text("Instrument Builder supports saved mappings, simulated and experimental native surface input with optional dedicated MIDI output. Camera and Remote are planned.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(24)
         }
