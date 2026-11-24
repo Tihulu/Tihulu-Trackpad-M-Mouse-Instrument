@@ -28,11 +28,20 @@ struct AirDualDebugPanel: View {
                 HStack {
                     Button("Start frames") {
                         count = 0; aperture = 0.8; streaming = true
-                    }.disabled(streaming)
+                    }.disabled(streaming || studio.patchAirReplaying)
                     Button("Simulate tracking loss") {
-                        streaming = false; studio.releaseAirDebugFrame()
+                        streaming = false; studio.stopAirReplay()
                     }
                 }
+                HStack {
+                    Text("Recorded frames: \(studio.patchAirTraceCount)").font(.caption.monospacedDigit())
+                    Button("Replay trace") { studio.startAirReplay() }
+                        .disabled(streaming || studio.patchAirReplaying || studio.patchAirTraceCount == 0)
+                    Button("Stop replay") { studio.stopAirReplay() }.disabled(!studio.patchAirReplaying)
+                    Button("Clear trace") { studio.clearAirTrace() }.disabled(studio.patchAirReplaying)
+                }
+                Text("Trace is kept in memory only. Replay uses the current instrument routes and MIDI setting, not the original patch.")
+                    .font(.caption).foregroundStyle(.secondary)
             }.padding(8)
         }
         .task(id: streaming) {
@@ -42,7 +51,7 @@ struct AirDualDebugPanel: View {
                 do { try await Task.sleep(for: .milliseconds(33)) } catch { return }
             }
         }
-        .onDisappear { streaming = false; studio.releaseAirDebugFrame() }
+        .onDisappear { streaming = false; studio.stopAirReplay() }
     }
 }
 #endif

@@ -267,6 +267,15 @@ struct InstrumentBuilderView: View {
                         if physical && draft.routes.contains(where: { $0.source == .camera }) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(studio.patchCameraStatus).font(.headline)
+                                if studio.patchAirRecordAvailable {
+                                    HStack {
+                                        Button("Record diagnostic trace") { studio.startAirTrace() }.disabled(studio.patchAirRecording)
+                                        Button("Stop recording") { studio.stopAirTrace() }.disabled(!studio.patchAirRecording)
+                                        Text("\(studio.patchAirTraceCount) frames").font(.caption.monospacedDigit())
+                                    }
+                                    Text("Opt-in, in-memory derived hand coordinates only. Up to 30 seconds / 600 frames. Replay in Simulation mode after stopping live input.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
                                 Text(draft.routes.contains(where: { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) }) ?
                                      "Dual hand: close chord hand to arm, select 1–5 fingers, pinch helper to play. Open pinch to release notes. Optional helper axes remain active with a valid selection." :
                                      "Show one hand: X/Y are index fingertip position, gesture is thumb/index aperture relative to palm length, contact is reliable hand presence. Camera permission is required. No image recording or network.")

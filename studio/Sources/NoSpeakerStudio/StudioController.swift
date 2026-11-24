@@ -67,6 +67,16 @@ final class StudioController: ObservableObject {
     @Published var patchCameraSwapRoles = false
     @Published private(set) var patchAirDebugSelected: Int?
     @Published private(set) var patchAirDebugSounding: Int?
+    @Published private(set) var patchAirRecording = false
+    @Published private(set) var patchAirTraceCount = 0
+    @Published private(set) var patchAirReplaying = false
+    private var patchAirTrace = AirFrameTrace()
+    private var patchAirReplayTask: Task<Void, Never>?
+    private var patchAirReplayToken: UUID?
+    var patchAirRecordAvailable: Bool {
+        patchRunning && patchPhysical && patchCamera != nil &&
+            instrumentPatch.routes.contains { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) }
+    }
     var patchAirDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasDualCamera }
     @Published private(set) var patchCameraStatus = "Camera OFF"
     @Published private(set) var patchCameraHand: AirHandSample?
@@ -508,12 +518,66 @@ final class StudioController: ObservableObject {
     }
 
     func sendAirDebugFrame(count: Int, aperture: Double, x: Double, y: Double) {
-        guard patchAirDebugAvailable else { return }
+        guard patchAirDebugAvailable, !patchAirReplaying else { return }
         let now = ProcessInfo.processInfo.systemUptime
         let hand = AirHandSample.debugSample(x: x, y: y, aperture: aperture)
         let commands = patchSimulation.receiveDualHand(count: count, confidence: 1, helper: hand, time: now, now: now)
         refreshAirDebugState()
         recordPatchCommands(commands)
+    }
+
+    func startAirTrace() {
+        guard patchAirRecordAvailable, !patchAirRecording else { return }
+        patchAirTrace = AirFrameTrace()
+        patchAirTraceCount = 0
+        patchAirRecording = true
+    }
+
+    func stopAirTrace() { patchAirRecording = false }
+
+    func clearAirTrace() {
+        guard !patchAirRecording, !patchAirReplaying else { return }
+        patchAirTrace = AirFrameTrace()
+        patchAirTraceCount = 0
+    }
+
+    func startAirReplay() {
+        guard patchAirDebugAvailable, !patchAirReplaying, !patchAirTrace.frames.isEmpty else { return }
+        releaseAirDebugFrame()
+        guard patchAirDebugAvailable else { return }
+        let frames = patchAirTrace.frames
+        let token = UUID()
+        patchAirReplayToken = token
+        patchAirReplaying = true
+        patchAirReplayTask = Task { [weak self] in
+            let start = ProcessInfo.processInfo.systemUptime
+            for frame in frames {
+                let deadline = start + frame.offset
+                let delay = deadline - ProcessInfo.processInfo.systemUptime
+                if delay > 0 {
+                    do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                }
+                guard let self, !Task.isCancelled, self.patchAirReplayToken == token,
+                      self.patchAirDebugAvailable else { return }
+                let now = ProcessInfo.processInfo.systemUptime
+                // Do not burst overdue note edges after a stalled UI.
+                guard now - deadline < 0.10 else { self.stopAirReplay(); return }
+                let commands = self.patchSimulation.receiveDualHand(count: frame.count, confidence: frame.confidence,
+                                                                    helper: frame.helper, time: now, now: now)
+                self.refreshAirDebugState()
+                self.recordPatchCommands(commands)
+            }
+            guard let self, self.patchAirReplayToken == token else { return }
+            self.stopAirReplay()
+        }
+    }
+
+    func stopAirReplay() {
+        patchAirReplayToken = nil
+        patchAirReplayTask?.cancel()
+        patchAirReplayTask = nil
+        patchAirReplaying = false
+        releaseAirDebugFrame()
     }
 
     func releaseAirDebugFrame() {
@@ -587,6 +651,7 @@ final class StudioController: ObservableObject {
     }
 
     private func stopBuilderCamera(reason: String) {
+        stopAirTrace()
         if let camera = patchCamera {
             retiringPatchCamera = camera
             camera.stop()
@@ -616,6 +681,7 @@ final class StudioController: ObservableObject {
                 case .dualFrame(let count, let confidence, let helper, let time):
                     guard now >= time, now - time < 0.25 else {
                         recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: nil, confidence: 0, helper: nil, hostTime: time, now: now))
+                        stopAirTrace()
                         patchCameraHand = nil
                         patchCameraStatus = "Stale dual-hand frame · controls released"
                         continue
@@ -623,6 +689,11 @@ final class StudioController: ObservableObject {
                     patchCameraReceivedFrame = true
                     patchCameraLastFrame = time
                     let oriented = helper?.oriented(patchCameraOrientation, mirrorX: patchCameraMirrorX)
+                    if patchAirRecording {
+                        if patchAirTrace.append(count: count, confidence: confidence, helper: oriented, time: time) {
+                            patchAirTraceCount = patchAirTrace.frames.count
+                        } else { stopAirTrace() }
+                    }
                     patchCameraHand = oriented
                     patchCameraStatus = count.map { "Chord fingers: \($0) · pinch helper to play" } ?? "Two reliable hands required"
                     recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: count, confidence: confidence,
@@ -722,6 +793,11 @@ final class StudioController: ObservableObject {
     }
 
     func stopInstrumentPatch() {
+        stopAirTrace()
+        patchAirReplayToken = nil
+        patchAirReplayTask?.cancel()
+        patchAirReplayTask = nil
+        patchAirReplaying = false
         for task in patchPadTasks.values { task.cancel() }
         patchPadTasks.removeAll()
         patchPadTokens.removeAll()

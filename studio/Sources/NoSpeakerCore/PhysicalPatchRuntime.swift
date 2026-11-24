@@ -158,7 +158,7 @@ public struct PhysicalPatchRuntime: Sendable {
     /// rejects multiple/low-confidence hands; nil releases this source.
     public mutating func receiveHand(_ hand: AirHandSample?, hostTime: Double, now: Double) -> [SensorCommand] {
         let source = SensorSource.camera
-        guard supported.contains(source), hostTime.isFinite, now.isFinite,
+        guard !airDualEnabled, supported.contains(source), hostTime.isFinite, now.isFinite,
               hostTime >= 0, hostTime <= now, now - hostTime < Self.timeout,
               hostTime >= (seen[source] ?? 0) else { return [] }
         seen[source] = hostTime
