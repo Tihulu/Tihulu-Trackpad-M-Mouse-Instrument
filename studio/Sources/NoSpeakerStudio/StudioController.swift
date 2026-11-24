@@ -77,7 +77,7 @@ final class StudioController: ObservableObject {
     private var patchAirReplayToken: UUID?
     var patchAirRecordAvailable: Bool {
         patchRunning && patchPhysical && patchCamera != nil &&
-            instrumentPatch.routes.contains { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) }
+            AirDualHandPerformance.usesDualCamera(instrumentPatch.routes)
     }
     var patchAirDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasDualCamera }
     @Published private(set) var patchCameraStatus = "Camera OFF"
@@ -373,7 +373,7 @@ final class StudioController: ObservableObject {
                     patchCameraLastFrame = ProcessInfo.processInfo.systemUptime
                     patchCameraReceivedFrame = false
                     camera.start(deviceID: patchCameraDeviceID,
-                                 dualMode: instrumentPatch.routes.contains { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) },
+                                 dualMode: AirDualHandPerformance.usesDualCamera(instrumentPatch.routes),
                                  swapRoles: patchCameraSwapRoles)
                 }
                 if let remoteTransport {
@@ -642,7 +642,7 @@ final class StudioController: ObservableObject {
         if patchAirLiveSelected != selected { patchAirLiveSelected = selected }
         if patchAirLiveSounding != sounding { patchAirLiveSounding = sounding }
         if patchCamera != nil && !patchPhysicalRuntime.activeSources.contains(.camera) {
-            if now - patchCameraLastFrame >= 0.25 || !instrumentPatch.routes.contains(where: { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) }) {
+            if now - patchCameraLastFrame >= 0.25 || !AirDualHandPerformance.usesDualCamera(instrumentPatch.routes) {
                 patchCameraHand = nil
             }
             if now - patchCameraLastFrame >= PhysicalPatchRuntime.timeout {

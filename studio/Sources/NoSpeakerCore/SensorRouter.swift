@@ -9,6 +9,11 @@ public enum SensorSource: String, Codable, CaseIterable, Sendable {
 public enum SensorSignal: String, Codable, CaseIterable, Sendable {
     case x, y, contact, contactSize, pressure, angle, speed, gesture, expression
     case airChord1, airChord2, airChord3, airChord4, airChord5
+    case airString1_1, airString1_2, airString1_3, airString1_4, airString1_5, airString1_6, airString1_7, airString1_8
+    case airString2_1, airString2_2, airString2_3, airString2_4, airString2_5, airString2_6, airString2_7, airString2_8
+    case airString3_1, airString3_2, airString3_3, airString3_4, airString3_5, airString3_6, airString3_7, airString3_8
+    case airString4_1, airString4_2, airString4_3, airString4_4, airString4_5, airString4_6, airString4_7, airString4_8
+    case airString5_1, airString5_2, airString5_3, airString5_4, airString5_5, airString5_6, airString5_7, airString5_8
     case tiltYaw, tiltPitch, tiltRoll, accelerationMagnitude, rotationMagnitude, airStrike
     case drumPad1, drumPad2, drumPad3, drumPad4, drumPad5, drumPad6, drumPad7, drumPad8
     case pianoKey0, pianoKey1, pianoKey2, pianoKey3, pianoKey4, pianoKey5, pianoKey6, pianoKey7, pianoKey8
@@ -241,7 +246,7 @@ public struct SensorRouter: Sendable {
             let owner = Owner(session: event.session, mapping: mapping.id)
             let value: Int
             var filtered = normalized
-            if mapping.signal == .airStrike && mapping.destination.kind == .note {
+            if (mapping.signal == .airStrike || AirStrumPerformance.isStringSignal(mapping.signal)) && mapping.destination.kind == .note {
                 // Host onset detector supplies strength; route velocity caps output.
                 // No synthetic zero is used for release; remove ownership instead.
                 value = event.value > 0 ? max(1, Int((normalized * Double(mapping.velocity)).rounded())) : 0

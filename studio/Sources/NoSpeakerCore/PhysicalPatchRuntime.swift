@@ -10,6 +10,7 @@ public struct PhysicalPatchRuntime: Sendable {
     private var airDualEnabled = false
     private var airHelperEnabled = false
     private var airActiveSlot: Int?
+    private var airStrum: AirStrumPerformance?
     private var supported: Set<SensorSource> = []
     private var sessions: [SensorSource: UUID] = [:]
     private var seen: [SensorSource: Double] = [:]
@@ -57,7 +58,7 @@ public struct PhysicalPatchRuntime: Sendable {
             case .trackpad, .magicMouse: return supportedSignals.contains($0.signal)
             case .lid: return $0.signal == .angle
             case .touchBar: return $0.signal == .x
-            case .camera: return [.x,.y,.gesture,.contact].contains($0.signal) || AirDualHandPerformance.signals.contains($0.signal)
+            case .camera: return [.x,.y,.gesture,.contact].contains($0.signal) || AirDualHandPerformance.signals.contains($0.signal) || AirStrumPerformance.isStringSignal($0.signal)
             case .phone, .tablet:
                 guard allowRemote else { return false }
                 if [.x,.y,.contact].contains($0.signal) { return true }
@@ -83,7 +84,8 @@ public struct PhysicalPatchRuntime: Sendable {
         try router.configure(patch.routes)
         airDual = AirDualHandPerformance()
         airActiveSlot = nil
-        airDualEnabled = patch.routes.contains { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) }
+        airDualEnabled = AirDualHandPerformance.usesDualCamera(patch.routes)
+        airStrum = AirStrumPerformance(routes:patch.routes)
         airHelperEnabled = airDualEnabled && AirDualHandPerformance.hasHelperRoutes(patch.routes)
         mappingProjections = projections
         supported = Set(patch.routes.map(\.source))
@@ -184,21 +186,25 @@ public struct PhysicalPatchRuntime: Sendable {
         guard airDualEnabled else { return [] }
         guard hostTime.isFinite, now.isFinite, hostTime >= 0, hostTime <= now,
               now - hostTime < 0.25, hostTime > (seen[.camera] ?? -1)
-        else { airDual.reset(); airActiveSlot = nil; return disconnect(.camera) }
+        else { return releaseCamera() }
         let slot = airDual.receive(count: count, confidence: confidence, helper: helper,
                                    time: hostTime, now: now)
         // Selected hands may drive continuous controls without sounding a chord.
         guard let helper, slot != nil || (airHelperEnabled && airDual.trackingReady) else {
             seen[.camera] = hostTime
             airActiveSlot = nil
+            airStrum?.reset()
             return disconnect(.camera)
         }
         seen[.camera] = hostTime
         if sessions[.camera] == nil { sessions[.camera] = try? router.connect(.camera, now: hostTime) }
         guard let session = sessions[.camera] else { airDual.reset(); airActiveSlot = nil; return [] }
-        let commands = AirDualHandPerformance.route(slot: slot, previous: airActiveSlot, helper: helper,
+        var commands = AirDualHandPerformance.route(slot: airStrum == nil ? slot : nil, previous: airStrum == nil ? airActiveSlot : nil, helper: helper,
                                                     session: session, time: hostTime, router: &router,
                                                     sequence: &sequence)
+        if airStrum != nil {
+            commands += airStrum!.update(slot:slot,position:helper.x,time:hostTime,now:now,session:session,router:&router,sequence:&sequence)
+        }
         airActiveSlot = slot
         return commands
     }
@@ -502,7 +508,7 @@ public struct PhysicalPatchRuntime: Sendable {
     public mutating func expire(now: Double) -> [SensorCommand] {
         guard now.isFinite else { return [] }
         let dualExpired = airDualEnabled && (seen[.camera].map { now - $0 >= 0.25 } ?? false)
-        if dualExpired { airDual.reset(); airActiveSlot = nil }
+        if dualExpired { airDual.reset(); airActiveSlot = nil; airStrum?.reset() }
         // Remove all expired owners atomically, including camera and remote.
         let stale = sessions.keys.filter {
             ($0 == .camera && dualExpired) || now - (seen[$0] ?? 0) >= Self.timeout
@@ -514,6 +520,9 @@ public struct PhysicalPatchRuntime: Sendable {
         let expiredPeers = remotePeers.filter { $0.value.expired(now:now) }.map(\.key)
         for id in expiredPeers { removed.formUnion(removeRemoteSessions(id)) }
         var commands = router.disconnect(sessions:removed)
+        if let camera = sessions[.camera], airStrum != nil {
+            commands += airStrum!.expire(now:now,session:camera,router:&router)
+        }
         for id in remotePeers.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
             guard var peer = remotePeers[id], var stream = peer.inertial[.accelerationMagnitude],
                   let deadline = stream.strikeReleaseAt, now >= deadline, let session = stream.session else { continue }
@@ -527,6 +536,7 @@ public struct PhysicalPatchRuntime: Sendable {
 
     /// Camera failure must not revoke unrelated physical or remote owners.
     public mutating func releaseCamera() -> [SensorCommand] {
+        airStrum?.reset()
         airDual.reset()
         airActiveSlot = nil
         return disconnect(.camera)
@@ -538,7 +548,7 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     public mutating func stop() -> [SensorCommand] {
-        airDual = AirDualHandPerformance(); airDualEnabled = false; airHelperEnabled = false; airActiveSlot = nil
+        airDual = AirDualHandPerformance(); airDualEnabled = false; airHelperEnabled = false; airActiveSlot = nil; airStrum = nil
         sessions = [:]
         seen = [:]
         supported = []

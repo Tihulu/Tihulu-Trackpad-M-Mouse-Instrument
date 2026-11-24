@@ -71,6 +71,22 @@ struct InstrumentBuilderView: View {
                             } else { message = "Cannot add dual-hand routes: check route capacity." }
                         }.disabled(draft.routes.count + 15 > SensorRouter.maxMappings ||
                                     draft.routes.contains { $0.source == .camera })
+                        HStack {
+                            Button("Add Air Guitar · 6 strings") {
+                                var next = draft
+                                next.routes += AirStrumPerformance.routes(bank:AirStrumPerformance.guitarBank)
+                                if next.isValid { draft = next; physical = true; message = "Select chord, pinch helper, then sweep X across strings." }
+                            }.disabled(draft.routes.count + 30 > SensorRouter.maxMappings || draft.routes.contains { $0.source == .camera })
+                            Button("Add 3-course Air · experimental") {
+                                var next = draft
+                                next.routes += AirStrumPerformance.routes(bank:AirStrumPerformance.threeCourseBank)
+                                if next.isValid { draft = next; physical = true; message = "Three-course equal-tempered preset; not makam tuning." }
+                            }.disabled(draft.routes.count + 15 > SensorRouter.maxMappings || draft.routes.contains { $0.source == .camera })
+                        }
+                        if AirStrumPerformance.usesStrum(draft.routes) {
+                            Text("Pinch arms the stroke; sweep X to cross virtual strings. Opening the pinch releases all string pulses. Edit each string note in Routes.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         Button("Add helper effects · Bend / Expression / Wah") {
                             var next = draft
                             next.routes += AirDualHandPerformance.helperRoutes()
@@ -79,7 +95,7 @@ struct InstrumentBuilderView: View {
                                 message = "Helper effects added. X = bend, Y = expression, aperture = CC74. Assign these in your DAW."
                             } else { message = "Cannot add helper effects: check route capacity, duplicate IDs and release settings." }
                         }.disabled(draft.routes.count + 3 > SensorRouter.maxMappings ||
-                                    !draft.routes.contains { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) } ||
+                                    !AirDualHandPerformance.usesDualCamera(draft.routes) ||
                                     AirDualHandPerformance.hasHelperRoutes(draft.routes))
                         Text("Optional helper axes remain active after opening the pinch while a valid chord is selected. Tracking loss releases all camera-owned controls. Customize targets, ranges and smoothing in Routes.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -278,7 +294,7 @@ struct InstrumentBuilderView: View {
                                     Text("Opt-in, in-memory derived hand coordinates only. Up to 30 seconds / 600 frames. Replay in Simulation mode after stopping live input.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
-                                Text(draft.routes.contains(where: { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) }) ?
+                                Text(AirDualHandPerformance.usesDualCamera(draft.routes) ?
                                      "Dual hand: close chord hand to arm, select 1–5 fingers, pinch helper to play. Open pinch to release notes. Optional helper axes remain active with a valid selection." :
                                      "Show one hand: X/Y are index fingertip position, gesture is thumb/index aperture relative to palm length, contact is reliable hand presence. Camera permission is required. No image recording or network.")
                                     .font(.caption).foregroundStyle(.secondary)

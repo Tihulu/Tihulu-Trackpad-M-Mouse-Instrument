@@ -70,6 +70,10 @@ public struct AirDualHandPerformance: Sendable {
             (route.calibration.apply(1) ?? -1) >= route.threshold
     }
 
+    public static func usesDualCamera(_ routes: [SensorMapping]) -> Bool {
+        routes.contains { $0.source == .camera && signals.contains($0.signal) } || AirStrumPerformance.usesStrum(routes)
+    }
+
     public static let helperSignals: Set<SensorSignal> = [.x,.y,.gesture]
 
     public static func hasHelperRoutes(_ routes: [SensorMapping]) -> Bool {
@@ -79,7 +83,11 @@ public struct AirDualHandPerformance: Sendable {
 
     /// In dual-hand mode the free helper axes must never trigger a note.
     public static func permitsCombination(_ routes: [SensorMapping]) -> Bool {
-        guard routes.contains(where: { $0.source == .camera && signals.contains($0.signal) }) else { return true }
+        guard usesDualCamera(routes) else { return true }
+        if AirStrumPerformance.usesStrum(routes) {
+            guard !routes.contains(where: { $0.source == .camera && (signals.contains($0.signal) || $0.signal == .contact) }),
+                  AirStrumPerformance(routes:routes) != nil else { return false }
+        }
         return routes.allSatisfy { route in
             guard route.source == .camera && helperSignals.contains(route.signal) else { return true }
             return ContinuousResponse.isContinuous(route.destination)
