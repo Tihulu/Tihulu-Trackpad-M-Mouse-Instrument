@@ -109,7 +109,7 @@ public struct PhysicalPatchRuntime: Sendable {
         var projections: [SensorSource:RemoteMappingProjection] = [:]
         if allowRemote {
             for source in [SensorSource.phone,.tablet] where patch.routes.contains(where: { $0.source == source }) {
-                projections[source] = try RemoteMappingProjection(patch:patch,source:source)
+                projections[source] = try RemoteMappingProjection(patch:patch,source:source,synthetic:synthetic)
             }
         }
         try router.configure(patch.routes)

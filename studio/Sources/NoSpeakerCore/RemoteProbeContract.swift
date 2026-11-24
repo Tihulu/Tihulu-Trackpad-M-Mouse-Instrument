@@ -3,9 +3,9 @@ import Foundation
 /// Read-only diagnostic contract. It does not grant LAN access by itself,
 /// configure hardware, or infer successful MIDI delivery from an ACK.
 public enum RemoteProbeContract {
-    public static func expected(patch: InstrumentPatch, source: SensorSource) throws -> RemoteCapabilities {
+    public static func expected(patch: InstrumentPatch, source: SensorSource, synthetic:SensorSource? = nil) throws -> RemoteCapabilities {
         guard source == .phone || source == .tablet,
-              PhysicalPatchRuntime.supports(patch, allowRemote:true) else { throw RemoteTouchError.unavailable }
+              (synthetic.map { PhysicalPatchRuntime.supportsHybrid(patch,synthetic:$0,allowRemote:true) } ?? PhysicalPatchRuntime.supports(patch,allowRemote:true)) else { throw RemoteTouchError.unavailable }
         let signals = Set(patch.routes.filter { $0.source == source }.map(\.signal))
         guard !signals.isEmpty else { throw RemoteTouchError.unavailable }
         func mask(_ values: [SensorSignal]) -> Int {

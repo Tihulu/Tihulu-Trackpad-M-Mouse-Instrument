@@ -9,3 +9,5 @@ Selecting a different synthetic source resets the UI MIDI toggle to off. A run-s
 Explicit synthetic camera substitution is supported for dual-hand chord/strum and named-hand helper modes. Native camera frames are rejected for this source and no camera permission is requested. Synthetic frames use the native gesture runtime and 250 ms frame watchdog, not the scalar UI lease. Standalone trace replay remains simulation-only. Legacy single-hand camera mappings cannot be substituted by this mode.
 
 Camera debug streams are bound to a Builder run token. The camera panel owns its Stop/Release action; the scalar release button is hidden for camera substitution so an ongoing frame producer cannot immediately rearm it. Native source status excludes the synthetic camera.
+
+Hybrid Remote projection and loopback diagnostic validate the explicitly selected substitution using the same full-patch admission contract. Remote metadata remains restricted to the paired phone/tablet source; synthetic and other local targets are never included.

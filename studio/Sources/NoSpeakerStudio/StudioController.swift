@@ -432,7 +432,7 @@ final class StudioController: ObservableObject {
     func runBuilderRemoteProbe(source: SensorSource) {
         guard patchRemoteReady, patchRemoteEndpoint?.isLoopback == true, !patchRemoteProbeRunning else { return }
         do {
-            let expected = try RemoteProbeContract.expected(patch:instrumentPatch,source:source)
+            let expected = try RemoteProbeContract.expected(patch:instrumentPatch,source:source,synthetic:patchHybridSource)
             let invitation = try issueBuilderRemoteInvitation(source: source)
             let token = UUID()
             patchRemoteProbeToken = token

@@ -105,3 +105,21 @@ private func mappingFixture() -> InstrumentPatch {
     _ = bridge.revoke(first,runtime:&runtime)
     #expect(bridge.connectionIDs == [second])
 }
+
+@Test func hybridRemoteProjectionAndProbeRemainSourceScoped() throws {
+    var patch = mappingFixture()
+    patch.routes.append(.init(id:"synthetic-private",source:.external,signal:.x,destination:.init(.pitchBend)))
+    #expect(throws:RemoteTouchError.invalidFrame) { try RemoteMappingProjection(patch:patch,source:.phone) }
+    let projection = try RemoteMappingProjection(patch:patch,source:.phone,synthetic:.external)
+    #expect(projection.rows == [[2,0,0,60,1],[2,0,2,70,2]])
+    let probe = try RemoteProbeContract.expected(patch:patch,source:.phone,synthetic:.external)
+    var runtime = PhysicalPatchRuntime()
+    try runtime.configure(patch,allowRemote:true,synthetic:.external)
+    let key = Data(repeating:42,count:32)
+    try runtime.issueRemotePairing(secret:key,source:.phone,now:1,mappingDetails:true)
+    let peer = try runtime.admitRemote(secret:key,now:1)
+    #expect(runtime.remoteCapabilities(peer) == probe)
+    let page = try runtime.remoteMappingPage(peer,page:0,sequence:2)
+    #expect(page.rows == projection.rows)
+    #expect(throws:RemoteTouchError.unavailable) { try RemoteProbeContract.expected(patch:patch,source:.external,synthetic:.external) }
+}
