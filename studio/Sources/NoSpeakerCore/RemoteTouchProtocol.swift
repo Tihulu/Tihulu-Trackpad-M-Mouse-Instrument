@@ -84,14 +84,19 @@ struct RemotePairingGate: Sendable {
     private var pending: Data?
     private var source: SensorSource?
     private var issuedAt = 0.0
-    mutating func issue(secret: Data, source: SensorSource, now: Double) throws {
+    private var mappingDetails = false
+    mutating func issue(secret: Data, source: SensorSource, now: Double, mappingDetails: Bool = false) throws {
         guard secret.count == 32, source == .phone || source == .tablet,
               now.isFinite, now >= 0 else { throw RemoteTouchError.invalidPairing }
         pending = secret
         self.source = source
+        self.mappingDetails = mappingDetails
         issuedAt = now
     }
     mutating func consume(secret: Data, now: Double) throws -> SensorSource {
+        try consumeWithConsent(secret:secret,now:now).source
+    }
+    mutating func consumeWithConsent(secret: Data, now: Double) throws -> (source: SensorSource, mappingDetails: Bool) {
         guard let pending, let source, now.isFinite, now >= issuedAt,
               now-issuedAt < 60 else {
             clear()
@@ -101,10 +106,11 @@ struct RemotePairingGate: Sendable {
         var difference: UInt8 = 0
         for (a,b) in zip(pending,secret) { difference |= a ^ b }
         guard difference == 0 else { throw RemoteTouchError.invalidPairing }
+        let consent = mappingDetails
         clear()
-        return source
+        return (source,consent)
     }
-    mutating func clear() { pending = nil; source = nil; issuedAt = 0 }
+    mutating func clear() { pending = nil; source = nil; issuedAt = 0; mappingDetails = false }
 }
 
 struct RemoteInertialStream: Sendable {
@@ -119,6 +125,7 @@ struct RemoteInertialStream: Sendable {
 
 struct RemoteTouchPeer: Sendable {
     let source: SensorSource
+    let mappingDetails: Bool
     var routerSession: UUID?
     var drumSession: UUID?
     var drumMask = 0
@@ -139,8 +146,9 @@ struct RemoteTouchPeer: Sendable {
     private var lastSequence: UInt64 = 0
     private var windowStart: Double
     private var count = 0
-    init(source: SensorSource, now: Double) {
+    init(source: SensorSource, now: Double, mappingDetails: Bool = false) {
         self.source = source
+        self.mappingDetails = mappingDetails
         lastSeen = now
         windowStart = now
     }
