@@ -777,7 +777,14 @@ final class StudioController: ObservableObject {
                   !self.touchRunning, !self.midiRunning, !self.midiHelperRunning,
                   !self.systemAudioRunning, let events, !events.isEmpty else { return }
             self.startupGreetingPlaying = true
-            engine.play(events: events, masterLevel: self.masterLevel)
+            let generation = self.renderGeneration
+            engine.play(events: events, masterLevel: self.masterLevel) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.renderGeneration == generation else { return }
+                    self.startupGreetingPlaying = false
+                    self.startupGreetingTask = nil
+                }
+            }
         }
     }
 
@@ -791,23 +798,47 @@ final class StudioController: ObservableObject {
         }
     }
 
+    private func beginPlaybackRequest() -> UInt64 {
+        renderGeneration &+= 1
+        playback?.stop(closeDriver: false)
+        isPlaying = true
+        lastError = nil
+        return renderGeneration
+    }
+
+    private func playRendered(_ events: [ScheduledHapticEvent], token: UInt64,
+                              loop: Bool = false, duration: Double? = nil, level: Double? = nil) {
+        guard renderGeneration == token, let playback else {
+            if renderGeneration == token { isPlaying = false }
+            return
+        }
+        playback.play(events: events, masterLevel: level ?? masterLevel,
+                      loop: loop, duration: duration) { [weak self] error in
+            Task { @MainActor in
+                guard let self, self.renderGeneration == token else { return }
+                self.isPlaying = false
+                if let error {
+                    self.lastError = error
+                    self.engineStatus = "Playback error"
+                }
+            }
+        }
+    }
+
     func speak(_ text: String, voice: String?) {
         guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine(), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        isPlaying = true
+        let token = beginPlaybackRequest()
         let renderText = text
         let renderVoice = voice
-        renderGeneration &+= 1
-        let token = renderGeneration
         Task {
             do {
                 let events = try await Task.detached(priority: .userInitiated) {
                     try VoiceHapticService.render(text: renderText, voice: renderVoice)
                 }.value
                 guard renderGeneration == token, !liveNoteOwnsHaptics else { return }
-                playback?.play(events: events, masterLevel: masterLevel)
-                isPlaying = false
+                playRendered(events, token: token)
             } catch {
                 guard renderGeneration == token else { return }
                 fail(error)
@@ -819,10 +850,14 @@ final class StudioController: ObservableObject {
         guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
+        guard let duration = PlaybackTimeline.patternDuration(bpm: bpm, stepsPerBeat: 4, length: length) else {
+            lastError = "Invalid sequence tempo or length."
+            return
+        }
+        let token = beginPlaybackRequest()
         do {
             let events = try HapticPatternRenderer.notes(.init(bpm: bpm, stepsPerBeat: 4, length: length, steps: steps))
-            playback?.play(events: events, masterLevel: masterLevel, loop: loop)
-            isPlaying = true
+            playRendered(events, token: token, loop: loop, duration: duration)
         } catch { fail(error) }
     }
 
@@ -830,9 +865,13 @@ final class StudioController: ObservableObject {
         guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
+        guard let duration = PlaybackTimeline.patternDuration(bpm: bpm, stepsPerBeat: 4, length: length) else {
+            lastError = "Invalid sequence tempo or length."
+            return
+        }
+        let token = beginPlaybackRequest()
         let events = HapticPatternRenderer.drums(.init(bpm: bpm, stepsPerBeat: 4, length: length, hits: hits))
-        playback?.play(events: events, masterLevel: masterLevel, loop: loop)
-        isPlaying = true
+        playRendered(events, token: token, loop: loop, duration: duration)
     }
 
     func stopPlayback() {
@@ -846,8 +885,11 @@ final class StudioController: ObservableObject {
         guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
+        guard frequency.isFinite, frequency > 0 else { return }
         let duration = max(2, (0.04 * frequency).rounded()) / frequency * 1_000
-        playback?.play(frame: .init(tones: [.init(frequencyHz: frequency)], durationMS: duration, level: masterLevel))
+        let token = beginPlaybackRequest()
+        playRendered([.init(time: 0, frame: .init(tones: [.init(frequencyHz: frequency)],
+                       durationMS: duration, level: masterLevel))], token: token, level: 1)
     }
 
     func sweep() {
@@ -865,8 +907,8 @@ final class StudioController: ObservableObject {
             )))
             time += step
         }
-        playback?.play(events: events, masterLevel: 1)
-        isPlaying = true
+        let token = beginPlaybackRequest()
+        playRendered(events, token: token, level: 1)
     }
 
     var touchSessionSummary: String {
@@ -1524,12 +1566,13 @@ final class StudioController: ObservableObject {
         guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
+        let token = beginPlaybackRequest()
         do {
             let data = try Data(contentsOf: url)
             let midi = try MIDIFileParser.parse(data)
             currentFileName = url.lastPathComponent
-            playback?.play(events: MIDIFileParser.hapticEvents(from: midi), masterLevel: masterLevel)
-            isPlaying = true
+            playRendered(MIDIFileParser.hapticEvents(from: midi), token: token,
+                         duration: midi.durationSeconds)
         } catch { fail(error) }
     }
 
@@ -1540,17 +1583,14 @@ final class StudioController: ObservableObject {
         currentFileName = url.lastPathComponent
         let selectedProfile = profile ?? activeProfile
         let fileURL = url
-        isPlaying = true
-        renderGeneration &+= 1
-        let token = renderGeneration
+        let token = beginPlaybackRequest()
         Task {
             do {
                 let events = try await Task.detached(priority: .userInitiated) {
                     try AudioFileHapticService.render(url: fileURL, profile: selectedProfile)
                 }.value
                 guard renderGeneration == token, !liveNoteOwnsHaptics else { return }
-                playback?.play(events: events, masterLevel: masterLevel)
-                isPlaying = false
+                playRendered(events, token: token)
             } catch {
                 guard renderGeneration == token else { return }
                 fail(error)
