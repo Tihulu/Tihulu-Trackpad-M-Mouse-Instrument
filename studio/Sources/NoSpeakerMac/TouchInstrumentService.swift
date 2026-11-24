@@ -249,6 +249,9 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var sustainedHapticStates = HapticSustainVoices<TouchPerformanceState>()
     private var sustainActive = false
     private var activeDrumContacts: Set<String> = []
+    // Grid strikes survive sample-publication invalidation, but never a
+    // structural layout change or an explicit performance stop.
+    private var gridDrumNotes: [TouchSurfaceKind: [Int: Int]] = [:]
     private var pendingDrumHits: [HapticFrame] = []
     // Accessed only on the serial render queue.
     private var drumPriorityUntil = 0.0
@@ -332,6 +335,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             liveHapticStates.removeAll()
             sustainedHapticStates.removeAll()
             activeDrumContacts.removeAll()
+            gridDrumNotes.removeAll()
             pendingDrumHits.removeAll()
             sustainActive = false
         }
@@ -358,13 +362,18 @@ public final class TouchInstrumentService: @unchecked Sendable {
     public func setActive(_ active: Bool) {
         if !active { renderFence.revoke() }
         lock.lock()
-        if self.active != active { invalidateSamplesLocked(); renderRevision &+= 1 }
+        if self.active != active {
+            invalidateSamplesLocked()
+            gridDrumNotes.removeAll()
+            renderRevision &+= 1
+        }
         self.active = active
         if !active {
             sustainActive = false
             liveHapticStates.removeAll()
             sustainedHapticStates.removeAll()
             activeDrumContacts.removeAll()
+            gridDrumNotes.removeAll()
             pendingDrumHits.removeAll()
         }
         lock.unlock()
@@ -454,7 +463,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
         let mappedNotes = config.mappedMIDINotes
         let instrument = config.instrument(for: frame.surface)
-        var states: [TouchPerformanceState] = (mappedNotes.isEmpty && instrument != .drums) ? [] : frame.contacts.compactMap { contact -> TouchPerformanceState? in
+        var states: [TouchPerformanceState] = mappedNotes.isEmpty ? [] : frame.contacts.compactMap { contact -> TouchPerformanceState? in
             guard contact.surface == frame.surface,
                   let sample = TouchSampleDomain.normalize(x:Double(contact.x),y:Double(contact.y),pressure:Double(contact.size)) else { return nil }
             let rawX = sample.x
@@ -509,13 +518,15 @@ public final class TouchInstrumentService: @unchecked Sendable {
         publicationSequence &+= 1
         let stamp = TouchSnapshotStamp(revision:revision,sequence:publicationSequence)
         if instrument == .drums && config.drumLayout.isGrid {
-            let previous = latestStatesBySurface[frame.surface] ?? []
+            let previous = gridDrumNotes[frame.surface] ?? [:]
+            var next: [Int: Int] = [:]
             for index in states.indices where states[index].isDown {
                 let id = states[index].contactID
-                let oldNote = previous.first { $0.contactID == id && $0.isDown }?.quantizedMIDI
                 states[index].quantizedMIDI = config.drumLayout.strikeNote(
-                    at:states[index].quantizedMIDI, previousDownNote:oldNote)
+                    at:states[index].quantizedMIDI, previousDownNote:previous[id])
+                next[id] = states[index].quantizedMIDI
             }
+            gridDrumNotes[frame.surface] = next
         }
         latestStatesBySurface[frame.surface] = states.filter(\.isTouching)
         let combined = TouchSurfaceKind.allCases
