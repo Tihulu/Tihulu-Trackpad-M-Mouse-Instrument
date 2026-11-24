@@ -57,6 +57,25 @@ struct InstrumentBuilderView: View {
                 }
                 ExpressivePresetPanel(patch: $draft).disabled(studio.patchRunning)
                 AirInstrumentPresetPanel(patch: $draft).disabled(studio.patchRunning)
+                GroupBox("Dual Hand · camera chords") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Show a closed chord hand to arm, then 1–5 fingers to select C, Dm, Em, F or G. Open and pinch the helper hand to play; open it to release. Edit the individual note routes below.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Add dual-hand chord routes") {
+                            var next = draft
+                            next.routes += AirDualHandPerformance.routes()
+                            if next.isValid {
+                                draft = next
+                                physical = true
+                                message = "Dual Hand added. Enable MIDI output, grant camera permission and start explicitly."
+                            } else { message = "Cannot add dual-hand routes: check route capacity." }
+                        }.disabled(draft.routes.count + 15 > SensorRouter.maxMappings ||
+                                    draft.routes.contains { $0.source == .camera })
+                        Toggle("Swap physical chord and helper hands", isOn: $studio.patchCameraSwapRoles)
+                        Text("Experimental live camera mode; connect a DAW to the dedicated Builder MIDI output. Simulation routes remain available.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8).disabled(studio.patchRunning)
+                }
                 GroupBox("Air Drums · motion percussion") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
