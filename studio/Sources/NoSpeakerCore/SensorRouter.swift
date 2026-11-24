@@ -8,7 +8,7 @@ public enum SensorSource: String, Codable, CaseIterable, Sendable {
 /// No adapter or device is started by constructing a router.
 public enum SensorSignal: String, Codable, CaseIterable, Sendable {
     case x, y, contact, contactSize, pressure, angle, speed, gesture, expression
-    case tiltYaw, tiltPitch, tiltRoll
+    case tiltYaw, tiltPitch, tiltRoll, accelerationMagnitude, rotationMagnitude
 }
 
 public struct SensorCalibration: Codable, Equatable, Sendable {

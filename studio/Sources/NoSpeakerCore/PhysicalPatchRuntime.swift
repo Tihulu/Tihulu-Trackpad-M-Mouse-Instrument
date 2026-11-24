@@ -11,6 +11,7 @@ public struct PhysicalPatchRuntime: Sendable {
     private var seen: [SensorSource: Double] = [:]
     private var sequence: UInt64 = 0
     private var motionSources: Set<SensorSource> = []
+    private var inertialSignals: [SensorSource: Set<SensorSignal>] = [:]
     private var remoteEnabled = false
     private var pairing = RemotePairingGate()
     private var remotePeers: [UUID: RemoteTouchPeer] = [:]
@@ -30,7 +31,7 @@ public struct PhysicalPatchRuntime: Sendable {
             case .phone, .tablet:
                 guard allowRemote else { return false }
                 if [.x,.y,.contact].contains($0.signal) { return true }
-                return [.tiltYaw,.tiltPitch,.tiltRoll].contains($0.signal) &&
+                return [.tiltYaw,.tiltPitch,.tiltRoll,.accelerationMagnitude,.rotationMagnitude].contains($0.signal) &&
                     ($0.destination.kind == .controlChange || $0.destination.kind == .pitchBend)
             default: return false
             }
@@ -42,6 +43,10 @@ public struct PhysicalPatchRuntime: Sendable {
         try router.configure(patch.routes)
         supported = Set(patch.routes.map(\.source))
         motionSources = Set(patch.routes.filter { [.tiltYaw,.tiltPitch,.tiltRoll].contains($0.signal) }.map(\.source))
+        inertialSignals = [:]
+        for route in patch.routes where [.accelerationMagnitude,.rotationMagnitude].contains(route.signal) {
+            inertialSignals[route.source, default: []].insert(route.signal)
+        }
         remoteEnabled = allowRemote
         pairing.clear()
         seen = [:]
@@ -194,12 +199,38 @@ public struct PhysicalPatchRuntime: Sendable {
             peer.motionFreshness.disarm()
             remotePeers[id] = peer
             return .accepted(commands)
+        case .accelerationArm, .rotationArm:
+            let signal: SensorSignal = frame.kind == .accelerationArm ? .accelerationMagnitude : .rotationMagnitude
+            guard inertialSignals[peer.source]?.contains(signal) == true, peer.inertial[signal] == nil
+            else { return .close(revokeRemote(id)) }
+            peer.inertial[signal] = .init(lastReceipt: now, session: nil)
+            remotePeers[id] = peer
+            return .accepted([])
+        case .acceleration, .rotation:
+            let signal: SensorSignal = frame.kind == .acceleration ? .accelerationMagnitude : .rotationMagnitude
+            guard var stream = peer.inertial[signal], now > stream.lastReceipt, let value = frame.inertialValue
+            else { return .close(revokeRemote(id)) }
+            if stream.session == nil { stream.session = try? router.connect(peer.source, now: now) }
+            guard let session = stream.session else { return .close(revokeRemote(id)) }
+            stream.lastReceipt = now
+            peer.inertial[signal] = stream
+            remotePeers[id] = peer
+            sequence &+= 1
+            return .accepted(router.ingest(.init(session: session, signal: signal, value: value,
+                                                 sequence: sequence, timestamp: now), now: now))
+        case .accelerationRelease, .rotationRelease:
+            let signal: SensorSignal = frame.kind == .accelerationRelease ? .accelerationMagnitude : .rotationMagnitude
+            guard let stream = peer.inertial.removeValue(forKey: signal) else { return .close(revokeRemote(id)) }
+            let commands = stream.session.map { router.disconnect($0) } ?? []
+            remotePeers[id] = peer
+            return .accepted(commands)
         }
     }
 
     public mutating func revokeRemote(_ id: UUID) -> [SensorCommand] {
         guard let peer = remotePeers.removeValue(forKey: id) else { return [] }
-        return [peer.routerSession, peer.motionSession].compactMap { $0 }.flatMap { router.disconnect($0) }
+        let inertialSessions = [SensorSignal.accelerationMagnitude, .rotationMagnitude].compactMap { peer.inertial[$0]?.session }
+        return ([peer.routerSession, peer.motionSession].compactMap { $0 } + inertialSessions).flatMap { router.disconnect($0) }
     }
 
     public mutating func cancelRemotePairing() { pairing.clear() }
@@ -233,6 +264,7 @@ public struct PhysicalPatchRuntime: Sendable {
         seen = [:]
         supported = []
         motionSources = []
+        inertialSignals = [:]
         remoteEnabled = false
         pairing.clear()
         remotePeers = [:]
