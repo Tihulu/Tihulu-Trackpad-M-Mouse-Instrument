@@ -69,6 +69,7 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
     public var baseMIDINote: Int
     public var scale: TouchScale
     public var customScale: CustomScale?
+    public var physicalChordBank: ChordBank?
     public var fretless: Bool
     public var zoneWidth: Double
     public var pitchSpanSemitones: Double
@@ -107,11 +108,13 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         magicMouseOutput: SurfaceOutputRoute = .midiInstrument,
         drumLayout: DrumPadLayout = .standard12,
         magicMouseOrientation: SurfaceOrientation = .horizontal,
-        customScale: CustomScale? = nil
+        customScale: CustomScale? = nil,
+        physicalChordBank: ChordBank? = nil
     ) {
         self.baseMIDINote = baseMIDINote
         self.scale = scale
         self.customScale = customScale
+        self.physicalChordBank = physicalChordBank
         self.fretless = fretless
         self.zoneWidth = zoneWidth
         self.pitchSpanSemitones = pitchSpanSemitones
@@ -180,6 +183,18 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         return try? MusicTheory.frequency(midi: midi)
     }
 
+    public var hasPhysicalChords: Bool {
+        selectedSurfaces.contains { instrument(for:$0) == .chords }
+    }
+    public func permitsPhysicalChordMIDI(isMPE: Bool) -> Bool {
+        guard selectedSurfaces.contains(where: { instrument(for:$0) == .chords && output(for:$0).sendsMIDI }) else { return true }
+        guard let bank = physicalChordBank else { return false }
+        let mixedFretless = fretless && selectedSurfaces.contains {
+            instrument(for:$0) == .melodic && output(for:$0).sendsMIDI
+        }
+        return PhysicalChordGrid.permitsMIDI(bank:bank,isMPE:isMPE,mixedFretless:mixedFretless)
+    }
+
     public var hasMIDIOutput: Bool {
         selectedSurfaces.contains { output(for: $0).sendsMIDI }
     }
@@ -195,6 +210,7 @@ public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
     public var y: Double
     public var pressure: Double
     public var quantizedMIDI: Int
+    public var chordSlot: Int? = nil
     public var continuousMIDI: Double
     public var velocity: Int
     public var expression: Int
@@ -252,6 +268,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     // Grid strikes survive sample-publication invalidation, but never a
     // structural layout change or an explicit performance stop.
     private var gridDrumNotes: [TouchSurfaceKind: [Int: Int]] = [:]
+    private var chordSlots: [TouchSurfaceKind: [Int: Int]] = [:]
     private var pendingDrumHits: [HapticFrame] = []
     // Accessed only on the serial render queue.
     private var drumPriorityUntil = 0.0
@@ -336,6 +353,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             sustainedHapticStates.removeAll()
             activeDrumContacts.removeAll()
             gridDrumNotes.removeAll()
+            chordSlots.removeAll()
             pendingDrumHits.removeAll()
             sustainActive = false
         }
@@ -365,6 +383,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         if self.active != active {
             invalidateSamplesLocked()
             gridDrumNotes.removeAll()
+            chordSlots.removeAll()
             renderRevision &+= 1
         }
         self.active = active
@@ -374,6 +393,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             sustainedHapticStates.removeAll()
             activeDrumContacts.removeAll()
             gridDrumNotes.removeAll()
+            chordSlots.removeAll()
             pendingDrumHits.removeAll()
         }
         lock.unlock()
@@ -401,7 +421,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         if changed { renderRevision &+= 1 }
         sustainActive = isOn
         if isOn {
-            for state in liveHapticStates where configuration.output(for: state.surface).sendsHaptics && configuration.instrument(for: state.surface) == .melodic {
+            for state in liveHapticStates where configuration.output(for: state.surface).sendsHaptics && configuration.instrument(for: state.surface) != .drums {
                 sustainedHapticStates.remember(id:state.id,value:state)
             }
         } else {
@@ -477,7 +497,13 @@ public final class TouchInstrumentService: @unchecked Sendable {
             )
 
             let quantized: Int
-            if instrument == .drums {
+            var chordSlot: Int?
+            if instrument == .chords {
+                guard let slot = PhysicalChordGrid.slot(x:x,y:y),
+                      let pad = config.physicalChordBank?.pad(at:slot), let first = pad.notes.first else { return nil }
+                chordSlot = slot
+                quantized = first
+            } else if instrument == .drums {
                 guard let pad = config.drumLayout.pad(x:x,y:y) else { return nil }
                 quantized = pad.midiNote
             } else {
@@ -495,7 +521,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 ? Int((pressure * 127).rounded())
                 : 127
 
-            return TouchPerformanceState(
+            var state = TouchPerformanceState(
                 contactID: contact.id,
                 surface: contact.surface,
                 isTouching: contact.isDown,
@@ -509,6 +535,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 expression: expression,
                 vibrato: y
             )
+            state.chordSlot = chordSlot
+            return state
         }
 
         lock.lock()
@@ -527,6 +555,22 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 next[id] = states[index].quantizedMIDI
             }
             gridDrumNotes[frame.surface] = next
+        }
+        if instrument == .chords {
+            let previous = chordSlots[frame.surface] ?? [:]
+            var next: [Int:Int] = [:]
+            for index in states.indices where states[index].isDown {
+                let id = states[index].contactID
+                guard let slot = previous[id] ?? states[index].chordSlot,
+                      let pad = config.physicalChordBank?.pad(at:slot), let first = pad.notes.first else {
+                    states[index].isDown = false
+                    continue
+                }
+                states[index].chordSlot = slot
+                states[index].quantizedMIDI = first
+                next[id] = slot
+            }
+            chordSlots[frame.surface] = next
         }
         latestStatesBySurface[frame.surface] = states.filter(\.isTouching)
         let combined = TouchSurfaceKind.allCases
@@ -556,7 +600,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         }
         activeDrumContacts = Set(drums.map(\.id))
         if sustainActive {
-            for state in liveHapticStates where liveConfig.output(for: state.surface).sendsHaptics && liveConfig.instrument(for: state.surface) == .melodic {
+            for state in liveHapticStates where liveConfig.output(for: state.surface).sendsHaptics && liveConfig.instrument(for: state.surface) != .drums {
                 sustainedHapticStates.remember(id:state.id,value:state)
             }
         }
@@ -599,13 +643,23 @@ public final class TouchInstrumentService: @unchecked Sendable {
             includeSustained:isSustained
         ) { state in
             config.output(for:state.surface).sendsHaptics &&
-            config.instrument(for:state.surface) == .melodic
+            config.instrument(for:state.surface) != .drums
         }
         guard !sounding.isEmpty else { return }
 
         var tones: [HapticTone] = []
         var level = 0.0
         for state in sounding {
+            if config.instrument(for:state.surface) == .chords {
+                guard let slot = state.chordSlot, let bank = config.physicalChordBank,
+                      let pad = bank.pad(at:slot) else { continue }
+                for note in pad.notes {
+                    let frequency = bank.customScale?.tunedFrequency(midi:note,root:bank.root) ?? (try? MusicTheory.frequency(midi:note))
+                    if let frequency { tones.append(.init(frequencyHz:frequency)) }
+                }
+                level = max(level,Double(state.velocity)/127)
+                continue
+            }
             let baseFrequency: Double
             if config.fretless && config.instrument(for: state.surface) == .melodic {
                 baseFrequency = 440.0 * pow(2.0, (state.continuousMIDI - 69.0) / 12.0)

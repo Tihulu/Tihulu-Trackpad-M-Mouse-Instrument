@@ -110,3 +110,30 @@ import Testing
     #expect(DrumPadLayout.grid8.strikeNote(at:36,previousDownNote:127) == 36)
     #expect(DrumPadLayout.compact8.strikeNote(at:38,previousDownNote:36) == 38)
 }
+
+@Test func physicalChordGridAndSharedGateOwnership() throws {
+    for slot in 0..<8 {
+        #expect(PhysicalChordGrid.slot(x:(Double(slot%4)+0.5)/4,y:1-(Double(slot/4)+0.5)/2) == slot)
+    }
+    #expect(PhysicalChordGrid.slot(x:.nan,y:0) == nil)
+    var ledger = LegacyNoteOwners<String>()
+    var gates = PhysicalChordGates<Int>()
+    func target(_ n:Int) -> SensorDestination { .init(.note,channel:0,number:n) }
+    func owner(_ c:Int,_ t:SensorDestination) -> String { "\(c)-\(t.channel)-\(t.number)" }
+    let a = Set([target(60),target(64),target(67)])
+    let b = Set([target(64),target(67),target(71)])
+    #expect(gates.reconcile([1:a,2:b],velocity:[1:90,2:90],ledger:&ledger,owner:owner).count == 4)
+    #expect(gates.reconcile([2:b],velocity:[2:90],ledger:&ledger,owner:owner) == [.init(target(60),value:0)])
+    #expect(gates.reconcile([3:b],velocity:[3:90],ledger:&ledger,owner:owner).isEmpty)
+    _ = ledger.press("external",channel:0,note:64,velocity:100)
+    #expect(gates.reconcile([:],velocity:[:],ledger:&ledger,owner:owner).count == 2)
+    #expect(ledger.active == [target(64)])
+    #expect(ledger.release("external") == [.init(target(64),value:0)])
+}
+
+@Test func physicalChordMIDIRouteRejectsUnsupportedCombinations() {
+    let bank = ChordBank()
+    #expect(PhysicalChordGrid.permitsMIDI(bank:bank,isMPE:false,mixedFretless:false))
+    #expect(!PhysicalChordGrid.permitsMIDI(bank:bank,isMPE:true,mixedFretless:false))
+    #expect(!PhysicalChordGrid.permitsMIDI(bank:bank,isMPE:false,mixedFretless:true))
+}

@@ -714,7 +714,8 @@ final class StudioController: ObservableObject {
     }
 
     func updateChordBank(_ proposed: ChordBank) {
-        guard proposed.isValid, !chordArmed, chordOutstanding.isEmpty, chordMPESelectors.isEmpty else { return }
+        guard proposed.isValid, !chordArmed, chordOutstanding.isEmpty, chordMPESelectors.isEmpty,
+              !(touchRunning && currentTouchConfiguration.hasPhysicalChords) else { return }
         chordBank = proposed
         touchBarBridge?.refreshChordControls()
         if let data = try? WorkspaceArchive.encode(name: "Chord bank", payload: proposed) {
@@ -1028,7 +1029,7 @@ final class StudioController: ObservableObject {
         return SurfaceMIDIChannel.controlTarget(
             base: touchMIDIChannel,
             hasMIDIDrums: surfaces.contains { currentTouchConfiguration.instrument(for: $0) == .drums },
-            hasMIDIMelody: surfaces.contains { currentTouchConfiguration.instrument(for: $0) == .melodic },
+            hasMIDIMelody: surfaces.contains { currentTouchConfiguration.instrument(for: $0) != .drums },
             isMPE: touchMIDIMode == .mpe
         )
     }
@@ -1924,6 +1925,10 @@ final class StudioController: ObservableObject {
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
         guard allowLivePerformance() else { return }
+        guard configuration.permitsPhysicalChordMIDI(isMPE:midiMode == .mpe) else {
+            lastError = "Physical chord MIDI requires Standard mode, no shared fretless MIDI, and explicit approximation for microtonal banks."
+            return
+        }
         guard configuration.permitsMelodicMIDI else {
             lastError = "Custom cent offsets require Trackpad output or explicit equal-tempered MIDI approximation in the Scale Editor. Drum MIDI is unaffected."
             return

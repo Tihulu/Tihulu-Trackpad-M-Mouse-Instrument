@@ -4,6 +4,7 @@ import Foundation
 public enum SurfaceInstrumentMode: String, CaseIterable, Identifiable, Sendable, Codable {
     case melodic = "Melodic"
     case drums = "Drums"
+    case chords = "Chord Pads"
 
     public var id: String { rawValue }
 }
@@ -130,5 +131,54 @@ public enum SurfaceMIDIChannel {
                                      hasMIDIMelody: Bool, isMPE: Bool) -> Int? {
         guard hasMIDIMelody, !isMPE else { return nil }
         return melodic(base: base, hasMIDIDrums: hasMIDIDrums)
+    }
+}
+
+/// Physical chord grid shares the editable ChordBank's eight slots. A
+/// contact holds one slot until release; the bank's timed/latch UI is separate.
+public enum PhysicalChordGrid {
+    public static func slot(x: Double, y: Double) -> Int? {
+        DrumPadLayout.grid8.padIndex(x:x,y:y)
+    }
+
+    public static func permitsMIDI(bank: ChordBank, isMPE: Bool, mixedFretless: Bool) -> Bool {
+        guard bank.isValid, !isMPE, !mixedFretless else { return false }
+        guard let scale = bank.customScale, scale.isMicrotonal else { return true }
+        return scale.allowEqualTemperedMIDI
+    }
+}
+
+/// Reconcile per-contact note sets through the existing shared gate ledger.
+/// Add new owners before dropping old ones so a common tone survives a swap.
+public struct PhysicalChordGates<Contact: Hashable> {
+    private var held: [Contact: Set<SensorDestination>] = [:]
+    public init() {}
+    public var channels: Set<Int> { Set(held.values.flatMap { $0.map(\.channel) }) }
+    public mutating func reconcile<Owner: Hashable>(
+        _ desired: [Contact: Set<SensorDestination>], velocity: [Contact: Int],
+        ledger: inout LegacyNoteOwners<Owner>, owner: (Contact, SensorDestination) -> Owner
+    ) -> [SensorCommand] {
+        let next = desired.filter { !$0.value.isEmpty }
+        guard next.allSatisfy({ entry in
+            (1...127).contains(velocity[entry.key] ?? 0) &&
+            entry.value.allSatisfy { $0.kind == .note && $0.isValid }
+        }) else { return [] }
+        var result: [SensorCommand] = []
+        for (contact, targets) in next {
+            for target in targets.subtracting(held[contact] ?? []).sorted(by: Self.less) {
+                result += ledger.press(owner(contact,target),channel:target.channel,note:target.number,velocity:velocity[contact] ?? 1)
+            }
+        }
+        for (contact, targets) in held {
+            for target in targets.subtracting(next[contact] ?? []).sorted(by: Self.less) {
+                result += ledger.release(owner(contact,target))
+            }
+        }
+        held = next
+        return result
+    }
+
+    private static func less(_ lhs: SensorDestination, _ rhs: SensorDestination) -> Bool {
+        lhs.channel == rhs.channel ? lhs.number < rhs.number : lhs.channel < rhs.channel
     }
 }

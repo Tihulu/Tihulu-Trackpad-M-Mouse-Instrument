@@ -136,10 +136,11 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var inputHapticsEnabled = true
 
     private enum OutgoingNoteOwner: Hashable {
-        case touch(TouchKey), legacyTouch, performance(NoteKey)
+        case touch(TouchKey), physicalChord(TouchKey, SensorDestination), legacyTouch, performance(NoteKey)
     }
     private var noteOwners = LegacyNoteOwners<OutgoingNoteOwner>()
     private var outgoingTouches: [TouchKey: OutgoingTouch] = [:]
+    private var physicalChordGates = PhysicalChordGates<TouchKey>()
     private var touchOutputNote: Int?
     private var touchOutputChannel = 0
     private var touchOutputFretless = false
@@ -218,6 +219,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         expressionByChannel.removeAll()
         channelPressureByChannel.removeAll()
         outgoingTouches.removeAll()
+        physicalChordGates = PhysicalChordGates<TouchKey>()
         sustainOwners = LegacySustainOwners()
         lock.unlock()
         startRenderTimer()
@@ -305,6 +307,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         expressionByChannel.removeAll()
         channelPressureByChannel.removeAll()
         outgoingTouches.removeAll()
+        physicalChordGates = PhysicalChordGates<TouchKey>()
         sustainOwners = LegacySustainOwners()
         lock.unlock()
 
@@ -385,6 +388,22 @@ public final class MIDIHapticService: @unchecked Sendable {
             }
         }
 
+        // Chords are standard MIDI, not disguised MPE notes. Invalid routes
+        // release existing physical chord ownership without touching other sources.
+        var chordTargets: [TouchKey:Set<SensorDestination>] = [:]
+        var chordVelocities: [TouchKey:Int] = [:]
+        if configuration.permitsPhysicalChordMIDI(isMPE:midiMode == .mpe),
+           let bank = configuration.physicalChordBank {
+            for state in desired where configuration.instrument(for:state.surface) == .chords {
+                guard let slot = state.chordSlot, let pad = bank.pad(at:slot) else { continue }
+                let key = TouchKey(surface:state.surface,id:state.contactID)
+                chordTargets[key] = Set(pad.notes.map { .init(.note,channel:safeMelodicChannel,number:$0) })
+                chordVelocities[key] = max(1,min(127,state.velocity))
+            }
+        }
+        desired.removeAll { configuration.instrument(for:$0.surface) == .chords }
+        sendOwnedNotes(physicalChordGates.reconcile(chordTargets,velocity:chordVelocities,
+            ledger:&noteOwners,owner:{ .physicalChord($0,$1) }))
         let desiredKeys = Set(desired.map { TouchKey(surface: $0.surface, id: $0.contactID) })
         let releasedKeys = outgoingTouches.keys.filter { !desiredKeys.contains($0) }
         for key in releasedKeys {
@@ -520,6 +539,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     public func endAllTouchOutput() {
+        sendOwnedNotes(physicalChordGates.reconcile([:],velocity:[:],ledger:&noteOwners,owner:{ .physicalChord($0,$1) }))
         for (key, outgoing) in outgoingTouches {
             releaseOutgoingTouch(key,outgoing:outgoing)
         }
@@ -567,7 +587,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         let previous = sustainOwners.channels(for:.touch)
-        let currentNoteChannels = Set(outgoingTouches.values.map(\.channel))
+        let currentNoteChannels = Set(outgoingTouches.values.map(\.channel)).union(physicalChordGates.channels)
         let fallback = max(0,min(15,baseChannel))
         let targets = active && canSend
             ? previous.union(currentNoteChannels.isEmpty && previous.isEmpty ? [fallback] : currentNoteChannels)

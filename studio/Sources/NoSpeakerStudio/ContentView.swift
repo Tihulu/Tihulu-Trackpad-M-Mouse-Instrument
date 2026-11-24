@@ -774,6 +774,11 @@ private struct TouchInstrumentView: View {
         (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument == .melodic)
     }
 
+    private var hasChords: Bool {
+        (surfaceSelection.accepts(.trackpad) && trackpadInstrument == .chords) ||
+        (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument == .chords)
+    }
+
     private var hasDrums: Bool {
         (surfaceSelection.accepts(.trackpad) && trackpadInstrument == .drums) ||
         (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument == .drums)
@@ -803,7 +808,8 @@ private struct TouchInstrumentView: View {
             trackpadOutput: trackpadOutput,
             magicMouseOutput: magicMouseOutput,
             drumLayout: drumLayout,
-            customScale: studio.touchCustomScale
+            customScale: studio.touchCustomScale,
+            physicalChordBank: hasChords ? studio.chordBank : nil
         )
     }
 
@@ -812,7 +818,7 @@ private struct TouchInstrumentView: View {
             VStack(alignment: .leading, spacing: 16) {
                 PageHeader(
                     title: "Touch Instrument",
-                    subtitle: "Play GM drums or melodic notes with the trackpad and Magic Mouse. Route each surface to trackpad haptics, a DAW MIDI instrument, or both."
+                    subtitle: "Play physical chord pads, GM drums or melodic notes with the trackpad and Magic Mouse. Route each surface to trackpad haptics, a DAW MIDI instrument, or both."
                 )
 
                 HStack(spacing: 14) {
@@ -875,7 +881,7 @@ private struct TouchInstrumentView: View {
                                 ForEach(SurfaceOutputRoute.allCases) { Text($0.rawValue).tag($0) }
                             }
                             .frame(width: 200)
-                            Text(trackpadInstrument == .drums ? "GM · MIDI Ch 10" : "Melodic instrument")
+                            Text(trackpadInstrument == .drums ? "GM · MIDI Ch 10" : (trackpadInstrument == .chords ? "Chord Bank · 8 pads" : "Melodic instrument"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -894,7 +900,7 @@ private struct TouchInstrumentView: View {
                                 ForEach(SurfaceOutputRoute.allCases) { Text($0.rawValue).tag($0) }
                             }
                             .frame(width: 200)
-                            Text(magicMouseInstrument == .drums ? "GM · MIDI Ch 10" : "Melodic instrument")
+                            Text(magicMouseInstrument == .drums ? "GM · MIDI Ch 10" : (magicMouseInstrument == .chords ? "Chord Bank · 8 pads" : "Melodic instrument"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -1045,11 +1051,17 @@ private struct TouchInstrumentView: View {
                     }
                 }
 
+                if hasChords {
+                    GroupBox("Physical Chord Pads") {
+                        Text("Eight held-contact pads from the Chord Pads page. Edit the bank while Touch Instrument is stopped. Physical pads use the Touch output and velocity, not the bank’s timed gate or latch. MIDI requires Standard mode; microtonal MIDI needs explicit approximation.")
+                            .font(.caption).foregroundStyle(.secondary).padding(6)
+                    }
+                }
                 if configuration.hasMIDIOutput {
                     GroupBox("Logic Pro / DAW MIDI Out") {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 14) {
-                                if hasMelodic {
+                                if hasMelodic || hasChords {
                                     Picker("Melodic MIDI Mode", selection: $midiMode) {
                                         ForEach(TouchMIDIMode.allCases) { Text($0.rawValue).tag($0) }
                                     }
@@ -1169,6 +1181,7 @@ private struct TouchInstrumentView: View {
         .onChange(of: root) { _ in syncConfiguration() }
         .onChange(of: scale) { _ in syncConfiguration() }
         .onChange(of: studio.touchCustomScale) { _ in syncConfiguration() }
+        .onChange(of: studio.chordBank) { _ in if hasChords && !studio.touchRunning { syncConfiguration() } }
         .onChange(of: fretless) { _ in syncConfiguration() }
         .onChange(of: zoneWidth) { _ in syncConfiguration() }
         .onChange(of: pitchSpan) { _ in syncConfiguration() }
@@ -1197,7 +1210,7 @@ private struct TouchInstrumentView: View {
             HStack {
                 Text(surface.rawValue)
                     .font(.headline)
-                Text(instrument == .drums ? "GM Drum Pads" : "Melodic Note Map")
+                Text(instrument == .drums ? "GM Drum Pads" : (instrument == .chords ? "Physical Chord Pads" : "Melodic Note Map"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -1208,6 +1221,7 @@ private struct TouchInstrumentView: View {
             TouchSurfaceMap(
                 notes: mappedMIDINotes,
                 drumLayout: drumLayout,
+                chordBank: studio.chordBank,
                 instrument: instrument,
                 rootMIDI: root,
                 fretless: fretless,
@@ -1235,6 +1249,7 @@ private struct TouchSurfaceMap: View {
     let notes: [Int]
     let drumLayout: DrumPadLayout
     private var drumPads: [DrumPad] { drumLayout.pads }
+    let chordBank: ChordBank
     let instrument: SurfaceInstrumentMode
     let rootMIDI: Int
     let fretless: Bool
@@ -1252,7 +1267,25 @@ private struct TouchSurfaceMap: View {
                 RoundedRectangle(cornerRadius: 18)
                     .fill(.quaternary.opacity(active ? 0.58 : 0.42))
 
-                if instrument == .drums {
+                if instrument == .chords {
+                    let width = proxy.size.width / 4
+                    let height = proxy.size.height / 2
+                    ForEach(0..<ChordBank.padCount,id:\.self) { slot in
+                        let pad = chordBank.pad(at:slot)
+                        let pressed = states.contains { $0.isDown && $0.chordSlot == slot }
+                        ZStack {
+                            RoundedRectangle(cornerRadius:8)
+                                .fill(pressed ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.08))
+                            RoundedRectangle(cornerRadius:8).strokeBorder(Color.secondary.opacity(0.24))
+                            VStack(spacing:4) {
+                                Text(pad?.name ?? "Unavailable").font(.headline)
+                                Text(pad?.noteNames ?? "").font(.caption2).lineLimit(2)
+                            }.padding(3)
+                        }
+                        .frame(width:max(1,width-4),height:max(1,height-4))
+                        .position(x:(CGFloat(slot % 4)+0.5)*width,y:(CGFloat(slot / 4)+0.5)*height)
+                    }
+                } else if instrument == .drums {
                     let cellWidth = proxy.size.width / CGFloat(drumLayout.columns)
                     let cellHeight = proxy.size.height / CGFloat(drumLayout.rows)
                     ForEach(drumPads.indices, id: \.self) { index in
@@ -1340,7 +1373,7 @@ private struct TouchSurfaceMap: View {
                     .animation(.linear(duration: 0.025), value: y)
                 }
 
-                if states.isEmpty && instrument != .drums {
+                if states.isEmpty && instrument == .melodic {
                     VStack(spacing: 8) {
                         Image(systemName: surfaceSelection == .magicMouse
                               ? "computermouse" : "hand.point.up.left")
@@ -1352,7 +1385,7 @@ private struct TouchSurfaceMap: View {
                     .position(x: proxy.size.width / 2, y: proxy.size.height * 0.65)
                 }
 
-                if instrument != .drums {
+                if instrument == .melodic {
                     HStack {
                         Label("Lower pitch", systemImage: "arrow.left")
                         Spacer()
