@@ -129,13 +129,18 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pad[aria-disabled=true]{opacity:.45}#dot{position:absolute;width:22px;height:22px;background:#e34f4f;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}#dot[hidden]{display:none}
 #status{min-height:2.8em}small{color:#bdbdbd}
 </style></head>
-<body><h1>TIHULU Remote</h1><p>Local touch controller · Experimental</p>
+<body><h1>TIHULU Remote</h1><p>Local touch &amp; tilt controller · Experimental</p>
 <label for="secret">One-time invitation (64 hexadecimal characters)</label>
 <input id="secret" type="password" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
 <button id="connect">Connect</button><button id="disconnect" disabled>Disconnect / release</button>
 <p id="status" role="status" aria-live="polite">Not connected.</p>
 <div id="pad" aria-label="XY touch surface" aria-disabled="true"><span>Touch and move</span><div id="dot" hidden></div></div>
-<p><small>X and Y control the mapped instrument. Lift to release. One contact only. No motion, microphone or camera access. The host decides whether MIDI is enabled.</small></p>
+<p><small>X and Y control the mapped instrument. Lift to release. One contact only.</small></p>
+<section aria-labelledby="tilt-title"><h2 id="tilt-title">Pocket Wah / Tilt</h2>
+<p>First map a phone or tablet tilt axis on the Mac. Hold the phone comfortably, nearly upright or flat but away from extreme angles, then enable and calibrate. Touch and tilt are separate modes.</p>
+<button id="motionStart" disabled>Enable &amp; calibrate tilt</button><button id="motionStop" disabled>Release tilt</button>
+<label for="tiltMeter">Relative pitch (before Mac mapping)</label><meter id="tiltMeter" min="0" max="1" value="0.5" style="width:100%;height:24px"></meter>
+<p id="motionStatus" role="status">Motion off.</p><small>Motion is opt-in, sent only to the paired Mac. No microphone, camera or storage. The host decides MIDI routing.</small></section>
 <script src="/control.js" defer></script></body></html>
 """#
     private static let script = #"""
@@ -144,10 +149,55 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const get = id => document.getElementById(id);
   const pad=get("pad"), dot=get("dot"), secret=get("secret"), connect=get("connect"), disconnect=get("disconnect"), status=get("status");
   let ws=null, admitted=false, pending=false, sequence=0, pointer=null, position=null, releaseDue=false, timer=null, deadline=null, lastSend=0;
+  const motionStart=get("motionStart"), motionStop=get("motionStop"), meter=get("tiltMeter"), motionStatus=get("motionStatus");
+  let mode="idle", sample=null, neutral=null, sampleAt=0, sentAt=-1, permissionEpoch=0, waitingSince=0, pendingKind=null;
+  function syncControls(){
+    pad.setAttribute("aria-disabled",String(!admitted||mode!=="idle"));
+    motionStart.disabled=!admitted||mode!=="idle"||pointer!==null||releaseDue||pending;
+    motionStop.disabled=!admitted||mode==="idle"||mode==="releasing";
+  }
+  function resetMotion(message){
+    permissionEpoch++;window.removeEventListener("deviceorientation",orientation);
+    mode="idle";sample=null;neutral=null;sampleAt=0;sentAt=-1;meter.value=0.5;
+    motionStatus.textContent=message;syncControls();
+  }
+  function orientation(e){
+    if(mode!=="waiting"&&mode!=="arming"&&mode!=="active")return;
+    const {alpha,beta,gamma}=e;
+    if(![alpha,beta,gamma].every(Number.isFinite)||alpha<0||alpha>=360||Math.abs(beta)>80||Math.abs(gamma)>80){
+      if(mode==="arming"||mode==="active")close("Tilt unavailable or outside safe range. Reconnect and calibrate.");
+      return;
+    }
+    sample={alpha,beta,gamma};sampleAt=performance.now();
+    if(neutral){let delta=((beta-neutral.beta+540)%360)-180;meter.value=Math.max(0,Math.min(1,0.5+delta/90));}
+  }
+  async function startMotion(){
+    if(!admitted||mode!=="idle"||pointer!==null||releaseDue||pending)return;
+    if(!window.isSecureContext||typeof window.DeviceOrientationEvent==="undefined"){
+      motionStatus.textContent="Orientation unavailable in this secure browser.";return;
+    }
+    const epoch=++permissionEpoch;mode="requesting";syncControls();motionStatus.textContent="Waiting for permission…";
+    try{
+      const api=window.DeviceOrientationEvent;
+      if(typeof api.requestPermission==="function"&&await api.requestPermission()!=="granted"){
+        if(epoch===permissionEpoch)resetMotion("Orientation permission denied.");return;
+      }
+    }catch{if(epoch===permissionEpoch)resetMotion("Orientation permission unavailable.");return;}
+    if(epoch!==permissionEpoch||!admitted||mode!=="requesting")return;
+    mode="waiting";waitingSince=performance.now();sample=null;neutral=null;sentAt=-1;
+    window.addEventListener("deviceorientation",orientation);motionStatus.textContent="Hold steady; waiting for a valid orientation sample.";
+    syncControls();
+  }
+  function stopMotion(){
+    if(mode==="idle"||mode==="releasing")return;
+    if(mode==="requesting"||mode==="waiting"){resetMotion("Motion off.");return;}
+    permissionEpoch++;window.removeEventListener("deviceorientation",orientation);
+    mode="releasing";sample=null;motionStatus.textContent="Releasing tilt…";syncControls();tick();
+  }
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
     const old=ws;ws=null;admitted=false;pending=false;sequence=0;pointer=null;position=null;releaseDue=false;
-    clearDeadline();if(timer!==null)clearInterval(timer);timer=null;
+    clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;resetMotion("Motion off.");
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
   }
@@ -155,13 +205,28 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function send(kind, axes){
     if(!ws||!admitted||pending||ws.readyState!==WebSocket.OPEN)return;
     if(ws.bufferedAmount>256){close("Backlog. Controls released by host watchdog.");return;}
-    const frame={version:1,sequence:++sequence,kind};
-    if(axes){frame.x=axes.x;frame.y=axes.y;}
-    pending=true;lastSend=performance.now();wait(220);
+    const motion=kind==="orientationArm"||kind==="orientation"||kind==="motionRelease";
+    const frame={version:motion?2:1,sequence:++sequence,kind};
+    if(axes){if(motion){frame.alpha=axes.alpha;frame.beta=axes.beta;frame.gamma=axes.gamma;}else{frame.x=axes.x;frame.y=axes.y;}}
+    pending=true;pendingKind=kind;lastSend=performance.now();syncControls();wait(220);
     try{ws.send(JSON.stringify(frame));}catch{close("Send failed. Request a new invitation.");}
   }
   function tick(){
-    if(!admitted||pending)return;
+    if(!admitted)return;
+    const now=performance.now();
+    if(mode==="waiting"&&now-waitingSince>=3000){resetMotion("No valid orientation data. Check permission and device support.");}
+    if((mode==="active"||mode==="arming")&&now-sampleAt>=250){close("Orientation stopped. Host releases tilt; reconnect explicitly.");return;}
+    if(pending)return;
+    if(mode==="releasing"){send("motionRelease");return;}
+    if(mode==="waiting"&&sample&&now-sampleAt<150){
+      neutral={...sample};sentAt=sampleAt;mode="arming";motionStatus.textContent="Calibrating…";send("orientationArm",sample);return;
+    }
+    if(mode==="active"){
+      if(sample&&sampleAt>sentAt&&now-lastSend>=50&&now-sampleAt<150){sentAt=sampleAt;send("orientation",sample);}
+      return;
+    }
+    if(mode==="arming")return;
+    if(mode==="requesting"||mode==="waiting"){if(now-lastSend>=500)send("heartbeat");return;}
     if(releaseDue){releaseDue=false;send("release");}
     else if(pointer!==null&&position){if(performance.now()-lastSend>=50)send("touch",position);}
     else if(performance.now()-lastSend>=500)send("heartbeat");
@@ -180,11 +245,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if(ws!==socket)return;
       if(!admitted){
         if(e.data!=="admitted"||socket.protocol!=="tihulu-touch-v1"){close("Pairing rejected.");return;}
-        clearDeadline();admitted=true;lastSend=performance.now();pad.setAttribute("aria-disabled","false");status.textContent="Connected. Touch to play.";
+        clearDeadline();admitted=true;lastSend=performance.now();syncControls();status.textContent="Connected. Touch or explicitly enable tilt.";
         timer=setInterval(tick,25);tick();return;
       }
       if(!pending||e.data!=="accepted"){close("Unexpected response.");return;}
-      clearDeadline();pending=false;if(releaseDue)tick();
+      clearDeadline();pending=false;const kind=pendingKind;pendingKind=null;
+      if(kind==="orientationArm"&&mode==="arming"){mode="active";motionStatus.textContent="Tilt active. Move gently; release when finished.";}
+      if(kind==="motionRelease")resetMotion("Tilt released.");
+      syncControls();if(releaseDue||mode==="releasing")tick();
     };
     socket.onerror=()=>{key.fill(0);if(ws===socket)close("TLS or connection failed. Do not bypass certificate validation.");};
     socket.onclose=()=>{key.fill(0);if(ws===socket)close("Disconnected. Request a new invitation.");};
@@ -196,16 +264,21 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     dot.hidden=false;dot.style.left=(position.x*100)+"%";dot.style.top=((1-position.y)*100)+"%";
   }
   pad.addEventListener("pointerdown",e=>{
-    if(!admitted||pointer!==null||e.button!==0)return;
+    if(!admitted||mode!=="idle"||pointer!==null||e.button!==0)return;
     e.preventDefault();pointer=e.pointerId;try{pad.setPointerCapture(pointer);}catch{close("Pointer capture failed.");return;}
-    move(e);if(!pending&&!releaseDue)send("touch",position);
+    move(e);syncControls();if(!pending&&!releaseDue)send("touch",position);
   });
   pad.addEventListener("pointermove",e=>{if(e.pointerId===pointer){e.preventDefault();move(e);}});
   function lift(e){
     if(e.pointerId!==pointer)return;
-    pointer=null;position=null;dot.hidden=true;releaseDue=true;tick();
+    pointer=null;position=null;dot.hidden=true;releaseDue=true;syncControls();tick();
   }
   for(const event of ["pointerup","pointercancel","lostpointercapture"])pad.addEventListener(event,lift);
+  motionStart.addEventListener("click",startMotion);
+  motionStop.addEventListener("click",stopMotion);
+  function rotated(){if(ws&&mode!=="idle")close("Screen rotated. Reconnect and calibrate again.");}
+  window.addEventListener("orientationchange",rotated);
+  if(window.screen&&window.screen.orientation&&typeof window.screen.orientation.addEventListener==="function")window.screen.orientation.addEventListener("change",rotated);
   disconnect.addEventListener("click",()=>close("Disconnected. Host releases owned controls."));
   window.addEventListener("blur",()=>{if(ws)close("Window lost focus. Reconnect explicitly.");});
   window.addEventListener("pagehide",()=>{if(ws)close("Page hidden.");});
