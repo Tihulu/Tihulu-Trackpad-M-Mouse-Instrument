@@ -65,6 +65,7 @@ private struct HelperDraft: Codable {
     var magicMouseSustainEnabled: Bool = false
     var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
     var magicMouseTapThreshold: Double? = nil
+    var sharePedalSurface: Bool? = nil
 }
 
 private struct NoteDraft: Codable {
@@ -219,7 +220,7 @@ struct ContentView: View {
                     case .chords: ChordPadPanel(compact: false)
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
                     case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, stringLayout: $touchDraft.stringLayout, mouseStringLayout: $touchDraft.mouseStringLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
-                    case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture, magicMouseTapThreshold: $helperDraft.magicMouseTapThreshold)
+                    case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture, magicMouseTapThreshold: $helperDraft.magicMouseTapThreshold, sharePedalSurface:$helperDraft.sharePedalSurface)
                     case .touchBar: TouchBarModeView()
                     case .notes: NoteSequencerView(notes: $noteDraft.notes, selectedMIDI: $noteDraft.selectedMIDI, velocity: $noteDraft.velocity, loop: $noteDraft.loop, groove: $noteDraft.groove, output: $noteDraft.output)
                     case .drums: DrumSequencerView(active: $drumDraft.active, loop: $drumDraft.loop, groove: $drumDraft.groove, output: $drumDraft.output)
@@ -1157,6 +1158,9 @@ private struct TouchInstrumentView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if sustainEnabled {
+                            Toggle("Also use pedal surfaces for expressive controls (advanced)",isOn:Binding(get:{sharePedalSurface ?? false},set:{sharePedalSurface = $0}))
+                            Text("By default a surface assigned to sustain sends pedal events only. Use another surface for expression and bend. CC7/11 hold their last value between touches; Stop restores the configured neutral.")
+                                .font(.caption).foregroundStyle(.secondary)
                             SustainSettingsPanel(
                                 surfaceSelection: surfaceSelection,
                                 playing: studio.touchRunning,
@@ -1795,7 +1799,7 @@ private struct MIDIHelperView: View {
     @Binding var magicMouseSustainEnabled: Bool
     @Binding var magicMouseSustainGesture: MagicMouseSustainGesture
     @Binding var magicMouseTapThreshold: Double?
-
+    @Binding var sharePedalSurface:Bool?
 
     private var assignments: MIDIHelperAssignments {
         .init(vibrato: vibratoEnabled, pitchBend: pitchBendEnabled, expression: expressionEnabled)
@@ -1835,6 +1839,13 @@ private struct MIDIHelperView: View {
                         Toggle("Expression", isOn: $expressionEnabled)
                         Toggle("Sustain CC64", isOn: $sustainEnabled)
                         Spacer()
+                        Button("Keyboard Sustain Only") {
+                            vibratoEnabled = false
+                            pitchBendEnabled = false
+                            expressionEnabled = false
+                            sustainEnabled = true
+                            sharePedalSurface = false
+                        }
                         Button("Hybrid Preset") {
                             vibratoEnabled = true
                             pitchBendEnabled = true
@@ -1956,7 +1967,7 @@ private struct MIDIHelperView: View {
                                     Label("Y / Vertical → CC \(vibratoCC)" + (vibratoCC == 4 ? " · Wah" : ""), systemImage: "arrow.up.and.down")
                                 }
                                 if expressionEnabled {
-                                    Label("Contact Size → CC11 Expression", systemImage: "circle.dotted")
+                                    Label("Contact Size → CC \(expressionCC) Expression", systemImage: "circle.dotted")
                                 }
                                 if sustainEnabled {
                                     Label("Gesture / Contact / Click → CC64 Sustain", systemImage: "hand.tap")
@@ -2006,6 +2017,7 @@ private struct MIDIHelperView: View {
         .onChange(of: magicMouseSustainEnabled) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainGesture) { _ in syncIfRunning() }
         .onChange(of: magicMouseTapThreshold) { _ in syncIfRunning() }
+        .onChange(of: sharePedalSurface) { _ in syncIfRunning() }
     }
 
     private func startHelper() {
@@ -2024,7 +2036,8 @@ private struct MIDIHelperView: View {
             magicMouseSustainGesture: magicMouseSustainGesture,
             trackpadSustainGesture: trackpadSustainGesture,
             trackpadSustainSensor: trackpadSustainSensor,
-            magicMouseTapThreshold: magicMouseTapThreshold ?? 0
+            magicMouseTapThreshold: magicMouseTapThreshold ?? 0,
+            sharePedalSurface:sharePedalSurface ?? false
         )
     }
 

@@ -265,3 +265,22 @@ public enum PhysicalClickAttribution {
         return touching.first
     }
 }
+
+
+/// Hardware-independent keyboard-helper safety policy. Pedal contacts do
+/// not also drive expression or bend unless explicitly requested.
+public enum HelperPerformancePolicy {
+    public static func permitsEffects(isTrackpad:Bool,settings:MIDIHelperSustainSettings,sharePedalSurface:Bool) -> Bool {
+        sharePedalSurface || !(isTrackpad ? settings.trackpadEnabled : settings.magicMouseEnabled)
+    }
+    public static func validContact(x:Double,y:Double,size:Double) -> Bool {
+        [x,y,size].allSatisfy { $0.isFinite && (0...1).contains($0) }
+    }
+    /// Gain controllers hold the last intentional value between touches.
+    /// Other momentary controls release normally. Full Stop still performs
+    /// the existing explicitly owned controller cleanup.
+    public static func idleValues(_ values:[SensorDestination:LegacyContinuousOwners.Value]) -> [SensorDestination:LegacyContinuousOwners.Value] {
+        values.filter { $0.key.kind == .controlChange && [7,11].contains($0.key.number) }
+    }
+    public static func neutral(forCC cc:Int) -> Int { [7,11].contains(cc) ? 127 : 0 }
+}

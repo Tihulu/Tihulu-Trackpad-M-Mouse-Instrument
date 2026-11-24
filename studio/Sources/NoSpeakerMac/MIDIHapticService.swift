@@ -650,7 +650,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         lock.unlock()
-        guard canSend, x.isFinite, y.isFinite, contactSize.isFinite,
+        guard canSend, HelperPerformancePolicy.validContact(x:x,y:y,size:contactSize),
               HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
                                      vibratoCC:vibratoCC,expressionCC:expressionCC) else { return }
         let ch = max(0,min(15,channel))
@@ -660,12 +660,19 @@ public final class MIDIHapticService: @unchecked Sendable {
             values[.init(.pitchBend,channel:ch)] = .init(bend,neutral:8192,bendRange:max(1,min(24,pitchBendRange)))
         }
         if assignments.vibrato {
-            values[.init(.controlChange,channel:ch,number:vibratoCC)] = .init(Int((min(1,max(0,y))*127).rounded()),neutral:0)
+            values[.init(.controlChange,channel:ch,number:vibratoCC)] = .init(Int((min(1,max(0,y))*127).rounded()),neutral:HelperPerformancePolicy.neutral(forCC:vibratoCC))
         }
         if assignments.expression {
-            values[.init(.controlChange,channel:ch,number:expressionCC)] = .init(Int((min(1,max(0,contactSize))*127).rounded()),neutral:127)
+            values[.init(.controlChange,channel:ch,number:expressionCC)] = .init(Int((min(1,max(0,contactSize))*127).rounded()),neutral:HelperPerformancePolicy.neutral(forCC:expressionCC))
         }
         sendContinuousUpdates(continuousOwners.replace(.helper,values:values))
+    }
+
+    /// Ordinary lift is not a gain reset. Preserve the last intentional CC7/11
+    /// value without touching other owners or generating notes.
+    public func idleHelperControls() {
+        let held = HelperPerformancePolicy.idleValues(continuousOwners.values(for:.helper))
+        sendContinuousUpdates(continuousOwners.replace(.helper,values:held))
     }
 
     public func resetHelperControls(

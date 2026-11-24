@@ -326,6 +326,7 @@ final class StudioController: ObservableObject {
     private var touchMIDIChannel = 0
 
     private var helperAssignments = MIDIHelperAssignments.hybrid
+    private var helperSharePedalSurface = false
     private var helperSendToDAW = true
     private var helperTargetChannel = 0
     private var helperPitchBendRange = 12
@@ -2568,7 +2569,8 @@ final class StudioController: ObservableObject {
         magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold,
         trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold,
         trackpadSustainSensor: TrackpadSustainSensor = .contactSize,
-        magicMouseTapThreshold: Double = 0
+        magicMouseTapThreshold: Double = 0,
+        sharePedalSurface:Bool = false
     ) {
         guard allowLivePerformance() else { return }
         guard !sendToDAW || HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
@@ -2594,7 +2596,7 @@ final class StudioController: ObservableObject {
         let nextRouting = HelperRoutingSnapshot(sendToDAW:sendToDAW,channel:targetChannel,
             bendRange:pitchBendRange,vibratoCC:vibratoCC,expressionCC:expressionCC)
         let otherMappingChanged = newSustainSettings != helperSustainSettings ||
-            assignments != helperAssignments || surfaceSelection != helperSurfaceSelection
+            assignments != helperAssignments || surfaceSelection != helperSurfaceSelection || sharePedalSurface != helperSharePedalSurface
         if !midiHelperRunning || otherMappingChanged || oldRouting != nextRouting { touch?.invalidatePendingSamples() }
         if midiHelperRunning && oldRouting.requiresRelease(before:nextRouting,otherMappingChanged:otherMappingChanged) {
             midi?.resetHelperControls(
@@ -2621,6 +2623,7 @@ final class StudioController: ObservableObject {
         }
         helperSustainSettings = newSustainSettings
         helperAssignments = assignments
+        helperSharePedalSurface = sharePedalSurface
         helperSurfaceSelection = surfaceSelection
         helperSendToDAW = sendToDAW
         helperLocalSound = localSound
@@ -2682,7 +2685,7 @@ final class StudioController: ObservableObject {
         midiHelperStates = states
         guard midiHelperRunning else { return }
 
-        let active = states.filter(\.isTouching)
+        let active = states.filter { $0.isTouching && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
         let snapshot = helperSustainState.update(
             trackpadContactSizes: active
                 .filter { $0.surface == .trackpad }
@@ -2704,21 +2707,19 @@ final class StudioController: ObservableObject {
         }
         midi?.setHelperSustain(snapshot.isActive,channel:helperTargetChannel)
 
-        guard !active.isEmpty else {
-            midi?.resetHelperControls(
-                assignments: helperAssignments,
-                channel: helperTargetChannel,
-                vibratoCC: helperVibratoCC,
-                expressionCC: helperExpressionCC
-            )
+        let expressive = active.filter {
+            HelperPerformancePolicy.permitsEffects(isTrackpad:$0.surface == .trackpad,settings:helperSustainSettings,sharePedalSurface:helperSharePedalSurface)
+        }
+        guard !expressive.isEmpty else {
+            midi?.idleHelperControls()
             return
         }
 
         // Multi-touch helper aggregation:
         // horizontal = average bend, vertical = strongest vibrato, pressure = strongest expression.
-        let x = active.map(\.x).reduce(0, +) / Double(active.count)
-        let y = active.map(\.y).max() ?? 0
-        let pressure = active.map(\.pressure).max() ?? 0
+        let x = expressive.map(\.x).reduce(0, +) / Double(expressive.count)
+        let y = expressive.map(\.y).max() ?? 0
+        let pressure = expressive.map(\.pressure).max() ?? 0
 
         midi?.sendHelperControls(
             x: x,

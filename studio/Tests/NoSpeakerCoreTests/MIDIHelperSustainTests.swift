@@ -221,3 +221,31 @@ import Testing
     #expect(PhysicalClickAttribution.resolve(Set(["trackpad","mouse"]),snapshotRevision:2,currentRevision:2,receivedAt:1,now:1.1) == nil)
     #expect(PhysicalClickAttribution.resolve(Set<String>(),snapshotRevision:2,currentRevision:2,receivedAt:1,now:1.1) == nil)
 }
+
+@Test func helperPedalSurfacesDoNotDriveGainOrBendByDefault() {
+    let config = MIDIHelperSustainSettings(trackpadEnabled:true,magicMouseEnabled:false)
+    #expect(!HelperPerformancePolicy.permitsEffects(isTrackpad:true,settings:config,sharePedalSurface:false))
+    #expect(HelperPerformancePolicy.permitsEffects(isTrackpad:false,settings:config,sharePedalSurface:false))
+    #expect(HelperPerformancePolicy.permitsEffects(isTrackpad:true,settings:config,sharePedalSurface:true))
+    #expect(!HelperPerformancePolicy.validContact(x:.nan,y:0.5,size:0.6))
+    #expect(!HelperPerformancePolicy.validContact(x:0.5,y:0.5,size:2))
+}
+@Test func helperOrdinaryLiftDoesNotForceGainTo127OrZero() {
+    let volume = SensorDestination(.controlChange,number:7)
+    let expression = SensorDestination(.controlChange,number:11)
+    let wah = SensorDestination(.controlChange,number:74)
+    let bend = SensorDestination(.pitchBend)
+    var owners = LegacyContinuousOwners()
+    let values:[SensorDestination:LegacyContinuousOwners.Value] = [
+        volume:.init(55,neutral:127),expression:.init(42,neutral:127),
+        wah:.init(80,neutral:0),bend:.init(10000,neutral:8192,bendRange:12)]
+    _ = owners.replace(.helper,values:values)
+    let release = owners.replace(.helper,values:HelperPerformancePolicy.idleValues(values))
+    #expect(Set(release.map(\.target)) == [wah,bend])
+    #expect(owners.values(for:.helper)[expression]?.value == 42)
+    #expect(owners.values(for:.helper)[volume]?.value == 55)
+    #expect(owners.replace(.helper,values:HelperPerformancePolicy.idleValues(owners.values(for:.helper))).isEmpty)
+    #expect(Set(owners.release(.helper).map(\.target)) == [volume,expression])
+    #expect(HelperPerformancePolicy.neutral(forCC:74) == 0)
+    #expect(HelperPerformancePolicy.neutral(forCC:7) == 127)
+}
