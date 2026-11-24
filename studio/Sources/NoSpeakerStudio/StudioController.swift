@@ -49,6 +49,7 @@ final class StudioController: ObservableObject {
     @Published private(set) var chordProgression = StudioController.readChordProgression()
     @Published private(set) var progressionRunning = false
     @Published private(set) var progressionStep: Int?
+    @Published private(set) var progressionSingleSlot: Int?
     private var progressionTask: Task<Void, Never>?
     private var progressionToken: UUID?
     private var chordState = ChordPadState()
@@ -227,9 +228,14 @@ final class StudioController: ObservableObject {
         }
     }
 
-    func startChordProgression() {
+    func startChordProgression(singleSlot: Int? = nil) {
+        var settings = chordProgression
+        if let singleSlot {
+            guard settings.arpeggio != nil, (0..<ChordBank.padCount).contains(singleSlot) else { return }
+            settings.slots = [singleSlot]
+        }
         guard chordArmed, !progressionRunning,
-              let plan = chordProgression.plan(bank: chordBank, bpm: bpm) else {
+              let plan = settings.plan(bank: chordBank, bpm: bpm) else {
             chordStatus = "Arm output and choose a valid non-empty progression and tempo."
             return
         }
@@ -238,19 +244,20 @@ final class StudioController: ObservableObject {
         let token = UUID()
         progressionToken = token
         progressionRunning = true
+        progressionSingleSlot = singleSlot
         progressionTask = Task { [weak self] in
             let clock = ContinuousClock()
             let period = Duration.nanoseconds(Int64((plan.duration * 1_000_000_000).rounded()))
             var origin = clock.now
             do {
                 repeat {
-                    for (index, step) in plan.steps.enumerated() {
+                    for step in plan.steps {
                         let onset = origin.advanced(by: .nanoseconds(Int64((step.onset * 1_000_000_000).rounded())))
                         let end = onset.advanced(by: .nanoseconds(Int64((step.gate * 1_000_000_000).rounded())))
                         try await clock.sleep(until: onset)
                         guard !Task.isCancelled, self?.progressionToken == token,
                               self?.chordArmed == true else { return }
-                        self?.progressionStep = index
+                        if self?.progressionStep != step.position { self?.progressionStep = step.position }
                         // Skip an expired gate instead of bursting missed notes.
                         guard let slot = step.slot, let pad = step.pad, clock.now < end else { continue }
                         guard self?.pressProgressionChord(slot: slot, pad: pad, plan: plan) == true else { return }
@@ -350,6 +357,7 @@ final class StudioController: ObservableObject {
         progressionTask = nil
         progressionRunning = false
         progressionStep = nil
+        progressionSingleSlot = nil
         for task in chordTimers.values { task.cancel() }
         chordTimers.removeAll()
         chordTimerTokens.removeAll()

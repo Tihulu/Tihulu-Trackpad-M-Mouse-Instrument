@@ -1,0 +1,7 @@
+# Arpeggiator
+
+Adds an optional arpeggiator inside the existing Chord Progression editor, not a new instrument engine. Up, Down, Up/Down without repeated endpoints, repeatable seeded Shuffle; 1/2/3/4/6/8 notes per beat, 1–3 octaves, existing gate percentage per pulse. Supports generated and custom chord voicings, deduplicates overlapping octave notes and omits out-of-range transpositions. Each chord restarts order; rests and full musical duration remain. Maximum expanded plan 512 pulses. Old progression archives decode with arpeggiation disabled. Settings persist with progression. No auto-arm or playback.
+
+Full progression or explicit Arp button on any pad, using the same transport, bank output and note ownership. Ordinary pad buttons retain chord behavior. Single-pad Arp follows current beats, loop, gate and tempo; it does not change the saved progression slots. Shared haptic experimental mode can accompany Touch Bar; legacy motor restrictions remain. Stop, focus loss, manual takeover, Panic and output failure use existing release path. Seeded Shuffle is intentionally repeatable, not a different random sequence each cycle. Does not claim external clock sync or live tempo updates.
+
+Four core tests: ordering, octave bounds, repeatable shuffle, triplets and rests, backward-compatible archive and bounded expansion. Native acceptance: all outputs, custom chord, single-pad Arp, normal pad behavior, rapid Stop/manual takeover, fast rates, navigation and saved settings. Physical motor latency and audio quality remain unverified. No stable release.
