@@ -1,0 +1,173 @@
+{
+  "representative": {
+    "passed": 159,
+    "total": 192,
+    "profiles": {
+      "rtt5": {
+        "passed": 32,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 91,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": true,
+            "maxGap": 148,
+            "missing": 0,
+            "closed": null
+          }
+        ]
+      },
+      "rtt20": {
+        "passed": 32,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 140,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": true,
+            "maxGap": 220,
+            "missing": 0,
+            "closed": null
+          }
+        ]
+      },
+      "rtt40": {
+        "passed": 22,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 280,
+            "missing": 3,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 0,
+            "missing": 4,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "rtt60": {
+        "passed": 20,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 141,
+            "missing": 1,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 0,
+            "missing": 5,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "jitter20": {
+        "passed": 31,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 151,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 194,
+            "missing": 1,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "jitter40": {
+        "passed": 22,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 288,
+            "missing": 3,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 0,
+            "missing": 4,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          }
+        ]
+      }
+    }
+  },
+  "lifecycle": {
+    "passed": 14,
+    "total": 14,
+    "failed": []
+  },
+  "experimental": {
+    "rtt5": {
+      "hold": 127,
+      "burst": 127,
+      "both": 127
+    },
+    "rtt20": {
+      "hold": 127,
+      "burst": 127,
+      "both": 127
+    },
+    "rtt40": {
+      "hold": 64,
+      "burst": 81,
+      "both": 60
+    },
+    "rtt60": {
+      "hold": 64,
+      "burst": 35,
+      "both": 35
+    },
+    "jitter20": {
+      "hold": 127,
+      "burst": 126,
+      "both": 126
+    },
+    "jitter40": {
+      "hold": 64,
+      "burst": 81,
+      "both": 60
+    }
+  },
+  "conservative": {
+    "rows": 210,
+    "hold": 210,
+    "burst": 210,
+    "both": 210,
+    "failed": []
+  },
+  "note": "Actual embedded JS, virtual timers, withheld v8 handshake, simulated host policy; not physical."
+}
