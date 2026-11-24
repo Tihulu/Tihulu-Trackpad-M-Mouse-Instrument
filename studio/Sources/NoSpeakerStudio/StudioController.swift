@@ -65,6 +65,8 @@ final class StudioController: ObservableObject {
     @Published var patchCameraOrientation: AirControlOrientation = .upright
     @Published var patchCameraMirrorX = false
     @Published var patchCameraSwapRoles = false
+    @Published private(set) var patchAirLiveSelected: Int?
+    @Published private(set) var patchAirLiveSounding: Int?
     @Published private(set) var patchAirDebugSelected: Int?
     @Published private(set) var patchAirDebugSounding: Int?
     @Published private(set) var patchAirRecording = false
@@ -634,8 +636,15 @@ final class StudioController: ObservableObject {
         guard patchRunning else { return }
         let expired = patchPhysicalRuntime.expire(now: ProcessInfo.processInfo.systemUptime)
         recordPatchCommands(expired)
+        guard patchRunning else { return }
+        let selected = patchPhysicalRuntime.airSelectedSlot
+        let sounding = patchPhysicalRuntime.airSoundingSlot
+        if patchAirLiveSelected != selected { patchAirLiveSelected = selected }
+        if patchAirLiveSounding != sounding { patchAirLiveSounding = sounding }
         if patchCamera != nil && !patchPhysicalRuntime.activeSources.contains(.camera) {
-            patchCameraHand = nil
+            if now - patchCameraLastFrame >= 0.25 || !instrumentPatch.routes.contains(where: { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) }) {
+                patchCameraHand = nil
+            }
             if now - patchCameraLastFrame >= PhysicalPatchRuntime.timeout {
                 airTracking.reset()
             }
@@ -652,6 +661,8 @@ final class StudioController: ObservableObject {
 
     private func stopBuilderCamera(reason: String) {
         stopAirTrace()
+        patchAirLiveSelected = nil
+        patchAirLiveSounding = nil
         if let camera = patchCamera {
             retiringPatchCamera = camera
             camera.stop()
@@ -805,6 +816,8 @@ final class StudioController: ObservableObject {
         patchWatchdog = nil
         patchAirDebugSelected = nil
         patchAirDebugSounding = nil
+        patchAirLiveSelected = nil
+        patchAirLiveSounding = nil
         let hadPhysicalInput = patchPhysical
         let hadNativeBar = patchNativeBar
         patchNativeToken = nil

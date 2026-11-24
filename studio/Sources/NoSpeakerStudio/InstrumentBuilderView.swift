@@ -268,6 +268,8 @@ struct InstrumentBuilderView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(studio.patchCameraStatus).font(.headline)
                                 if studio.patchAirRecordAvailable {
+                                    Text("Selected slot: " + (studio.patchAirLiveSelected.map { String($0) } ?? "—") + " · Sounding: " + (studio.patchAirLiveSounding.map { String($0) } ?? "—"))
+                                        .font(.caption.monospacedDigit())
                                     HStack {
                                         Button("Record diagnostic trace") { studio.startAirTrace() }.disabled(studio.patchAirRecording)
                                         Button("Stop recording") { studio.stopAirTrace() }.disabled(!studio.patchAirRecording)
