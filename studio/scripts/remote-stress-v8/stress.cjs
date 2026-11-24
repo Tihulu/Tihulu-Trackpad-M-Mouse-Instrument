@@ -61,7 +61,7 @@ function setup(script,execute,{rtt=10,jitter=0,drop=()=>false,hostDelay=0,experi
         if(this.readyState!==1)return;
         if(processingDelay>=100||!host.accept(f,c.now)){hostReason=processingDelay>=100?"stale host delivery":"host policy rejection";this.close();return;}
         received.push({f,at:c.now});if(drop(f))return;
-        c.add(()=>{if(this.readyState!==1)return;inFlight--;ack.push({f,at:c.now,rtt:c.now-at});this.onmessage?.({data:f.kind==="capabilities"?JSON.stringify(manifest):f.kind==="mapping"?JSON.stringify({kind:"mapping",version:8,sequence:f.sequence,page:0,pages:1,total:0,detail:false,rows:[]}):"accepted"});if(f.kind==="mapping"){admittedAt=c.now;if(experimental)el("workloadMode").emit("click");}},Math.ceil(delay/2));
+        c.add(()=>{if(this.readyState!==1)return;inFlight--;ack.push({f,at:c.now,rtt:c.now-at});this.onmessage?.({data:f.kind==="capabilities"?JSON.stringify(manifest):f.kind==="mapping"?JSON.stringify({kind:"mapping",version:8,sequence:f.sequence,page:0,pages:1,total:0,detail:false,rows:[]}):"accepted"});if(f.kind==="mapping"){admittedAt=c.now;if(experimental){el("navSetup").emit("click");el("workloadMode").emit("click");el("navPlay").emit("click");}}},Math.ceil(delay/2));
       },Math.floor(delay/2)+processingDelay);
     }
     close(){if(this.readyState!==1)return;this.readyState=3;closed={at:c.now,status:el("status").textContent,hostReason};clearHost("simulated disconnect");this.onclose?.();}

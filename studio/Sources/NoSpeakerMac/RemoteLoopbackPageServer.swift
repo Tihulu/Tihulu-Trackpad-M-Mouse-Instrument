@@ -144,7 +144,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 @media(max-width:420px){#pedalGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style></head>
 <body><h1>TIHULU Remote</h1><p>Local MIDI performance controller · Experimental</p>
-<div id="remoteBar"><nav aria-label="Controller views"><button id="navPlay" aria-pressed="false" disabled>Play</button><button id="navSetup" aria-pressed="false" disabled>Setup</button><button id="navConnection" aria-pressed="true">Connection</button></nav><button id="releaseAll" disabled>Release my controls</button><button id="disconnect" disabled>Disconnect / release</button><p id="navStatus" role="status"></p><p id="status" role="status" aria-live="polite">Not connected.</p><small id="ackLatency">Mac ACK round trip: no sample.</small></div>
+<div id="remoteBar"><nav aria-label="Controller views"><button id="navPlay" aria-pressed="false" disabled>Play</button><button id="navSetup" aria-pressed="false" disabled>Setup</button><button id="navConnection" aria-pressed="true">Connection</button></nav><button id="releaseAll" disabled>Release my controls</button><button id="disconnect" disabled>Disconnect / release</button><p id="navStatus" role="status"></p><p id="playWorkloadStatus" role="status"></p><p id="status" role="status" aria-live="polite">Not connected.</p><small id="ackLatency">Mac ACK round trip: no sample.</small></div>
 <section id="connectionView"><label for="secret">One-time invitation (64 hexadecimal characters)</label>
 <input id="secret" type="password" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
 <button id="connect">Connect</button><p>Use the matching trusted TLS certificate and a new invitation for each connection. ACK round trip includes Mac processing; it is not audio or MIDI latency.</p></section>
@@ -209,7 +209,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function sendTouchEdge(){const edge=touchQueue.shift();send(edge.kind,edge.axes);}
   let caps=null,experimentalWorkload=false,workloadRefusal="";
   let releasingAll=false,releaseAllTimer=null;
-  let currentView="connection",ackSamples=[],ackAt=null;
+  let currentView="connection",ackSamples=[];
   const viewNames=["play","setup","connection"];
   const navId=v=>"nav"+v[0].toUpperCase()+v.slice(1);
   function navigationBusy(){return releasingAll||pending||workloadMask()!==0;}
@@ -219,20 +219,23 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       const b=get(navId(v));b.setAttribute("aria-pressed",String(currentView===v));
       b.disabled=v!==currentView&&(!caps||navigationBusy());
     }
-    get("navStatus").textContent=caps&&navigationBusy()?"Release and disable controls before changing views.":"";
+    textIfChanged("navStatus",caps&&navigationBusy()?"Release and disable controls before changing views.":"");
   }
   function chooseView(v){
     if(!viewNames.includes(v)||v===currentView||!caps||navigationBusy())return;
-    currentView=v;syncNavigation();
+    currentView=v;syncControls();
   }
+  function textIfChanged(id,value){const el=get(id);if(el.textContent!==value)el.textContent=value;}
   function syncLatency(){
-    const recent=ackAt!==null&&performance.now()-ackAt<2000;
-    const median=ackSamples.length?[...ackSamples].sort((a,b)=>a-b)[Math.floor(ackSamples.length/2)]:null;
-    get("ackLatency").textContent=recent&&median!==null?"Mac ACK round trip (recent median): "+Math.round(median)+" ms. Not MIDI/audio latency.":"Mac ACK round trip: no recent sample.";
+    const now=performance.now();
+    ackSamples=ackSamples.filter(x=>now-x.at<2000);
+    const values=ackSamples.map(x=>x.elapsed).sort((a,b)=>a-b),n=values.length;
+    const median=n?(values[Math.floor((n-1)/2)]+values[Math.floor(n/2)])/2:null;
+    textIfChanged("ackLatency",median!==null?"Mac ACK round trip (recent median): "+Math.round(median)+" ms. Not MIDI/audio latency.":"Mac ACK round trip: no recent sample.");
   }
   function recordAck(){
     const now=performance.now(),elapsed=now-lastSend;
-    if(Number.isFinite(elapsed)&&elapsed>=0&&elapsed<=220){ackSamples.push(elapsed);if(ackSamples.length>8)ackSamples.shift();ackAt=now;}
+    if(Number.isFinite(elapsed)&&elapsed>=0&&elapsed<=220){ackSamples.push({elapsed,at:now});if(ackSamples.length>8)ackSamples.shift();}
     syncLatency();
   }
   const releaseAll=get("releaseAll");
@@ -387,7 +390,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       mappingTimer=null;
       if(ws!==connection||mappingStage!==stage||pending)return;
       send(stage.phase==="labels"?"mappingLabels":"mapping",{page:stage.next});
-    },Math.max(0,50-(performance.now()-lastSend)));
+    },50); // Wait after the preceding ACK, not merely after its send.
   }
   function acceptMapping(data){
     const s=mappingStage,p=parseMapping(data);
@@ -440,11 +443,13 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function syncWorkload(){
     const mask=workloadMask();
     get("workloadSection").hidden=!caps;
-    workloadMode.disabled=!admitted||!caps||mask!==0||pending||releasingAll;
+    workloadMode.disabled=currentView!=="setup"||!admitted||!caps||mask!==0||pending||releasingAll;
     workloadMode.textContent=experimentalWorkload?"Use conservative combinations":"Enable experimental combinations";
     workloadMode.setAttribute("aria-pressed",String(experimentalWorkload));
     const description=experimentalWorkload?"Experimental combinations. Performance may be interrupted.":"Conservative combinations. No physical latency guarantee.";
-    workloadStatus.textContent=(workloadRefusal?workloadRefusal+" ":"")+description+" Enabled, requested or releasing streams: "+popcount(mask)+".";
+    const summary=(workloadRefusal?workloadRefusal+" ":"")+description+" Enabled, requested or releasing streams: "+popcount(mask)+".";
+    if(workloadStatus.textContent!==summary)workloadStatus.textContent=summary;
+    textIfChanged("playWorkloadStatus",caps?summary:"");
   }
   const manifestFields=["kind","version","touch","tilt","acceleration","rotation","airDrums","drums","piano","pedals"];
   const has=(group,index)=>Boolean(caps&&(caps[group]&(1<<index)));
@@ -699,7 +704,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
-    const old=ws;ws=null;admitted=false;caps=null;currentView="connection";ackSamples=[];ackAt=null;releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
+    const old=ws;ws=null;admitted=false;caps=null;currentView="connection";ackSamples=[];releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
     if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();syncControls();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
@@ -905,7 +910,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   pedalToggles.forEach((b,i)=>b.addEventListener("click",()=>pedalToggle(i)));
   pedalSliders.forEach((b,i)=>b.addEventListener("input",()=>pedalMove(i)));
   workloadMode.addEventListener("click",()=>{
-    if(releasingAll||!admitted||!caps||workloadMask()!==0||pending)return;
+    if(currentView!=="setup"||releasingAll||!admitted||!caps||workloadMask()!==0||pending)return;
     experimentalWorkload=!experimentalWorkload;workloadRefusal="";syncControls();
   });
   for(const v of viewNames)get(navId(v)).addEventListener("click",()=>chooseView(v));
