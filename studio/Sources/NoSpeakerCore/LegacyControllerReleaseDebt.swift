@@ -64,6 +64,10 @@ public enum LegacyRecoveryPolicy {
     public static func permitsSustainEvent(running: Bool, pressed: Bool) -> Bool {
         running || pressed
     }
+    /// A neutralization callback is cleanup, not permission to start output.
+    public static func permitsControlEvent(running: Bool, releaseOnly: Bool) -> Bool {
+        running || !releaseOnly
+    }
     public static func permitsSend(enabled: Bool, faulted: Bool, cleaning: Bool) -> Bool {
         cleaning || (enabled && !faulted)
     }

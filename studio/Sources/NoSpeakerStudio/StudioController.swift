@@ -1063,7 +1063,8 @@ final class StudioController: ObservableObject {
         }
     }
 
-    func touchBarValue(_ zone: TouchBarZone, normalized value: Double) {
+    func touchBarValue(_ zone: TouchBarZone, normalized value: Double, releaseOnly: Bool = false) {
+        guard value.isFinite, [.pitchBend, .fretless, .vibrato, .expression, .filter].contains(zone) else { return }
         if touchBarProfile.effectiveOutput.sendsHaptics {
             guard touchBarOutputArmed, value.isFinite else { return }
             let safe = min(1, max(0, value))
@@ -1083,9 +1084,10 @@ final class StudioController: ObservableObject {
             if deliverTouchBarCommands(commands) { updateTouchBarHaptics() }
             return
         }
+        guard LegacyRecoveryPolicy.permitsControlEvent(running:midiRunning,releaseOnly:releaseOnly) else { return }
         cancelStartupGreeting()
         if !midiRunning { startMIDI() }
-        guard midiRunning, value.isFinite else { return }
+        guard midiRunning else { return }
         let safe = max(0, min(1, value))
         let channel = touchBarProfile.channel
         switch zone {
@@ -2045,6 +2047,9 @@ final class StudioController: ObservableObject {
             engineStatus = "MIDI remains active for running instruments"
             return
         }
+        // Retire the legacy Tilt producer before stopping its MIDI bridge.
+        // Otherwise the next hardware poll can auto-start the stopped source.
+        if !touchBarProfile.effectiveOutput.sendsHaptics { enableLiveHinge(false) }
         // The whole legacy source is stopping: settle actual attempted
         // MIDI output before individual UI owners can perform a handoff.
         midiSessionEpoch.end()

@@ -84,3 +84,12 @@ import Testing
     #expect(LegacyRecoveryPolicy.permitsSustainEvent(running:true,pressed:false))
     #expect(LegacyRecoveryPolicy.permitsSustainEvent(running:true,pressed:true))
 }
+
+@Test func stoppedTouchBarNeutralizationDoesNotAuthorizeBridgeStart() {
+    for running in [false,true] {
+        for releaseOnly in [false,true] {
+            let permitted = LegacyRecoveryPolicy.permitsControlEvent(running:running,releaseOnly:releaseOnly)
+            #expect(permitted == (running || !releaseOnly))
+        }
+    }
+}

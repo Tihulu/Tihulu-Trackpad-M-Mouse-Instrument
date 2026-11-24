@@ -112,7 +112,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
                 self.controller?.touchBarKey(note, pressed: pressed, owner: .nativeRibbon)
                 if !pressed {
                     // Neutralize pitch bend and let go of the note on release.
-                    self.controller?.touchBarValue(.fretless, normalized: 0.5)
+                    self.controller?.touchBarValue(.fretless, normalized: 0.5, releaseOnly: true)
                     slider?.doubleValue = 0.5
                 }
             }
