@@ -499,6 +499,10 @@ final class StudioController: ObservableObject {
     }
 
     func releaseOptionalTouchBarNotes() {
+        // Do not invalidate legacy MIDI tap timers when merely releasing the
+        // optional output. Otherwise an app-focus change could strand a note.
+        guard touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed ||
+              !touchBarOutstanding.isEmpty else { return }
         nativePianoTokens.removeAll()
         let channel = touchBarProfile.channel
         _ = touchBarLocalState.reset(channel: channel)
@@ -1059,6 +1063,9 @@ final class StudioController: ObservableObject {
         if (touchRunning && touchMIDIOutEnabled) || midiHelperRunning {
             engineStatus = "MIDI remains active for running instruments"
             return
+        }
+        if !touchBarProfile.effectiveOutput.sendsHaptics {
+            releaseTouchBarNotes()
         }
         captureMonitor?.releasePointer()
         midi?.releaseTouchSustain()
