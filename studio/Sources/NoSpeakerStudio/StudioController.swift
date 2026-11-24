@@ -2031,12 +2031,7 @@ final class StudioController: ObservableObject {
         midiHelperMagicMouseSustainActive = false
         midiHelperRunning = false
         midi?.endAllTouchOutput()
-        midi?.resetHelperControls(
-            assignments: helperAssignments,
-            channel: helperTargetChannel,
-            vibratoCC: helperVibratoCC,
-            expressionCC: helperExpressionCC
-        )
+        // The active Helper must already have stopped and released its controls.
         midi?.stop()
         midiRunning = false
         stopCaptureMonitorIfIdle()
@@ -2084,6 +2079,14 @@ final class StudioController: ObservableObject {
         trackpadSustainSensor: TrackpadSustainSensor = .contactSize
     ) {
         guard allowLivePerformance() else { return }
+        guard !sendToDAW || HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
+                                                   vibratoCC:vibratoCC,expressionCC:expressionCC) else {
+            // Reject the new configuration and stop any old active helper
+            // rather than display settings that do not match live routing.
+            stopMIDIHelper()
+            lastError = "Choose distinct expressive CCs. Bank, sustain, RPN/NRPN and channel-mode controls are reserved."
+            return
+        }
         cancelStartupGreeting()
         let newSustainSettings = MIDIHelperSustainSettings(
             trackpadEnabled: trackpadSustainEnabled,

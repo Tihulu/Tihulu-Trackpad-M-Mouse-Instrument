@@ -15,3 +15,20 @@ import Testing
     let silent = HelperRoutingSnapshot(sendToDAW:false,channel:1,bendRange:12,vibratoCC:1,expressionCC:11)
     #expect(!silent.requiresRelease(before:old,otherMappingChanged:true))
 }
+
+
+@Test func helperCCPolicyRejectsProtocolAndChannelModeControls() {
+    let excluded = Set([0,6,32,38,64,96,97,98,99,100,101] + Array(120...127))
+    for cc in -1...128 {
+        #expect(HelperCCPolicy.permits(cc) == ((0...127).contains(cc) && !excluded.contains(cc)))
+    }
+    #expect(HelperCCPolicy.choices.count == 109)
+    #expect(HelperCCPolicy.choices.contains(74))
+}
+@Test func helperCCPolicyRejectsActiveDuplicateOnlyAndPreservesDisabledSettings() {
+    #expect(!HelperCCPolicy.permits(vibrato:true,expression:true,vibratoCC:74,expressionCC:74))
+    #expect(HelperCCPolicy.permits(vibrato:true,expression:false,vibratoCC:74,expressionCC:74))
+    #expect(HelperCCPolicy.permits(vibrato:false,expression:true,vibratoCC:64,expressionCC:11))
+    #expect(!HelperCCPolicy.permits(vibrato:true,expression:false,vibratoCC:64,expressionCC:11))
+    #expect(HelperCCPolicy.permits(vibrato:true,expression:true,vibratoCC:1,expressionCC:11))
+}
