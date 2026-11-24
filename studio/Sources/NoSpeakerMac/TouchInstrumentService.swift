@@ -67,6 +67,7 @@ public enum TouchTriggerMode: String, CaseIterable, Identifiable, Sendable, Coda
 public struct TouchInstrumentConfiguration: Sendable, Equatable {
     public var baseMIDINote: Int
     public var scale: TouchScale
+    public var customScale: CustomScale?
     public var fretless: Bool
     public var zoneWidth: Double
     public var pitchSpanSemitones: Double
@@ -104,10 +105,12 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         trackpadOutput: SurfaceOutputRoute = .trackpadHaptic,
         magicMouseOutput: SurfaceOutputRoute = .midiInstrument,
         drumLayout: DrumPadLayout = .standard12,
-        magicMouseOrientation: SurfaceOrientation = .horizontal
+        magicMouseOrientation: SurfaceOrientation = .horizontal,
+        customScale: CustomScale? = nil
     ) {
         self.baseMIDINote = baseMIDINote
         self.scale = scale
+        self.customScale = customScale
         self.fretless = fretless
         self.zoneWidth = zoneWidth
         self.pitchSpanSemitones = pitchSpanSemitones
@@ -137,6 +140,29 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
 
     public var selectedSurfaces: [TouchSurfaceKind] {
         TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) }
+    }
+
+    public var mappedMIDINotes: [Int] {
+        if !fretless, let customScale {
+            return customScale.mappedMIDINotes(root: baseMIDINote, zoneWidth: zoneWidth)
+        }
+        return scale.mappedMIDINotes(root: baseMIDINote, zoneWidth: zoneWidth)
+    }
+
+    public var permitsMelodicMIDI: Bool {
+        guard !fretless, let customScale else { return true }
+        guard customScale.isValid else { return false }
+        let sendsMelodicMIDI = selectedSurfaces.contains {
+            instrument(for: $0) == .melodic && output(for: $0).sendsMIDI
+        }
+        return !sendsMelodicMIDI || !customScale.isMicrotonal || customScale.allowEqualTemperedMIDI
+    }
+
+    public func frettedFrequency(midi: Int) -> Double? {
+        if let customScale {
+            return customScale.tunedFrequency(midi: midi, root: baseMIDINote)
+        }
+        return try? MusicTheory.frequency(midi: midi)
     }
 
     public var hasMIDIOutput: Bool {
@@ -325,10 +351,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
         guard config.surfaceSelection.accepts(frame.surface) else { return }
 
-        let mappedNotes = config.scale.mappedMIDINotes(
-            root: config.baseMIDINote,
-            zoneWidth: config.zoneWidth
-        )
+        let mappedNotes = config.mappedMIDINotes
         let instrument = config.instrument(for: frame.surface)
         guard !mappedNotes.isEmpty else {
             callback?([])
@@ -467,7 +490,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             if config.fretless && config.instrument(for: state.surface) == .melodic {
                 baseFrequency = 440.0 * pow(2.0, (state.continuousMIDI - 69.0) / 12.0)
             } else {
-                guard let frequency = try? MusicTheory.frequency(midi: state.quantizedMIDI) else {
+                guard let frequency = config.frettedFrequency(midi: state.quantizedMIDI) else {
                     continue
                 }
                 baseFrequency = frequency
