@@ -7,12 +7,12 @@ const source=fs.readFileSync(path.join(__dirname,"../Sources/NoSpeakerMac/Remote
 const script=source.split('private static let script = #"""')[1].split('"""#')[0]
   .replaceAll("__REMOTE_ORIGIN__","https://local.test").replaceAll("__REMOTE_SOCKET__","wss://local.test");
 const fullManifest={kind:"capabilities",version:7,touch:true,tilt:true,acceleration:true,rotation:true,airDrums:true,drums:255,piano:67108863,pedals:63};
-function setup(permission="granted",manifest=fullManifest){
+function setup(permission="granted",manifest=fullManifest,experimental=true){
   let time=1000, ticker, socket, nextTimer=0;const timers=new Map();
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id]});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
   class WS{
@@ -26,6 +26,7 @@ function setup(permission="granted",manifest=fullManifest){
   elements.secret.value="aa".repeat(32);elements.connect.emit("click");socket.onopen();socket.onmessage({data:"admitted"});
   const query=socket.frames.shift();
   time+=13;if(manifest!==null)socket.onmessage({data:typeof manifest==="string"?manifest:JSON.stringify(manifest)});
+  if(experimental&&!socket.closed&&manifest!==null)elements.workloadMode.emit("click");
   return {query,elements,window,document,socket,step(ms=25){time+=ms;for(const [id,t] of [...timers])if(t.at<=time&&timers.delete(id))t.f();ticker?.()},ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
     orientation(beta=0){window.emit("deviceorientation",{alpha:0,beta,gamma:0})}};
 }
@@ -353,4 +354,37 @@ test("manifest rejects fractional or exponent bitsets and BOM",()=>{
     valid.replace('"pedals":63','"pedals":6.3e1'),"\uFEFF"+valid]){
     const a=setup("granted",bad);assert.equal(a.socket.closed,true);assert.equal(a.elements.touchSection.hidden,true);
   }
+});
+
+test("default workload refuses a second discrete surface without disturbing the first",()=>{
+  const a=setup("granted",fullManifest,false);
+  a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.drumEnable.emit("click");a.elements.drum0.emit("pointerdown",drumEvent(2));
+  a.elements.pad.emit("pointerdown",xyEvent(3));assert.equal(a.socket.frames.length,1);
+  assert.match(a.elements.workloadStatus.textContent,/Combination unavailable/);
+  a.elements.pianoEnable.emit("click");assert.equal(a.socket.frames.at(-1).mask,0);
+  a.elements.drumEnable.emit("click");assert.match(a.elements.workloadStatus.textContent,/Combination unavailable/);
+  a.ack();a.elements.drumEnable.emit("click");a.elements.drum0.emit("pointerdown",drumEvent(2));a.step(13);
+  assert.equal(a.socket.frames.at(-1).kind,"drumPads");
+});
+test("conservative mode allows three sensors or one discrete plus two sensors",async()=>{
+  const a=setup("granted",fullManifest,false);
+  await a.elements.motionStart.emit("click");await a.elements.accelStart.emit("click");
+  a.elements.pianoEnable.emit("click");await a.elements.rotationStart.emit("click");
+  assert.match(a.elements.workloadStatus.textContent,/Combination unavailable/);
+  assert.equal(a.elements.rotationStatus.textContent,"");
+  a.elements.pianoEnable.emit("click");await a.elements.rotationStart.emit("click");
+  assert.match(a.elements.rotationStatus.textContent,/Waiting for a valid/);
+  assert.equal(a.socket.frames.length,0);
+});
+test("experimental choice only when idle; reset on disconnect",()=>{
+  const a=setup("granted",fullManifest,false);
+  a.elements.pianoEnable.emit("click");
+  a.elements.workloadMode.emit("click");assert.match(a.elements.workloadMode.textContent,/Enable experimental/);
+  a.elements.pianoEnable.emit("click");a.elements.workloadMode.emit("click");
+  assert.match(a.elements.workloadMode.textContent,/Use conservative/);
+  a.elements.drumEnable.emit("click");a.elements.pianoEnable.emit("click");
+  assert.match(a.elements.workloadStatus.textContent,/streams: 2/);
+  a.window.emit("pagehide");assert.equal(a.elements.workloadSection.hidden,true);
+  assert.match(a.elements.workloadMode.textContent,/Enable experimental/);
 });
