@@ -211,3 +211,13 @@ import Testing
     let config = MIDIHelperSustainSettings(trackpadEnabled:true,trackpadGesture:.touchHold)
     #expect(!engine.update(trackpadContactSizes:[.nan,-1,2],magicMouseTouching:false,settings:config).isActive)
 }
+
+@Test func clickAttributionRejectsAmbiguousStaleAndOldRevision() {
+    let one:Set<String> = ["trackpad"]
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,receivedAt:1,now:1.1) == "trackpad")
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:1,currentRevision:2,receivedAt:1,now:1.1) == nil)
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,receivedAt:1,now:1.5) == nil)
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,receivedAt:1,now:0.9) == nil)
+    #expect(PhysicalClickAttribution.resolve(Set(["trackpad","mouse"]),snapshotRevision:2,currentRevision:2,receivedAt:1,now:1.1) == nil)
+    #expect(PhysicalClickAttribution.resolve(Set<String>(),snapshotRevision:2,currentRevision:2,receivedAt:1,now:1.1) == nil)
+}

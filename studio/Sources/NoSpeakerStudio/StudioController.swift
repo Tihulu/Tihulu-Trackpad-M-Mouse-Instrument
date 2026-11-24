@@ -93,6 +93,10 @@ final class StudioController: ObservableObject {
     private var patchPadTokens: [PatchSimulation.Input: UUID] = [:]
     private var surfaceMonitorToken: UUID?
     private var surfaceSnapshotCursor = TouchSnapshotCursor()
+    private var clickTouchingSurfaces: Set<TouchSurfaceKind> = []
+    private var clickSnapshotRevision: UInt64?
+    private var clickSnapshotReceivedAt: Double?
+    private var physicalClickDown = false
     @Published private(set) var sequenceRunning = false
     @Published private(set) var sequenceStatus = "Sequencer MIDI idle"
     private let sequenceMIDI = ChordMIDIOutput(name: "TIHULU Sequencer")
@@ -1670,6 +1674,7 @@ final class StudioController: ObservableObject {
         stopSystemAudio()
         playback?.stop(closeDriver: false)
         surfaceMonitorToken = nil
+        clearClickAttribution()
         touch?.stopPreview()
         // Terminal revocation drains an in-flight submission and blocks any
         // late producer or monitoring request on this exact driver instance.
@@ -2028,6 +2033,7 @@ final class StudioController: ObservableObject {
                      (patchPhysical && instrumentPatch.routes.contains { $0.source == .trackpad || $0.source == .magicMouse })
         if !needed {
             surfaceMonitorToken = nil
+            clearClickAttribution()
             touch.stopPreview()
             touchPreviewRunning = false
             return
@@ -2055,18 +2061,23 @@ final class StudioController: ObservableObject {
             let token = UUID()
             surfaceMonitorToken = token
             surfaceSnapshotCursor.reset()
+            clearClickAttribution()
             try touch.startStampedPreview(configuration: monitoringConfiguration) { [weak self] states,stamp in
                 Task { @MainActor in
                     guard let self, self.engineGeneration == generation,
                           self.surfaceMonitorToken == token, self.touchPreviewRunning,
                           let revision = self.touch?.currentSampleRevision,
                           self.surfaceSnapshotCursor.accept(stamp,currentRevision:revision) else { return }
+                    self.clickTouchingSurfaces = Set(states.filter(\.isTouching).map(\.surface))
+                    self.clickSnapshotRevision = stamp.revision
+                    self.clickSnapshotReceivedAt = ProcessInfo.processInfo.systemUptime
                     self.handleSharedSurfaceStates(states)
                 }
             }
             touchPreviewRunning = true
         } catch {
             surfaceMonitorToken = nil
+            clearClickAttribution()
             touchPreviewRunning = false
             fail(error)
         }
@@ -2793,6 +2804,15 @@ final class StudioController: ObservableObject {
         }
     }
 
+    private func clearClickAttribution() {
+        clickTouchingSurfaces.removeAll()
+        clickSnapshotRevision = nil
+        clickSnapshotReceivedAt = nil
+        physicalClickDown = false
+        clickedSurface = nil
+        trackpadClickPressure = nil
+    }
+
     private func invalidatePhysicalClickState() {
         helperSustainState.invalidatePhysicalClicks(settings:helperSustainSettings)
         touchSustainState.invalidatePhysicalClicks(settings:touchSustainSettings)
@@ -2801,15 +2821,15 @@ final class StudioController: ObservableObject {
 
     private func handlePhysicalClick(_ down: Bool, pressure: Double) {
         if down {
-            let currentStates = midiHelperStates + touchStates
-            let touchedSurfaces = Set(
-                currentStates.filter(\.isTouching).map(\.surface)
-            )
-            // Global CGEvent click does not identify its physical source.
-            // Only assign it if exactly one surface has an active contact.
-            clickedSurface = touchedSurfaces.count == 1 ? touchedSurfaces.first : nil
+            guard !physicalClickDown else { return }
+            physicalClickDown = true
+            // Use only the most recent shared, unfiltered monitor snapshot.
+            clickedSurface = PhysicalClickAttribution.resolve(clickTouchingSurfaces,
+                snapshotRevision:clickSnapshotRevision,currentRevision:touch?.currentSampleRevision,
+                receivedAt:clickSnapshotReceivedAt,now:ProcessInfo.processInfo.systemUptime)
             trackpadClickPressure = clickedSurface == .trackpad && pressure.isFinite && (0...1).contains(pressure) ? pressure : nil
         } else {
+            physicalClickDown = false
             clickedSurface = nil
             trackpadClickPressure = nil
         }

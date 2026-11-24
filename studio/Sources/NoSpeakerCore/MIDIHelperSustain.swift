@@ -253,3 +253,15 @@ public struct MIDIHelperSustainState: Sendable {
         snapshot = .init()
     }
 }
+
+/// Conservative attribution from the current shared snapshot, not from
+/// independent consumer caches. The OS click itself has no device identity.
+public enum PhysicalClickAttribution {
+    public static func resolve<Surface:Hashable>(_ touching:Set<Surface>,
+        snapshotRevision:UInt64?,currentRevision:UInt64?,receivedAt:Double?,now:Double) -> Surface? {
+        guard let snapshotRevision, let currentRevision, snapshotRevision == currentRevision,
+              let receivedAt, receivedAt.isFinite, now.isFinite, now >= receivedAt,
+              now-receivedAt < 0.35, touching.count == 1 else { return nil }
+        return touching.first
+    }
+}
