@@ -374,7 +374,8 @@ final class StudioController: ObservableObject {
                     patchCameraReceivedFrame = false
                     camera.start(deviceID: patchCameraDeviceID,
                                  dualMode: AirDualHandPerformance.usesDualCamera(instrumentPatch.routes),
-                                 swapRoles: patchCameraSwapRoles)
+                                 swapRoles: patchCameraSwapRoles,
+                                 helperMode: AirHandsHelper.uses(instrumentPatch.routes))
                 }
                 if let remoteTransport {
                     patchRemoteBridge = RemoteHostBridge()
@@ -689,6 +690,20 @@ final class StudioController: ObservableObject {
                 case .fault(let message):
                     stopBuilderCamera(reason: message)
                     return
+                case .helperFrame(let left, let right, let time):
+                    let l = left?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
+                    let r = right?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
+                    if now >= time && now-time < 0.25 {
+                        patchCameraReceivedFrame = true
+                        patchCameraLastFrame = time
+                        patchCameraHand = l ?? r
+                        patchCameraStatus = "MIDI Helper · " + (l == nil ? "Left absent" : "Left tracked") +
+                            " · " + (r == nil ? "Right absent" : "Right tracked")
+                    } else {
+                        patchCameraHand = nil
+                        patchCameraStatus = "Stale helper frame · released"
+                    }
+                    recordPatchCommands(patchPhysicalRuntime.receiveHelperHands(left:l,right:r,hostTime:time,now:now))
                 case .dualFrame(let count, let confidence, let helper, let time):
                     guard now >= time, now - time < 0.25 else {
                         recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: nil, confidence: 0, helper: nil, hostTime: time, now: now))

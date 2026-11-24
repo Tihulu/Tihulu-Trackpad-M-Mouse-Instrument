@@ -56,6 +56,7 @@ struct InstrumentBuilderView: View {
                     }.padding(8).disabled(studio.patchRunning)
                 }
                 ExpressivePresetPanel(patch: $draft).disabled(studio.patchRunning)
+                AirHandsHelperPanel(patch: $draft, physical: $physical).disabled(studio.patchRunning)
                 AirInstrumentPresetPanel(patch: $draft).disabled(studio.patchRunning)
                 GroupBox("Dual Hand · camera chords") {
                     VStack(alignment: .leading, spacing: 6) {

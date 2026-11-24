@@ -9,6 +9,8 @@ public enum SensorSource: String, Codable, CaseIterable, Sendable {
 public enum SensorSignal: String, Codable, CaseIterable, Sendable {
     case x, y, contact, contactSize, pressure, angle, speed, gesture, expression
     case airChord1, airChord2, airChord3, airChord4, airChord5
+    case airLeftX, airLeftY, airLeftAperture, airLeftPinch, airLeftSpeed
+    case airRightX, airRightY, airRightAperture, airRightPinch, airRightSpeed
     case airString1_1, airString1_2, airString1_3, airString1_4, airString1_5, airString1_6, airString1_7, airString1_8
     case airString2_1, airString2_2, airString2_3, airString2_4, airString2_5, airString2_6, airString2_7, airString2_8
     case airString3_1, airString3_2, airString3_3, airString3_4, airString3_5, airString3_6, airString3_7, airString3_8
@@ -273,8 +275,12 @@ public struct SensorRouter: Sendable {
     /// Remove its contribution instead of feeding a synthetic zero (which
     /// could retrigger an inverted gate or bypass a custom release position).
     public mutating func releaseSignal(session id: UUID, signal: SensorSignal) -> [SensorCommand] {
+        releaseSignals(session:id,signals:[signal])
+    }
+
+    public mutating func releaseSignals(session id: UUID, signals: Set<SensorSignal>) -> [SensorCommand] {
         guard let session = sessions[id] else { return [] }
-        let ids = Set(mappings.filter { $0.source == session.source && $0.signal == signal }.map(\.id))
+        let ids = Set(mappings.filter { $0.source == session.source && signals.contains($0.signal) }.map(\.id))
         contributions = contributions.filter { $0.key.session != id || !ids.contains($0.key.mapping) }
         return reconcile()
     }

@@ -12,6 +12,7 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
         case ready
         case frame(AirHandSample?, Double)
         case dualFrame(Int?, Double, AirHandSample?, Double)
+        case helperFrame(AirHandSample?, AirHandSample?, Double)
         case fault(String)
     }
     private let queue = DispatchQueue(label: "com.tihulu.builder.camera", qos: .userInitiated)
@@ -25,6 +26,7 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
     private let request = VNDetectHumanHandPoseRequest()
     private var lastFrame = -1.0
     private var dualMode = false
+    private var helperMode = false
     private var swapRoles = false
     private var observers: [NSObjectProtocol] = []
 
@@ -40,10 +42,11 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    func start(deviceID: String, dualMode: Bool = false, swapRoles: Bool = false) {
+    func start(deviceID: String, dualMode: Bool = false, swapRoles: Bool = false, helperMode: Bool = false) {
         queue.async { [self] in
             guard !isClosed else { return }
             self.dualMode = dualMode
+            self.helperMode = helperMode
             self.swapRoles = swapRoles
             do {
                 guard Self.authorization == .authorized else { throw CameraError.permission }
@@ -140,6 +143,24 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
         lastFrame = now
         do {
             try VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: .up, options: [:]).perform([request])
+            if helperMode {
+                let hands = request.results ?? []
+                func sample(_ hand: VNHumanHandPoseObservation) -> AirHandSample? {
+                    guard let points = try? hand.recognizedPoints(.all) else { return nil }
+                    func point(_ name:VNHumanHandPoseObservation.JointName) -> AirHandPoint? {
+                        guard let p = points[name] else { return nil }
+                        return .init(x:Double(p.location.x),y:Double(p.location.y),confidence:Double(p.confidence))
+                    }
+                    guard let thumb = point(.thumbTip), let index = point(.indexTip),
+                          let wrist = point(.wrist), let middle = point(.middleMCP) else { return nil }
+                    return AirHandSample(thumb:thumb,index:index,wrist:wrist,middleBase:middle)
+                }
+                let left = hands.filter { $0.chirality == .left }
+                let right = hands.filter { $0.chirality == .right }
+                push(.helperFrame(left.count == 1 ? sample(left[0]) : nil,
+                                  right.count == 1 ? sample(right[0]) : nil,now))
+                return
+            }
             if dualMode {
                 guard let hands = request.results, hands.count == 2,
                       let left = hands.first(where: { $0.chirality == .left }),
@@ -184,7 +205,8 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
             }
             push(.frame(AirHandSample(thumb: thumb, index: index, wrist: wrist, middleBase: middle), now))
         } catch {
-            if dualMode { push(.dualFrame(nil, 0, nil, now)) }
+            if helperMode { push(.helperFrame(nil,nil,now)) }
+            else if dualMode { push(.dualFrame(nil, 0, nil, now)) }
             else { push(.frame(nil, now)) }
         }
     }
