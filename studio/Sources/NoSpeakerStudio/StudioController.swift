@@ -39,6 +39,10 @@ final class StudioController: ObservableObject {
     @Published private(set) var patchPhysical = false
     @Published private(set) var patchActiveSurfaces: Set<SensorSource> = []
     private var patchPhysicalRuntime = PhysicalPatchRuntime()
+    private var patchRemoteTransport: RemoteLoopbackTransport?
+    private var patchRemoteBridge: RemoteHostBridge?
+    @Published private(set) var patchRemoteReady = false
+    @Published private(set) var patchRemotePeers: Set<UUID> = []
     private var patchMailbox: PatchSurfaceMailbox?
     private var patchWatchdog: Task<Void, Never>?
     private var patchHinge: MacBookHingeAngleSource?
@@ -201,12 +205,20 @@ final class StudioController: ObservableObject {
         patchCameraChoices = BuilderCameraSource.choices()
     }
 
-    func startInstrumentPatch(sendMIDI: Bool, physical: Bool = false) {
+    // Internal explicit loopback test entry point. No UI or LAN exposure until
+    // certificate provisioning and trusted browser flow are implemented.
+    func startInstrumentPatch(sendMIDI: Bool, physical: Bool = false,
+                              remoteTransport: RemoteLoopbackTransport? = nil) {
         guard !patchRunning else { return }
         let sources = Set(instrumentPatch.routes.map(\.source))
         let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
+        let hasRemoteRoutes = sources.contains(.phone) || sources.contains(.tablet)
+        guard remoteTransport == nil || (physical && hasRemoteRoutes) else {
+            patchStatus = "Remote test requires native phone/tablet routes."
+            return
+        }
         if physical {
-            guard PhysicalPatchRuntime.supports(instrumentPatch) else {
+            guard PhysicalPatchRuntime.supports(instrumentPatch, allowRemote: remoteTransport != nil) else {
                 patchStatus = "Unsupported live source or signal. Use Simulation or edit the routes."
                 return
             }
@@ -246,7 +258,7 @@ final class StudioController: ObservableObject {
             try patchLedger.configure(instrumentPatch)
             if sendMIDI { try patchMIDI.open() }
             if physical {
-                try patchPhysicalRuntime.configure(instrumentPatch)
+                try patchPhysicalRuntime.configure(instrumentPatch, allowRemote: remoteTransport != nil)
                 let mailbox = PatchSurfaceMailbox()
                 patchMailbox = mailbox
                 patchPhysical = true
@@ -304,11 +316,60 @@ final class StudioController: ObservableObject {
                     patchCameraReceivedFrame = false
                     camera.start(deviceID: patchCameraDeviceID)
                 }
+                if let remoteTransport {
+                    patchRemoteBridge = RemoteHostBridge()
+                    patchRemoteTransport = remoteTransport
+                    patchRemoteReady = false
+                    patchRemotePeers = []
+                    remoteTransport.start()
+                }
                 startPatchWatchdog()
             }
         } catch {
             stopInstrumentPatch()
             patchStatus = error.localizedDescription
+        }
+    }
+
+    func issueBuilderRemoteInvitation(source: SensorSource) throws -> Data {
+        guard patchRunning, patchPhysical, patchRemoteTransport != nil, var bridge = patchRemoteBridge
+        else { throw RemoteTouchError.unavailable }
+        let secret = try RemoteLoopbackTransport.invitation()
+        try bridge.issue(secret: secret, source: source, now: ProcessInfo.processInfo.systemUptime,
+                         runtime: &patchPhysicalRuntime)
+        patchRemoteBridge = bridge
+        return secret
+    }
+
+    func revokeBuilderRemote(_ connection: UUID) {
+        guard var bridge = patchRemoteBridge, let transport = patchRemoteTransport else { return }
+        let result = bridge.revoke(connection, runtime: &patchPhysicalRuntime)
+        patchRemoteBridge = bridge
+        patchRemotePeers = bridge.connectionIDs
+        recordPatchCommands(result.commands)
+        transport.revoke(connection)
+    }
+
+    private func drainBuilderRemote(now: Double) {
+        guard let transport = patchRemoteTransport, var bridge = patchRemoteBridge else { return }
+        let result = bridge.process(transport.drain(), now: now, runtime: &patchPhysicalRuntime)
+        patchRemoteBridge = bridge
+        if patchRemoteReady != bridge.ready { patchRemoteReady = bridge.ready }
+        if patchRemotePeers != bridge.connectionIDs { patchRemotePeers = bridge.connectionIDs }
+        recordPatchCommands(result.commands)
+        // MIDI failure can retire the entire Builder while delivering commands.
+        guard patchRunning, patchRemoteTransport === transport else { return }
+        if result.fault {
+            stopInstrumentPatch()
+            patchStatus = "Remote transport fault. Outputs released; restart explicitly."
+            return
+        }
+        for action in result.actions {
+            switch action {
+            case .acknowledge(let id, let accepted): transport.acknowledge(id, accepted: accepted)
+            case .revoke(let id): transport.revoke(id)
+            case .stop: transport.stop()
+            }
         }
     }
 
@@ -410,7 +471,9 @@ final class StudioController: ObservableObject {
             }
         }
         guard patchRunning else { return }
-        let expired = patchPhysicalRuntime.expire(now: now)
+        drainBuilderRemote(now: ProcessInfo.processInfo.systemUptime)
+        guard patchRunning else { return }
+        let expired = patchPhysicalRuntime.expire(now: ProcessInfo.processInfo.systemUptime)
         recordPatchCommands(expired)
         if patchCamera != nil && !patchPhysicalRuntime.activeSources.contains(.camera) {
             patchCameraHand = nil
@@ -494,6 +557,11 @@ final class StudioController: ObservableObject {
         let hadNativeBar = patchNativeBar
         patchNativeToken = nil
         patchNativeBar = false
+        patchRemoteTransport?.stop()
+        patchRemoteTransport = nil
+        patchRemoteBridge = nil
+        patchRemoteReady = false
+        patchRemotePeers = []
         if let camera = patchCamera {
             retiringPatchCamera = camera
             camera.stop()

@@ -160,6 +160,16 @@ public struct PhysicalPatchRuntime: Sendable {
         return router.disconnect(session)
     }
 
+    public mutating func cancelRemotePairing() { pairing.clear() }
+
+    /// Stop remote admission and release remote owners without disturbing local inputs.
+    public mutating func disableRemote() -> [SensorCommand] {
+        remoteEnabled = false
+        pairing.clear()
+        let ids = remotePeers.keys.sorted { $0.uuidString < $1.uuidString }
+        return ids.flatMap { revokeRemote($0) }
+    }
+
     public mutating func expire(now: Double) -> [SensorCommand] {
         guard now.isFinite else { return [] }
         let stale = sessions.keys.filter { now - (seen[$0] ?? 0) >= Self.timeout }
