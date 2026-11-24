@@ -44,6 +44,20 @@ final class AirFrameTraceTests: XCTestCase {
         XCTAssertFalse(bounded.append(count:nil,confidence:0,helper:nil,time:25))
     }
 
+    func testCombinedTracePreservesSurvivingHandAndMode() {
+        var trace = AirFrameTrace()
+        let hand = AirHandSample.debugSample(x:0.3,y:0.7,aperture:0.8)
+        XCTAssertTrue(trace.appendCombined(count:0,confidence:1,left:hand,right:hand,swapRoles:false,time:10))
+        XCTAssertTrue(trace.appendCombined(count:nil,confidence:.nan,left:nil,right:hand,swapRoles:false,time:10.1))
+        XCTAssertEqual(trace.mode,.combined(swapRoles:false))
+        XCTAssertNil(trace.frames[1].left)
+        XCTAssertEqual(trace.frames[1].right,hand)
+        XCTAssertNil(trace.frames[1].count)
+        XCTAssertFalse(trace.append(count:1,confidence:1,helper:hand,time:10.2))
+        XCTAssertFalse(trace.appendCombined(count:1,confidence:1,left:hand,right:hand,swapRoles:true,time:10.2))
+        XCTAssertEqual(trace.frames.count,2)
+    }
+
     func testSingleHandCannotBypassDualMode() throws {
         var live = PhysicalPatchRuntime()
         let contact = SensorMapping(id:"contact",source:.camera,signal:.contact,destination:.init(.note,number:80))

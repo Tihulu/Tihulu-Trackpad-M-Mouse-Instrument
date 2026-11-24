@@ -4,7 +4,7 @@ Status: experimental development candidate; physical acceptance pending.
 
 ## Connect
 1. In Instrument Builder add a Camera MIDI Helper assignment or quick setup. Choose left/right hand, motion and MIDI channel (UI 1–16).
-2. Add Trackpad/Magic Mouse/other compatible native routes to the same patch if wanted. Named left/right helper assignments may coexist with chord/strum routes. Avoid mapping the legacy chord-helper axes and named hand axes to the same MIDI destination. Combined mode uses a single camera session. Legacy single-hand camera routes remain separate; combined-mode trace recording is not yet supported.
+2. Add Trackpad/Magic Mouse/other compatible native routes to the same patch if wanted. Named left/right helper assignments may coexist with chord/strum routes. Avoid mapping the legacy chord-helper axes and named hand axes to the same MIDI destination. Combined mode uses a single camera session. Legacy single-hand camera routes remain separate; combined-mode diagnostic recording preserves both hands and requires the same role assignment when replayed.
 3. Start Native Inputs explicitly; grant camera access and start again when requested. Enable the dedicated MIDI output deliberately.
 4. In the DAW select the TIHULU Instrument Builder MIDI source and the corresponding MIDI channel. Enable input monitoring for an instrument track. For effects use the receiving instrument's CC mapping or MIDI Learn where supported. Do not enable a MIDI feedback loop.
 5. Stop the Builder before editing assignments. Use Stop / Release All or DAW panic if delivery fails.

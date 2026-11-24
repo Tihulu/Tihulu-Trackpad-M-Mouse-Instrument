@@ -48,11 +48,11 @@ struct AirDualDebugPanel: View {
                 HStack {
                     Text("Recorded frames: \(studio.patchAirTraceCount)").font(.caption.monospacedDigit())
                     Button("Replay trace") { studio.startAirReplay() }
-                        .disabled(streaming || studio.patchAirReplaying || studio.patchAirTraceCount == 0 || studio.patchCombinedDebugAvailable)
+                        .disabled(streaming || studio.patchAirReplaying || studio.patchAirTraceCount == 0 || !studio.patchAirTraceCompatible)
                     Button("Stop replay") { studio.stopAirReplay() }.disabled(!studio.patchAirReplaying)
                     Button("Clear trace") { studio.clearAirTrace() }.disabled(studio.patchAirReplaying)
                 }
-                Text("Trace is kept in memory only. Replay uses the current instrument routes and MIDI setting, not the original patch.")
+                Text("Trace is kept in memory only. Replay requires the same camera mode and hand roles, but uses current instrument routes and MIDI settings.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(8)
         }

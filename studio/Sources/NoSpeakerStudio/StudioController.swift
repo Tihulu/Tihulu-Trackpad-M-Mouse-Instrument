@@ -77,7 +77,7 @@ final class StudioController: ObservableObject {
     private var patchAirReplayToken: UUID?
     var patchAirRecordAvailable: Bool {
         patchRunning && patchPhysical && patchCamera != nil &&
-            AirDualHandPerformance.usesDualCamera(instrumentPatch.routes) && !AirHandsHelper.uses(instrumentPatch.routes)
+            AirDualHandPerformance.usesDualCamera(instrumentPatch.routes)
     }
     var patchAirDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasDualCamera }
     var patchHelperDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasHelperHands && !patchSimulation.hasDualCamera }
@@ -567,11 +567,17 @@ final class StudioController: ObservableObject {
         patchAirTraceCount = 0
     }
 
+    var patchAirTraceCompatible: Bool {
+        guard let mode = patchAirTrace.mode else { return false }
+        return patchCombinedDebugAvailable ? mode == .combined(swapRoles:patchCameraSwapRoles) : mode == .dual
+    }
+
     func startAirReplay() {
-        guard patchAirDebugAvailable, !patchCombinedDebugAvailable, !patchAirReplaying, !patchAirTrace.frames.isEmpty else { return }
+        guard patchAirDebugAvailable, patchAirTraceCompatible, !patchAirReplaying, !patchAirTrace.frames.isEmpty else { return }
         releaseAirDebugFrame()
         guard patchAirDebugAvailable else { return }
         let frames = patchAirTrace.frames
+        let mode = patchAirTrace.mode
         let token = UUID()
         patchAirReplayToken = token
         patchAirReplaying = true
@@ -588,8 +594,14 @@ final class StudioController: ObservableObject {
                 let now = ProcessInfo.processInfo.systemUptime
                 // Do not burst overdue note edges after a stalled UI.
                 guard now - deadline < 0.10 else { self.stopAirReplay(); return }
-                let commands = self.patchSimulation.receiveDualHand(count: frame.count, confidence: frame.confidence,
-                                                                    helper: frame.helper, time: now, now: now)
+                let commands:[SensorCommand]
+                if case .combined(let swap)? = mode {
+                    commands = self.patchSimulation.receiveCombinedHands(count:frame.count,confidence:frame.confidence,
+                        left:frame.left,right:frame.right,swapRoles:swap,time:now,now:now)
+                } else {
+                    commands = self.patchSimulation.receiveDualHand(count:frame.count,confidence:frame.confidence,
+                        helper:frame.helper,time:now,now:now)
+                }
                 self.refreshAirDebugState()
                 self.recordPatchCommands(commands)
             }
@@ -719,11 +731,17 @@ final class StudioController: ObservableObject {
                     if now >= time && now-time < 0.25 {
                         patchCameraReceivedFrame = true
                         patchCameraLastFrame = time
+                        if patchAirRecording {
+                            if patchAirTrace.appendCombined(count:count,confidence:confidence,left:l,right:r,swapRoles:patchCameraSwapRoles,time:time) {
+                                patchAirTraceCount = patchAirTrace.frames.count
+                            } else { stopAirTrace() }
+                        }
                         patchCameraHand = patchCameraSwapRoles ? l : r
                         patchCameraStatus = "Combined · " + (l == nil ? "Left absent" : "Left tracked") +
                             " · " + (r == nil ? "Right absent" : "Right tracked")
                     } else {
                         patchCameraHand = nil
+                        stopAirTrace()
                         patchCameraStatus = "Stale combined frame · released"
                     }
                     recordPatchCommands(patchPhysicalRuntime.receiveCombinedHands(count:count,confidence:confidence,
