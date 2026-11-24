@@ -1,0 +1,1059 @@
+{
+  "candidate": "74818cb142801011250c8707f11af43b13f3f549",
+  "harness": "ebd3d51f79e70909ac4097ca656648c1a5820652",
+  "execution": "V8 virtual clock, host model; twice identical",
+  "summary": {
+    "actual": {
+      "rtt5": {
+        "passed": 32,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 176,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": true,
+            "maxGap": 96,
+            "missing": 0,
+            "closed": null
+          }
+        ]
+      },
+      "rtt20": {
+        "passed": 29,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 176,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 160,
+            "missing": 3,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "rtt40": {
+        "passed": 23,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 140,
+            "missing": 3,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 140,
+            "missing": 7,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "rtt60": {
+        "passed": 18,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 131,
+            "missing": 4,
+            "closed": "Touch input delayed. Reconnect explicitly."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 131,
+            "missing": 8,
+            "closed": "Touch input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "jitter20": {
+        "passed": 29,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 230,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 140,
+            "missing": 4,
+            "closed": "Pedal input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "jitter40": {
+        "passed": 23,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 131,
+            "missing": 3,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 131,
+            "missing": 7,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          }
+        ]
+      }
+    },
+    "oldest": {
+      "rtt5": {
+        "passed": 32,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 91,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": true,
+            "maxGap": 148,
+            "missing": 0,
+            "closed": null
+          }
+        ]
+      },
+      "rtt20": {
+        "passed": 32,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 140,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": true,
+            "maxGap": 220,
+            "missing": 0,
+            "closed": null
+          }
+        ]
+      },
+      "rtt40": {
+        "passed": 22,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 280,
+            "missing": 4,
+            "closed": "Disconnected. Request a new invitation."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 0,
+            "missing": 4,
+            "closed": "Touch input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "rtt60": {
+        "passed": 20,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 131,
+            "missing": 1,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 0,
+            "missing": 5,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "jitter20": {
+        "passed": 31,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 151,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 189,
+            "missing": 1,
+            "closed": "Touch input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "jitter40": {
+        "passed": 22,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 288,
+            "missing": 4,
+            "closed": "Disconnected. Request a new invitation."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 0,
+            "missing": 4,
+            "closed": "Touch input delayed. Reconnect explicitly."
+          }
+        ]
+      }
+    },
+    "guarded": {
+      "rtt5": {
+        "passed": 32,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 91,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": true,
+            "maxGap": 148,
+            "missing": 0,
+            "closed": null
+          }
+        ]
+      },
+      "rtt20": {
+        "passed": 32,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 140,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": true,
+            "maxGap": 220,
+            "missing": 0,
+            "closed": null
+          }
+        ]
+      },
+      "rtt40": {
+        "passed": 22,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 280,
+            "missing": 4,
+            "closed": "Disconnected. Request a new invitation."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 0,
+            "missing": 4,
+            "closed": "Touch input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "rtt60": {
+        "passed": 20,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 131,
+            "missing": 1,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 0,
+            "missing": 5,
+            "closed": "Drum input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "jitter20": {
+        "passed": 31,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": true,
+            "maxGap": 151,
+            "missing": 0,
+            "closed": null
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 8,
+            "missing": 1,
+            "closed": "Touch input delayed. Reconnect explicitly."
+          }
+        ]
+      },
+      "jitter40": {
+        "passed": 22,
+        "total": 32,
+        "seven": [
+          {
+            "workload": "hold",
+            "pass": false,
+            "maxGap": 288,
+            "missing": 4,
+            "closed": "Disconnected. Request a new invitation."
+          },
+          {
+            "workload": "burst",
+            "pass": false,
+            "maxGap": 0,
+            "missing": 4,
+            "closed": "Touch input delayed. Reconnect explicitly."
+          }
+        ]
+      }
+    }
+  },
+  "faults": {
+    "actual": [
+      {
+        "name": "tap behind drumPads",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind pianoKeys",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind pedalboard",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind orientation",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind acceleration",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind rotation",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "queued onset pointercancel",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Touch cancelled. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "queued onset lostpointercapture",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Touch cancelled. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "queued onset orientationchange",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Screen rotated. Reconnect and calibrate again.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "queued onset pagehide",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Page hidden.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "two completed taps, post-up lost capture",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.2,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          },
+          {
+            "version": 1,
+            "sequence": 6,
+            "kind": "touch",
+            "x": 0.3,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 7,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "overflow",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Touch input backlog. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": [],
+        "elapsed": 0
+      },
+      {
+        "name": "stale",
+        "pass": true,
+        "closed": {
+          "at": 1261,
+          "status": "Touch input delayed. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": [],
+        "elapsed": 161
+      },
+      {
+        "name": "missingAck",
+        "pass": true,
+        "closed": {
+          "at": 1320,
+          "status": "Connection timed out. Request a new invitation.",
+          "hostReason": null
+        },
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 2,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          }
+        ],
+        "elapsed": 220
+      }
+    ],
+    "oldest": [
+      {
+        "name": "tap behind drumPads",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind pianoKeys",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind pedalboard",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind orientation",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind acceleration",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind rotation",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "queued onset pointercancel",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Touch cancelled. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "queued onset lostpointercapture",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Touch cancelled. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "queued onset orientationchange",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Screen rotated. Reconnect and calibrate again.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "queued onset pagehide",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Page hidden.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "two completed taps, post-up lost capture",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.2,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          },
+          {
+            "version": 1,
+            "sequence": 5,
+            "kind": "touch",
+            "x": 0.3,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 6,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "overflow",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Touch input backlog. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": [],
+        "elapsed": 0
+      },
+      {
+        "name": "stale",
+        "pass": true,
+        "closed": {
+          "at": 1261,
+          "status": "Touch input delayed. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": [],
+        "elapsed": 161
+      },
+      {
+        "name": "missingAck",
+        "pass": true,
+        "closed": {
+          "at": 1320,
+          "status": "Connection timed out. Request a new invitation.",
+          "hostReason": null
+        },
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 2,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          }
+        ],
+        "elapsed": 220
+      }
+    ],
+    "guarded": [
+      {
+        "name": "tap behind drumPads",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind pianoKeys",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind pedalboard",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind orientation",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind acceleration",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "tap behind rotation",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "queued onset pointercancel",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Touch cancelled. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "queued onset lostpointercapture",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Touch cancelled. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "queued onset orientationchange",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Screen rotated. Reconnect and calibrate again.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "queued onset pagehide",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Page hidden.",
+          "hostReason": null
+        },
+        "wire": []
+      },
+      {
+        "name": "two completed taps, post-up lost capture",
+        "pass": true,
+        "closed": null,
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 3,
+            "kind": "touch",
+            "x": 0.2,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 4,
+            "kind": "release"
+          },
+          {
+            "version": 1,
+            "sequence": 5,
+            "kind": "touch",
+            "x": 0.3,
+            "y": 0.75
+          },
+          {
+            "version": 1,
+            "sequence": 6,
+            "kind": "release"
+          }
+        ]
+      },
+      {
+        "name": "overflow",
+        "pass": true,
+        "closed": {
+          "at": 1100,
+          "status": "Touch input backlog. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": [],
+        "elapsed": 0
+      },
+      {
+        "name": "stale",
+        "pass": true,
+        "closed": {
+          "at": 1261,
+          "status": "Touch input delayed. Reconnect explicitly.",
+          "hostReason": null
+        },
+        "wire": [],
+        "elapsed": 161
+      },
+      {
+        "name": "missingAck",
+        "pass": true,
+        "closed": {
+          "at": 1320,
+          "status": "Connection timed out. Request a new invitation.",
+          "hostReason": null
+        },
+        "wire": [
+          {
+            "version": 1,
+            "sequence": 2,
+            "kind": "touch",
+            "x": 0.25,
+            "y": 0.75
+          }
+        ],
+        "elapsed": 220
+      }
+    ]
+  }
+}
