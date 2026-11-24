@@ -31,6 +31,7 @@ public enum MIDIHapticError: LocalizedError {
     case destination(OSStatus)
     case source(OSStatus)
     case inputPort(OSStatus)
+    case outgoingRecoveryRequired
 
     public var errorDescription: String? {
         switch self {
@@ -42,6 +43,7 @@ public enum MIDIHapticError: LocalizedError {
         case .destination(let status): return "CoreMIDI virtual input creation failed (OSStatus \(status))."
         case .source(let status): return "CoreMIDI virtual output creation failed (OSStatus \(status))."
         case .inputPort(let status): return "CoreMIDI input port creation failed (OSStatus \(status))."
+        case .outgoingRecoveryRequired: return "MIDI cleanup is unconfirmed. Retry Stop; if controller recovery is required, reset the DAW before reconnecting."
         }
     }
 }
@@ -148,6 +150,15 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var mpeChannels = LegacyMPEChannelPool()
     private var continuousOwners = LegacyContinuousOwners()
     private var outgoingPressure = LegacyChannelPressure()
+    // Outgoing state is serialized by the existing Studio caller.
+    private var gateDebt = LegacyGateReleaseDebt()
+    private var outgoingFault: OSStatus?
+    private var controllerRecoveryRequired = false
+    private var cleaningOutgoing = false
+    private var outgoingFailureHandler: (@Sendable (OSStatus) -> Void)?
+
+    public var hasUnconfirmedOutgoingCleanup: Bool { !gateDebt.isEmpty || controllerRecoveryRequired }
+    public var outgoingFailureStatus: OSStatus? { outgoingFault }
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
 
@@ -156,7 +167,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         disposeEndpoints()
     }
 
-    public func start(masterLevel: Double, onMessage: (@Sendable (LiveMIDIMessage) -> Void)? = nil) throws {
+    public func start(masterLevel: Double, onFailure: (@Sendable (OSStatus) -> Void)? = nil, onMessage: (@Sendable (LiveMIDIMessage) -> Void)? = nil) throws {
         lock.lock()
         let alreadyActive = enabled && destination != 0 && virtualSource != 0 && inputPort != 0
         self.masterLevel = masterLevel
@@ -171,6 +182,9 @@ public final class MIDIHapticService: @unchecked Sendable {
         // Soft-stop note/controller state without closing the virtual MIDI
         // endpoints. Logic retains the same endpoints across mode switches.
         stop()
+        guard !hasUnconfirmedOutgoingCleanup else { throw MIDIHapticError.outgoingRecoveryRequired }
+        outgoingFault = nil
+        outgoingFailureHandler = onFailure
         if client == 0 { client = try MIDIProcessClient.shared.acquire() }
         if destination == 0 || virtualSource == 0 || inputPort == 0 {
             // Clean up any partial endpoints left by a previous failed start,
@@ -244,11 +258,17 @@ public final class MIDIHapticService: @unchecked Sendable {
         callback = nil
         lock.unlock()
         renderFence.revoke()
+        cleaningOutgoing = true
         releaseAllOutgoingSustain()
         endAllTouchOutput()
         sendOwnedNotes(noteOwners.releaseAll())
         sendContinuousUpdates(continuousOwners.releaseAll())
         sendPressureUpdates(outgoingPressure.replace([:]))
+        // The intended-owner ledgers may already have removed failed releases.
+        // Retry only the outstanding note and pedal destinations, not all channels.
+        for message in gateDebt.pending { sendMIDI1(status:message.status,data1:message.data1,data2:message.data2) }
+        cleaningOutgoing = false
+        outgoingFailureHandler = nil
 
         lock.lock()
         enabled = false
@@ -896,22 +916,29 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     private func sendMIDI1(status: Int, data1: Int, data2: Int) {
-        guard virtualSource != 0 else { return }
-        var packetList = MIDIPacketList()
-        let packet = MIDIPacketListInit(&packetList)
-        let bytes = LegacyMIDI1Bytes.channelMessage(status:status,data1:data1,data2:data2)
-        bytes.withUnsafeBufferPointer { buffer in
-            guard let base = buffer.baseAddress else { return }
-            _ = MIDIPacketListAdd(
-                &packetList,
-                MemoryLayout<MIDIPacketList>.size,
-                packet,
-                0,
-                bytes.count,
-                base
-            )
+        guard cleaningOutgoing || outgoingFault == nil else { return }
+        let message = LegacyGateReleaseDebt.Message(status,data1,data2)
+        var result: OSStatus = -1
+        if virtualSource != 0 {
+            var packetList = MIDIPacketList()
+            let packet = MIDIPacketListInit(&packetList)
+            let bytes = LegacyMIDI1Bytes.channelMessage(status:status,data1:data1,data2:data2)
+            let added = bytes.withUnsafeBufferPointer { buffer -> Bool in
+                guard let base = buffer.baseAddress else { return false }
+                return MIDIPacketListAdd(&packetList,MemoryLayout<MIDIPacketList>.size,
+                                         packet,0,bytes.count,base) != nil
+            }
+            if added { result = MIDIReceived(virtualSource,&packetList) }
         }
-        MIDIReceived(virtualSource, &packetList)
+        gateDebt.record(message,succeeded:result == noErr)
+        guard result != noErr else { return }
+        if !LegacyGateReleaseDebt.isGate(message) { controllerRecoveryRequired = true }
+        if outgoingFault == nil {
+            outgoingFault = result
+            // The handler schedules scoped stop on MainActor, never reenters
+            // the intended-owner state machines from inside this send.
+            outgoingFailureHandler?(result)
+        }
     }
 }
 
