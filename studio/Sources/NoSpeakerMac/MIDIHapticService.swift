@@ -637,7 +637,7 @@ public final class MIDIHapticService: @unchecked Sendable {
                 if let range = update.bendRange { sendPitchBendRange(semitones:range,channel:target.channel) }
                 sendPitchBend(update.value,channel:target.channel)
             case .controlChange:
-                sendMIDI1(status:0xb0|target.channel,data1:target.number,data2:update.value,neutral:update.neutral)
+                sendMIDI1(status:0xb0|target.channel,data1:target.number,data2:update.value,neutral:update.neutral,persistentGain:update.preserveOnRelease)
             default: break
             }
         }
@@ -660,19 +660,18 @@ public final class MIDIHapticService: @unchecked Sendable {
             values[.init(.pitchBend,channel:ch)] = .init(bend,neutral:8192,bendRange:max(1,min(24,pitchBendRange)))
         }
         if assignments.vibrato {
-            values[.init(.controlChange,channel:ch,number:vibratoCC)] = .init(Int((min(1,max(0,y))*127).rounded()),neutral:HelperPerformancePolicy.neutral(forCC:vibratoCC))
+            values[.init(.controlChange,channel:ch,number:vibratoCC)] = HelperPerformancePolicy.gainValue(Int((min(1,max(0,y))*127).rounded()),cc:vibratoCC)
         }
         if assignments.expression {
-            values[.init(.controlChange,channel:ch,number:expressionCC)] = .init(Int((min(1,max(0,contactSize))*127).rounded()),neutral:HelperPerformancePolicy.neutral(forCC:expressionCC))
+            values[.init(.controlChange,channel:ch,number:expressionCC)] = HelperPerformancePolicy.gainValue(Int((min(1,max(0,contactSize))*127).rounded()),cc:expressionCC)
         }
         sendContinuousUpdates(continuousOwners.replace(.helper,values:values))
     }
 
-    /// Ordinary lift is not a gain reset. Preserve the last intentional CC7/11
-    /// value without touching other owners or generating notes.
+    /// Ordinary lift retires the helper owner. Persistent gain stays at its
+    /// last intentional value unless another active internal owner takes over.
     public func idleHelperControls() {
-        let held = HelperPerformancePolicy.idleValues(continuousOwners.values(for:.helper))
-        sendContinuousUpdates(continuousOwners.replace(.helper,values:held))
+        sendContinuousUpdates(continuousOwners.release(.helper))
     }
 
     public func resetHelperControls(
@@ -990,7 +989,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     @discardableResult
-    private func sendMIDI1(status: Int, data1: Int, data2: Int, neutral: Int? = nil, rangePart: Bool = false) -> Bool {
+    private func sendMIDI1(status: Int, data1: Int, data2: Int, neutral: Int? = nil, rangePart: Bool = false,persistentGain:Bool = false) -> Bool {
         guard permitsOutgoingSend else { return false }
         let message = LegacyGateReleaseDebt.Message(status,data1,data2)
         var result: OSStatus = -1
@@ -1006,7 +1005,9 @@ public final class MIDIHapticService: @unchecked Sendable {
             if added { result = MIDIReceived(virtualSource,&packetList) }
         }
         gateDebt.record(message,succeeded:result == noErr)
-        let cleanupValue = neutral ?? LegacyControllerReleaseDebt.neutral(for:message)
+        let isPersistentGain = persistentGain && status & 0xf0 == 0xb0 && [7,11].contains(data1)
+        let cleanupValue = isPersistentGain ? nil : (neutral ?? LegacyControllerReleaseDebt.neutral(for:message))
+        if isPersistentGain { controllerDebt.forgetPersistentGain(message) }
         if let cleanupValue {
             controllerDebt.record(message,neutral:cleanupValue,succeeded:result == noErr)
         }

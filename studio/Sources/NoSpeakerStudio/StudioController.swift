@@ -2646,7 +2646,7 @@ final class StudioController: ObservableObject {
         midi?.setInputHapticsEnabled(localSound)
         midiHelperRunning = true
         startPerformanceEventMonitor()
-        engineStatus = "MIDI Helper active · expressive CC mapping"
+        engineStatus = assignments.hasEffects ? "MIDI Helper active · expressive CC mapping" : "MIDI Helper active · sustain-only CC64"
     }
 
     func stopMIDIHelper() {
@@ -2706,6 +2706,9 @@ final class StudioController: ObservableObject {
             return
         }
         midi?.setHelperSustain(snapshot.isActive,channel:helperTargetChannel)
+        // Sustain-only is a strict gate path. No pitch, CC7/11, pressure,
+        // note or RPN generation from these contacts.
+        guard helperAssignments.hasEffects else { return }
 
         let expressive = active.filter {
             HelperPerformancePolicy.permitsEffects(isTrackpad:$0.surface == .trackpad,settings:helperSustainSettings,sharePedalSurface:helperSharePedalSurface)

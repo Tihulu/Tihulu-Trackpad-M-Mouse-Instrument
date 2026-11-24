@@ -54,10 +54,10 @@ private struct HelperDraft: Codable {
     var pitchBendRange: Int = 12
     var vibratoCC: Int = 1
     var expressionCC: Int = 11
-    var vibratoEnabled: Bool = true
-    var pitchBendEnabled: Bool = true
-    var expressionEnabled: Bool = true
-    var sustainEnabled: Bool = false
+    var vibratoEnabled: Bool = false
+    var pitchBendEnabled: Bool = false
+    var expressionEnabled: Bool = false
+    var sustainEnabled: Bool = true
     var trackpadSustainEnabled: Bool = true
     var trackpadSustainThreshold: Double = 0.55
     var trackpadSustainSensor: TrackpadSustainSensor = .contactSize
@@ -1158,9 +1158,6 @@ private struct TouchInstrumentView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if sustainEnabled {
-                            Toggle("Also use pedal surfaces for expressive controls (advanced)",isOn:Binding(get:{sharePedalSurface ?? false},set:{sharePedalSurface = $0}))
-                            Text("By default a surface assigned to sustain sends pedal events only. Use another surface for expression and bend. CC7/11 hold their last value between touches; Stop restores the configured neutral.")
-                                .font(.caption).foregroundStyle(.secondary)
                             SustainSettingsPanel(
                                 surfaceSelection: surfaceSelection,
                                 playing: studio.touchRunning,
@@ -1844,6 +1841,8 @@ private struct MIDIHelperView: View {
                             pitchBendEnabled = false
                             expressionEnabled = false
                             sustainEnabled = true
+                            trackpadSustainEnabled = surfaceSelection != .magicMouse
+                            magicMouseSustainEnabled = surfaceSelection != .trackpad
                             sharePedalSurface = false
                         }
                         Button("Hybrid Preset") {
@@ -1943,6 +1942,10 @@ private struct MIDIHelperView: View {
                         }
 
                         if sustainEnabled {
+                            Toggle("Also use pedal surfaces for expressive controls (advanced)",isOn:Binding(get:{sharePedalSurface ?? false},set:{sharePedalSurface = $0}))
+                                .disabled(!assignments.hasEffects)
+                            Text("Pedal surfaces send only CC64 by default. Explicit gain controls (CC7/11) hold their last value on lift, disable and Stop; reset levels in the DAW if needed.")
+                                .font(.caption).foregroundStyle(.secondary)
                             SustainSettingsPanel(
                                 surfaceSelection: surfaceSelection,
                                 playing: studio.midiHelperRunning,

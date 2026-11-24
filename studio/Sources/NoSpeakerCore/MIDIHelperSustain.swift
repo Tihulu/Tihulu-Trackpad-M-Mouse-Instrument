@@ -92,6 +92,8 @@ public struct MIDIHelperAssignments: Sendable, Equatable {
         self.expression = expression
     }
 
+    public var hasEffects:Bool { vibrato || pitchBend || expression }
+    public static var sustainOnly:Self { .init(vibrato:false,pitchBend:false,expression:false) }
     public static var hybrid: Self { .init(vibrato: true, pitchBend: true, expression: true) }
 }
 
@@ -281,6 +283,9 @@ public enum HelperPerformancePolicy {
     /// the existing explicitly owned controller cleanup.
     public static func idleValues(_ values:[SensorDestination:LegacyContinuousOwners.Value]) -> [SensorDestination:LegacyContinuousOwners.Value] {
         values.filter { $0.key.kind == .controlChange && [7,11].contains($0.key.number) }
+    }
+    public static func gainValue(_ value:Int,cc:Int) -> LegacyContinuousOwners.Value {
+        .init(value,neutral:neutral(forCC:cc),preserveOnRelease:[7,11].contains(cc))
     }
     public static func neutral(forCC cc:Int) -> Int { [7,11].contains(cc) ? 127 : 0 }
 }

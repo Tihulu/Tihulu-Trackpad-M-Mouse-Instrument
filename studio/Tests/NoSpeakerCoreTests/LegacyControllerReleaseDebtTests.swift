@@ -93,3 +93,14 @@ import Testing
         }
     }
 }
+
+@Test func persistentHelperGainClearsOnlyMatchingCleanupDebt() {
+    var debt = LegacyControllerReleaseDebt()
+    debt.record(.init(0xb0,7,50),neutral:127,succeeded:true)
+    debt.record(.init(0xb1,7,60),neutral:127,succeeded:true)
+    debt.record(.init(0xb0,74,40),neutral:0,succeeded:true)
+    debt.forgetPersistentGain(.init(0xb0,7,40))
+    #expect(debt.pending == [.init(0xb0,74,0),.init(0xb1,7,127)])
+    debt.forgetPersistentGain(.init(0xb0,74,40))
+    #expect(debt.pending.count == 2)
+}
