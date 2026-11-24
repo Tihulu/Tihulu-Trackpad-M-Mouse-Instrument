@@ -175,3 +175,39 @@ import Testing
     let remaining = state.update(trackpadContactSizes:[0.8],magicMouseTouching:false,settings:config)
     #expect(remaining.trackpadActive && !remaining.magicMouseActive)
 }
+
+@Test func lostClickMonitorClearsOnlyClickDerivedSustain() {
+    var engine = MIDIHelperSustainState()
+    let config = MIDIHelperSustainSettings(trackpadEnabled:true,magicMouseEnabled:true,
+        magicMouseGesture:.tapToggle,trackpadGesture:.physicalClickToggle)
+    let initial = engine.update(trackpadContactSizes:[0.6],magicMouseTouching:true,settings:config,trackpadClickDown:true)
+    #expect(initial.trackpadActive && initial.magicMouseActive)
+    engine.invalidatePhysicalClicks(settings:config)
+    #expect(!engine.snapshot.trackpadActive && engine.snapshot.magicMouseActive)
+    let next = engine.update(trackpadContactSizes:[0.6],magicMouseTouching:true,settings:config)
+    #expect(!next.trackpadActive && next.magicMouseActive)
+}
+
+@Test func lostClickMonitorReleasesMouseToggleAndPressure() {
+    var engine = MIDIHelperSustainState()
+    let config = MIDIHelperSustainSettings(trackpadEnabled:true,magicMouseEnabled:true,
+        magicMouseGesture:.physicalClickToggle,trackpadSensor:.clickPressure)
+    #expect(config.needsPhysicalClicks)
+    let initial = engine.update(trackpadContactSizes:[],magicMouseTouching:false,settings:config,
+        trackpadClickDown:true,magicMouseClickDown:true,trackpadClickPressure:0.9)
+    #expect(initial.trackpadActive && initial.magicMouseActive)
+    engine.invalidatePhysicalClicks(settings:config)
+    #expect(!engine.snapshot.isActive)
+    #expect(!engine.update(trackpadContactSizes:[],magicMouseTouching:false,settings:config).isActive)
+}
+
+@Test func malformedSustainInputCannotArmThresholdOrTouchHold() {
+    for threshold in [Double.nan,.infinity,-0.1,1.1] {
+        var engine = MIDIHelperSustainState()
+        let config = MIDIHelperSustainSettings(trackpadEnabled:true,trackpadContactThreshold:threshold)
+        #expect(!engine.update(trackpadContactSizes:[0.9],magicMouseTouching:false,settings:config).isActive)
+    }
+    var engine = MIDIHelperSustainState()
+    let config = MIDIHelperSustainSettings(trackpadEnabled:true,trackpadGesture:.touchHold)
+    #expect(!engine.update(trackpadContactSizes:[.nan,-1,2],magicMouseTouching:false,settings:config).isActive)
+}

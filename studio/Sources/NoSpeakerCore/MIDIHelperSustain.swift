@@ -61,7 +61,8 @@ public struct MIDIHelperSustainSettings: Sendable, Equatable {
 
     public var needsPhysicalClicks: Bool {
         (trackpadEnabled &&
-            (trackpadGesture == .physicalClickHold || trackpadGesture == .physicalClickToggle)) ||
+            (trackpadGesture == .physicalClickHold || trackpadGesture == .physicalClickToggle ||
+             (trackpadGesture == .contactThreshold && trackpadSensor == .clickPressure))) ||
         (magicMouseEnabled &&
             (magicMouseGesture == .physicalClickHold || magicMouseGesture == .physicalClickToggle))
     }
@@ -104,6 +105,9 @@ public struct MIDIHelperSustainState: Sendable {
     private var mouseWasTouching = false
     private var mouseWasClicking = false
     private var mouseLatched = false
+    private var previousTrackpadGesture: TrackpadSustainGesture?
+    private var previousTrackpadSensor: TrackpadSustainSensor?
+    private var previousMouseGesture: MagicMouseSustainGesture?
 
     public private(set) var snapshot = MIDIHelperSustainSnapshot()
 
@@ -118,12 +122,17 @@ public struct MIDIHelperSustainState: Sendable {
         trackpadClickPressure: Double? = nil,
         magicMouseContactSizes: [Double] = []
     ) -> MIDIHelperSustainSnapshot {
-        let threshold = max(0.05, min(1, settings.trackpadContactThreshold))
-        let contactSize = trackpadContactSizes
-            .filter { $0.isFinite }
-            .map { min(1, max(0, $0)) }
-            .max() ?? 0
-        let trackpadTouching = !trackpadContactSizes.isEmpty
+        let threshold = settings.trackpadContactThreshold
+        let validSizes = trackpadContactSizes.filter { $0.isFinite && (0...1).contains($0) }
+        let contactSize = validSizes.max() ?? 0
+        let trackpadTouching = !validSizes.isEmpty
+        if previousTrackpadGesture != settings.trackpadGesture || previousTrackpadSensor != settings.trackpadSensor {
+            trackpadHeld = false; trackpadLatched = false
+        }
+        if previousMouseGesture != settings.magicMouseGesture { mouseLatched = false }
+        previousTrackpadGesture = settings.trackpadGesture
+        previousTrackpadSensor = settings.trackpadSensor
+        previousMouseGesture = settings.magicMouseGesture
 
         let trackpadActive: Bool
         if !settings.trackpadEnabled {
@@ -142,8 +151,9 @@ public struct MIDIHelperSustainState: Sendable {
                     // Touch force. Missing values do not fall back to size.
                     sensorValue = trackpadClickDown ? trackpadClickPressure : nil
                 }
-                if let value = sensorValue, value.isFinite {
-                    let normalized = max(0, min(1, value))
+                if threshold.isFinite, (0.05...1).contains(threshold),
+                   let value = sensorValue, value.isFinite, (0...1).contains(value) {
+                    let normalized = value
                     let releaseThreshold = max(0, threshold - 0.08)
                     trackpadHeld = trackpadHeld
                         ? normalized >= releaseThreshold
@@ -211,6 +221,24 @@ public struct MIDIHelperSustainState: Sendable {
         return snapshot
     }
 
+    /// A disabled event tap can miss a click-up. Clear click-derived
+    /// latches without canceling independent touch-derived sustain.
+    public mutating func invalidatePhysicalClicks(settings:MIDIHelperSustainSettings) {
+        trackpadWasClicking = false
+        mouseWasClicking = false
+        if settings.trackpadGesture == .physicalClickHold ||
+           settings.trackpadGesture == .physicalClickToggle ||
+           (settings.trackpadGesture == .contactThreshold && settings.trackpadSensor == .clickPressure) {
+            trackpadHeld = false
+            trackpadLatched = false
+            snapshot.trackpadActive = false
+        }
+        if settings.magicMouseGesture == .physicalClickHold || settings.magicMouseGesture == .physicalClickToggle {
+            mouseLatched = false
+            snapshot.magicMouseActive = false
+        }
+    }
+
     public mutating func reset() {
         trackpadHeld = false
         trackpadWasTouching = false
@@ -219,6 +247,9 @@ public struct MIDIHelperSustainState: Sendable {
         mouseWasTouching = false
         mouseWasClicking = false
         mouseLatched = false
+        previousTrackpadGesture = nil
+        previousTrackpadSensor = nil
+        previousMouseGesture = nil
         snapshot = .init()
     }
 }

@@ -6,3 +6,6 @@ Acceptance on real Mac: start without a usable haptic driver; arm capture and ve
 
 ## Follow-up recovery
 A Capture Now button separates shortcut diagnosis from pointer suppression. It requires the same explicitly armed, authorized active filtering tap. Key edges are paired by keycode even if modifiers change; unowned repeats pass through. A 500 ms health check disarms a missing or disabled tap, releases click state and never re-captures automatically. Physical macOS acceptance remains required: test direct capture, shortcut twice, release modifiers before the key, and permission revocation. Do not treat synthetic local events as proof of global capture.
+
+## Physical click sustain recovery
+Tap failure invalidates physical-click Hold/Toggle and experimental click-pressure sustain without clearing independently held touch/tap sustain. Invalid size/pressure/threshold values fail closed. This remains subject to real device acceptance; CGEvent does not reliably identify the clicked surface.

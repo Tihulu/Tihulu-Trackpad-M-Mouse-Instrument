@@ -2679,7 +2679,7 @@ final class StudioController: ObservableObject {
                 self.pointerCaptured = self.captureMonitor?.isCaptured ?? false
                 // A click-up event may have been lost while the tap timed out.
                 // Release any synthetic sustain state instead of sticking CC64.
-                self.handlePhysicalClick(false, pressure: 0)
+                self.invalidatePhysicalClickState()
                 self.captureStatus = "Input monitor recovered after timeout · cursor released · press the capture shortcut to resume"
             }
         }
@@ -2689,7 +2689,7 @@ final class StudioController: ObservableObject {
                 // macOS can disable a global event tap while the haptic driver
                 // is still healthy. Never escalate that to a device panic.
                 self.retireCaptureMonitor()
-                self.handlePhysicalClick(false, pressure: 0)
+                self.invalidatePhysicalClickState()
                 self.captureArmed = false
                 self.captureHotkeyArmed = false
                 self.clickedSurface = nil
@@ -2724,7 +2724,7 @@ final class StudioController: ObservableObject {
         let before = monitor.diagnosticSnapshot()
         if before.listening && !before.eventTapEnabled {
             retireCaptureMonitor()
-            handlePhysicalClick(false, pressure: 0)
+            invalidatePhysicalClickState()
             monitor = ensureCaptureMonitor()
         }
         do {
@@ -2736,7 +2736,7 @@ final class StudioController: ObservableObject {
                 : "Cursor free · physical-click monitor active"
         } catch {
             retireCaptureMonitor()
-            handlePhysicalClick(false, pressure: 0)
+            invalidatePhysicalClickState()
             captureStatus = "Global capture unavailable · check Accessibility and Input Monitoring permissions"
             if captureHotkeyArmed {
                 lastError = error.localizedDescription
@@ -2758,7 +2758,7 @@ final class StudioController: ObservableObject {
                 let health = monitor.diagnosticSnapshot()
                 guard health.accessibilityGranted,health.listening,health.eventTapEnabled else {
                     self.retireCaptureMonitor()
-                    self.handlePhysicalClick(false,pressure:0)
+                    self.invalidatePhysicalClickState()
                     self.captureArmed = false
                     self.captureHotkeyArmed = false
                     self.captureStatus = "Input tap unavailable · cursor free · re-enable explicitly"
@@ -2793,6 +2793,12 @@ final class StudioController: ObservableObject {
         }
     }
 
+    private func invalidatePhysicalClickState() {
+        helperSustainState.invalidatePhysicalClicks(settings:helperSustainSettings)
+        touchSustainState.invalidatePhysicalClicks(settings:touchSustainSettings)
+        handlePhysicalClick(false,pressure:0)
+    }
+
     private func handlePhysicalClick(_ down: Bool, pressure: Double) {
         if down {
             let currentStates = midiHelperStates + touchStates
@@ -2802,7 +2808,7 @@ final class StudioController: ObservableObject {
             // Global CGEvent click does not identify its physical source.
             // Only assign it if exactly one surface has an active contact.
             clickedSurface = touchedSurfaces.count == 1 ? touchedSurfaces.first : nil
-            trackpadClickPressure = clickedSurface == .trackpad ? pressure : nil
+            trackpadClickPressure = clickedSurface == .trackpad && pressure.isFinite && (0...1).contains(pressure) ? pressure : nil
         } else {
             clickedSurface = nil
             trackpadClickPressure = nil
@@ -2813,7 +2819,7 @@ final class StudioController: ObservableObject {
 
     private func handlePhysicalPressure(_ pressure: Double) {
         guard clickedSurface == .trackpad else { return }
-        trackpadClickPressure = pressure
+        trackpadClickPressure = pressure.isFinite && (0...1).contains(pressure) ? pressure : nil
         if midiHelperRunning { handleMIDIHelperStates(midiHelperStates) }
         if touchRunning { updateTouchSustain(touchStates) }
     }
