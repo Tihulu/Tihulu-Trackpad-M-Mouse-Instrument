@@ -14,13 +14,15 @@ public struct AirHandsHelper: Sendable {
         }
     }
     public enum Effect: String, CaseIterable, Identifiable, Sendable {
-        case pitchBend, expression, volume, wah, vibrato, modulation, breath, sustain, sostenuto, softPedal, pan, portamento, resonance, customCC
+        case pitchBend, expression, volume, wah, vibrato, vibratoRate, modulation, breath, sustain, sostenuto, softPedal, pan, portamento, resonance, customCC
         public var id: String { rawValue }
         public var title: String {
             switch self {
             case .pitchBend: "Pitch bend"
             case .wah: "Wah / filter"
             case .customCC: "Custom CC"
+            case .vibrato: "Vibrato depth"
+            case .vibratoRate: "Vibrato rate"
             default: rawValue.capitalized
             }
         }
@@ -31,7 +33,8 @@ public struct AirHandsHelper: Sendable {
             case .expression: .init(.controlChange,number:11)
             case .volume: .init(.controlChange,number:7)
             case .wah: .init(.controlChange,number:74)
-            case .vibrato: .init(.controlChange,number:76)
+            case .vibrato: .init(.controlChange,number:77)
+            case .vibratoRate: .init(.controlChange,number:76)
             case .modulation: .init(.controlChange,number:1)
             case .breath: .init(.controlChange,number:2)
             case .sostenuto: .init(.controlChange,number:66)
@@ -62,7 +65,7 @@ public struct AirHandsHelper: Sendable {
         let isSwitch = route.destination.kind == .sustain ||
             (route.destination.kind == .controlChange && [65,66,67,69].contains(route.destination.number))
         if isSwitch {
-            return isPinch && route.calibration.apply(1) == 1 && route.calibration.apply(0) == 0
+            return isPinch && route.response == nil && route.calibration.apply(1) == 1 && route.calibration.apply(0) == 0
         }
         return ContinuousResponse.isContinuous(route.destination)
     }

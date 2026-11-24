@@ -264,6 +264,7 @@ struct InstrumentBuilderView: View {
                         }
                         if studio.patchRunning && !studio.patchPhysical {
                             if studio.patchAirDebugAvailable { AirDualDebugPanel() }
+                            if studio.patchHelperDebugAvailable { AirHandsHelperDebugPanel() }
                             PerformanceControlsView(patch: studio.instrumentPatch, values: $values)
                         }
                         if studio.patchRunning && studio.patchNativeBar, let token = studio.builderBarToken {

@@ -80,6 +80,7 @@ final class StudioController: ObservableObject {
             AirDualHandPerformance.usesDualCamera(instrumentPatch.routes)
     }
     var patchAirDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasDualCamera }
+    var patchHelperDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasHelperHands }
     @Published private(set) var patchCameraStatus = "Camera OFF"
     @Published private(set) var patchCameraHand: AirHandSample?
     var patchCameraCalibrationAvailable: Bool { patchRunning && patchPhysical && !patchMIDIEnabled && patchCameraHand != nil }
@@ -390,7 +391,7 @@ final class StudioController: ObservableObject {
                     remotePage?.start()
                 }
                 startPatchWatchdog()
-            } else if patchSimulation.hasDualCamera {
+            } else if patchSimulation.hasDualCamera || patchSimulation.hasHelperHands {
                 startAirDebugWatchdog()
             }
         } catch {
@@ -505,7 +506,7 @@ final class StudioController: ObservableObject {
         patchWatchdog = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
-                guard let self, self.patchAirDebugAvailable else { return }
+                guard let self, self.patchAirDebugAvailable || self.patchHelperDebugAvailable else { return }
                 let commands = self.patchSimulation.expireDualHand(now: ProcessInfo.processInfo.systemUptime)
                 self.refreshAirDebugState()
                 self.recordPatchCommands(commands)
@@ -518,6 +519,17 @@ final class StudioController: ObservableObject {
         let sounding = patchSimulation.airSoundingSlot
         if patchAirDebugSelected != selected { patchAirDebugSelected = selected }
         if patchAirDebugSounding != sounding { patchAirDebugSounding = sounding }
+    }
+
+    func sendHelperDebugFrame(left:AirHandSample?,right:AirHandSample?) {
+        guard patchHelperDebugAvailable else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        recordPatchCommands(patchSimulation.receiveHelperHands(left:left,right:right,time:now,now:now))
+    }
+
+    func releaseHelperDebugFrame() {
+        guard patchHelperDebugAvailable else { return }
+        recordPatchCommands(patchSimulation.releaseDualHand())
     }
 
     func sendAirDebugFrame(count: Int, aperture: Double, x: Double, y: Double) {

@@ -72,12 +72,14 @@ public struct PatchSimulation: Sendable {
     private var airHelperEnabled = false
     private var airActiveSlot: Int?
     private var airStrum: AirStrumPerformance?
+    private var cameraHands = AirHandsHelper()
+    public private(set) var hasHelperHands = false
     public var airSelectedSlot: Int? { airDual.trackingReady ? airDual.selectedSlot : nil }
     public var airSoundingSlot: Int? {
         if let airStrum, !airStrum.hasActivePulses { return nil }
         return airDual.soundingSlot
     }
-    public var running: Bool { !sessions.isEmpty || hasDualCamera }
+    public var running: Bool { !sessions.isEmpty || hasDualCamera || hasHelperHands }
     public init() {}
 
     public mutating func start(_ patch: InstrumentPatch, now: Double) throws {
@@ -87,19 +89,22 @@ public struct PatchSimulation: Sendable {
         var ids: [SensorSource: UUID] = [:]
         let sources = Set(patch.routes.map(\.source))
         let dual = AirDualHandPerformance.usesDualCamera(patch.routes)
-        for source in SensorSource.allCases where sources.contains(source) && !(dual && source == .camera) {
+        let helper = AirHandsHelper.uses(patch.routes)
+        for source in SensorSource.allCases where sources.contains(source) && !((dual || helper) && source == .camera) {
             ids[source] = try next.connect(source, now: now)
         }
         router = next
         sessions = ids
         hasDualCamera = dual
+        hasHelperHands = helper
+        cameraHands.reset()
         airStrum = AirStrumPerformance(routes:patch.routes)
         airHelperEnabled = dual && AirDualHandPerformance.hasHelperRoutes(patch.routes)
         airDual = AirDualHandPerformance()
         airLastFrame = nil
         airActiveSlot = nil
         sequence = 0
-        inputs = Array(Set(patch.routes.filter { !(dual && $0.source == .camera) }.map { Input(source: $0.source, signal: $0.signal) }))
+        inputs = Array(Set(patch.routes.filter { !((dual || helper) && $0.source == .camera) }.map { Input(source: $0.source, signal: $0.signal) }))
             .sorted { $0.id < $1.id }
     }
 
@@ -113,6 +118,24 @@ public struct PatchSimulation: Sendable {
     public mutating func release(_ input: Input) -> [SensorCommand] {
         guard inputs.contains(input), let id = sessions[input.source] else { return [] }
         return router.releaseSignal(session: id, signal: input.signal)
+    }
+
+    public mutating func receiveHelperHands(left:AirHandSample?,right:AirHandSample?,
+                                            time:Double,now:Double) -> [SensorCommand] {
+        guard hasHelperHands else { return [] }
+        guard time.isFinite, now.isFinite, time >= 0, now >= time, now-time < 0.25,
+              airLastFrame.map({ time > $0 }) ?? true else { return releaseDualHand() }
+        if let last = airLastFrame, time-last >= 0.25 {
+            let release = releaseDualHand()
+            airLastFrame = time
+            return release
+        }
+        airLastFrame = time
+        if left == nil && right == nil { return releaseDualHand() }
+        if sessions[.camera] == nil { sessions[.camera] = try? router.connect(.camera,now:time) }
+        guard let session = sessions[.camera] else { return releaseDualHand() }
+        return cameraHands.receive(left:left,right:right,time:time,now:now,
+                                   session:session,router:&router,sequence:&sequence)
     }
 
     public mutating func receiveDualHand(count: Int?, confidence: Double, helper: AirHandSample?,
@@ -140,6 +163,7 @@ public struct PatchSimulation: Sendable {
     }
 
     public mutating func releaseDualHand() -> [SensorCommand] {
+        cameraHands.reset()
         airStrum?.reset()
         airDual.reset()
         airActiveSlot = nil
@@ -148,7 +172,7 @@ public struct PatchSimulation: Sendable {
     }
 
     public mutating func expireDualHand(now: Double) -> [SensorCommand] {
-        guard hasDualCamera, let last = airLastFrame else { return [] }
+        guard (hasDualCamera || hasHelperHands), let last = airLastFrame else { return [] }
         guard now.isFinite, now >= last, now - last < 0.25 else { return releaseDualHand() }
         if let camera = sessions[.camera], airStrum != nil {
             return airStrum!.expire(now:now,session:camera,router:&router)
@@ -157,8 +181,9 @@ public struct PatchSimulation: Sendable {
     }
 
     public mutating func disconnect(_ source: SensorSource) -> [SensorCommand] {
-        if source == .camera && hasDualCamera {
+        if source == .camera && (hasDualCamera || hasHelperHands) {
             hasDualCamera = false
+            hasHelperHands = false
             return releaseDualHand()
         }
         guard let id = sessions.removeValue(forKey: source) else { return [] }
@@ -167,6 +192,8 @@ public struct PatchSimulation: Sendable {
     }
 
     public mutating func stop() -> [SensorCommand] {
+        hasHelperHands = false
+        cameraHands.reset()
         hasDualCamera = false
         airStrum = nil
         airHelperEnabled = false

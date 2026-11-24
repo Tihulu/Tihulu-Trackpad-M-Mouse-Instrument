@@ -40,7 +40,7 @@ struct AirHandsHelperPanel: View {
                     message = "Added. Customize range, inversion, smoothing and MIDI destination in Routes."
                 }.disabled(patch.routes.count >= SensorRouter.maxMappings ||
                            patch.routes.contains { $0.source == .camera && !AirHandsHelper.allSignals.contains($0.signal) })
-                Text("Pitch bend range is set by the receiving instrument. CC76 vibrato rate and CC1 modulation require DAW support. Pinch pedals release on tracking loss; no measured force is claimed.")
+                Text("Pitch bend range is set by the receiving instrument. CC77 vibrato depth, CC76 vibrato rate and CC1 modulation require DAW support. Pinch pedals release on tracking loss; no measured force is claimed.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !message.isEmpty { Text(message).font(.caption) }
             }.padding(8)
