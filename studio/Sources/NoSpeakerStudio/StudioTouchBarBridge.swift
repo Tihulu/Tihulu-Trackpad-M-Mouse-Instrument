@@ -120,7 +120,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         case .fretless:
             let item = NSCustomTouchBarItem(identifier: identifier)
             item.customizationLabel = "Fretless Piano"
-            let slider = FretlessTouchSlider(
+            let slider = PerformanceTouchSlider(
                 value: 0.5, minValue: 0, maxValue: 1,
                 target: self, action: #selector(sliderChanged(_:))
             )
@@ -145,17 +145,22 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             item.view = slider
             return item
         case .pitchBend, .vibrato, .expression, .filter:
-            let item = NSSliderTouchBarItem(identifier: identifier)
+            let item = NSCustomTouchBarItem(identifier: identifier)
             item.customizationLabel = zone.rawValue
-            item.label = zone.rawValue
-            item.slider.minValue = 0
-            item.slider.maxValue = 1
-            item.slider.doubleValue = zone == .pitchBend || zone == .fretless ? 0.5 : 0
-            item.slider.isContinuous = true
-            profileControls.add(item.slider)
-            item.slider.target = self
-            item.slider.action = #selector(sliderChanged(_:))
-            item.slider.tag = switch zone {
+            let slider = PerformanceTouchSlider(
+                value: zone == .pitchBend ? 0.5 : 0, minValue: 0, maxValue: 1,
+                target: self, action: #selector(sliderChanged(_:))
+            )
+            slider.isContinuous = true
+            slider.setAccessibilityLabel(zone.rawValue)
+            profileControls.add(slider)
+            slider.onPress = { [weak self, weak slider] pressed in
+                guard let slider else { return }
+                if !pressed { slider.gesture = nil; return }
+                guard let self, self.profileEpoch.accepts(profileStamp), let controller = self.controller else { return }
+                slider.gesture = controller.touchBarGestureEpoch.revision
+            }
+            slider.tag = switch zone {
             case .pitchBend: 1
             case .fretless: 2
             case .vibrato: 3
@@ -163,6 +168,14 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             case .filter: 5
             default: 0
             }
+            // Preserve the control label and continuous/latched behavior.
+            let label = NSTextField(labelWithString: zone.rawValue)
+            let controls = NSStackView(views: [label, slider])
+            controls.orientation = .horizontal
+            controls.alignment = .centerY
+            controls.spacing = 4
+            slider.widthAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
+            item.view = controls
             return item
         }
     }
@@ -190,9 +203,9 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
 
     @objc private func sliderChanged(_ sender: NSSlider) {
         guard profileControls.contains(sender) else { return }
-        if let ribbon = sender as? FretlessTouchSlider,
-           let captured = ribbon.gesture,
-           controller?.touchBarGestureEpoch.accepts(captured) != true { return }
+        guard let controller else { return }
+        if let slider = sender as? PerformanceTouchSlider,
+           !controller.touchBarGestureEpoch.permitsSample(captured: slider.gesture) { return }
         let zone: TouchBarZone
         switch sender.tag {
         case 1: zone = .pitchBend
@@ -202,7 +215,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         case 5: zone = .filter
         default: return
         }
-        controller?.touchBarValue(zone, normalized: sender.doubleValue)
+        controller.touchBarValue(zone, normalized: sender.doubleValue)
     }
 
     @objc private func pianoKeyPressed(_ sender: NSSegmentedControl) {
@@ -233,13 +246,13 @@ private final class BuilderRibbonSlider: NSSlider {
 }
 
 @MainActor
-private final class FretlessTouchSlider: NSSlider {
+private final class PerformanceTouchSlider: NSSlider {
     var gesture: UInt64?
     var onPress: ((Bool) -> Void)?
     override func mouseDown(with event: NSEvent) {
         onPress?(true)
+        defer { onPress?(false) }
         super.mouseDown(with: event)
-        onPress?(false)
     }
 }
 
