@@ -10,7 +10,7 @@ private func labelFixture() -> InstrumentPatch {
         .init(id:"d",source:.tablet,signal:.x,destination:.init(.controlChange,number:11))
     ],performanceLayout:.init(widgets:[
         .init(source:.phone,signal:.x,kind:.xy,label:"Gitar · Wah"),
-        .init(source:.phone,signal:.contact,label:"bad\u{202E}text"),
+        .init(source:.phone,signal:.contact,label:"   "),
         .init(source:.tablet,signal:.x,label:"Tablet only"),
         .init(source:.phone,signal:.tiltPitch,label:"Unmapped")
     ]))
