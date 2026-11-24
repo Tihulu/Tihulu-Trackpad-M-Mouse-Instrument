@@ -1,0 +1,9 @@
+# Quality gate Q2c-pre — serialized shared output contract
+
+Q2b exact-head checks were still in progress when this increment was prepared. This branch therefore does not change the production driver or any UI/controller route. Existing haptic exclusivity stays in place. No additional background timer or dependency.
+
+The coordinator serializes lease creation, latest-frame submission, render and synchronous sink delivery, scoped release and terminal retirement with one lock. Clock sampling occurs inside the lock. Sink failure clears every lease and retires the owner; errors propagate to the caller. Retirement waits for in-flight delivery and prevents subsequent deliveries. It is not a guarantee of immediate physical silence; the already accepted bounded motor frame may finish. The host must still own timer scheduling, private driver shutdown and error presentation. The sink must never reenter the coordinator. Do not wire it into a second independent hardware writer.
+
+Tests use actual ChordPadState, TouchBarNoteState and NoteHapticRenderer inputs against an injected clock and mock output. Verify shared frequency deduplication, scoped release, stale lease, expiry, sink failure, retirement while a sink is in flight, idle and explicit clear. These are integration tests of the core contract, not tests of the real hardware path.
+
+Production integration gate: require Q2a/Q2b/Q2c-pre CI, use a single opt-in experimental owner for chords and Touch Bar only, preserve legacy solo routes as comparison, measure tick gaps and hardware latency, handle timer drain and actual driver failure, verify that real Panic/Stop disconnect releases both outputs. Do not enable shared output by default until real Mac acceptance. Keep existing drum, voice, speaker and sequencer routes unchanged. No release or feature expansion.
