@@ -28,6 +28,7 @@ final class StudioController: ObservableObject {
     }
     @Published var bpm = 120.0
     @Published private(set) var instrumentPatch = StudioController.readInstrumentPatch()
+    private var builderDraftSession = BuilderDraftSession()
     @Published private(set) var patchRunning = false
     @Published private(set) var patchInputs: [PatchSimulation.Input] = []
     @Published private(set) var patchMessages: [String] = []
@@ -205,7 +206,22 @@ final class StudioController: ObservableObject {
     func updateInstrumentPatch(_ proposed: InstrumentPatch) {
         guard !patchRunning, let data = try? proposed.archive() else { return }
         instrumentPatch = proposed
+        builderDraftSession.clear()
         UserDefaults.standard.set(data, forKey: "TIHULU.instrumentPatch.v1")
+    }
+
+    func resumeBuilderDraft() -> InstrumentPatch {
+        guard !patchRunning else { return instrumentPatch }
+        return builderDraftSession.resume(saved:instrumentPatch)
+    }
+
+    func rememberBuilderDraft(_ draft: InstrumentPatch) {
+        guard !patchRunning else { return }
+        builderDraftSession.remember(draft,saved:instrumentPatch)
+    }
+
+    func discardBuilderDraft() {
+        builderDraftSession.clear()
     }
 
     func refreshBuilderCameras() {
