@@ -393,9 +393,10 @@ test("experimental choice only when idle; reset on disconnect",()=>{
 });
 
 const touchOnly={...fullManifest,tilt:false,acceleration:false,rotation:false,airDrums:false,drums:0,piano:0,pedals:0};
-function mappingResponse(a,rows,overrides={}){
+function mappingResponse(a,rows,overrides={},autoLabels=true){
   a.step(50);const q=a.socket.frames.at(-1);
   a.socket.onmessage({data:JSON.stringify({kind:"mapping",version:8,sequence:q.sequence,page:q.page,pages:1,total:rows.length,detail:true,rows,...overrides})});
+  if(autoLabels&&!a.socket.closed&&(overrides.pages??1)===(q.page+1))labelResponse(a,[]);
 }
 test("v8 keeps controls hidden until complete validated mapping",()=>{
   const a=setup("granted",touchOnly,false,false);
@@ -430,4 +431,32 @@ test("v8 custom piano disables scale; exact default note enables it",()=>{
     assert.equal(a.elements.pianoScale.disabled,note!==48);
     assert.equal(a.elements.piano0.textContent,note===48?"C3":"K1");
   }
+});
+
+function labelResponse(a,rows,overrides={}){
+  a.step(50);const q=a.socket.frames.at(-1);
+  a.socket.onmessage({data:JSON.stringify({kind:"mappingLabels",version:8,sequence:q.sequence,page:q.page,pages:1,total:rows.length,rows,...overrides})});
+}
+test("label negotiation stages metadata and renders literal custom text",()=>{
+  const a=setup("granted",touchOnly,false,false);
+  mappingResponse(a,[[0,1,0,74,1]],{},false);
+  assert.equal(a.elements.touchSection.hidden,true);
+  labelResponse(a,[[0,"PGI-bGl0ZXJhbDwvYj4"]]);
+  assert.equal(a.elements.touchSection.hidden,false);
+  assert.match(a.elements.mappingDetails.textContent,/<b>literal<\/b> \(X\)/);
+  a.window.emit("pagehide");assert.equal(a.elements.mappingDetails.textContent,"");
+});
+test("labels reject noncanonical base64, invalid UTF8, controls and unknown IDs",()=>{
+  for(const row of [[0,"YR"],[0,"_w"],[0,"Cg"],[0,"4oCu"],[1,"YQ"]]){
+    const a=setup("granted",touchOnly,false,false);
+    mappingResponse(a,[[0,1,0,74,1]],{},false);labelResponse(a,[row]);
+    assert.equal(a.socket.closed,true);assert.equal(a.elements.touchSection.hidden,true);
+  }
+});
+test("labels remain hidden during multiple pages and reject duplicates",()=>{
+  const a=setup("granted",touchOnly,false,false);
+  mappingResponse(a,[[0,1,0,74,1],[2,0,0,60,1]],{},false);
+  labelResponse(a,[[0,"V2Fo"]],{pages:2,total:2});
+  assert.equal(a.elements.touchSection.hidden,true);
+  labelResponse(a,[[0,"V2Fo"]],{pages:2,total:2});assert.equal(a.socket.closed,true);
 });

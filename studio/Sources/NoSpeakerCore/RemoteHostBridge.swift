@@ -12,6 +12,7 @@ public enum RemoteHostAction: Equatable, Sendable {
     case acknowledge(UUID, Bool)
     case capabilities(UUID, RemoteCapabilities)
     case mapping(UUID, RemoteMappingPage)
+    case mappingLabels(UUID, RemoteMappingLabelPage)
     case revoke(UUID)
     case stop
 }
@@ -120,6 +121,15 @@ public struct RemoteHostBridge: Sendable {
                         if let index = frame.page,
                            let page = try? runtime.remoteMappingPage(peer,page:index,sequence:frame.sequence) {
                             result.actions.append(.mapping(connection,page))
+                        } else {
+                            result.commands += runtime.revokeRemote(peer)
+                            bindings.removeValue(forKey: connection)
+                            result.actions.append(.acknowledge(connection,false))
+                        }
+                    } else if let frame, frame.kind == .mappingLabels {
+                        if let index = frame.page,
+                           let page = try? runtime.remoteMappingLabelPage(peer,page:index,sequence:frame.sequence) {
+                            result.actions.append(.mappingLabels(connection,page))
                         } else {
                             result.commands += runtime.revokeRemote(peer)
                             bindings.removeValue(forKey: connection)

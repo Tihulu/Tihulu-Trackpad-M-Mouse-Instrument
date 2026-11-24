@@ -139,20 +139,23 @@ public final class RemoteLoopbackTransport: @unchecked Sendable {
 
     /// Host must consume invitation via R1 before accepting; acknowledge each
     /// processed frame only after R1 accepts it. A false result closes the peer.
-    public func acknowledge(_ id: UUID, accepted: Bool, capabilities: RemoteCapabilities? = nil, mapping: RemoteMappingPage? = nil) {
+    public func acknowledge(_ id: UUID, accepted: Bool, capabilities: RemoteCapabilities? = nil, mapping: RemoteMappingPage? = nil, labels: RemoteMappingLabelPage? = nil) {
         queue.async { [self] in
             guard var peer = peers[id], peer.awaitingHost else { return }
-            guard accepted, capabilities == nil || mapping == nil else { close(id); return }
+            guard accepted, [capabilities != nil,mapping != nil,labels != nil].filter({ $0 }).count <= 1 else { close(id); return }
             let message: String
             if peer.gate.phase == .awaitingHost {
                 guard peer.gate.admit(now: ProcessInfo.processInfo.systemUptime) else { close(id); return }
-                guard capabilities == nil, mapping == nil else { close(id); return }
+                guard capabilities == nil, mapping == nil, labels == nil else { close(id); return }
                 message = "admitted"
             } else if let capabilities {
                 guard let payload = try? capabilities.encoded(), let json = String(data: payload, encoding: .utf8) else { close(id); return }
                 message = json
             } else if let mapping {
                 guard let payload = try? mapping.encoded(), let json = String(data: payload, encoding: .utf8) else { close(id); return }
+                message = json
+            } else if let labels {
+                guard let payload = try? labels.encoded(), let json = String(data: payload, encoding: .utf8) else { close(id); return }
                 message = json
             } else {
                 message = "accepted"

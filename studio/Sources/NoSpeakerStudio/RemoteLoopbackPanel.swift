@@ -15,6 +15,8 @@ struct RemoteLoopbackPanel: View {
     @State private var message = ""
     @State private var invitation = ""
     @State private var shareMappingDetails = false
+    @State private var shareMappingLabels = false
+    @State private var invitationSharesLabels = false
     @State private var invitationSharesMapping = false
     @State private var lan = false
     @State private var lanChoices: [RemoteLANChoice] = []
@@ -113,15 +115,20 @@ struct RemoteLoopbackPanel: View {
                     }
                     Toggle("Share MIDI destination details with this invitation", isOn: $shareMappingDetails)
                         .disabled(!invitation.isEmpty || !studio.patchRemoteReady || !studio.patchRemotePageReady || studio.patchRemoteProbeRunning || !sources.contains(source))
+                    Toggle("Also share custom control labels", isOn: $shareMappingLabels)
+                        .disabled(!shareMappingDetails || !invitation.isEmpty)
+                    Text("Custom labels can contain user-entered text. Only share with a trusted paired device.").font(.caption)
                     Text("Off by default. If enabled, the paired device can read its mapped MIDI channels, notes and controls. Other device mappings and patch names are not shared. Disconnect the peer to withdraw access; already disclosed information cannot be recalled.")
                         .font(.caption).foregroundStyle(.secondary)
                     Button("Create one-time browser invitation") {
                         let consent = shareMappingDetails
+                        let labels = consent && shareMappingLabels
                         clearInvitation()
                         do {
-                            invitation = try studio.issueBuilderRemoteInvitation(source: source, mappingDetails: consent)
+                            invitation = try studio.issueBuilderRemoteInvitation(source: source, mappingDetails: consent, mappingLabels: labels)
                                 .map { String(format: "%02x", $0) }.joined()
                             invitationSharesMapping = consent
+                            invitationSharesLabels = labels
                             clearTask = Task {
                                 do { try await Task.sleep(for: .seconds(60)) } catch { return }
                                 clearInvitation()
@@ -131,6 +138,7 @@ struct RemoteLoopbackPanel: View {
                     if !invitation.isEmpty {
                         Text(invitationSharesMapping ? "This invitation shares MIDI destination details." : "This invitation keeps MIDI destination details hidden.")
                             .font(.caption)
+                        Text(invitationSharesLabels ? "Custom labels shared." : "Custom labels hidden.").font(.caption)
                         Text(invitation).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                         Text("Enter into the controller page within 60 seconds. Treat this invitation as a password.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -150,6 +158,7 @@ struct RemoteLoopbackPanel: View {
         .onChange(of: studio.patchRunning) { running in if !running { clearInvitation() } }
         .onChange(of: studio.patchRemotePeers) { _ in if !invitation.isEmpty { clearInvitation() } }
         .onChange(of: source) { _ in clearInvitation() }
+        .onChange(of: shareMappingDetails) { enabled in if !enabled { shareMappingLabels = false } }
         .onAppear {
             if !sources.contains(source), let first = sources.first { source = first }
         }.onChange(of: sources) { available in
@@ -170,7 +179,9 @@ struct RemoteLoopbackPanel: View {
         clearTask?.cancel(); clearTask = nil
         invitation = ""
         shareMappingDetails = false
+        shareMappingLabels = false
         invitationSharesMapping = false
+        invitationSharesLabels = false
         studio.cancelBuilderRemoteInvitation()
     }
 }
