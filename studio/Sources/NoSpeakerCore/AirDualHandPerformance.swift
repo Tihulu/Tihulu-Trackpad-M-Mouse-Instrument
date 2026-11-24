@@ -31,8 +31,9 @@ public struct AirDualHandPerformance: Sendable {
             trackingReady = false
             return nil
         }
-        trackingReady = selection.selectedSlot != nil
-        soundingSlot = pinch.update(aperture: helper.aperture, selectedSlot: selection.selectedSlot)
+        // A pending chord must not trigger the previous selection.
+        trackingReady = selection.selectedSlot == count && count > 0
+        soundingSlot = pinch.update(aperture: helper.aperture, selectedSlot: trackingReady ? selection.selectedSlot : nil)
         return soundingSlot
     }
 
