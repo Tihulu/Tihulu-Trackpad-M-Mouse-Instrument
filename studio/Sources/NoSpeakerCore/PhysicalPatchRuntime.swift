@@ -8,6 +8,7 @@ public struct PhysicalPatchRuntime: Sendable {
     private var router = SensorRouter()
     private var airDual = AirDualHandPerformance()
     private var airDualEnabled = false
+    private var airHelperEnabled = false
     private var airActiveSlot: Int?
     private var supported: Set<SensorSource> = []
     private var sessions: [SensorSource: UUID] = [:]
@@ -81,6 +82,7 @@ public struct PhysicalPatchRuntime: Sendable {
         airDual = AirDualHandPerformance()
         airActiveSlot = nil
         airDualEnabled = patch.routes.contains { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) }
+        airHelperEnabled = airDualEnabled && AirDualHandPerformance.hasHelperRoutes(patch.routes)
         mappingProjections = projections
         supported = Set(patch.routes.map(\.source))
         touchSources = Set(patch.routes.filter { [.x,.y,.contact].contains($0.signal) }.map(\.source))
@@ -183,8 +185,8 @@ public struct PhysicalPatchRuntime: Sendable {
         else { airDual.reset(); airActiveSlot = nil; return disconnect(.camera) }
         let slot = airDual.receive(count: count, confidence: confidence, helper: helper,
                                    time: hostTime, now: now)
-        // Only live pinched chords own notes or helper controls.
-        guard let slot, let helper else {
+        // Selected hands may drive continuous controls without sounding a chord.
+        guard let helper, slot != nil || (airHelperEnabled && airDual.trackingReady) else {
             seen[.camera] = hostTime
             airActiveSlot = nil
             return disconnect(.camera)
@@ -527,7 +529,7 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     public mutating func stop() -> [SensorCommand] {
-        airDual = AirDualHandPerformance(); airDualEnabled = false; airActiveSlot = nil
+        airDual = AirDualHandPerformance(); airDualEnabled = false; airHelperEnabled = false; airActiveSlot = nil
         sessions = [:]
         seen = [:]
         supported = []
