@@ -298,6 +298,12 @@ struct InstrumentBuilderView: View {
                             Text(studio.patchStatus).font(.caption)
                         }
                         if studio.patchRunning { EnsembleClockPanel() }
+                        else if studio.ensembleClockStatus.contains("Stop delivery failed") {
+                            HStack {
+                                Text(studio.ensembleClockStatus).font(.caption).foregroundStyle(.orange)
+                                Button("Retry clock Stop") { studio.stopEnsembleClock() }
+                            }
+                        }
                         if studio.patchRunning && (!studio.patchPhysical || studio.patchHybridSource != nil) {
                             if studio.patchAirDebugAvailable { AirDualDebugPanel() }
                             if studio.patchHelperDebugAvailable { AirHandsHelperDebugPanel() }

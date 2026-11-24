@@ -47,7 +47,7 @@ final class StudioController: ObservableObject {
     @Published private(set) var ensembleClockStatus = "Clock idle"
     func startEnsembleClock(bpm:Double,beatsPerBar:Int,sendMIDI:Bool) {
         guard patchRunning,!ensembleClockRunning,!sendMIDI || patchMIDIEnabled,
-              var clock = EnsembleClock(bpm:bpm,beatsPerBar:beatsPerBar,now:ProcessInfo.processInfo.systemUptime) else { return }
+              EnsembleClock(bpm:bpm,beatsPerBar:beatsPerBar,now:0) != nil else { return }
         guard clearEnsembleClockDebt() else { return }
         if sendMIDI {
             do { try ensembleClockMIDI.open() } catch { ensembleClockStatus = "Clock MIDI open failed"; return }
@@ -57,6 +57,11 @@ final class StudioController: ObservableObject {
                 stopEnsembleClock(reason:"Clock Start delivery failed")
                 return
             }
+        }
+        // Setup and CoreMIDI open can take longer than a tick. Start the
+        // absolute schedule only after successful transport preparation.
+        guard var clock = EnsembleClock(bpm:bpm,beatsPerBar:beatsPerBar,now:ProcessInfo.processInfo.systemUptime) else {
+            stopEnsembleClock(reason:"Invalid host clock"); return
         }
         let token = UUID()
         ensembleClockToken = token
