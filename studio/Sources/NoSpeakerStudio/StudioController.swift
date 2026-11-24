@@ -193,6 +193,7 @@ final class StudioController: ObservableObject {
             return
         }
         do {
+            try patchLedger.configure(instrumentPatch)
             if sendMIDI { try patchMIDI.open() }
             if physical {
                 try patchPhysicalRuntime.configure(instrumentPatch)

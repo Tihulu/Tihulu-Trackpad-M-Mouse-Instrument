@@ -33,7 +33,7 @@ public enum ExpressivePreset: String, CaseIterable, Identifiable, Sendable {
         case .expression: "CC11 controls expression on compatible instruments."
         case .volume: "CC7 controls MIDI channel volume on compatible instruments."
         case .vibrato: "CC1 modulation can control vibrato if assigned in the receiving instrument."
-        case .pan: "CC10 is conventional MIDI pan. The existing router resets generic CCs to zero on release; configure a separate receiver if that is undesirable."
+        case .pan: "CC10 is conventional MIDI pan. This preset returns to center (64) on release."
         case .xyFilter: "X sends CC74 cutoff, Y sends CC71 resonance. Assign both in the DAW. Both axes require a compatible input."
         }
     }
@@ -78,7 +78,8 @@ public enum ExpressivePreset: String, CaseIterable, Identifiable, Sendable {
         var result = patch
         result.routes += targets.map { input, target in
             SensorMapping(id: UUID().uuidString, source: source, signal: input, destination: target,
-                          calibration: .init(inverted: inverted))
+                          calibration: .init(inverted: inverted),
+                          response: self == .pan ? ContinuousResponse(release: 64.0 / 127.0) : nil)
         }
         guard result.isValid else { throw ExpressivePresetError.invalidPatch }
         return result
