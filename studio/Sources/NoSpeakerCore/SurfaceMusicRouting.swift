@@ -208,11 +208,17 @@ public enum StringTuning: String, CaseIterable, Identifiable, Codable, Sendable 
 public struct StringSurfaceLayout: Codable, Equatable, Sendable {
     public var tuning: StringTuning
     public var frets: Int
-    public init(tuning:StringTuning = .standard, frets:Int = 12) {
-        self.tuning = tuning; self.frets = frets
+    /// Optional so archives without custom tuning keep their preset.
+    public var customOpenNotes: [Int]?
+    public init(tuning:StringTuning = .standard, frets:Int = 12, customOpenNotes:[Int]? = nil) {
+        self.tuning = tuning; self.frets = frets; self.customOpenNotes = customOpenNotes
     }
-    public var isValid: Bool { (4...24).contains(frets) }
-    public var rows: Int { tuning.openNotes.count }
+    public var openNotes: [Int] { customOpenNotes ?? tuning.openNotes }
+    public var isValid: Bool {
+        guard (4...24).contains(frets), (4...8).contains(openNotes.count) else { return false }
+        return openNotes.allSatisfy { (0...(127-frets)).contains($0) }
+    }
+    public var rows: Int { isValid ? openNotes.count : 0 }
     public var columns: Int { isValid ? frets + 1 : 0 }
     public struct Cell: Equatable, Sendable {
         public let string: Int
@@ -223,7 +229,7 @@ public struct StringSurfaceLayout: Codable, Equatable, Sendable {
         guard isValid, x.isFinite,y.isFinite,(0...1).contains(x),(0...1).contains(y) else { return nil }
         let string = min(rows-1,Int((1-y)*Double(rows)))
         let fret = min(columns-1,Int(x*Double(columns)))
-        return .init(string:string,fret:fret,note:tuning.openNotes[string]+fret)
+        return .init(string:string,fret:fret,note:openNotes[string]+fret)
     }
 
     public func permitsMIDI(mixedFretless:Bool,isMPE:Bool) -> Bool {

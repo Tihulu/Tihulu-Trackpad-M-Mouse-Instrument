@@ -198,3 +198,20 @@ import Testing
         #expect(!bad.permitsMIDI(mixedFretless:false,isMPE:true))
     }
 }
+
+@Test func customStringTuningValidatesRangeAndBackwardCompatibility() throws {
+    let old = Data("{\"tuning\":\"Guitar · Standard\",\"frets\":12}".utf8)
+    let decoded = try JSONDecoder().decode(StringSurfaceLayout.self,from:old)
+    #expect(decoded.customOpenNotes == nil)
+    #expect(decoded.openNotes == StringTuning.standard.openNotes)
+    let custom = StringSurfaceLayout(frets:24,customOpenNotes:[55,55,50,48,43,38,33,28])
+    #expect(custom.isValid)
+    #expect(custom.rows == 8)
+    #expect(custom.cell(x:1,y:0)?.note == 52)
+    #expect(try JSONDecoder().decode(StringSurfaceLayout.self,from:JSONEncoder().encode(custom)) == custom)
+    for notes in [[],[0,1,2],[1,2,3,104],[1,2,3,-1],[1,2,3,Int.max],Array(repeating:40,count:9)] {
+        let invalid = StringSurfaceLayout(frets:24,customOpenNotes:notes)
+        #expect(!invalid.isValid)
+        #expect(invalid.cell(x:1,y:1) == nil)
+    }
+}

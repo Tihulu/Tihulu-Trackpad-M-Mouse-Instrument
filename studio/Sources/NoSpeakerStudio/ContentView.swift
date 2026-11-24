@@ -1066,15 +1066,49 @@ private struct TouchInstrumentView: View {
                         VStack(alignment:.leading,spacing:8) {
                             Picker("Tuning",selection:Binding(
                                 get:{ effectiveStringLayout.tuning },
-                                set:{ var next = effectiveStringLayout; next.tuning = $0; stringLayout = next }
+                                set:{ var next = effectiveStringLayout; next.tuning = $0; next.customOpenNotes = nil; stringLayout = next }
                             )) {
                                 ForEach(StringTuning.allCases) { Text($0.rawValue).tag($0) }
                             }
                             Stepper("Frets: \(effectiveStringLayout.frets) + open string",value:Binding(
                                 get:{ effectiveStringLayout.frets },
-                                set:{ var next = effectiveStringLayout; next.frets = $0; stringLayout = next }
+                                set:{ var next = effectiveStringLayout; next.frets = $0; if next.isValid { stringLayout = next } }
                             ),in:4...24)
-                            Text("X selects fret, Y selects string. Slide across frets to change notes. This fretted layout uses equal temperament; fretless strings, strum gestures and custom tunings are separate follow-ups.")
+                            Toggle("Custom open-string tuning",isOn:Binding(
+                                get:{ effectiveStringLayout.customOpenNotes != nil },
+                                set:{ enabled in
+                                    var next = effectiveStringLayout
+                                    next.customOpenNotes = enabled ? next.tuning.openNotes : nil
+                                    stringLayout = next
+                                }
+                            ))
+                            if let notes = effectiveStringLayout.customOpenNotes {
+                                Stepper("Strings: \(notes.count)",value:Binding(
+                                    get:{ notes.count },
+                                    set:{ count in
+                                        guard (4...8).contains(count) else { return }
+                                        var next = effectiveStringLayout
+                                        var pitches = Array(notes.prefix(count))
+                                        while pitches.count < count { pitches.append(max(0,(pitches.last ?? 40)-5)) }
+                                        next.customOpenNotes = pitches
+                                        if next.isValid { stringLayout = next }
+                                    }
+                                ),in:4...8)
+                                ForEach(notes.indices,id:\.self) { row in
+                                    Stepper("String \(row+1): \((try? MusicTheory.noteName(midi:notes[row])) ?? String(notes[row])) · MIDI \(notes[row])",
+                                        value:Binding(
+                                            get:{ notes[row] },
+                                            set:{ pitch in
+                                                var next = effectiveStringLayout
+                                                guard var pitches = next.customOpenNotes, pitches.indices.contains(row) else { return }
+                                                pitches[row] = pitch
+                                                next.customOpenNotes = pitches
+                                                if next.isValid { stringLayout = next }
+                                            }
+                                        ),in:0...(127-effectiveStringLayout.frets))
+                                }
+                            }
+                            Text("X selects fret, Y selects string. Slide across frets to change notes. Equal-tempered layout; fretless strings and strum gestures are follow-ups. High open notes may limit the available fret count. The haptic motor has a narrower frequency range than MIDI.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }.padding(6)
                     }.disabled(studio.touchRunning)
@@ -1302,7 +1336,7 @@ private struct TouchSurfaceMap: View {
                     let width = proxy.size.width / CGFloat(stringLayout.columns)
                     let height = proxy.size.height / CGFloat(stringLayout.rows)
                     ForEach(0..<stringLayout.rows,id:\.self) { row in
-                        let open = stringLayout.tuning.openNotes[row]
+                        let openNote = stringLayout.openNotes[row]
                         ForEach(0..<stringLayout.columns,id:\.self) { fret in
                             let hit = states.contains {
                                 $0.isDown && stringLayout.cell(x:$0.x,y:$0.y)?.string == row &&
@@ -1313,7 +1347,7 @@ private struct TouchSurfaceMap: View {
                                 Rectangle().strokeBorder(Color.secondary.opacity(0.18))
                                 Rectangle().fill(Color.secondary.opacity(0.6)).frame(height:1)
                                 if fret == 0 {
-                                    Text((try? MusicTheory.noteName(midi:open)) ?? String(open)).font(.caption2)
+                                    Text((try? MusicTheory.noteName(midi:openNote)) ?? String(openNote)).font(.caption2)
                                         .padding(2).background(.background)
                                 } else if row == 0 {
                                     Text(String(fret)).font(.system(size:9,design:.monospaced))
