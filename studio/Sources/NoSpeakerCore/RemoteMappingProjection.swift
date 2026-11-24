@@ -47,8 +47,8 @@ struct RemoteMappingProjection: Sendable {
     }
 }
 
-/// Internal payload only; no wire dispatch until negotiated v8 is implemented.
-struct RemoteMappingPage: Encodable, Equatable, Sendable {
+/// Host-generated bounded read-only v8 response.
+public struct RemoteMappingPage: Encodable, Equatable, Sendable {
     let kind = "mapping"
     let version = 8
     let sequence: UInt64
@@ -57,7 +57,7 @@ struct RemoteMappingPage: Encodable, Equatable, Sendable {
     let total: Int
     let detail: Bool
     let rows: [[Int]]
-    func encoded() throws -> Data {
+    public func encoded() throws -> Data {
         let data = try JSONEncoder().encode(self)
         guard data.count <= RemoteTouchFrame.maximumBytes else { throw RemoteTouchError.invalidFrame }
         return data

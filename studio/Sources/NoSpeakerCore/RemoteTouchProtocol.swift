@@ -9,11 +9,12 @@ public struct RemoteTouchFrame: Decodable, Equatable, Sendable {
     public enum Kind: String, Decodable, Sendable {
         case touch, release, heartbeat, orientationArm, orientation, motionRelease
         case accelerationArm, acceleration, accelerationRelease, rotationArm, rotation, rotationRelease
-        case drumPads, pianoKeys, pedalboard, capabilities
+        case drumPads, pianoKeys, pedalboard, capabilities, mapping
     }
     public let version: Int
     public let sequence: UInt64
     public let kind: Kind
+    public let page: Int?
     public let mask: Int?
     public let levels: [Double]?
     public let x: Double?
@@ -69,6 +70,9 @@ public struct RemoteTouchFrame: Decodable, Equatable, Sendable {
                   (0...RemotePiano.maximumMask).contains(mask) else { throw RemoteTouchError.invalidFrame }
         case .capabilities:
             guard frame.version == 7, keys == common else { throw RemoteTouchError.invalidFrame }
+        case .mapping:
+            guard frame.version == 8, bytes.allSatisfy({ $0 < 128 }), keys == common.union(["page"]),
+                  let page = frame.page, (0..<8).contains(page) else { throw RemoteTouchError.invalidFrame }
         case .pedalboard:
             guard frame.version == 6, keys == common.union(["mask","levels"]),
                   let mask = frame.mask, let levels = frame.levels,
@@ -126,6 +130,12 @@ struct RemoteInertialStream: Sendable {
 struct RemoteTouchPeer: Sendable {
     let source: SensorSource
     let mappingDetails: Bool
+    var capabilitiesSeen = false
+    var performanceStarted = false
+    var mappingStarted: Double?
+    var mappingLast: Double?
+    var mappingNext = 0
+    var mappingComplete = false
     var routerSession: UUID?
     var drumSession: UUID?
     var drumMask = 0
@@ -154,6 +164,7 @@ struct RemoteTouchPeer: Sendable {
     }
     func expired(now: Double) -> Bool {
         guard now.isFinite, now >= lastSeen, now-lastSeen < 2 else { return true }
+        if let started = mappingStarted, !mappingComplete, now-started >= 10 { return true }
         // Neither stream may extend the other's lifetime. Fail closed for the
         // whole connection on an expired active stream; explicit release is independent.
         if routerSession != nil {
@@ -177,7 +188,7 @@ struct RemoteTouchPeer: Sendable {
     var isIdle: Bool { routerSession == nil && tilt == nil && inertial.isEmpty && drumSession == nil && pianoSession == nil && pedalSession == nil }
     mutating func accept(_ frame: RemoteTouchFrame, now: Double) -> Bool {
         guard !expired(now: now), frame.sequence > lastSequence,
-              (frame.kind != .heartbeat && frame.kind != .capabilities) || isIdle else { return false }
+              (frame.kind != .heartbeat && frame.kind != .capabilities && frame.kind != .mapping) || isIdle else { return false }
         if now-windowStart >= 1 { windowStart = now; count = 0 }
         guard count < 90 else { return false }
         count += 1

@@ -11,6 +11,7 @@ public enum RemoteHostEvent: Sendable {
 public enum RemoteHostAction: Equatable, Sendable {
     case acknowledge(UUID, Bool)
     case capabilities(UUID, RemoteCapabilities)
+    case mapping(UUID, RemoteMappingPage)
     case revoke(UUID)
     case stop
 }
@@ -32,9 +33,9 @@ public struct RemoteHostBridge: Sendable {
     public init() {}
 
     public mutating func issue(secret: Data, source: SensorSource, now: Double,
-                               runtime: inout PhysicalPatchRuntime) throws {
+                               runtime: inout PhysicalPatchRuntime, mappingDetails: Bool = false) throws {
         guard ready, !stopped else { throw RemoteTouchError.unavailable }
-        try runtime.issueRemotePairing(secret: secret, source: source, now: now)
+        try runtime.issueRemotePairing(secret: secret, source: source, now: now, mappingDetails: mappingDetails)
     }
 
     public mutating func revoke(_ connection: UUID, runtime: inout PhysicalPatchRuntime) -> RemoteHostBatch {
@@ -106,13 +107,23 @@ public struct RemoteHostBridge: Sendable {
                 switch runtime.receiveRemote(peer, bytes: bytes, now: now) {
                 case .accepted(let commands):
                     result.commands += commands
-                    if (try? RemoteTouchFrame.read(bytes))?.kind == .capabilities {
+                    let frame = try? RemoteTouchFrame.read(bytes)
+                    if frame?.kind == .capabilities {
                         if let capabilities = runtime.remoteCapabilities(peer) {
                             result.actions.append(.capabilities(connection, capabilities))
                         } else {
                             result.commands += runtime.revokeRemote(peer)
                             bindings.removeValue(forKey: connection)
                             result.actions.append(.acknowledge(connection, false))
+                        }
+                    } else if let frame, frame.kind == .mapping {
+                        if let index = frame.page,
+                           let page = try? runtime.remoteMappingPage(peer,page:index,sequence:frame.sequence) {
+                            result.actions.append(.mapping(connection,page))
+                        } else {
+                            result.commands += runtime.revokeRemote(peer)
+                            bindings.removeValue(forKey: connection)
+                            result.actions.append(.acknowledge(connection,false))
                         }
                     } else {
                         result.actions.append(.acknowledge(connection, true))
