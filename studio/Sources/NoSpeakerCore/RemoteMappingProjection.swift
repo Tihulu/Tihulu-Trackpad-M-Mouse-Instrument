@@ -110,8 +110,8 @@ struct RemoteMappingLabel: Encodable, Equatable, Sendable {
     }
 }
 
-/// Internal foundation only; wire dispatch and browser decoding are separate.
-struct RemoteMappingLabelPage: Encodable, Equatable, Sendable {
+/// Bounded host-generated label response.
+public struct RemoteMappingLabelPage: Encodable, Equatable, Sendable {
     let kind = "mappingLabels"
     let version = 8
     let sequence: UInt64
@@ -119,7 +119,7 @@ struct RemoteMappingLabelPage: Encodable, Equatable, Sendable {
     let pages: Int
     let total: Int
     let rows: [RemoteMappingLabel]
-    func encoded() throws -> Data {
+    public func encoded() throws -> Data {
         let data = try JSONEncoder().encode(self)
         guard data.count <= RemoteTouchFrame.maximumBytes else { throw RemoteTouchError.invalidFrame }
         return data

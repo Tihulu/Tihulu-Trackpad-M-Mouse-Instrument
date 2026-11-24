@@ -208,19 +208,19 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function sendTouchEdge(){const edge=touchQueue.shift();send(edge.kind,edge.axes);}
   let caps=null,experimentalWorkload=false,workloadRefusal="";
   // This page is served only with the compatible host implementation.
-  const mappingV8=true;
-  let mappingStage=null,mappingRows=null,mappingTimer=null,mappingBudget=null;
+  const mappingV8=true,mappingLabelsV8=true;
+  let mappingStage=null,mappingRows=null,mappingLabels=new Map(),mappingTimer=null,mappingBudget=null;
   const mappingNames=["X","Y","Contact","Tilt yaw","Tilt pitch","Tilt roll","Acceleration","Rotation","Air strike",
     ...Array.from({length:8},(_,i)=>"Pad "+(i+1)),...Array.from({length:25},(_,i)=>"Key "+(i+1)),"Piano sustain",
     "Expression","Volume","Wah / Filter","Pedal sustain","Switch A","Switch B"];
   // Bounded specialized grammar: flat envelope plus fixed-width integer rows.
   // Decoded keys are unique; no generic recursive parser or coercion.
-  function parseMapping(data){
+  function parseMapping(data,labels=false){
     if(typeof data!=="string"||data.length>256||/[^\x00-\x7f]/.test(data))return null;
     const ws="[ \\t\\r\\n]*",uint="(?:0|[1-9][0-9]*)";
     const token='"(?:[^"\\\\\\x00-\\x1f]|\\\\(?:["\\\\/bfnrt]|u[0-9a-fA-F]{4}))*"';
-    const tuple="\\["+ws+Array(5).fill(uint).join(ws+","+ws)+ws+"\\]";
-    const rows="\\["+ws+"(?:"+tuple+"(?:"+ws+","+ws+tuple+"){0,7})?"+ws+"\\]";
+    const tuple="\\["+ws+(labels?uint+ws+","+ws+token:Array(5).fill(uint).join(ws+","+ws))+ws+"\\]";
+    const rows="\\["+ws+"(?:"+tuple+(labels?"":"(?:"+ws+","+ws+tuple+"){0,7}")+")?"+ws+"\\]";
     const member=new RegExp(ws+"("+token+")"+ws+":"+ws+"("+token+"|"+uint+"|true|false|"+rows+")"+ws,"y");
     const start=/[ \t\r\n]*\{[ \t\r\n]*/y,end=/[ \t\r\n]*\}[ \t\r\n]*$/y,comma=/[ \t\r\n]*,[ \t\r\n]*/y;
     let at=0;const keys=new Set(),out=Object.create(null);
@@ -230,12 +230,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       let m;
       while((m=take(member))){
         const key=JSON.parse(m[1]),raw=m[2];
-        if(keys.has(key)||!["kind","version","sequence","page","pages","total","detail","rows"].includes(key))return null;
+        if(keys.has(key)||!(labels?["kind","version","sequence","page","pages","total","rows"]:["kind","version","sequence","page","pages","total","detail","rows"]).includes(key))return null;
         keys.add(key);
         if(["version","sequence","page","pages","total"].includes(key)&&!/^(0|[1-9][0-9]*)$/.test(raw))return null;
         if(key==="rows"&&!raw.startsWith("["))return null;
         out[key]=JSON.parse(raw);
-        if(take(end))return at===data.length&&keys.size===8?out:null;
+        if(take(end))return at===data.length&&keys.size===(labels?7:8)?out:null;
         if(!take(comma))return null;
       }
     }catch{}
@@ -271,21 +271,52 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }
     return Boolean(caps.piano&33554431);
   }
+  function labelFor(id){const label=mappingLabels.get(id);return label?label+" ("+mappingNames[id]+")":mappingNames[id];}
+  function decodeLabel(raw){
+    if(typeof raw!=="string"||!/^[A-Za-z0-9_-]{1,86}$/.test(raw))return null;
+    // Decode canonical base64url without relying on browser atob or permissive UTF-8.
+    const alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let bits=0,value=0,bytes=[];
+    for(const c of raw){value=(value<<6)|alphabet.indexOf(c);bits+=6;if(bits>=8){bits-=8;bytes.push((value>>bits)&255);}}
+    if(bits===6||(bits&&((value&((1<<bits)-1))!==0))||bytes.length<1||bytes.length>64)return null;
+    try{
+      const label=decodeURIComponent(bytes.map(b=>"%"+b.toString(16).padStart(2,"0")).join(""));
+      if(/[\p{Cc}\p{Cf}]/u.test(label)||!/[^\p{White_Space}]/u.test(label))return null;
+      return label;
+    }catch{return null;}
+  }
+  function acceptLabels(data){
+    const s=mappingStage,p=parseMapping(data,true);
+    if(!s||s.phase!=="labels"||!p||p.kind!=="mappingLabels"||p.version!==8||p.sequence!==sequence||p.page!==s.next||
+      ![p.sequence,p.page,p.pages,p.total].every(Number.isSafeInteger)||p.total<0||p.total>49||
+      p.pages!==Math.max(1,p.total)||p.page<0||p.page>=p.pages||
+      p.rows.length!==(p.total===0?0:1)||(s.next!==0&&(p.total!==s.labelTotal||p.pages!==s.labelPages)))return false;
+    if(s.next===0){s.labelTotal=p.total;s.labelPages=p.pages;}
+    for(const r of p.rows){
+      if(!Array.isArray(r)||r.length!==2||!Number.isSafeInteger(r[0])||r[0]<=s.lastLabel||
+        !s.rows.some(row=>row[0]===r[0]))return false;
+      const label=decodeLabel(r[1]);if(label===null)return false;
+      s.labels.set(r[0],label);s.lastLabel=r[0];
+    }
+    s.next++;clearDeadline();pending=false;pendingKind=null;
+    if(s.next===s.labelPages)ready(s.manifest,s.rows,s.labels);else nextMapping();
+    return true;
+  }
   function renderMapping(){
     get("mappingSection").hidden=!caps;
     get("mappingStatus").textContent=!caps?"":mappingRows?"Shared by the Mac. MIDI output is not confirmed by this display.":"Mapping details hidden by the Mac.";
-    get("mappingDetails").textContent=mappingRows?mappingRows.map(r=>mappingNames[r[0]]+" · "+targetText(r)).join("\n"):"";
+    get("mappingDetails").textContent=mappingRows?mappingRows.map(r=>labelFor(r[0])+" · "+targetText(r)).join("\n"):"";
     for(let i=0;i<8;i++){
-      const r=targets(9+i);get("drum"+i).textContent="Pad "+(i+1)+(r.length===1?" · "+targetText(r[0]):r.length>1?" · "+r.length+" targets":"");
+      const r=targets(9+i);get("drum"+i).textContent=labelFor(9+i)+(r.length===1?" · "+targetText(r[0]):r.length>1?" · "+r.length+" targets":"");
     }
   }
   function clearMapping(){
     if(mappingTimer!==null)clearTimeout(mappingTimer);mappingTimer=null;
     if(mappingBudget!==null)clearTimeout(mappingBudget);mappingBudget=null;
-    mappingStage=null;mappingRows=null;
+    mappingStage=null;mappingRows=null;mappingLabels=new Map();
   }
-  function ready(manifest,rows){
-    clearMapping();mappingRows=rows;caps=manifest;
+  function ready(manifest,rows,labels=new Map()){
+    clearMapping();mappingRows=rows;mappingLabels=labels;caps=manifest;
     if(!octaveAvailable(0)&&octaveAvailable(1))pianoOctave=1;
     syncControls();renderMapping();status.textContent="Connected. Only mapped controls are available.";
     timer=setInterval(tick,25);tick();
@@ -296,7 +327,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     mappingTimer=setTimeout(()=>{
       mappingTimer=null;
       if(ws!==connection||mappingStage!==stage||pending)return;
-      send("mapping",{page:stage.next});
+      send(stage.phase==="labels"?"mappingLabels":"mapping",{page:stage.next});
     },Math.max(0,50-(performance.now()-lastSend)));
   }
   function acceptMapping(data){
@@ -316,7 +347,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     clearDeadline();pending=false;pendingKind=null;
     if(s.next===s.pages){
       if(s.detail&&(!s.rows.length||!coverage(s.rows,s.manifest)))return false;
-      ready(s.manifest,s.detail?s.rows:null);
+      if(s.detail&&mappingLabelsV8){s.phase="labels";s.next=0;s.labels=new Map();s.lastLabel=-1;nextMapping();}
+      else ready(s.manifest,s.detail?s.rows:null);
     }else nextMapping();
     return true;
   }
@@ -444,7 +476,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       b.disabled=!admitted||!pianoEnabled||!has("piano",index)||pianoEmergency;
       const rows=targets(17+index);
       const label=scaleAllowed?note:"K"+(index+1);
-      b.textContent=label;b.setAttribute("aria-label",label+(rows.length?" · "+rows.map(targetText).join("; "):" · mapping details hidden"));
+      b.textContent=label;b.setAttribute("aria-label",(mappingLabels.has(17+index)?labelFor(17+index)+" · ":"")+label+(rows.length?" · "+rows.map(targetText).join("; "):" · mapping details hidden"));
       b.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<index))));
       b.setAttribute("data-scale",String(scaleAllowed&&pianoScale.value!=="all"&&scale.includes((index-root+12)%12)));
     });
@@ -618,8 +650,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const motion=kind==="orientationArm"||kind==="orientation"||kind==="motionRelease";
     const inertial=streams.find(s=>kind===s.kind||kind===s.kind+"Arm"||kind===s.kind+"Release");
     const drum=kind==="drumPads",piano=kind==="pianoKeys",pedals=kind==="pedalboard";
-    const frame={version:kind==="mapping"?8:kind==="capabilities"?7:pedals?6:piano?5:drum?4:inertial?3:motion?2:1,sequence:++sequence,kind};
-    if(kind==="mapping"){frame.page=axes.page;}
+    const frame={version:(kind==="mapping"||kind==="mappingLabels")?8:kind==="capabilities"?7:pedals?6:piano?5:drum?4:inertial?3:motion?2:1,sequence:++sequence,kind};
+    if(kind==="mapping"||kind==="mappingLabels"){frame.page=axes.page;}
     else if(pedals){frame.mask=axes.mask;frame.levels=axes.levels;}
     else if(drum||piano){frame.mask=axes.mask;}
     else if(axes){if(motion){frame.alpha=axes.alpha;frame.beta=axes.beta;frame.gamma=axes.gamma;}else{frame.x=axes.x;frame.y=axes.y;if(inertial)frame.z=axes.z;}}
@@ -707,13 +739,16 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         if(!manifest){close("Invalid or unsupported control manifest. Reconnect with a compatible Mac build.");return;}
         clearDeadline();pending=false;pendingKind=null;
         if(!mappingV8){ready(manifest,null);return;}
-        mappingStage={manifest,next:0,rows:[],multiplicity:0};
+        mappingStage={manifest,phase:"mapping",next:0,rows:[],multiplicity:0};
         status.textContent="Synchronizing MIDI mappings…";
         mappingBudget=setTimeout(()=>close("Mapping synchronization timed out. Reconnect explicitly."),10000);
         nextMapping();return;
       }
       if(pending&&pendingKind==="mapping"){
         if(!acceptMapping(e.data))close("Invalid mapping response. Reconnect explicitly.");return;
+      }
+      if(pending&&pendingKind==="mappingLabels"){
+        if(!acceptLabels(e.data))close("Invalid label response. Reconnect explicitly.");return;
       }
       if(!pending||!caps||e.data!=="accepted"){close("Unexpected response.");return;}
       clearDeadline();pending=false;const kind=pendingKind;pendingKind=null;

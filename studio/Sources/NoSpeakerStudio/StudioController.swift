@@ -347,12 +347,12 @@ final class StudioController: ObservableObject {
         }
     }
 
-    func issueBuilderRemoteInvitation(source: SensorSource, mappingDetails: Bool = false) throws -> Data {
+    func issueBuilderRemoteInvitation(source: SensorSource, mappingDetails: Bool = false, mappingLabels: Bool = false) throws -> Data {
         guard patchRunning, patchPhysical, patchRemoteTransport != nil, var bridge = patchRemoteBridge
         else { throw RemoteTouchError.unavailable }
         let secret = try RemoteLoopbackTransport.invitation()
         try bridge.issue(secret: secret, source: source, now: ProcessInfo.processInfo.systemUptime,
-                         runtime: &patchPhysicalRuntime, mappingDetails: mappingDetails)
+                         runtime: &patchPhysicalRuntime, mappingDetails: mappingDetails, mappingLabels: mappingLabels)
         patchRemoteBridge = bridge
         return secret
     }
@@ -427,6 +427,7 @@ final class StudioController: ObservableObject {
             case .acknowledge(let id, let accepted): transport.acknowledge(id, accepted: accepted)
             case .capabilities(let id, let capabilities): transport.acknowledge(id, accepted: true, capabilities: capabilities)
             case .mapping(let id, let page): transport.acknowledge(id, accepted: true, mapping: page)
+            case .mappingLabels(let id, let page): transport.acknowledge(id, accepted: true, labels: page)
             case .revoke(let id): transport.revoke(id)
             case .stop: transport.stop()
             }

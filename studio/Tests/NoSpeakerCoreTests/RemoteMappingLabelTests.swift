@@ -33,7 +33,7 @@ private func labelFixture() -> InstrumentPatch {
     for value in [""," ","\u{00a0}","\u{200b}","a\u{202e}b","a\nb",String(repeating:"é",count:33)] {
         #expect(!RemoteMappingLabel.permits(value))
     }
-    for value in ["Türkçe","日本語","<b>literal</b>","e\u{301}",String(repeating:"é",count:32)] {
+    for value in ["T\u{00FC}rk\u{00E7}e","日本語","<b>literal</b>","e\u{301}",String(repeating:"é",count:32)] {
         #expect(RemoteMappingLabel.permits(value))
     }
     let long = RemoteMappingLabelPage(sequence:9_007_199_254_740_991,page:48,pages:49,total:49,
@@ -61,5 +61,33 @@ private func labelFixture() -> InstrumentPatch {
         }
         _ = runtime.revokeRemote(id)
         #expect(throws:RemoteTouchError.unavailable) { try runtime.remoteMappingLabelPage(id,page:0,sequence:3) }
+    }
+}
+
+
+@Test func mappingLabelWirePhaseAndConsent() throws {
+    let key = Data(repeating:77,count:32)
+    let caps = Data(#"{"version":7,"sequence":1,"kind":"capabilities"}"#.utf8)
+    let mapping = Data(#"{"version":8,"sequence":2,"kind":"mapping","page":0}"#.utf8)
+    let label = Data(#"{"version":8,"sequence":3,"kind":"mappingLabels","page":0}"#.utf8)
+    for (detail,consent) in [(false,true),(true,false),(true,true)] {
+        var runtime = PhysicalPatchRuntime()
+        try runtime.configure(labelFixture(),allowRemote:true)
+        var bridge = RemoteHostBridge()
+        let connection = UUID()
+        _ = bridge.process([.ready],now:1,runtime:&runtime)
+        try bridge.issue(secret:key,source:.phone,now:1,runtime:&runtime,mappingDetails:detail,mappingLabels:consent)
+        _ = bridge.process([.invitation(connection,key,1)],now:1,runtime:&runtime)
+        _ = bridge.process([.frame(connection,caps,1.1)],now:1.1,runtime:&runtime)
+        _ = bridge.process([.frame(connection,mapping,1.2)],now:1.2,runtime:&runtime)
+        let reply = bridge.process([.frame(connection,label,1.3)],now:1.3,runtime:&runtime)
+        if detail {
+            if case .mappingLabels(let id,let p) = reply.actions.first {
+                #expect(id == connection && p.total == (consent ? 1 : 0))
+                #expect(try p.encoded().count <= 256)
+            } else { Issue.record("Missing label reply") }
+            let replay = Data(#"{"version":8,"sequence":4,"kind":"mappingLabels","page":0}"#.utf8)
+            #expect(bridge.process([.frame(connection,replay,1.4)],now:1.4,runtime:&runtime).actions == [.acknowledge(connection,false)])
+        } else { #expect(reply.actions == [.acknowledge(connection,false)]) }
     }
 }

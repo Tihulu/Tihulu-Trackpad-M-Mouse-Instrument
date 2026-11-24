@@ -206,8 +206,7 @@ public struct PhysicalPatchRuntime: Sendable {
         return try projection.page(page,sequence:sequence,detail:peer.mappingDetails)
     }
 
-    // No label network dispatch exists at this stage. A future wire path
-    // must enforce the ordered metadata phase before invoking this API.
+    // Wire dispatch must first accept the request in receiveRemote.
     func remoteMappingLabelPage(_ id: UUID, page: Int, sequence: UInt64) throws -> RemoteMappingLabelPage {
         guard remoteEnabled, let peer = remotePeers[id], peer.isIdle, peer.mappingDetails,
               peer.mappingComplete, !peer.performanceStarted,
@@ -224,7 +223,10 @@ public struct PhysicalPatchRuntime: Sendable {
         if peer.mappingStarted != nil && !peer.mappingComplete && frame.kind != .mapping {
             return .close(revokeRemote(id))
         }
-        if frame.kind != .heartbeat && frame.kind != .capabilities && frame.kind != .mapping {
+        if peer.labelStarted && !peer.labelComplete && frame.kind != .mappingLabels {
+            return .close(revokeRemote(id))
+        }
+        if frame.kind != .heartbeat && frame.kind != .capabilities && frame.kind != .mapping && frame.kind != .mappingLabels {
             peer.performanceStarted = true
         }
         switch frame.kind {
@@ -242,6 +244,19 @@ public struct PhysicalPatchRuntime: Sendable {
             peer.mappingLast = now
             peer.mappingNext += 1
             peer.mappingComplete = peer.mappingNext == page.pages
+            remotePeers[id] = peer
+            return .accepted([])
+        case .mappingLabels:
+            guard peer.mappingComplete, peer.mappingDetails, !peer.performanceStarted, !peer.labelComplete,
+                  let started = peer.mappingStarted, now-started < 10,
+                  let index = frame.page, index == peer.labelNext,
+                  let last = peer.mappingLast, now-last >= 0.05-1e-9,
+                  let page = try? remoteMappingLabelPage(id,page:index,sequence:frame.sequence),
+                  (try? page.encoded()) != nil else { return .close(revokeRemote(id)) }
+            peer.labelStarted = true
+            peer.mappingLast = now
+            peer.labelNext += 1
+            peer.labelComplete = peer.labelNext == page.pages
             remotePeers[id] = peer
             return .accepted([])
         case .release:
