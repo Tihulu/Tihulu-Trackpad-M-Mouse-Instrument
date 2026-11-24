@@ -129,6 +129,13 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pad[aria-disabled=true]{opacity:.45}#dot{position:absolute;width:22px;height:22px;background:#e34f4f;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}#dot[hidden]{display:none}
 #status{min-height:2.8em}small{color:#bdbdbd}
 #drumGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}#drumGrid button{margin:0;min-height:80px;padding:8px;touch-action:none;user-select:none;overflow-wrap:anywhere}#drumGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5} @media(max-width:420px){#drumGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+#pianoBoard{position:relative;height:clamp(145px,30vh,240px);touch-action:none;user-select:none}
+#pianoBoard button{position:absolute;margin:0;border-radius:0 0 6px 6px;padding:0 0 8px;display:flex;align-items:flex-end;justify-content:center;touch-action:none;user-select:none;font-size:12px}
+#pianoBoard .whiteKey{top:0;height:100%;background:#f1f1f1;color:#252525;border-color:#555;z-index:1}
+#pianoBoard .blackKey{top:0;height:60%;background:#222;color:white;border-color:#666;z-index:2}
+#pianoBoard button[data-scale=true]{border-bottom:7px solid #79a8d2}
+#pianoBoard button[aria-pressed=true],#pianoSustain[aria-pressed=true]{background:#286b50;color:white;border-color:#79c9a5}
+#pianoBoard button:focus-visible{outline:3px solid #e5a33b;outline-offset:-4px}
 </style></head>
 <body><h1>TIHULU Remote</h1><p>Local touch &amp; tilt controller · Experimental</p>
 <label for="secret">One-time invitation (64 hexadecimal characters)</label>
@@ -142,6 +149,16 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <button id="drumEnable" disabled>Enable drum pads</button><button id="drumRelease" disabled>Release all pads</button>
 <p id="drumStatus" role="status">Off.</p><div id="drumGrid"><button id="drum0" type="button" aria-pressed="false" disabled>1 · Kick</button><button id="drum1" type="button" aria-pressed="false" disabled>2 · Snare</button><button id="drum2" type="button" aria-pressed="false" disabled>3 · Closed Hi-Hat</button><button id="drum3" type="button" aria-pressed="false" disabled>4 · Open Hi-Hat</button><button id="drum4" type="button" aria-pressed="false" disabled>5 · Low Tom</button><button id="drum5" type="button" aria-pressed="false" disabled>6 · High Tom</button><button id="drum6" type="button" aria-pressed="false" disabled>7 · Crash</button><button id="drum7" type="button" aria-pressed="false" disabled>8 · Ride</button></div>
 <small>Multiple fingers supported. Hold a pad to sustain its note; lift to release. Fixed host velocity, no pressure sensing. Release all clears pending hits.</small></section>
+<section aria-labelledby="piano-title"><h2 id="piano-title">Piano</h2>
+<p>Add the full 25-key and sustain preset for the paired source in the Mac Instrument Builder. Labels and scale hints refer to the default chromatic mapping.</p>
+<button id="pianoEnable" disabled>Enable piano</button><button id="pianoRelease" disabled>Release keys &amp; pedal</button>
+<p id="pianoStatus" role="status">Off.</p>
+<button id="octaveDown" disabled>Octave −</button><span id="octaveLabel">C3–C4</span><button id="octaveUp" disabled>Octave +</button>
+<label for="pianoScale">Scale guide (visual only)</label><select id="pianoScale"><option value="all">Chromatic</option><option value="major">Major</option><option value="minor">Natural minor</option><option value="pentatonic">Major pentatonic</option></select>
+<label for="pianoRoot">Root note</label><select id="pianoRoot"><option value="0">C</option><option value="1">C♯</option><option value="2">D</option><option value="3">D♯</option><option value="4">E</option><option value="5">F</option><option value="6">F♯</option><option value="7">G</option><option value="8">G♯</option><option value="9">A</option><option value="10">A♯</option><option value="11">B</option></select>
+<div id="pianoBoard" aria-label="Piano keyboard"><button id="piano0" class="whiteKey" type="button" style="left:0%;width:12.5%" aria-pressed="false" disabled></button><button id="piano2" class="whiteKey" type="button" style="left:12.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano4" class="whiteKey" type="button" style="left:25%;width:12.5%" aria-pressed="false" disabled></button><button id="piano5" class="whiteKey" type="button" style="left:37.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano7" class="whiteKey" type="button" style="left:50%;width:12.5%" aria-pressed="false" disabled></button><button id="piano9" class="whiteKey" type="button" style="left:62.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano11" class="whiteKey" type="button" style="left:75%;width:12.5%" aria-pressed="false" disabled></button><button id="piano12" class="whiteKey" type="button" style="left:87.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano1" class="blackKey" type="button" style="left:8.6%;width:7.8%" aria-pressed="false" disabled></button><button id="piano3" class="blackKey" type="button" style="left:21.1%;width:7.8%" aria-pressed="false" disabled></button><button id="piano6" class="blackKey" type="button" style="left:46.1%;width:7.8%" aria-pressed="false" disabled></button><button id="piano8" class="blackKey" type="button" style="left:58.6%;width:7.8%" aria-pressed="false" disabled></button><button id="piano10" class="blackKey" type="button" style="left:71.1%;width:7.8%" aria-pressed="false" disabled></button></div>
+<button id="pianoSustain" type="button" aria-pressed="false" disabled>Sustain (hold)</button>
+<small>Hold multiple keys or the pedal. Lift to release. Octave changes are available only after all piano messages are acknowledged. Scale guide does not alter MIDI routing.</small></section>
 <section aria-labelledby="tilt-title"><h2 id="tilt-title">Pocket Wah / Tilt</h2>
 <p>First map a phone or tablet tilt axis on the Mac. Hold the phone comfortably, nearly upright or flat but away from extreme angles, then enable and calibrate. Touch and tilt can be used together. Release either control independently.</p>
 <button id="motionStart" disabled>Enable &amp; calibrate tilt</button><button id="motionStop" disabled>Release tilt</button>
@@ -192,6 +209,51 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function drumUp(owner){if(drumOwners.delete(owner))drumChanged();}
   function sendDrum(mask){send("drumPads",{mask});}
+  const pianoButtons=Array.from({length:13},(_,i)=>get("piano"+i));
+  const pianoPedal=get("pianoSustain"),pianoEnable=get("pianoEnable"),pianoRelease=get("pianoRelease"),pianoStatus=get("pianoStatus");
+  const octaveDown=get("octaveDown"),octaveUp=get("octaveUp"),octaveLabel=get("octaveLabel"),pianoScale=get("pianoScale"),pianoRoot=get("pianoRoot");
+  const pitchNames=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
+  const scaleDegrees={all:[0,1,2,3,4,5,6,7,8,9,10,11],major:[0,2,4,5,7,9,11],minor:[0,2,3,5,7,8,10],pentatonic:[0,2,4,7,9]};
+  let pianoEnabled=false,pianoOctave=0,pianoOwners=new Map(),pianoQueue=[],pianoDesired=0,pianoSent=0,lastPianoSend=-Infinity,pianoEmergency=false;
+  function pianoBusy(){return pianoDesired!==0||pianoSent!==0||pianoQueue.length!==0||pianoEmergency||pendingKind==="pianoKeys";}
+  function syncPiano(){
+    pianoEnable.disabled=!admitted;pianoEnable.textContent=pianoEnabled?"Disable piano":"Enable piano";
+    pianoRelease.disabled=!admitted||!pianoBusy();
+    octaveDown.disabled=!admitted||!pianoEnabled||pianoOctave===0||pianoBusy();
+    octaveUp.disabled=!admitted||!pianoEnabled||pianoOctave===1||pianoBusy();
+    octaveLabel.textContent="C"+(3+pianoOctave)+"–C"+(4+pianoOctave);
+    const scale=scaleDegrees[pianoScale.value]||scaleDegrees.all;
+    const root=Number(pianoRoot.value)||0;
+    pianoButtons.forEach((b,i)=>{
+      const index=i+12*pianoOctave,note=pitchNames[index%12]+(3+Math.floor(index/12));
+      b.disabled=!admitted||!pianoEnabled||pianoEmergency;
+      b.textContent=note;b.setAttribute("aria-label",note);
+      b.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<index))));
+      b.setAttribute("data-scale",String(pianoScale.value!=="all"&&scale.includes((index-root+12)%12)));
+    });
+    pianoPedal.disabled=!admitted||!pianoEnabled||pianoEmergency;
+    pianoPedal.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<25))));
+  }
+  function resetPiano(){pianoEnabled=false;pianoOctave=0;pianoOwners.clear();pianoQueue=[];pianoDesired=0;pianoSent=0;lastPianoSend=-Infinity;pianoEmergency=false;pianoStatus.textContent="Off.";syncPiano();}
+  function pianoChanged(){
+    let mask=0;for(const index of pianoOwners.values())mask|=1<<index;
+    if(mask===pianoDesired)return;
+    pianoDesired=mask;
+    if(pianoQueue.length>=8){close("Piano input backlog. Reconnect explicitly.");return;}
+    pianoQueue.push({mask,at:performance.now()});syncPiano();tick();
+  }
+  function releasePiano(){
+    pianoOwners.clear();pianoDesired=0;pianoQueue=[];
+    pianoEmergency=pianoSent!==0;syncPiano();tick();
+  }
+  function pianoDown(owner,index){
+    if(!admitted||!pianoEnabled||pianoEmergency||pianoOwners.has(owner))return;
+    if(pianoOwners.size>=32){close("Too many piano contacts. Reconnect explicitly.");return;}
+    pianoOwners.set(owner,index);pianoChanged();
+  }
+  function pianoUp(owner){if(pianoOwners.delete(owner))pianoChanged();}
+  function sendPiano(mask){send("pianoKeys",{mask});}
+  function changeOctave(value){if(!admitted||!pianoEnabled||pianoBusy())return;pianoOctave=value;syncPiano();}
   function inertialState(kind,prefix,limit,scale){return {kind,start:get(prefix+"Start"),stop:get(prefix+"Stop"),meter:get(prefix+"Meter"),status:get(prefix+"Status"),limit,scale,mode:"idle",epoch:0,sample:null,at:0,sent:-1,last:-Infinity,waiting:0};}
   const streams=[inertialState("acceleration","accel",100,20),inertialState("rotation","rotation",2000,360)];
   const capturing=s=>["waiting","arming","active"].includes(s.mode);
@@ -235,7 +297,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     s.epoch++;s.mode="releasing";s.sample=null;s.status.textContent="Releasing…";syncInertialListener();syncControls();tick();
   }
   function syncControls(){
-    pad.setAttribute("aria-disabled",String(!admitted));syncDrums();
+    pad.setAttribute("aria-disabled",String(!admitted));syncDrums();syncPiano();
     const asking=mode==="requesting"||streams.some(s=>s.mode==="requesting");
     motionStart.disabled=!admitted||mode!=="idle"||asking;
     for(const s of streams){s.start.disabled=!admitted||s.mode!=="idle"||asking;s.stop.disabled=!admitted||s.mode==="idle"||s.mode==="releasing";}
@@ -282,7 +344,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
     const old=ws;ws=null;admitted=false;pending=false;sequence=0;pointer=null;position=null;releaseDue=false;
-    clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();
+    clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
   }
@@ -292,12 +354,13 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(ws.bufferedAmount>256){close("Backlog. Controls released by host watchdog.");return;}
     const motion=kind==="orientationArm"||kind==="orientation"||kind==="motionRelease";
     const inertial=streams.find(s=>kind===s.kind||kind===s.kind+"Arm"||kind===s.kind+"Release");
-    const drum=kind==="drumPads";
-    const frame={version:drum?4:inertial?3:motion?2:1,sequence:++sequence,kind};
-    if(drum){frame.mask=axes.mask;}
+    const drum=kind==="drumPads",piano=kind==="pianoKeys";
+    const frame={version:piano?5:drum?4:inertial?3:motion?2:1,sequence:++sequence,kind};
+    if(drum||piano){frame.mask=axes.mask;}
     else if(axes){if(motion){frame.alpha=axes.alpha;frame.beta=axes.beta;frame.gamma=axes.gamma;}else{frame.x=axes.x;frame.y=axes.y;if(inertial)frame.z=axes.z;}}
     pending=true;pendingKind=kind;lastSend=performance.now();
     if(drum){lastDrumSend=lastSend;drumSent=axes.mask;}
+    if(piano){lastPianoSend=lastSend;pianoSent=axes.mask;}
     if(kind==="touch")lastTouchSend=lastSend;
     if(kind==="orientationArm"||kind==="orientation")lastTiltSend=lastSend;
     if(inertial&&kind!==inertial.kind+"Release")inertial.last=lastSend;
@@ -314,14 +377,18 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if((s.mode==="arming"||s.mode==="active")&&now-s.at>=250){close(s.kind+" stopped. Reconnect explicitly.");return;}
     }
     if(drumQueue.length&&now-drumQueue[0].at>=150){close("Drum input delayed. Reconnect explicitly.");return;}
+    if(pianoQueue.length&&now-pianoQueue[0].at>=150){close("Piano input delayed. Reconnect explicitly.");return;}
     if(pending)return;
     // Release takes precedence over new samples; one frame per ACK.
+    if(pianoEmergency){pianoEmergency=false;sendPiano(0);return;}
     if(drumEmergency){drumEmergency=false;sendDrum(0);return;}
     if(releaseDue){releaseDue=false;send("release");return;}
     if(mode==="releasing"){send("motionRelease");return;}
     const releasing=streams.find(s=>s.mode==="releasing");
     if(releasing){send(releasing.kind+"Release");return;}
     const ready=[];
+    if(pianoQueue.length&&now-lastPianoSend>=25)ready.push({last:lastPianoSend,run:()=>sendPiano(pianoQueue.shift().mask)});
+    else if(pianoSent!==0&&!pianoQueue.length&&now-lastPianoSend>=50)ready.push({last:lastPianoSend,run:()=>sendPiano(pianoSent)});
     if(drumQueue.length&&now-lastDrumSend>=25)ready.push({last:lastDrumSend,run:()=>sendDrum(drumQueue.shift().mask)});
     else if(drumSent!==0&&!drumQueue.length&&now-lastDrumSend>=50)ready.push({last:lastDrumSend,run:()=>sendDrum(drumSent)});
     if(pointer!==null&&position&&now-lastTouchSend>=50)ready.push({last:lastTouchSend,run:()=>send("touch",position)});
@@ -340,7 +407,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     // One ACK lane, oldest serviced eligible stream wins; ties favor the
     // later candidate (preserves tilt's initial refresh priority).
     if(ready.length){ready.reduce((a,b)=>a.last<b.last?a:b).run();return;}
-    if(pointer===null&&drumSent===0&&!drumQueue.length&&mode!=="active"&&mode!=="arming"&&!streams.some(s=>s.mode==="active"||s.mode==="arming")&&now-lastSend>=500)send("heartbeat");
+    if(pointer===null&&pianoSent===0&&!pianoQueue.length&&drumSent===0&&!drumQueue.length&&mode!=="active"&&mode!=="arming"&&!streams.some(s=>s.mode==="active"||s.mode==="arming")&&now-lastSend>=500)send("heartbeat");
   }
   connect.addEventListener("click",()=>{
     if(ws)return;
@@ -367,7 +434,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         if(kind===s.kind+"Arm"&&s.mode==="arming"){s.mode="active";s.status.textContent="Active. Release when finished.";}
         if(kind===s.kind+"Release")resetInertial(s,"Released.");
       }
-      syncControls();if(drumEmergency||drumQueue.length||releaseDue||mode==="releasing"||streams.some(s=>s.mode==="releasing"))tick();
+      syncControls();if(pianoEmergency||pianoQueue.length||drumEmergency||drumQueue.length||releaseDue||mode==="releasing"||streams.some(s=>s.mode==="releasing"))tick();
     };
     socket.onerror=()=>{key.fill(0);if(ws===socket)close("TLS or connection failed. Do not bypass certificate validation.");};
     socket.onclose=()=>{key.fill(0);if(ws===socket)close("Disconnected. Request a new invitation.");};
@@ -408,10 +475,32 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();drumUp("k"+index);}});
     b.addEventListener("blur",()=>drumUp("k"+index));
   });
+  pianoEnable.addEventListener("click",()=>{
+    if(!admitted)return;
+    pianoEnabled=!pianoEnabled;
+    if(!pianoEnabled)releasePiano();
+    pianoStatus.textContent=pianoEnabled?"Enabled. Use only with the mapped Mac preset.":"Off.";syncPiano();
+  });
+  pianoRelease.addEventListener("click",releasePiano);
+  octaveDown.addEventListener("click",()=>changeOctave(0));
+  octaveUp.addEventListener("click",()=>changeOctave(1));
+  pianoScale.addEventListener("change",syncPiano);pianoRoot.addEventListener("change",syncPiano);
+  [...pianoButtons,pianoPedal].forEach((b,i)=>{
+    const index=()=>i===13?25:i+12*pianoOctave;
+    b.addEventListener("pointerdown",e=>{
+      if(!admitted||!pianoEnabled||e.button!==0)return;
+      e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{close("Piano pointer capture failed.");return;}
+      pianoDown("p"+e.pointerId,index());
+    });
+    for(const name of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(name,e=>pianoUp("p"+e.pointerId));
+    b.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();if(!e.repeat)pianoDown("k"+i,index());}});
+    b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();pianoUp("k"+i);}});
+    b.addEventListener("blur",()=>pianoUp("k"+i));
+  });
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);
   for(const s of streams){s.start.addEventListener("click",()=>startInertial(s));s.stop.addEventListener("click",()=>stopInertial(s));}
-  function rotated(){if(ws&&(drumDesired!==0||drumSent!==0||drumQueue.length||mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
+  function rotated(){if(ws&&(pianoBusy()||drumDesired!==0||drumSent!==0||drumQueue.length||mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
   window.addEventListener("orientationchange",rotated);
   if(window.screen&&window.screen.orientation&&typeof window.screen.orientation.addEventListener==="function")window.screen.orientation.addEventListener("change",rotated);
   disconnect.addEventListener("click",()=>close("Disconnected. Host releases owned controls."));

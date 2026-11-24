@@ -11,7 +11,7 @@ function setup(permission="granted"){
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id]});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
   class WS{
@@ -152,4 +152,52 @@ test("drum disabled by default and page hide closes active notes",()=>{
   const a=setup();a.elements.drum0.emit("pointerdown",drumEvent(1));assert.equal(a.socket.frames.length,0);
   a.elements.drumEnable.emit("click");a.elements.drum0.emit("pointerdown",drumEvent(1));
   a.window.emit("pagehide");assert.equal(a.socket.closed,true);
+});
+
+test("piano polyphonic short taps and independent release",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  assert.equal(a.socket.frames.at(-1).version,5);assert.equal(a.socket.frames.at(-1).mask,1);
+  a.elements.piano4.emit("pointerdown",drumEvent(2));
+  a.elements.piano0.emit("pointerup",drumEvent(1));
+  a.ack();a.step();assert.equal(a.socket.frames.at(-1).mask,17);a.ack();
+  a.step();assert.equal(a.socket.frames.at(-1).mask,16);a.ack();
+  a.elements.piano4.emit("pointerup",drumEvent(2));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+});
+test("octave change waits for zero snapshot ACK",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.octaveUp.emit("click");assert.equal(a.elements.octaveLabel.textContent,"C3–C4");
+  a.elements.piano0.emit("pointerup",drumEvent(1));a.step();
+  a.elements.octaveUp.emit("click");assert.equal(a.elements.octaveLabel.textContent,"C3–C4");
+  a.ack();a.elements.octaveUp.emit("click");assert.equal(a.elements.octaveLabel.textContent,"C4–C5");
+  a.elements.piano12.emit("pointerdown",drumEvent(2));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,1<<24);
+});
+test("sustain owns independent bit and blocks octave until released",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");
+  a.elements.pianoSustain.emit("pointerdown",drumEvent(1));a.ack();
+  assert.equal(a.socket.frames.at(-1).mask,1<<25);
+  a.elements.piano0.emit("pointerdown",drumEvent(2));a.step();a.ack();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<25)|1);
+  a.elements.piano0.emit("pointerup",drumEvent(2));a.step();a.ack();
+  assert.equal(a.socket.frames.at(-1).mask,1<<25);assert.equal(a.elements.octaveUp.disabled,true);
+  a.elements.pianoRelease.emit("click");assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  assert.equal(a.elements.octaveUp.disabled,false);
+});
+test("piano release all preserves drum ownership",()=>{
+  const a=setup();a.elements.drumEnable.emit("click");a.elements.pianoEnable.emit("click");
+  a.elements.drum0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.piano0.emit("pointerdown",drumEvent(2));a.ack();
+  a.elements.pianoRelease.emit("click");assert.equal(a.socket.frames.at(-1).kind,"pianoKeys");
+  assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  a.step(50);assert.equal(a.socket.frames.at(-1).kind,"drumPads");assert.equal(a.socket.frames.at(-1).mask,1);
+});
+test("scale guide does not send MIDI and stale piano edge fails closed",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");
+  a.elements.pianoScale.value="major";a.elements.pianoRoot.value="2";a.elements.pianoScale.emit("change");
+  assert.equal(a.socket.frames.length,0);
+  a.elements.piano0.emit("pointerdown",drumEvent(1));a.elements.piano0.emit("pointerup",drumEvent(1));
+  a.step(151);assert.equal(a.socket.closed,true);
 });
