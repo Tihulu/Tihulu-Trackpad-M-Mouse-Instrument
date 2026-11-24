@@ -12,6 +12,7 @@ public struct PhysicalPatchRuntime: Sendable {
     private var sequence: UInt64 = 0
     private var motionSources: Set<SensorSource> = []
     private var inertialSignals: [SensorSource: Set<SensorSignal>] = [:]
+    private var drumMasks: [SensorSource: Int] = [:]
     private var strikeSettings: [SensorSource: AirStrikeDetector.Settings] = [:]
     private static let strikeDuration = 0.06
     private var remoteEnabled = false
@@ -34,6 +35,7 @@ public struct PhysicalPatchRuntime: Sendable {
                 guard allowRemote else { return false }
                 if [.x,.y,.contact].contains($0.signal) { return true }
                 if $0.signal == .airStrike { return $0.destination.kind == .note }
+                if RemoteDrumPads.signals.contains($0.signal) { return RemoteDrumPads.permits($0) }
                 return [.tiltYaw,.tiltPitch,.tiltRoll,.accelerationMagnitude,.rotationMagnitude].contains($0.signal) &&
                     ($0.destination.kind == .controlChange || $0.destination.kind == .pitchBend)
             default: return false
@@ -46,6 +48,10 @@ public struct PhysicalPatchRuntime: Sendable {
         try router.configure(patch.routes)
         supported = Set(patch.routes.map(\.source))
         motionSources = Set(patch.routes.filter { [.tiltYaw,.tiltPitch,.tiltRoll].contains($0.signal) }.map(\.source))
+        drumMasks = [:]
+        for route in patch.routes {
+            if let index = RemoteDrumPads.signals.firstIndex(of: route.signal) { drumMasks[route.source, default: 0] |= 1 << index }
+        }
         inertialSignals = [:]
         strikeSettings = AirDrumSensitivity.settings(for: patch.routes) ?? [:]
         for source in strikeSettings.keys { inertialSignals[source, default: []].insert(.accelerationMagnitude) }
@@ -204,6 +210,31 @@ public struct PhysicalPatchRuntime: Sendable {
             peer.motionFreshness.disarm()
             remotePeers[id] = peer
             return .accepted(commands)
+        case .drumPads:
+            guard let mask = frame.mask, let allowed = drumMasks[peer.source], mask & ~allowed == 0
+            else { return .close(revokeRemote(id)) }
+            if mask == 0 {
+                let commands = peer.drumSession.map { router.disconnect($0) } ?? []
+                peer.drumSession = nil; peer.drumMask = 0; peer.lastDrumReceipt = nil
+                remotePeers[id] = peer
+                return .accepted(commands)
+            }
+            if peer.drumSession == nil { peer.drumSession = try? router.connect(peer.source, now: now) }
+            guard let session = peer.drumSession else { return .close(revokeRemote(id)) }
+            var commands: [SensorCommand] = []
+            // Add new owners before removing old ones. A shared destination
+            // stays held when transferred between pads in one snapshot.
+            for (index, signal) in RemoteDrumPads.signals.enumerated() where mask & (1 << index) != 0 && peer.drumMask & (1 << index) == 0 {
+                sequence &+= 1
+                commands += router.ingest(.init(session: session, signal: signal, value: 1,
+                                                sequence: sequence, timestamp: now), now: now)
+            }
+            for (index, signal) in RemoteDrumPads.signals.enumerated() where mask & (1 << index) == 0 && peer.drumMask & (1 << index) != 0 {
+                commands += router.releaseSignal(session: session, signal: signal)
+            }
+            peer.drumMask = mask; peer.lastDrumReceipt = now
+            remotePeers[id] = peer
+            return .accepted(commands)
         case .accelerationArm, .rotationArm:
             let signal: SensorSignal = frame.kind == .accelerationArm ? .accelerationMagnitude : .rotationMagnitude
             guard inertialSignals[peer.source]?.contains(signal) == true, peer.inertial[signal] == nil
@@ -253,7 +284,7 @@ public struct PhysicalPatchRuntime: Sendable {
     public mutating func revokeRemote(_ id: UUID) -> [SensorCommand] {
         guard let peer = remotePeers.removeValue(forKey: id) else { return [] }
         let inertialSessions = [SensorSignal.accelerationMagnitude, .rotationMagnitude].compactMap { peer.inertial[$0]?.session }
-        return ([peer.routerSession, peer.motionSession].compactMap { $0 } + inertialSessions).flatMap { router.disconnect($0) }
+        return ([peer.routerSession, peer.motionSession, peer.drumSession].compactMap { $0 } + inertialSessions).flatMap { router.disconnect($0) }
     }
 
     public mutating func cancelRemotePairing() { pairing.clear() }
@@ -297,6 +328,7 @@ public struct PhysicalPatchRuntime: Sendable {
         motionSources = []
         inertialSignals = [:]
         strikeSettings = [:]
+        drumMasks = [:]
         remoteEnabled = false
         pairing.clear()
         remotePeers = [:]
