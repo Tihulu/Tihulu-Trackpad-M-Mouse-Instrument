@@ -22,6 +22,21 @@ public struct PhysicalPatchRuntime: Sendable {
     private var pairing = RemotePairingGate()
     private var remotePeers: [UUID: RemoteTouchPeer] = [:]
     public static let maximumRemotePeers = 4
+    // One session for each supported local source: trackpad, mouse, lid, Touch Bar, camera.
+    public static let reservedLocalSessions = 5
+    public static let maximumRemoteSessions = SensorRouter.maxSessions - reservedLocalSessions
+    public var reservedRemoteSessions: Int {
+        remotePeers.values.reduce(0) { $0 + remoteSessionCost($1.source) }
+    }
+    private func remoteSessionCost(_ source: SensorSource) -> Int {
+        var cost = inertialSignals[source]?.count ?? 0
+        if touchSources.contains(source) { cost += 1 }
+        if motionSources.contains(source) { cost += 1 }
+        if (drumMasks[source] ?? 0) != 0 { cost += 1 }
+        if (pianoMasks[source] ?? 0) != 0 { cost += 1 }
+        if (pedalMasks[source] ?? 0) != 0 { cost += 1 }
+        return cost
+    }
     public var remotePeerIDs: Set<UUID> { Set(remotePeers.keys) }
 
     public init() {}
@@ -153,6 +168,11 @@ public struct PhysicalPatchRuntime: Sendable {
         guard remotePeers.count < Self.maximumRemotePeers else { throw RemoteTouchError.capacity }
         let source = try pairing.consume(secret: secret, now: now)
         guard supported.contains(source) else { throw RemoteTouchError.unavailable }
+        let cost = remoteSessionCost(source)
+        // Reserve the full advertised source capability before admitting a peer.
+        // Reservations persist until peer removal, not merely stream release.
+        guard cost > 0 else { throw RemoteTouchError.unavailable }
+        guard reservedRemoteSessions + cost <= Self.maximumRemoteSessions else { throw RemoteTouchError.capacity }
         let id = UUID()
         remotePeers[id] = RemoteTouchPeer(source: source, now: now)
         return id
