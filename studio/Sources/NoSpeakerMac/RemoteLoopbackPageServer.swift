@@ -141,6 +141,13 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <button id="motionStart" disabled>Enable &amp; calibrate tilt</button><button id="motionStop" disabled>Release tilt</button>
 <label for="tiltMeter">Relative pitch (before Mac mapping)</label><meter id="tiltMeter" min="0" max="1" value="0.5" style="width:100%;height:24px"></meter>
 <p id="motionStatus" role="status">Motion off.</p><small>Motion is opt-in, sent only to the paired Mac. No microphone, camera or storage. The host decides MIDI routing.</small></section>
+<section aria-labelledby="inertial-title"><h2 id="inertial-title">Motion dynamics</h2>
+<p>Map acceleration magnitude or rotation magnitude on the Mac first. Each control is optional and separately released. Gravity-free acceleration is required; missing readings are not simulated.</p>
+<label for="accelMeter">Acceleration · 0–20 m/s²</label><meter id="accelMeter" min="0" max="1" value="0" style="width:100%;height:24px"></meter>
+<button id="accelStart" disabled>Enable acceleration</button><button id="accelStop" disabled>Release acceleration</button><p id="accelStatus" role="status">Off.</p>
+<label for="rotationMeter">Rotation speed · 0–360°/s</label><meter id="rotationMeter" min="0" max="1" value="0" style="width:100%;height:24px"></meter>
+<button id="rotationStart" disabled>Enable rotation</button><button id="rotationStop" disabled>Release rotation</button><p id="rotationStatus" role="status">Off.</p>
+<small>Live meters are before Mac mapping. Use only the sensors your instrument maps. No shake-triggered notes in this version.</small></section>
 <script src="/control.js" defer></script></body></html>
 """#
     private static let script = #"""
@@ -152,9 +159,53 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const motionStart=get("motionStart"), motionStop=get("motionStop"), meter=get("tiltMeter"), motionStatus=get("motionStatus");
   let mode="idle", sample=null, neutral=null, sampleAt=0, sentAt=-1, permissionEpoch=0, waitingSince=0, pendingKind=null;
   let lastTouchSend=-Infinity,lastTiltSend=-Infinity;
+  function inertialState(kind,prefix,limit,scale){return {kind,start:get(prefix+"Start"),stop:get(prefix+"Stop"),meter:get(prefix+"Meter"),status:get(prefix+"Status"),limit,scale,mode:"idle",epoch:0,sample:null,at:0,sent:-1,last:-Infinity,waiting:0};}
+  const streams=[inertialState("acceleration","accel",100,20),inertialState("rotation","rotation",2000,360)];
+  const capturing=s=>["waiting","arming","active"].includes(s.mode);
+  function syncInertialListener(){
+    window.removeEventListener("devicemotion",deviceMotion);
+    if(streams.some(capturing))window.addEventListener("devicemotion",deviceMotion);
+  }
+  function resetInertial(s,message){
+    s.epoch++;s.mode="idle";s.sample=null;s.at=0;s.sent=-1;s.last=-Infinity;s.meter.value=0;s.status.textContent=message;
+    syncInertialListener();syncControls();
+  }
+  function deviceMotion(e){
+    for(const s of streams){
+      if(!capturing(s))continue;
+      const v=s.kind==="acceleration"?e.acceleration:e.rotationRate;
+      const axes=v?(s.kind==="acceleration"?[v.x,v.y,v.z]:[v.alpha,v.beta,v.gamma]):[];
+      if(axes.length!==3||!axes.every(v=>Number.isFinite(v)&&Math.abs(v)<=s.limit)){
+        if(s.mode==="active"||s.mode==="arming"){close(s.kind+" unavailable. Host releases controls.");return;}
+        continue;
+      }
+      s.sample={x:axes[0],y:axes[1],z:axes[2]};s.at=performance.now();
+      s.meter.value=Math.min(1,Math.hypot(...axes)/s.scale);
+    }
+  }
+  async function startInertial(s){
+    if(!admitted||s.mode!=="idle"||streams.some(x=>x.mode==="requesting")||mode==="requesting")return;
+    if(!window.isSecureContext||typeof window.DeviceMotionEvent==="undefined"){s.status.textContent="DeviceMotion unavailable.";return;}
+    const epoch=++s.epoch;s.mode="requesting";s.status.textContent="Waiting for permission…";syncControls();
+    try{
+      const api=window.DeviceMotionEvent;
+      if(typeof api.requestPermission==="function"&&await api.requestPermission()!=="granted"){
+        if(epoch===s.epoch)resetInertial(s,"Motion permission denied.");return;
+      }
+    }catch{if(epoch===s.epoch)resetInertial(s,"Motion permission unavailable.");return;}
+    if(epoch!==s.epoch||!admitted||s.mode!=="requesting")return;
+    s.mode="waiting";s.waiting=performance.now();s.status.textContent="Waiting for a valid sensor sample…";syncInertialListener();syncControls();
+  }
+  function stopInertial(s){
+    if(s.mode==="idle"||s.mode==="releasing")return;
+    if(s.mode==="requesting"||s.mode==="waiting"){resetInertial(s,"Off.");return;}
+    s.epoch++;s.mode="releasing";s.sample=null;s.status.textContent="Releasing…";syncInertialListener();syncControls();tick();
+  }
   function syncControls(){
     pad.setAttribute("aria-disabled",String(!admitted));
-    motionStart.disabled=!admitted||mode!=="idle";
+    const asking=mode==="requesting"||streams.some(s=>s.mode==="requesting");
+    motionStart.disabled=!admitted||mode!=="idle"||asking;
+    for(const s of streams){s.start.disabled=!admitted||s.mode!=="idle"||asking;s.stop.disabled=!admitted||s.mode==="idle"||s.mode==="releasing";}
     motionStop.disabled=!admitted||mode==="idle"||mode==="releasing";
   }
   function resetMotion(message){
@@ -173,7 +224,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(neutral){let delta=((beta-neutral.beta+540)%360)-180;meter.value=Math.max(0,Math.min(1,0.5+delta/90));}
   }
   async function startMotion(){
-    if(!admitted||mode!=="idle")return;
+    if(!admitted||mode!=="idle"||streams.some(s=>s.mode==="requesting"))return;
     if(!window.isSecureContext||typeof window.DeviceOrientationEvent==="undefined"){
       motionStatus.textContent="Orientation unavailable in this secure browser.";return;
     }
@@ -198,7 +249,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
     const old=ws;ws=null;admitted=false;pending=false;sequence=0;pointer=null;position=null;releaseDue=false;
-    clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");
+    clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
   }
@@ -207,11 +258,13 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(!ws||!admitted||pending||ws.readyState!==WebSocket.OPEN)return;
     if(ws.bufferedAmount>256){close("Backlog. Controls released by host watchdog.");return;}
     const motion=kind==="orientationArm"||kind==="orientation"||kind==="motionRelease";
-    const frame={version:motion?2:1,sequence:++sequence,kind};
-    if(axes){if(motion){frame.alpha=axes.alpha;frame.beta=axes.beta;frame.gamma=axes.gamma;}else{frame.x=axes.x;frame.y=axes.y;}}
+    const inertial=streams.find(s=>kind===s.kind||kind===s.kind+"Arm"||kind===s.kind+"Release");
+    const frame={version:inertial?3:motion?2:1,sequence:++sequence,kind};
+    if(axes){if(motion){frame.alpha=axes.alpha;frame.beta=axes.beta;frame.gamma=axes.gamma;}else{frame.x=axes.x;frame.y=axes.y;if(inertial)frame.z=axes.z;}}
     pending=true;pendingKind=kind;lastSend=performance.now();
     if(kind==="touch")lastTouchSend=lastSend;
     if(kind==="orientationArm"||kind==="orientation")lastTiltSend=lastSend;
+    if(inertial&&kind!==inertial.kind+"Release")inertial.last=lastSend;
     syncControls();wait(220);
     try{ws.send(JSON.stringify(frame));}catch{close("Send failed. Request a new invitation.");}
   }
@@ -220,20 +273,34 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const now=performance.now();
     if(mode==="waiting"&&now-waitingSince>=3000){resetMotion("No valid orientation data. Check permission and device support.");}
     if((mode==="active"||mode==="arming")&&now-sampleAt>=250){close("Orientation stopped. Host releases tilt; reconnect explicitly.");return;}
+    for(const s of streams){
+      if(s.mode==="waiting"&&now-s.waiting>=3000)resetInertial(s,"No valid sensor data. Check device support.");
+      if((s.mode==="arming"||s.mode==="active")&&now-s.at>=250){close(s.kind+" stopped. Reconnect explicitly.");return;}
+    }
     if(pending)return;
     // Release takes precedence over new samples; one frame per ACK.
     if(releaseDue){releaseDue=false;send("release");return;}
     if(mode==="releasing"){send("motionRelease");return;}
-    if(mode==="waiting"&&sample&&now-sampleAt<150){
-      neutral={...sample};sentAt=sampleAt;mode="arming";motionStatus.textContent="Calibrating…";send("orientationArm",sample);return;
+    const releasing=streams.find(s=>s.mode==="releasing");
+    if(releasing){send(releasing.kind+"Release");return;}
+    const ready=[];
+    if(pointer!==null&&position&&now-lastTouchSend>=50)ready.push({last:lastTouchSend,run:()=>send("touch",position)});
+    if(mode==="waiting"&&sample&&now-sampleAt<150)ready.push({last:-Infinity,run:()=>{
+      neutral={...sample};sentAt=sampleAt;mode="arming";motionStatus.textContent="Calibrating…";send("orientationArm",sample);
+    }});
+    if(mode==="active"&&sample&&sampleAt>sentAt&&now-lastTiltSend>=50&&now-sampleAt<150)
+      ready.push({last:lastTiltSend,run:()=>{sentAt=sampleAt;send("orientation",sample);}});
+    for(const s of streams){
+      if(s.mode==="waiting"&&s.sample&&now-s.at<150)ready.push({last:-Infinity,run:()=>{
+        s.sent=s.at;s.mode="arming";s.status.textContent="Arming…";send(s.kind+"Arm",s.sample);
+      }});
+      if(s.mode==="active"&&s.sample&&s.at>s.sent&&now-s.last>=50&&now-s.at<150)
+        ready.push({last:s.last,run:()=>{s.sent=s.at;send(s.kind,s.sample);}});
     }
-    const touchDue=pointer!==null&&position&&now-lastTouchSend>=50;
-    const tiltDue=mode==="active"&&sample&&sampleAt>sentAt&&now-lastTiltSend>=50&&now-sampleAt<150;
-    // Oldest serviced eligible stream wins. A steady held touch still needs
-    // refresh; orientation never reuses a stale sample.
-    if(touchDue&&(!tiltDue||lastTouchSend<lastTiltSend)){send("touch",position);return;}
-    if(tiltDue){sentAt=sampleAt;send("orientation",sample);return;}
-    if(pointer===null&&mode!=="active"&&mode!=="arming"&&now-lastSend>=500)send("heartbeat");
+    // One ACK lane, oldest serviced eligible stream wins; ties favor the
+    // later candidate (preserves tilt's initial refresh priority).
+    if(ready.length){ready.reduce((a,b)=>a.last<b.last?a:b).run();return;}
+    if(pointer===null&&mode!=="active"&&mode!=="arming"&&!streams.some(s=>s.mode==="active"||s.mode==="arming")&&now-lastSend>=500)send("heartbeat");
   }
   connect.addEventListener("click",()=>{
     if(ws)return;
@@ -256,7 +323,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       clearDeadline();pending=false;const kind=pendingKind;pendingKind=null;
       if(kind==="orientationArm"&&mode==="arming"){mode="active";motionStatus.textContent="Tilt active. Move gently; release when finished.";}
       if(kind==="motionRelease")resetMotion("Tilt released.");
-      syncControls();if(releaseDue||mode==="releasing")tick();
+      for(const s of streams){
+        if(kind===s.kind+"Arm"&&s.mode==="arming"){s.mode="active";s.status.textContent="Active. Release when finished.";}
+        if(kind===s.kind+"Release")resetInertial(s,"Released.");
+      }
+      syncControls();if(releaseDue||mode==="releasing"||streams.some(s=>s.mode==="releasing"))tick();
     };
     socket.onerror=()=>{key.fill(0);if(ws===socket)close("TLS or connection failed. Do not bypass certificate validation.");};
     socket.onclose=()=>{key.fill(0);if(ws===socket)close("Disconnected. Request a new invitation.");};
@@ -280,7 +351,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   for(const event of ["pointerup","pointercancel","lostpointercapture"])pad.addEventListener(event,lift);
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);
-  function rotated(){if(ws&&mode!=="idle")close("Screen rotated. Reconnect and calibrate again.");}
+  for(const s of streams){s.start.addEventListener("click",()=>startInertial(s));s.stop.addEventListener("click",()=>stopInertial(s));}
+  function rotated(){if(ws&&(mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
   window.addEventListener("orientationchange",rotated);
   if(window.screen&&window.screen.orientation&&typeof window.screen.orientation.addEventListener==="function")window.screen.orientation.addEventListener("change",rotated);
   disconnect.addEventListener("click",()=>close("Disconnected. Host releases owned controls."));
