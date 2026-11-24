@@ -22,8 +22,9 @@ function variant(s,policy){
   R('pointer=null;position=null;dot.hidden=true;releaseDue=true;syncControls();tick();',
     'pointer=null;position=null;dot.hidden=true;if(touchEdges.length>=8){close("Touch input backlog.");return;}touchEdges.push({kind:"release",at:performance.now()});syncControls();tick();');
   R('if(pointer===null&&pedalSentMask===0','if(pointer===null&&!touchEdges.length&&pedalSentMask===0');
-  for(const [q,last] of [["pedalQueue","lastPedalSend"],["pianoQueue","lastPianoSend"],["drumQueue","lastDrumSend"]]){
-    R('ready.push({last:'+last+',run:()=>send','ready.push({last:'+last+',edge:'+q+'[0].at,run:()=>send');
+  for(const [q,last,send] of [["pedalQueue","lastPedalSend","sendPedals"],["pianoQueue","lastPianoSend","sendPiano"],["drumQueue","lastDrumSend","sendDrum"]]){
+    const tail=",run:()=>"+send+"("+q+".shift()";
+    R("ready.push({last:"+last+tail,"ready.push({last:"+last+",edge:"+q+"[0].at"+tail);
   }
   // ACK-driven work conservation; the original 25/50 ms eligibility remains.
   R('syncControls();if(pedalEmergency||pedalQueue.length||pedalDirty||pianoEmergency||pianoQueue.length||drumEmergency||drumQueue.length||releaseDue||mode==="releasing"||streams.some(s=>s.mode==="releasing"))tick();','syncControls();tick();');
