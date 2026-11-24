@@ -624,17 +624,19 @@ final class StudioController: ObservableObject {
     }
 
     private func recordPatchCommands(_ commands: [SensorCommand]) {
+        guard !commands.isEmpty else { return }
+        var attempted: [SensorCommand] = []
         for command in commands {
-            let target = command.destination
-            patchMessages.insert("Ch " + String(target.channel + 1) + " · " + target.kind.rawValue +
-                                 " " + String(target.number) + " → " + String(command.value), at: 0)
+            attempted.append(command)
             if patchMIDIEnabled && !patchLedger.deliver(command, send: { patchMIDI.send($0) }) {
                 stopInstrumentPatch()
                 patchStatus = "MIDI delivery failed. Check DAW and retry Stop."
                 break
             }
         }
-        if patchMessages.count > 24 { patchMessages = Array(patchMessages.prefix(24)) }
+        // Deliver synchronously in the original order, publish the bounded
+        // monitor only once. A failure still includes the attempted command.
+        patchMessages = BuilderCommandMonitor.updated(patchMessages, attempted:attempted)
     }
 
     func stopInstrumentPatch() {
