@@ -32,6 +32,7 @@ final class StudioController: ObservableObject {
     private var chordHaptics: LiveNoteHapticOutput?
     private var chordHapticToken: UUID?
     private var renderGeneration: UInt64 = 0
+    private var engineGeneration: UInt64 = 0
     var chordOwnsHaptics: Bool { chordArmed && chordBank.effectiveOutput.sendsHaptics }
     @Published private(set) var touchBarOutputArmed = false
     @Published private(set) var touchBarOutputStatus = "Optional Trackpad output off"
@@ -570,12 +571,19 @@ final class StudioController: ObservableObject {
         }
     }
 
-    func prepareEngine() {
-        // A reconnect replaces the device and input monitor. Stop the previous
-        // dedicated event thread before replacing its owner, so no stale
-        // filtering tap can survive and interfere with desktop pointer input.
+    private func prepareEngine() {
+        guard !engineReady, !speakerBusy else { return }
+        // Only initialize after the previous session has been retired.
+        engineGeneration &+= 1
+        let generation = engineGeneration
         captureMonitor?.stop()
         captureMonitor = nil
+        driver?.close()
+        playback = nil
+        touch = nil
+        midi = nil
+        systemAudio = nil
+        driver = nil
         do {
             let driver = try HapticTrackpadDriver()
             try driver.open()
@@ -587,7 +595,7 @@ final class StudioController: ObservableObject {
             let capture = PerformanceCaptureMonitor()
             capture.onCaptureChanged = { [weak self] captured in
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, self.engineGeneration == generation else { return }
                     self.pointerCaptured = captured
                     if self.captureArmed || self.touchRunning || self.midiHelperRunning {
                         self.captureStatus = captured
@@ -597,17 +605,26 @@ final class StudioController: ObservableObject {
                 }
             }
             capture.onPanic = { [weak self] in
-                Task { @MainActor in self?.panicStop() }
+                Task { @MainActor in
+                    guard let self, self.engineGeneration == generation else { return }
+                    self.panicStop()
+                }
             }
             capture.onPhysicalClick = { [weak self] down, pressure in
-                Task { @MainActor in self?.handlePhysicalClick(down, pressure: pressure) }
+                Task { @MainActor in
+                    guard let self, self.engineGeneration == generation else { return }
+                    self.handlePhysicalClick(down, pressure: pressure)
+                }
             }
             capture.onPhysicalPressure = { [weak self] pressure in
-                Task { @MainActor in self?.handlePhysicalPressure(pressure) }
+                Task { @MainActor in
+                    guard let self, self.engineGeneration == generation else { return }
+                    self.handlePhysicalPressure(pressure)
+                }
             }
             capture.onMonitorRecovered = { [weak self] in
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, self.engineGeneration == generation else { return }
                     self.pointerCaptured = false
                     // A click-up event may have been lost while the tap timed out.
                     // Release any synthetic sustain state instead of sticking CC64.
@@ -617,7 +634,7 @@ final class StudioController: ObservableObject {
             }
             capture.onMonitorFailed = { [weak self] in
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, self.engineGeneration == generation else { return }
                     // macOS can disable a global event tap while the haptic driver
                     // is still healthy. Never escalate that to a device panic.
                     self.captureMonitor?.stop()
@@ -643,6 +660,7 @@ final class StudioController: ObservableObject {
     }
 
     func panicStop() {
+        engineGeneration &+= 1
         disarmTouchBarOutput()
         disarmChordPads()
         renderGeneration &+= 1
@@ -656,9 +674,12 @@ final class StudioController: ObservableObject {
         clickedSurface = nil
         trackpadClickPressure = nil
         stopSystemAudio()
-        playback?.stop(closeDriver: true)
+        playback?.stop(closeDriver: false)
         touch?.stopPreview()
         midi?.stop()
+        // Terminal revocation drains an in-flight submission and blocks any
+        // late producer or monitoring request on this exact driver instance.
+        driver?.panicStop()
         isPlaying = false
         touchRunning = false
         touchPreviewRunning = false
@@ -685,14 +706,21 @@ final class StudioController: ObservableObject {
     }
 
     func reconnect() {
-        disarmTouchBarOutput()
-        disarmChordPads()
-        renderGeneration &+= 1
-        cancelStartupGreeting()
-        if speakerBusy { stopSystemAudio(); return }
-        driver?.close()
-        driver = nil
-        prepareEngine()
+        // Reconnect is an explicit session reset, never a silent hot swap.
+        // Preserve user settings, but do not auto-resume active performances.
+        panicStop()
+        let generation = engineGeneration
+        if speakerBusy {
+            let pending = speakerTask
+            engineStatus = "Stopping capture before reconnect"
+            Task { [weak self] in
+                await pending?.value
+                guard let self, self.engineGeneration == generation else { return }
+                self.prepareEngine()
+            }
+        } else {
+            prepareEngine()
+        }
     }
 
     /// Once per process, not on every SwiftUI appearance or reconnect.
@@ -858,9 +886,11 @@ final class StudioController: ObservableObject {
         }
 
         do {
+            let generation = engineGeneration
             try touch.startPreview(configuration: monitoringConfiguration) { [weak self] states in
                 Task { @MainActor in
-                    self?.handleSharedSurfaceStates(states)
+                    guard let self, self.engineGeneration == generation, self.touchPreviewRunning else { return }
+                    self.handleSharedSurfaceStates(states)
                 }
             }
             touchPreviewRunning = true
@@ -1032,9 +1062,10 @@ final class StudioController: ObservableObject {
         cancelStartupGreeting()
         guard requireEngine(), let midi else { return }
         do {
+            let generation = engineGeneration
             try midi.start(masterLevel: masterLevel) { [weak self] message in
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, self.engineGeneration == generation, self.midiRunning else { return }
                     self.lastMIDIMessage = "Ch \(message.channel + 1) · Note \(message.note) · Velocity \(message.velocity) · \(message.isNoteOn ? "On" : "Off")"
                     let key = "\(message.channel)-\(message.note)"
                     if message.isNoteOn {
@@ -1577,6 +1608,10 @@ final class StudioController: ObservableObject {
 
     private func requireEngine() -> Bool {
         if engineReady { return true }
+        guard !speakerBusy else {
+            lastError = "Wait for system audio capture to finish stopping."
+            return false
+        }
         prepareEngine()
         return engineReady
     }
