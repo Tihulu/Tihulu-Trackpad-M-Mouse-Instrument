@@ -145,6 +145,9 @@ final class StudioController: ObservableObject {
     @Published var simulatedHingeAngle = 90.0
     @Published var liveHingeEnabled = false
     @Published var hingeSensorStatus = "Hardware sensor OFF · manual simulator available"
+    @Published private(set) var hingeProbeStatus = "Not probed"
+    @Published private(set) var nativeTouchBarItemRequests: UInt64 = 0
+    @Published private(set) var nativeTouchBarInputCount: UInt64 = 0
     @Published var activeMIDINotes: [ActiveMIDINote] = []
     @Published var systemAudioRunning = false
     @Published var systemAudioStarting = false
@@ -329,6 +332,12 @@ final class StudioController: ObservableObject {
                         guard let self, self.patchNativeToken == token, self.patchRunning else { return }
                         self.patchLidDegrees = degrees
                         self.receiveBuilderScalar(.lid, value: PhysicalPatchRuntime.normalizedLid(degrees))
+                    }
+                    sensor.onLoss = { [weak self, weak sensor] reason in
+                        guard let self, let sensor, self.patchHinge === sensor, self.patchNativeToken == token else { return }
+                        self.patchLidDegrees = nil
+                        self.patchLidStatus = reason
+                        self.receiveBuilderScalar(.lid, value: nil)
                     }
                     if !sensor.start() {
                         let reason = sensor.status
@@ -1018,6 +1027,25 @@ final class StudioController: ObservableObject {
         touchBarBridge?.install(profile: touchBarProfile, builderToken: builderBarToken)
     }
 
+    func attachNativeTouchBarToWindow() { touchBarBridge?.attachToKeyWindow() }
+
+    func recordNativeTouchBarItemRequest() { nativeTouchBarItemRequests &+= 1 }
+    func recordNativeTouchBarInput() { nativeTouchBarInputCount &+= 1 }
+
+    /// Explicit reconnect releases the old bar owners before replacing controls.
+    /// No note or MIDI output is armed by this action.
+    func reconnectNativeTouchBar() {
+        releaseTouchBarNotes()
+        midi?.releaseTouchBarControls()
+        touchBarSustainOn = false
+        midi?.releaseTouchBarSustain()
+        if patchNativeBar { receiveBuilderScalar(.touchBar, value: nil) }
+        nativeTouchBarItemRequests = 0
+        nativeTouchBarInputCount = 0
+        if touchBarBridge == nil { installTouchBar() }
+        else { touchBarBridge?.install(profile: touchBarProfile, builderToken: builderBarToken, force: true) }
+    }
+
     func setTouchBarProfile(_ proposed: TouchBarProfile) {
         let next = proposed.normalized()
         guard next != touchBarProfile else { return }
@@ -1252,6 +1280,18 @@ final class StudioController: ObservableObject {
         if touchBarOutputLedger.isEmpty { touchBarOutputStatus = "Optional Trackpad output off" }
     }
 
+    /// An explicit read-only probe never routes a sample to MIDI or haptics.
+    func probeLidSensor() {
+        guard !liveHingeEnabled, patchHinge == nil else {
+            hingeProbeStatus = "Stop live lid input before probing."
+            return
+        }
+        let probe = MacBookHingeAngleSource()
+        let found = probe.start()
+        hingeProbeStatus = (found ? "Read-only probe succeeded · " : "Read-only probe failed · ") + probe.status
+        probe.stop()
+    }
+
     func enableLiveHinge(_ enable: Bool) {
         if enable && patchHinge != nil {
             hingeSensorStatus = "Stop Builder lid input before using independent Tilt."
@@ -1267,14 +1307,25 @@ final class StudioController: ObservableObject {
         }
         guard !liveHingeEnabled else { return }
         let sensor = MacBookHingeAngleSource()
-        sensor.onAngle = { [weak self] degrees in
-            self?.applySimulatedHingeAngle(degrees)
+        hingeSensor = sensor
+        sensor.onAngle = { [weak self, weak sensor] degrees in
+            guard let self, let sensor, self.hingeSensor === sensor else { return }
+            self.applySimulatedHingeAngle(degrees)
+        }
+        sensor.onLoss = { [weak self, weak sensor] reason in
+            guard let self, let sensor, self.hingeSensor === sensor else { return }
+            self.enableLiveHinge(false)
+            if let neutral = self.touchBarProfile.neutralTilt {
+                self.simulatedHingeAngle = neutral.angle
+                self.touchBarValue(neutral.zone, normalized: neutral.value, releaseOnly: true)
+            }
+            self.hingeSensorStatus = reason
         }
         if sensor.start() {
-            hingeSensor = sensor
             liveHingeEnabled = true
             hingeSensorStatus = "Live hardware angle sensor active · MIDI mappings enabled"
         } else {
+            hingeSensor = nil
             hingeSensorStatus = sensor.status
             liveHingeEnabled = false
         }

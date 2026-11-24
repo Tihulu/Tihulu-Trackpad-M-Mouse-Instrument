@@ -247,6 +247,9 @@ struct ContentView: View {
         } message: { _ in
             Text("This changes the instrument and helper drafts, not your sequencer patterns. It will not start a session.")
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            studio.attachNativeTouchBarToWindow()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             studio.releaseChordPads()
             studio.releaseOptionalTouchBarNotes()
@@ -2255,6 +2258,16 @@ private struct TouchBarModeView: View {
                     subtitle: "Customize a native Touch Bar performance surface or use the same MIDI controls on screen while Trackpad and Magic Mouse sessions continue."
                 )
 
+                GroupBox("Native Touch Bar · Connection") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button("Show / Reconnect Native Touch Bar") { studio.reconnectNativeTouchBar() }
+                            .buttonStyle(.borderedProminent)
+                        Text("AppKit item requests: \(studio.nativeTouchBarItemRequests) · Native control callbacks: \(studio.nativeTouchBarInputCount)")
+                            .font(.caption.monospacedDigit())
+                        Text("Bring this Studio window to the front. In macOS Keyboard settings choose App Controls where supported. Reconnect releases existing Touch Bar notes and controls; it does not arm output. Callback counts are not proof of physical hardware.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8)
+                }
                 TouchBarOutputSettings()
                 GroupBox("Touch Bar layout · Customize simultaneous zones") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -2361,6 +2374,8 @@ private struct TouchBarModeView: View {
                             get: { studio.liveHingeEnabled },
                             set: { studio.enableLiveHinge($0) }
                         ))
+                        Button("Probe Lid Sensor (Read Only)") { studio.probeLidSensor() }
+                        Text(studio.hingeProbeStatus).font(.caption.monospacedDigit()).textSelection(.enabled)
                         Text(studio.hingeSensorStatus)
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
