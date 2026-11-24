@@ -6,6 +6,9 @@ public struct PhysicalPatchRuntime: Sendable {
     public static let supportedSignals: Set<SensorSignal> = [.x, .y, .contact, .contactSize]
     public static let timeout = 0.35
     private var router = SensorRouter()
+    private var airDual = AirDualHandPerformance()
+    private var airDualEnabled = false
+    private var airActiveSlot: Int?
     private var supported: Set<SensorSource> = []
     private var sessions: [SensorSource: UUID] = [:]
     private var seen: [SensorSource: Double] = [:]
@@ -51,7 +54,7 @@ public struct PhysicalPatchRuntime: Sendable {
             case .trackpad, .magicMouse: return supportedSignals.contains($0.signal)
             case .lid: return $0.signal == .angle
             case .touchBar: return $0.signal == .x
-            case .camera: return [.x,.y,.gesture,.contact].contains($0.signal)
+            case .camera: return [.x,.y,.gesture,.contact].contains($0.signal) || AirDualHandPerformance.signals.contains($0.signal)
             case .phone, .tablet:
                 guard allowRemote else { return false }
                 if [.x,.y,.contact].contains($0.signal) { return true }
@@ -75,6 +78,9 @@ public struct PhysicalPatchRuntime: Sendable {
             }
         }
         try router.configure(patch.routes)
+        airDual = AirDualHandPerformance()
+        airActiveSlot = nil
+        airDualEnabled = patch.routes.contains { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) }
         mappingProjections = projections
         supported = Set(patch.routes.map(\.source))
         touchSources = Set(patch.routes.filter { [.x,.y,.contact].contains($0.signal) }.map(\.source))
@@ -164,6 +170,37 @@ public struct PhysicalPatchRuntime: Sendable {
                                           sequence: sequence, timestamp: hostTime), now: hostTime)
         }
         return result
+    }
+
+    /// Dual-hand frames use the same session, router and output ledger as
+    /// single-hand camera input. No additional reserved session is consumed.
+    public mutating func receiveDualHand(count: Int?, confidence: Double,
+                                         helper: AirHandSample?, hostTime: Double,
+                                         now: Double) -> [SensorCommand] {
+        guard airDualEnabled else { return [] }
+        guard hostTime.isFinite, now.isFinite, hostTime >= 0, hostTime <= now,
+              now - hostTime < 0.25, hostTime > (seen[.camera] ?? -1)
+        else { airDual.reset(); airActiveSlot = nil; return disconnect(.camera) }
+        let slot = airDual.receive(count: count, confidence: confidence, helper: helper,
+                                   time: hostTime, now: now)
+        // Only live pinched chords own notes or helper controls.
+        guard let slot, let helper else {
+            seen[.camera] = hostTime
+            airActiveSlot = nil
+            return disconnect(.camera)
+        }
+        var commands = receiveHand(helper, hostTime: hostTime, now: now)
+        guard let session = sessions[.camera] else { airDual.reset(); airActiveSlot = nil; return commands }
+        if airActiveSlot != slot {
+            if let old = airActiveSlot {
+                commands += router.releaseSignal(session: session, signal: AirDualHandPerformance.signals[old - 1])
+            }
+            sequence &+= 1
+            commands += router.ingest(.init(session: session, signal: AirDualHandPerformance.signals[slot - 1],
+                                            value: 1, sequence: sequence, timestamp: hostTime), now: hostTime)
+            airActiveSlot = slot
+        }
+        return commands
     }
 
     /// Host-only API: a future transport must bind returned IDs to connections.
@@ -464,6 +501,18 @@ public struct PhysicalPatchRuntime: Sendable {
 
     public mutating func expire(now: Double) -> [SensorCommand] {
         guard now.isFinite else { return [] }
+        if airDualEnabled, let last = seen[.camera], now - last >= 0.25 {
+            airDual.reset(); airActiveSlot = nil
+            // The existing 350 ms generic deadline is not extended.
+            var commands = disconnect(.camera)
+            // Continue expiring the other devices in the same watchdog call.
+            commands += expireRemaining(now: now)
+            return commands
+        }
+        return expireRemaining(now: now)
+    }
+
+    private mutating func expireRemaining(now: Double) -> [SensorCommand] {
         let stale = sessions.keys.filter { now - (seen[$0] ?? 0) >= Self.timeout }
             .sorted { $0.rawValue < $1.rawValue }
         var removed: Set<UUID> = []
@@ -490,6 +539,7 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     public mutating func stop() -> [SensorCommand] {
+        airDual = AirDualHandPerformance(); airDualEnabled = false; airActiveSlot = nil
         sessions = [:]
         seen = [:]
         supported = []
