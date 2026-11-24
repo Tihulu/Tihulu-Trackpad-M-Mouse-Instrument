@@ -1,0 +1,7 @@
+# R8a — mobile pedalboard host core
+
+Six explicitly mapped logical controls: expression (CC11), volume (CC7), wah/filter (CC74), sustain (CC64), two general-purpose switches (CC80/81), channel 1 defaults. These are MIDI targets, not built-in audio processing or guaranteed DAW effect assignments. Host routes are editable; continuous routes reuse range, calibration, smoothing and release policies. Binary CC switches require exact identity calibration, no smoothing/range override and zero neutral. Sustain is an owned gate.
+
+V6 pedalboard snapshot contains a 6-bit active mask and exactly six finite normalized levels. Inactive slots must be zero; active binary slots exactly one. Zero mask disconnects only the pedal session. A separate 350 ms freshness guard and existing authenticated sequence/ACK/rate limits apply. Other streams cannot mask stalled pedal input; malformed/unmapped snapshots close and release all peer owners. Shared sustain and CC ownership use existing arbitration. Expression/volume release to 127 by default, wah and switches to zero, configurable continuous release where consistent across owners. No direct MIDI bytes, program change, arbitrary note injection or audio engine.
+
+Host preset factory and four Swift scenarios added. Browser UI, explicit activation, switch toggle UX, capability negotiation and physical acceptance remain future work. Existing session and route caps still apply. Stable untouched.

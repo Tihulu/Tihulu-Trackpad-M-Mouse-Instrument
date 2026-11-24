@@ -14,6 +14,7 @@ public enum SensorSignal: String, Codable, CaseIterable, Sendable {
     case pianoKey9, pianoKey10, pianoKey11, pianoKey12, pianoKey13, pianoKey14, pianoKey15, pianoKey16, pianoKey17
     case pianoKey18, pianoKey19, pianoKey20, pianoKey21, pianoKey22, pianoKey23, pianoKey24
     case pianoSustain
+    case pedalExpression, pedalVolume, pedalWah, pedalSustain, pedalSwitch1, pedalSwitch2
 }
 
 public struct SensorCalibration: Codable, Equatable, Sendable {
