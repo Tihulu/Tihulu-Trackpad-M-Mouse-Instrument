@@ -10,6 +10,10 @@ public enum SensorSignal: String, Codable, CaseIterable, Sendable {
     case x, y, contact, contactSize, pressure, angle, speed, gesture, expression
     case tiltYaw, tiltPitch, tiltRoll, accelerationMagnitude, rotationMagnitude, airStrike
     case drumPad1, drumPad2, drumPad3, drumPad4, drumPad5, drumPad6, drumPad7, drumPad8
+    case pianoKey0, pianoKey1, pianoKey2, pianoKey3, pianoKey4, pianoKey5, pianoKey6, pianoKey7, pianoKey8
+    case pianoKey9, pianoKey10, pianoKey11, pianoKey12, pianoKey13, pianoKey14, pianoKey15, pianoKey16, pianoKey17
+    case pianoKey18, pianoKey19, pianoKey20, pianoKey21, pianoKey22, pianoKey23, pianoKey24
+    case pianoSustain
 }
 
 public struct SensorCalibration: Codable, Equatable, Sendable {
