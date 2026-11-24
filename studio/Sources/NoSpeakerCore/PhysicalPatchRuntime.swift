@@ -10,26 +10,34 @@ public struct PhysicalPatchRuntime: Sendable {
     private var sessions: [SensorSource: UUID] = [:]
     private var seen: [SensorSource: Double] = [:]
     private var sequence: UInt64 = 0
+    private var remoteEnabled = false
+    private var pairing = RemotePairingGate()
+    private var remotePeers: [UUID: RemoteTouchPeer] = [:]
+    public static let maximumRemotePeers = 4
+    public var remotePeerIDs: Set<UUID> { Set(remotePeers.keys) }
 
     public init() {}
     public var activeSources: Set<SensorSource> { Set(sessions.keys) }
 
-    public static func supports(_ patch: InstrumentPatch) -> Bool {
+    public static func supports(_ patch: InstrumentPatch, allowRemote: Bool = false) -> Bool {
         patch.isValid && !patch.routes.isEmpty && patch.routes.allSatisfy {
             switch $0.source {
             case .trackpad, .magicMouse: return supportedSignals.contains($0.signal)
             case .lid: return $0.signal == .angle
             case .touchBar: return $0.signal == .x
             case .camera: return [.x,.y,.gesture,.contact].contains($0.signal)
+            case .phone, .tablet: return allowRemote && [.x,.y,.contact].contains($0.signal)
             default: return false
             }
         }
     }
 
-    public mutating func configure(_ patch: InstrumentPatch) throws {
-        guard sessions.isEmpty, Self.supports(patch) else { throw SensorRouterError.invalidMappings }
+    public mutating func configure(_ patch: InstrumentPatch, allowRemote: Bool = false) throws {
+        guard sessions.isEmpty, remotePeers.isEmpty, Self.supports(patch, allowRemote: allowRemote) else { throw SensorRouterError.invalidMappings }
         try router.configure(patch.routes)
         supported = Set(patch.routes.map(\.source))
+        remoteEnabled = allowRemote
+        pairing.clear()
         seen = [:]
         sequence = 0
     }
@@ -38,7 +46,7 @@ public struct PhysicalPatchRuntime: Sendable {
     /// An empty frame or invalid sample releases the entire physical source.
     public mutating func receive(source: SensorSource, x: Double?, y: Double?, size: Double?,
                                  hostTime: Double, now: Double) -> [SensorCommand] {
-        guard supported.contains(source), hostTime.isFinite, now.isFinite,
+        guard (source == .trackpad || source == .magicMouse), supported.contains(source), hostTime.isFinite, now.isFinite,
               hostTime >= 0, hostTime <= now, now - hostTime < Self.timeout,
               hostTime >= (seen[source] ?? 0) else { return [] }
         seen[source] = hostTime
@@ -101,11 +109,66 @@ public struct PhysicalPatchRuntime: Sendable {
         return result
     }
 
+    /// Host-only API: a future transport must bind returned IDs to connections.
+    public mutating func issueRemotePairing(secret: Data, source: SensorSource, now: Double) throws {
+        guard remoteEnabled, supported.contains(source), source == .phone || source == .tablet
+        else { throw RemoteTouchError.unavailable }
+        try pairing.issue(secret: secret, source: source, now: now)
+    }
+
+    public mutating func admitRemote(secret: Data, now: Double) throws -> UUID {
+        guard remoteEnabled else { throw RemoteTouchError.unavailable }
+        guard remotePeers.count < Self.maximumRemotePeers else { throw RemoteTouchError.capacity }
+        let source = try pairing.consume(secret: secret, now: now)
+        guard supported.contains(source) else { throw RemoteTouchError.unavailable }
+        let id = UUID()
+        remotePeers[id] = RemoteTouchPeer(source: source, now: now)
+        return id
+    }
+
+    public mutating func receiveRemote(_ id: UUID, bytes: Data, now: Double) -> RemoteTouchResult {
+        guard var peer = remotePeers[id], remoteEnabled else { return .close([]) }
+        guard let frame = try? RemoteTouchFrame.read(bytes), peer.accept(frame, now: now)
+        else { return .close(revokeRemote(id)) }
+        switch frame.kind {
+        case .heartbeat:
+            remotePeers[id] = peer
+            return .accepted([])
+        case .release:
+            let commands = peer.routerSession.map { router.disconnect($0) } ?? []
+            peer.routerSession = nil
+            remotePeers[id] = peer
+            return .accepted(commands)
+        case .touch:
+            if peer.routerSession == nil { peer.routerSession = try? router.connect(peer.source, now: now) }
+            guard let session = peer.routerSession, let x = frame.x, let y = frame.y
+            else { return .close(revokeRemote(id)) }
+            remotePeers[id] = peer
+            var commands: [SensorCommand] = []
+            for (signal, value): (SensorSignal, Double) in [(.x,x),(.y,y),(.contact,1)] {
+                sequence &+= 1
+                commands += router.ingest(.init(session: session, signal: signal, value: value,
+                                                sequence: sequence, timestamp: now), now: now)
+            }
+            return .accepted(commands)
+        }
+    }
+
+    public mutating func revokeRemote(_ id: UUID) -> [SensorCommand] {
+        guard let peer = remotePeers.removeValue(forKey: id),
+              let session = peer.routerSession else { return [] }
+        return router.disconnect(session)
+    }
+
     public mutating func expire(now: Double) -> [SensorCommand] {
         guard now.isFinite else { return [] }
         let stale = sessions.keys.filter { now - (seen[$0] ?? 0) >= Self.timeout }
             .sorted { $0.rawValue < $1.rawValue }
-        return stale.flatMap { disconnect($0) }
+        var commands = stale.flatMap { disconnect($0) }
+        let expiredPeers = remotePeers.filter { $0.value.expired(now: now) }.map(\.key)
+            .sorted { $0.uuidString < $1.uuidString }
+        for id in expiredPeers { commands += revokeRemote(id) }
+        return commands
     }
 
     private mutating func disconnect(_ source: SensorSource) -> [SensorCommand] {
@@ -117,6 +180,9 @@ public struct PhysicalPatchRuntime: Sendable {
         sessions = [:]
         seen = [:]
         supported = []
+        remoteEnabled = false
+        pairing.clear()
+        remotePeers = [:]
         return router.panic()
     }
 }
