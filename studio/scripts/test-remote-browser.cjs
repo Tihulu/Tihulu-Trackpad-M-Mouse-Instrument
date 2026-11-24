@@ -296,3 +296,35 @@ test("manifest rejects duplicate decoded names including escapes",()=>{
     const a=setup("granted",bad);assert.equal(a.socket.closed,true);assert.equal(a.elements.touchSection.hidden,true);
   }
 });
+
+function xyEvent(id,x=25,y=25){return {pointerId:id,button:0,clientX:x,clientY:y,preventDefault(){}};}
+test("short XY tap survives outstanding piano ACK in order",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.pad.emit("pointerdown",xyEvent(2));a.elements.pad.emit("pointerup",xyEvent(2));
+  assert.equal(a.socket.frames.length,1);a.ack();
+  assert.equal(a.socket.frames.at(-1).kind,"touch");assert.equal(a.socket.frames.at(-1).x,0.25);a.ack();
+  assert.equal(a.socket.frames.at(-1).kind,"release");a.ack();
+  assert.equal(a.socket.closed,undefined);
+});
+test("rapid XY taps retain ordered onsets and releases",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
+  for(const id of [2,3]){a.elements.pad.emit("pointerdown",xyEvent(id,id*10));a.elements.pad.emit("pointerup",xyEvent(id));}
+  for(let i=0;i<5;i++)a.ack();
+  assert.deepEqual(a.socket.frames.map(f=>f.kind),["pianoKeys","touch","release","touch","release"]);
+  assert.equal(a.socket.frames[1].x,0.2);assert.equal(a.socket.frames[3].x,0.3);
+});
+test("stale queued XY edge closes rather than replaying delayed onset",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.pad.emit("pointerdown",xyEvent(2));a.elements.pad.emit("pointerup",xyEvent(2));
+  a.step(150);assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("XY cancel discards queued onset and closes fail safe",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.pad.emit("pointerdown",xyEvent(2));a.elements.pad.emit("pointercancel",xyEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("XY queue overflow closes without playing stale taps",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
+  for(let id=2;id<=6;id++){a.elements.pad.emit("pointerdown",xyEvent(id));a.elements.pad.emit("pointerup",xyEvent(id));}
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});

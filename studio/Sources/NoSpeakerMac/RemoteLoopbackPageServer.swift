@@ -190,10 +190,17 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 (() => {
   const get = id => document.getElementById(id);
   const pad=get("pad"), dot=get("dot"), secret=get("secret"), connect=get("connect"), disconnect=get("disconnect"), status=get("status");
-  let ws=null, admitted=false, pending=false, sequence=0, pointer=null, position=null, releaseDue=false, timer=null, deadline=null, lastSend=0;
+  let ws=null, admitted=false, pending=false, sequence=0, pointer=null, position=null, timer=null, deadline=null, lastSend=0;
   const motionStart=get("motionStart"), motionStop=get("motionStop"), meter=get("tiltMeter"), motionStatus=get("motionStatus");
   let mode="idle", sample=null, neutral=null, sampleAt=0, sentAt=-1, permissionEpoch=0, waitingSince=0, pendingKind=null;
   let lastTouchSend=-Infinity,lastTiltSend=-Infinity;
+  let touchQueue=[],touchSent=false;
+  function touchBusy(){return pointer!==null||touchQueue.length!==0||touchSent||pendingKind==="touch"||pendingKind==="release";}
+  function queueTouch(kind,axes){
+    if(touchQueue.length>=8){close("Touch input backlog. Reconnect explicitly.");return;}
+    touchQueue.push({kind,axes,at:performance.now()});tick();
+  }
+  function sendTouchEdge(){const edge=touchQueue.shift();send(edge.kind,edge.axes);}
   let caps=null;
   const manifestFields=["kind","version","touch","tilt","acceleration","rotation","airDrums","drums","piano","pedals"];
   const has=(group,index)=>Boolean(caps&&(caps[group]&(1<<index)));
@@ -439,7 +446,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
-    const old=ws;ws=null;admitted=false;caps=null;pending=false;sequence=0;pointer=null;position=null;releaseDue=false;
+    const old=ws;ws=null;admitted=false;caps=null;pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
     clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
@@ -459,7 +466,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(drum){lastDrumSend=lastSend;drumSent=axes.mask;}
     if(piano){lastPianoSend=lastSend;pianoSent=axes.mask;}
     if(pedals){lastPedalSend=lastSend;pedalSentMask=axes.mask;}
-    if(kind==="touch")lastTouchSend=lastSend;
+    if(kind==="touch"){lastTouchSend=lastSend;touchSent=true;}
+    if(kind==="release")touchSent=false;
     if(kind==="orientationArm"||kind==="orientation")lastTiltSend=lastSend;
     if(inertial&&kind!==inertial.kind+"Release")inertial.last=lastSend;
     syncControls();wait(220);
@@ -474,6 +482,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if(s.mode==="waiting"&&now-s.waiting>=3000)resetInertial(s,"No valid sensor data. Check device support.");
       if((s.mode==="arming"||s.mode==="active")&&now-s.at>=250){close(s.kind+" stopped. Reconnect explicitly.");return;}
     }
+    if(touchQueue.length&&now-touchQueue[0].at>=150){close("Touch input delayed. Reconnect explicitly.");return;}
     if(drumQueue.length&&now-drumQueue[0].at>=150){close("Drum input delayed. Reconnect explicitly.");return;}
     if(pianoQueue.length&&now-pianoQueue[0].at>=150){close("Piano input delayed. Reconnect explicitly.");return;}
     if(pedalQueue.length&&now-pedalQueue[0].at>=150){close("Pedal input delayed. Reconnect explicitly.");return;}
@@ -482,7 +491,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(pedalEmergency){pedalEmergency=false;sendPedals({mask:0,levels:[0,0,0,0,0,0]});return;}
     if(pianoEmergency){pianoEmergency=false;sendPiano(0);return;}
     if(drumEmergency){drumEmergency=false;sendDrum(0);return;}
-    if(releaseDue){releaseDue=false;send("release");return;}
+    if(touchQueue[0]?.kind==="release"){sendTouchEdge();return;}
     if(mode==="releasing"){send("motionRelease");return;}
     const releasing=streams.find(s=>s.mode==="releasing");
     if(releasing){send(releasing.kind+"Release");return;}
@@ -493,7 +502,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     else if(pianoSent!==0&&!pianoQueue.length&&now-lastPianoSend>=50)ready.push({last:lastPianoSend,run:()=>sendPiano(pianoSent)});
     if(drumQueue.length&&now-lastDrumSend>=25)ready.push({last:lastDrumSend,run:()=>sendDrum(drumQueue.shift().mask)});
     else if(drumSent!==0&&!drumQueue.length&&now-lastDrumSend>=50)ready.push({last:lastDrumSend,run:()=>sendDrum(drumSent)});
-    if(pointer!==null&&position&&now-lastTouchSend>=50)ready.push({last:lastTouchSend,run:()=>send("touch",position)});
+    if(touchQueue.length)ready.push({last:lastTouchSend,run:sendTouchEdge});
+    else if(pointer!==null&&position&&touchSent&&now-lastTouchSend>=50)ready.push({last:lastTouchSend,run:()=>send("touch",position)});
     if(mode==="waiting"&&sample&&now-sampleAt<150)ready.push({last:-Infinity,run:()=>{
       neutral={...sample};sentAt=sampleAt;mode="arming";motionStatus.textContent="Calibrating…";send("orientationArm",sample);
     }});
@@ -509,7 +519,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     // One ACK lane, oldest serviced eligible stream wins; ties favor the
     // later candidate (preserves tilt's initial refresh priority).
     if(ready.length){ready.reduce((a,b)=>a.last<b.last?a:b).run();return;}
-    if(pointer===null&&pedalSentMask===0&&!pedalQueue.length&&pianoSent===0&&!pianoQueue.length&&drumSent===0&&!drumQueue.length&&mode!=="active"&&mode!=="arming"&&!streams.some(s=>s.mode==="active"||s.mode==="arming")&&now-lastSend>=500)send("heartbeat");
+    if(!touchBusy()&&pedalSentMask===0&&!pedalQueue.length&&pianoSent===0&&!pianoQueue.length&&drumSent===0&&!drumQueue.length&&mode!=="active"&&mode!=="arming"&&!streams.some(s=>s.mode==="active"||s.mode==="arming")&&now-lastSend>=500)send("heartbeat");
   }
   connect.addEventListener("click",()=>{
     if(ws)return;
@@ -544,28 +554,32 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         if(kind===s.kind+"Arm"&&s.mode==="arming"){s.mode="active";s.status.textContent="Active. Release when finished.";}
         if(kind===s.kind+"Release")resetInertial(s,"Released.");
       }
-      syncControls();if(pedalEmergency||pedalQueue.length||pedalDirty||pianoEmergency||pianoQueue.length||drumEmergency||drumQueue.length||releaseDue||mode==="releasing"||streams.some(s=>s.mode==="releasing"))tick();
+      syncControls();if(pedalEmergency||pedalQueue.length||pedalDirty||pianoEmergency||pianoQueue.length||drumEmergency||drumQueue.length||touchQueue.length||mode==="releasing"||streams.some(s=>s.mode==="releasing"))tick();
     };
     socket.onerror=()=>{key.fill(0);if(ws===socket)close("TLS or connection failed. Do not bypass certificate validation.");};
     socket.onclose=()=>{key.fill(0);if(ws===socket)close("Disconnected. Request a new invitation.");};
   });
   function move(e){
-    const rect=pad.getBoundingClientRect();if(!rect.width||!rect.height)return;
+    const rect=pad.getBoundingClientRect();
+    if(![rect.width,rect.height,rect.left,rect.top,e.clientX,e.clientY].every(Number.isFinite)||rect.width<=0||rect.height<=0){close("Invalid touch geometry. Reconnect explicitly.");return false;}
     const clamp=v=>Math.max(0,Math.min(1,v));
     position={x:clamp((e.clientX-rect.left)/rect.width),y:1-clamp((e.clientY-rect.top)/rect.height)};
-    dot.hidden=false;dot.style.left=(position.x*100)+"%";dot.style.top=((1-position.y)*100)+"%";
+    dot.hidden=false;dot.style.left=(position.x*100)+"%";dot.style.top=((1-position.y)*100)+"%";return true;
   }
   pad.addEventListener("pointerdown",e=>{
-    if(!admitted||!caps?.touch||pointer!==null||releaseDue||e.button!==0)return;
+    if(!admitted||!caps?.touch||pointer!==null||e.button!==0)return;
     e.preventDefault();pointer=e.pointerId;try{pad.setPointerCapture(pointer);}catch{close("Pointer capture failed.");return;}
-    lastTouchSend=-Infinity;move(e);syncControls();tick();
+    if(!move(e))return;syncControls();queueTouch("touch",{...position});
   });
   pad.addEventListener("pointermove",e=>{if(e.pointerId===pointer){e.preventDefault();move(e);}});
   function lift(e){
     if(e.pointerId!==pointer)return;
-    pointer=null;position=null;dot.hidden=true;releaseDue=true;syncControls();tick();
+    pointer=null;position=null;dot.hidden=true;syncControls();queueTouch("release");
   }
-  for(const event of ["pointerup","pointercancel","lostpointercapture"])pad.addEventListener(event,lift);
+  pad.addEventListener("pointerup",lift);
+  // Cancellation is not a completed musical tap: discard unsent edges and
+  // let host disconnect/watchdog release already delivered owners.
+  for(const event of ["pointercancel","lostpointercapture"])pad.addEventListener(event,e=>{if(e.pointerId===pointer)close("Touch cancelled. Reconnect explicitly.");});
   drumEnable.addEventListener("click",()=>{
     if(!admitted||!caps?.drums)return;
     drumEnabled=!drumEnabled;
@@ -619,7 +633,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);
   for(const s of streams){s.start.addEventListener("click",()=>startInertial(s));s.stop.addEventListener("click",()=>stopInertial(s));}
-  function rotated(){if(ws&&(pedalBusy()||pianoBusy()||drumDesired!==0||drumSent!==0||drumQueue.length||mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
+  function rotated(){if(ws&&(touchBusy()||pedalBusy()||pianoBusy()||drumDesired!==0||drumSent!==0||drumQueue.length||mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
   window.addEventListener("orientationchange",rotated);
   if(window.screen&&window.screen.orientation&&typeof window.screen.orientation.addEventListener==="function")window.screen.orientation.addEventListener("change",rotated);
   disconnect.addEventListener("click",()=>close("Disconnected. Host releases owned controls."));
