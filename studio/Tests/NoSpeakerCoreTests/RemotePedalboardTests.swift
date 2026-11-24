@@ -3,7 +3,7 @@ import Testing
 @testable import NoSpeakerCore
 
 private func pedals(_ sequence: Int, _ mask: Int, _ levels: [Double], version: Int = 6) -> Data {
-    Data("{\"version\":\(version),\"sequence\":\(sequence),\"kind\":\"pedalboard\",\"mask\":\(mask),\"levels\":[\(levels.map { String($0) }.joined(separator: ","))]}".utf8)
+    Data("{\"version\":\(version),\"sequence\":\(sequence),\"kind\":\"pedalboard\",\"mask\":\(mask),\"levels\":[\(levels.map { $0 == 0 ? "0" : $0 == 1 ? "1" : String($0) }.joined(separator: ","))]}".utf8)
 }
 private func pedalPair(_ runtime: inout PhysicalPatchRuntime, routes: [SensorMapping] = RemotePedalboard.routes()) throws -> UUID {
     try runtime.configure(.init(routes: routes), allowRemote: true)

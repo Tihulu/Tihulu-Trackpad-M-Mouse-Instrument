@@ -35,3 +35,29 @@ import Testing
     #expect(runtime.receiveRemote(id,bytes:touch,now:1.2) == .close([]))
     #expect(runtime.remotePeerIDs.isEmpty)
 }
+
+
+@Test func remoteDiscreteTokensAreExactAndBOMRejected() throws {
+    let invalid = [
+        #"{"version":7,"sequence":1.00000000000000000001,"kind":"capabilities"}"#,
+        #"{"version":7.0,"sequence":1,"kind":"capabilities"}"#,
+        #"{"version":7,"sequence":1e0,"kind":"capabilities"}"#,
+        #"{"version":4,"sequence":1,"kind":"drumPads","mask":254.999999999999999999}"#,
+        #"{"version":4,"sequence":1,"kind":"drumPads","mask":-0}"#,
+        #"{"version":5,"sequence":1,"kind":"pianoKeys","mask":1e0}"#,
+        #"{"version":6,"sequence":1,"kind":"pedalboard","mask":8,"levels":[0,0,0,0.999999999999999999,0,0]}"#,
+        #"{"version":6,"sequence":1,"kind":"pedalboard","mask":1,"levels":[0.5,0.0,0,0,0,0]}"#,
+        #"{"version":6,"sequence":1,"kind":"pedalboard","mask":8,"levels":[0,0,0,1e0,0,0]}"#
+    ]
+    for value in invalid {
+        #expect(throws: RemoteTouchError.invalidFrame) { try RemoteTouchFrame.read(Data(value.utf8)) }
+    }
+    let good = #"{"version":7,"sequence":1,"kind":"capabilities"}"#
+    #expect(throws: RemoteTouchError.invalidFrame) {
+        try RemoteTouchFrame.read(Data([0xef,0xbb,0xbf]) + Data(good.utf8))
+    }
+    let continuous = #"{"version":6,"sequence":1,"kind":"pedalboard","levels":[5e-1,0,0,1,0,0],"mask":9}"#
+    #expect(try RemoteTouchFrame.read(Data(continuous.utf8)).mask == 9)
+    let rounded = #"{"version":1,"sequence":1,"kind":"touch","x":1.00000000000000000001,"y":5e-1}"#
+    #expect(try RemoteTouchFrame.read(Data(rounded.utf8)).x == 1)
+}
