@@ -59,3 +59,49 @@ private func mappingFixture() -> InstrumentPatch {
     #expect(collected == projection.rows)
     #expect(throws:RemoteTouchError.invalidFrame) { try projection.page(8,sequence:1,detail:true) }
 }
+
+
+@Test func mappingConsentCancelledExpiredAndReplacedInvitationDoesNotLeak() throws {
+    var runtime = PhysicalPatchRuntime()
+    try runtime.configure(mappingFixture(),allowRemote:true)
+    let old = Data(repeating:51,count:32), fresh = Data(repeating:52,count:32)
+    try runtime.issueRemotePairing(secret:old,source:.phone,now:1,mappingDetails:true)
+    runtime.cancelRemotePairing()
+    #expect(throws:RemoteTouchError.invalidPairing) { try runtime.admitRemote(secret:old,now:1.1) }
+    try runtime.issueRemotePairing(secret:old,source:.phone,now:2,mappingDetails:true)
+    #expect(throws:RemoteTouchError.invalidPairing) { try runtime.admitRemote(secret:old,now:62) }
+    try runtime.issueRemotePairing(secret:old,source:.phone,now:63,mappingDetails:true)
+    try runtime.issueRemotePairing(secret:fresh,source:.tablet,now:63.1)
+    #expect(throws:RemoteTouchError.invalidPairing) { try runtime.admitRemote(secret:old,now:63.2) }
+    let peer = try runtime.admitRemote(secret:fresh,now:63.3)
+    let page = try runtime.remoteMappingPage(peer,page:0,sequence:2)
+    #expect(!page.detail && page.rows.isEmpty && page.total == 0)
+    #expect(runtime.remoteCapabilities(peer)?.drums == 1)
+}
+
+@Test func mappingConsentBridgeDefaultAndExplicitAreSeparate() throws {
+    var runtime = PhysicalPatchRuntime()
+    try runtime.configure(mappingFixture(),allowRemote:true)
+    var bridge = RemoteHostBridge()
+    _ = bridge.process([.ready],now:1,runtime:&runtime)
+    let key = Data(repeating:41,count:32)
+    let first = UUID(), second = UUID()
+    try bridge.issue(secret:key,source:.phone,now:1,runtime:&runtime,mappingDetails:true)
+    _ = bridge.process([.invitation(first,key,1)],now:1,runtime:&runtime)
+    try bridge.issue(secret:key,source:.phone,now:1.1,runtime:&runtime)
+    _ = bridge.process([.invitation(second,key,1.1)],now:1.1,runtime:&runtime)
+    let caps = Data(#"{"version":7,"sequence":1,"kind":"capabilities"}"#.utf8)
+    let query = Data(#"{"version":8,"sequence":2,"kind":"mapping","page":0}"#.utf8)
+    _ = bridge.process([.frame(first,caps,1.2),.frame(second,caps,1.2)],now:1.2,runtime:&runtime)
+    let result = bridge.process([.frame(first,query,1.3),.frame(second,query,1.3)],now:1.3,runtime:&runtime)
+    #expect(result.commands.isEmpty)
+    #expect(result.actions.count == 2)
+    if case .mapping(let id,let page) = result.actions.first {
+        #expect(id == first && page.detail && page.total == 2)
+    } else { Issue.record("Expected explicit detail response") }
+    if case .mapping(let id,let page) = result.actions.last {
+        #expect(id == second && !page.detail && page.total == 0 && page.rows.isEmpty)
+    } else { Issue.record("Expected withheld response") }
+    _ = bridge.revoke(first,runtime:&runtime)
+    #expect(bridge.connectionIDs == [second])
+}

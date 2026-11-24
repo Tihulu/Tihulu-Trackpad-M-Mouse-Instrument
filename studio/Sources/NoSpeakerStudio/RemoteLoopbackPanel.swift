@@ -14,6 +14,8 @@ struct RemoteLoopbackPanel: View {
     @State private var source: SensorSource = .phone
     @State private var message = ""
     @State private var invitation = ""
+    @State private var shareMappingDetails = false
+    @State private var invitationSharesMapping = false
     @State private var lan = false
     @State private var lanChoices: [RemoteLANChoice] = []
     @State private var selectedLAN: String?
@@ -109,11 +111,17 @@ struct RemoteLoopbackPanel: View {
                             Text("Scan the page address on your phone. Enter the separate invitation; QR contains no secret.").font(.caption)
                         }
                     }
+                    Toggle("Share MIDI destination details with this invitation", isOn: $shareMappingDetails)
+                        .disabled(!invitation.isEmpty || !studio.patchRemoteReady || !studio.patchRemotePageReady || studio.patchRemoteProbeRunning || !sources.contains(source))
+                    Text("Off by default. If enabled, the paired device can read its mapped MIDI channels, notes and controls. Other device mappings and patch names are not shared. Disconnect the peer to withdraw access; already disclosed information cannot be recalled.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Button("Create one-time browser invitation") {
+                        let consent = shareMappingDetails
                         clearInvitation()
                         do {
-                            invitation = try studio.issueBuilderRemoteInvitation(source: source)
+                            invitation = try studio.issueBuilderRemoteInvitation(source: source, mappingDetails: consent)
                                 .map { String(format: "%02x", $0) }.joined()
+                            invitationSharesMapping = consent
                             clearTask = Task {
                                 do { try await Task.sleep(for: .seconds(60)) } catch { return }
                                 clearInvitation()
@@ -121,6 +129,8 @@ struct RemoteLoopbackPanel: View {
                         } catch { message = "Could not create invitation." }
                     }.disabled(!studio.patchRemoteReady || !studio.patchRemotePageReady || studio.patchRemoteProbeRunning || !sources.contains(source))
                     if !invitation.isEmpty {
+                        Text(invitationSharesMapping ? "This invitation shares MIDI destination details." : "This invitation keeps MIDI destination details hidden.")
+                            .font(.caption)
                         Text(invitation).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                         Text("Enter into the controller page within 60 seconds. Treat this invitation as a password.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -139,6 +149,7 @@ struct RemoteLoopbackPanel: View {
         }.onDisappear { clearInvitation() }
         .onChange(of: studio.patchRunning) { running in if !running { clearInvitation() } }
         .onChange(of: studio.patchRemotePeers) { _ in if !invitation.isEmpty { clearInvitation() } }
+        .onChange(of: source) { _ in clearInvitation() }
         .onAppear {
             if !sources.contains(source), let first = sources.first { source = first }
         }.onChange(of: sources) { available in
@@ -158,6 +169,8 @@ struct RemoteLoopbackPanel: View {
     private func clearInvitation() {
         clearTask?.cancel(); clearTask = nil
         invitation = ""
+        shareMappingDetails = false
+        invitationSharesMapping = false
         studio.cancelBuilderRemoteInvitation()
     }
 }
