@@ -86,6 +86,20 @@ struct InstrumentBuilderView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8).disabled(studio.patchRunning)
                 }
+                GroupBox("Mobile Pedalboard") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Picker("Device", selection: $drumSource) {
+                                Text("Phone").tag(SensorSource.phone)
+                                Text("Tablet").tag(SensorSource.tablet)
+                            }
+                            Button("Add missing pedal routes") { addMobilePedalboard() }
+                                .disabled(draft.routes.count >= SensorRouter.maxMappings)
+                        }
+                        Text("Expression CC11, volume CC7, wah/filter CC74, sustain CC64, and switches CC80/81 on MIDI channel 1 by default. Configure continuous range, smoothing and release in Routes. Map effects in your DAW; switches require exact binary CC values. Use Pocket Wah for motion instead of the manual wah pedal when both target the same parameter.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8).disabled(studio.patchRunning)
+                }
                 GroupBox("Routes · \(draft.routes.count)/64") {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach($draft.routes) { $route in
@@ -291,6 +305,17 @@ struct InstrumentBuilderView: View {
                 }.padding(4)
             }
         }
+    }
+
+    private func addMobilePedalboard() {
+        var next = draft
+        let missing = RemotePedalboard.routes(source: drumSource).filter { candidate in
+            !next.routes.contains { $0.source == candidate.source && $0.signal == candidate.signal }
+        }
+        next.routes += missing
+        guard next.isValid else { message = "Cannot add pedals: check route capacity, calibration and shared release values."; return }
+        draft = next
+        message = missing.isEmpty ? "All six pedals already mapped." : "Added \(missing.count) missing pedal routes."
     }
 
     private func addMobilePiano() {
