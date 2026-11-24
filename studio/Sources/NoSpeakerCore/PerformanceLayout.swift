@@ -1,7 +1,7 @@
 import Foundation
 
 public enum PerformanceControlKind: String, Codable, CaseIterable, Identifiable, Sendable {
-    case slider, pedal, pad, xy
+    case slider, pedal, pad, xy, knob, ribbon, key
     public var id: String { rawValue }
 }
 
@@ -24,6 +24,17 @@ public struct PerformanceWidget: Codable, Equatable, Identifiable, Sendable {
         let first = PatchSimulation.Input(source: source, signal: signal)
         return kind == .xy ? [first, .init(source: source, signal: .y)] : [first]
     }
+    /// A held key is only offered when every mapped target is a note
+    /// and a single endpoint of the input can activate every note gate.
+    /// This also supports inverted gates without synthetic zero releases.
+    public func keyPressValue(for routes: [SensorMapping]) -> Double? {
+        let matches = routes.filter { $0.source == source && $0.signal == signal }
+        guard !matches.isEmpty, matches.allSatisfy({ $0.destination.kind == .note && $0.isValid }) else { return nil }
+        return [1.0, 0.0].first { value in
+            matches.allSatisfy { ($0.calibration.apply(value) ?? -1) >= $0.threshold }
+        }
+    }
+
     public var isValid: Bool {
         label.utf8.count <= 64 &&
         !label.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } &&
@@ -45,7 +56,11 @@ public struct PerformanceLayout: Codable, Equatable, Sendable {
     public func resolved(for routes: [SensorMapping]) -> [PerformanceWidget] {
         guard isValid else { return [] }
         let available = Set(routes.map { PatchSimulation.Input(source: $0.source, signal: $0.signal) })
-        var result = widgets.filter { $0.inputs.allSatisfy { available.contains($0) } }
+        var result = widgets.filter { $0.inputs.allSatisfy { available.contains($0) } }.map { widget in
+            var copy = widget
+            if copy.kind == .key && copy.keyPressValue(for: routes) == nil { copy.kind = .slider }
+            return copy
+        }
         let covered = Set(result.flatMap(\.inputs))
         for input in available.subtracting(covered).sorted(by: { $0.id < $1.id }) {
             result.append(.init(source: input.source, signal: input.signal))

@@ -293,14 +293,14 @@ final class StudioController: ObservableObject {
         recordPatchCommands(commands)
     }
 
-    func pulsePatchInput(_ input: PatchSimulation.Input) {
+    func pulsePatchInput(_ input: PatchSimulation.Input, value: Double = 1) {
         guard patchRunning, !patchPhysical, patchInputs.contains(input) else { return }
         // Release first for an actual retrigger. No raw-zero synthesis.
         releasePatchInput(input)
         guard patchRunning else { return }
         let token = UUID()
         patchPadTokens[input] = token
-        sendPatchInput(input, value: 1)
+        sendPatchInput(input, value: value)
         guard patchRunning, patchPadTokens[input] == token else { return }
         patchPadTasks[input] = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
