@@ -71,6 +71,18 @@ struct InstrumentBuilderView: View {
                             } else { message = "Cannot add dual-hand routes: check route capacity." }
                         }.disabled(draft.routes.count + 15 > SensorRouter.maxMappings ||
                                     draft.routes.contains { $0.source == .camera })
+                        Button("Add helper effects · Bend / Expression / Wah") {
+                            var next = draft
+                            next.routes += AirDualHandPerformance.helperRoutes()
+                            if next.isValid {
+                                draft = next
+                                message = "Helper effects added. X = bend, Y = expression, aperture = CC74. Assign these in your DAW."
+                            } else { message = "Cannot add helper effects: check route capacity, duplicate IDs and release settings." }
+                        }.disabled(draft.routes.count + 3 > SensorRouter.maxMappings ||
+                                    !draft.routes.contains { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) } ||
+                                    AirDualHandPerformance.hasHelperRoutes(draft.routes))
+                        Text("Optional helper axes remain active after opening the pinch while a valid chord is selected. Tracking loss releases all camera-owned controls. Customize targets, ranges and smoothing in Routes.")
+                            .font(.caption).foregroundStyle(.secondary)
                         Toggle("Swap physical chord and helper hands", isOn: $studio.patchCameraSwapRoles)
                         Text("Experimental live camera mode; connect a DAW to the dedicated Builder MIDI output. Simulation routes remain available.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -255,7 +267,9 @@ struct InstrumentBuilderView: View {
                         if physical && draft.routes.contains(where: { $0.source == .camera }) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(studio.patchCameraStatus).font(.headline)
-                                Text("Show one hand: X/Y are index fingertip position, gesture is thumb/index aperture relative to palm length, contact is reliable hand presence. Camera permission is required. No image recording or network.")
+                                Text(draft.routes.contains(where: { $0.source == .camera && AirDualHandPerformance.signals.contains($0.signal) }) ?
+                                     "Dual hand: close chord hand to arm, select 1–5 fingers, pinch helper to play. Open pinch to release notes. Optional helper axes remain active with a valid selection." :
+                                     "Show one hand: X/Y are index fingertip position, gesture is thumb/index aperture relative to palm length, contact is reliable hand presence. Camera permission is required. No image recording or network.")
                                     .font(.caption).foregroundStyle(.secondary)
                                 if let hand = studio.patchCameraHand {
                                     HStack {
