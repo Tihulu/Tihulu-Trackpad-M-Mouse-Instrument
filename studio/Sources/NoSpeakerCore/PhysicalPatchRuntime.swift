@@ -87,12 +87,16 @@ public struct PhysicalPatchRuntime: Sendable {
     public static func supportsHybrid(_ patch:InstrumentPatch, synthetic:SensorSource, allowRemote:Bool = false) -> Bool {
         let sources = Set(patch.routes.map(\.source))
         let remote = sources.intersection([.phone,.tablet])
-        guard patch.isValid,[SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external].contains(synthetic),
+        guard patch.isValid,[SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external,.camera].contains(synthetic),
               sources.subtracting(remote).count <= reservedLocalSessions,
               allowRemote == !remote.isEmpty else { return false }
         let syntheticRoutes = patch.routes.filter { $0.source == synthetic }
         let simple:Set<SensorSignal> = [.x,.y,.contact,.contactSize,.pressure,.angle,.speed,.gesture,.expression]
-        guard !syntheticRoutes.isEmpty,syntheticRoutes.allSatisfy({ simple.contains($0.signal) }) else { return false }
+        guard !syntheticRoutes.isEmpty else { return false }
+        if synthetic == .camera {
+            guard AirDualHandPerformance.usesDualCamera(patch.routes) || AirHandsHelper.uses(patch.routes),
+                  supports(.init(routes:syntheticRoutes)) else { return false }
+        } else if !syntheticRoutes.allSatisfy({ simple.contains($0.signal) }) { return false }
         let native = InstrumentPatch(name:patch.name,routes:patch.routes.filter { $0.source != synthetic })
         return supports(native,allowRemote:allowRemote)
     }
@@ -118,7 +122,7 @@ public struct PhysicalPatchRuntime: Sendable {
         airHelperEnabled = airDualEnabled && AirDualHandPerformance.hasHelperRoutes(patch.routes)
         mappingProjections = projections
         hybridSource = synthetic
-        hybridInputs = Array(Set(patch.routes.filter { $0.source == synthetic }.map { PatchSimulation.Input(source:$0.source,signal:$0.signal) })).sorted { $0.id < $1.id }
+        hybridInputs = Array(Set(patch.routes.filter { $0.source == synthetic && synthetic != .camera }.map { PatchSimulation.Input(source:$0.source,signal:$0.signal) })).sorted { $0.id < $1.id }
         hybridReceipt = nil
         supported = Set(patch.routes.map(\.source)).subtracting(synthetic.map { [$0] } ?? [])
         touchSources = Set(patch.routes.filter { [.x,.y,.contact].contains($0.signal) }.map(\.source))
@@ -162,6 +166,7 @@ public struct PhysicalPatchRuntime: Sendable {
         return router.releaseSignal(session:id,signal:input.signal)
     }
     public mutating func releaseHybridSource() -> [SensorCommand] {
+        if hybridSource == .camera { return releaseCamera() }
         guard let id = hybridSession else { return [] }
         hybridSession = nil; hybridReceipt = nil
         return router.disconnect(id)
@@ -249,8 +254,8 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     public mutating func receiveHelperHands(left:AirHandSample?,right:AirHandSample?,
-                                            hostTime:Double,now:Double) -> [SensorCommand] {
-        guard cameraHandsEnabled, !airDualEnabled else { return [] }
+                                            hostTime:Double,now:Double,synthetic:Bool = false) -> [SensorCommand] {
+        guard synthetic == (hybridSource == .camera), cameraHandsEnabled, !airDualEnabled else { return [] }
         guard hostTime.isFinite, now.isFinite, hostTime >= 0, now >= hostTime,
               now-hostTime < 0.25, hostTime > (seen[.camera] ?? -1) else { return releaseCamera() }
         if let last = seen[.camera], hostTime-last >= 0.25 {
@@ -271,8 +276,8 @@ public struct PhysicalPatchRuntime: Sendable {
     /// Single timestamp and single reserved session for both camera roles.
     public mutating func receiveCombinedHands(count:Int?,confidence:Double,left:AirHandSample?,
                                               right:AirHandSample?,swapRoles:Bool,
-                                              hostTime:Double,now:Double) -> [SensorCommand] {
-        guard airDualEnabled, cameraHandsEnabled else { return [] }
+                                              hostTime:Double,now:Double,synthetic:Bool = false) -> [SensorCommand] {
+        guard synthetic == (hybridSource == .camera), airDualEnabled, cameraHandsEnabled else { return [] }
         guard hostTime.isFinite,now.isFinite,hostTime >= 0,now >= hostTime,now-hostTime < 0.25,
               seen[.camera].map({ hostTime > $0 }) ?? true else { return releaseCamera() }
         if let last = seen[.camera], hostTime-last >= 0.25 {
@@ -309,8 +314,8 @@ public struct PhysicalPatchRuntime: Sendable {
 
     public mutating func receiveDualHand(count: Int?, confidence: Double,
                                          helper: AirHandSample?, hostTime: Double,
-                                         now: Double) -> [SensorCommand] {
-        guard airDualEnabled, !cameraHandsEnabled else { return [] }
+                                         now: Double,synthetic:Bool = false) -> [SensorCommand] {
+        guard synthetic == (hybridSource == .camera), airDualEnabled, !cameraHandsEnabled else { return [] }
         guard hostTime.isFinite, now.isFinite, hostTime >= 0, hostTime <= now,
               now - hostTime < 0.25, hostTime > (seen[.camera] ?? -1)
         else { return releaseCamera() }

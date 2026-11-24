@@ -80,9 +80,9 @@ final class StudioController: ObservableObject {
         patchRunning && patchPhysical && patchCamera != nil &&
             AirDualHandPerformance.usesDualCamera(instrumentPatch.routes)
     }
-    var patchAirDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasDualCamera }
-    var patchHelperDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasHelperHands && !patchSimulation.hasDualCamera }
-    var patchCombinedDebugAvailable: Bool { patchAirDebugAvailable && patchSimulation.hasHelperHands }
+    var patchAirDebugAvailable: Bool { patchRunning && (patchPhysical ? patchHybridSource == .camera && AirDualHandPerformance.usesDualCamera(instrumentPatch.routes) : patchSimulation.hasDualCamera) }
+    var patchHelperDebugAvailable: Bool { patchRunning && (patchPhysical ? patchHybridSource == .camera && AirHandsHelper.uses(instrumentPatch.routes) && !AirDualHandPerformance.usesDualCamera(instrumentPatch.routes) : patchSimulation.hasHelperHands && !patchSimulation.hasDualCamera) }
+    var patchCombinedDebugAvailable: Bool { patchAirDebugAvailable && (patchPhysical ? AirHandsHelper.uses(instrumentPatch.routes) : patchSimulation.hasHelperHands) }
     @Published private(set) var patchCameraStatus = "Camera OFF"
     @Published private(set) var patchCameraHand: AirHandSample?
     var patchCameraCalibrationAvailable: Bool { patchRunning && patchPhysical && !patchMIDIEnabled && patchCameraHand != nil }
@@ -529,8 +529,8 @@ final class StudioController: ObservableObject {
     }
 
     private func refreshAirDebugState() {
-        let selected = patchSimulation.airSelectedSlot
-        let sounding = patchSimulation.airSoundingSlot
+        let selected = patchPhysical ? patchPhysicalRuntime.airSelectedSlot : patchSimulation.airSelectedSlot
+        let sounding = patchPhysical ? patchPhysicalRuntime.airSoundingSlot : patchSimulation.airSoundingSlot
         if patchAirDebugSelected != selected { patchAirDebugSelected = selected }
         if patchAirDebugSounding != sounding { patchAirDebugSounding = sounding }
     }
@@ -538,12 +538,12 @@ final class StudioController: ObservableObject {
     func sendHelperDebugFrame(left:AirHandSample?,right:AirHandSample?) {
         guard patchHelperDebugAvailable else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        recordPatchCommands(patchSimulation.receiveHelperHands(left:left,right:right,time:now,now:now))
+        recordPatchCommands(patchPhysical ? patchPhysicalRuntime.receiveHelperHands(left:left,right:right,hostTime:now,now:now,synthetic:true) : patchSimulation.receiveHelperHands(left:left,right:right,time:now,now:now))
     }
 
     func releaseHelperDebugFrame() {
         guard patchHelperDebugAvailable else { return }
-        recordPatchCommands(patchSimulation.releaseDualHand())
+        recordPatchCommands(patchPhysical ? patchPhysicalRuntime.releaseHybridSource() : patchSimulation.releaseDualHand())
     }
 
     func sendAirDebugFrame(count: Int, aperture: Double, x: Double, y: Double,
@@ -555,11 +555,11 @@ final class StudioController: ObservableObject {
         if patchCombinedDebugAvailable {
             let chord = chordVisible ? chordHand : nil
             let helper = helperVisible ? hand : nil
-            commands = patchSimulation.receiveCombinedHands(count:count,confidence:1,
-                left:patchCameraSwapRoles ? helper : chord,right:patchCameraSwapRoles ? chord : helper,
-                swapRoles:patchCameraSwapRoles,time:now,now:now)
+            let left = patchCameraSwapRoles ? helper : chord
+            let right = patchCameraSwapRoles ? chord : helper
+            commands = patchPhysical ? patchPhysicalRuntime.receiveCombinedHands(count:count,confidence:1,left:left,right:right,swapRoles:patchCameraSwapRoles,hostTime:now,now:now,synthetic:true) : patchSimulation.receiveCombinedHands(count:count,confidence:1,left:left,right:right,swapRoles:patchCameraSwapRoles,time:now,now:now)
         } else {
-            commands = patchSimulation.receiveDualHand(count: count, confidence: 1, helper: hand, time: now, now: now)
+            commands = patchPhysical ? patchPhysicalRuntime.receiveDualHand(count:count,confidence:1,helper:hand,hostTime:now,now:now,synthetic:true) : patchSimulation.receiveDualHand(count: count, confidence: 1, helper: hand, time: now, now: now)
         }
         refreshAirDebugState()
         recordPatchCommands(commands)
@@ -581,7 +581,7 @@ final class StudioController: ObservableObject {
     }
 
     var patchAirTraceCompatible: Bool {
-        guard let mode = patchAirTrace.mode else { return false }
+        guard !patchPhysical, let mode = patchAirTrace.mode else { return false }
         return patchCombinedDebugAvailable ? mode == .combined(swapRoles:patchCameraSwapRoles) : mode == .dual
     }
 
@@ -633,7 +633,7 @@ final class StudioController: ObservableObject {
 
     func releaseAirDebugFrame() {
         guard patchAirDebugAvailable else { return }
-        let commands = patchSimulation.releaseDualHand()
+        let commands = patchPhysical ? patchPhysicalRuntime.releaseHybridSource() : patchSimulation.releaseDualHand()
         refreshAirDebugState()
         recordPatchCommands(commands)
     }
@@ -686,6 +686,7 @@ final class StudioController: ObservableObject {
         let expired = patchPhysicalRuntime.expire(now: ProcessInfo.processInfo.systemUptime)
         recordPatchCommands(expired)
         guard patchRunning else { return }
+        if patchHybridSource == .camera { refreshAirDebugState() }
         let selected = patchPhysicalRuntime.airSelectedSlot
         let sounding = patchPhysicalRuntime.airSoundingSlot
         if patchAirLiveSelected != selected { patchAirLiveSelected = selected }

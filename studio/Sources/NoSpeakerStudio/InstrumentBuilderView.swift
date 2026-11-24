@@ -222,7 +222,7 @@ struct InstrumentBuilderView: View {
                         if physical {
                             Picker("Synthetic source (Hybrid)",selection:$syntheticSource) {
                                 Text("None · native only").tag(nil as SensorSource?)
-                                ForEach([SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external],id:\.self) { source in
+                                ForEach([SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external,.camera],id:\.self) { source in
                                     if draft.routes.contains(where: { $0.source == source }) {
                                         Text(source.rawValue + " · on-screen").tag(Optional(source))
                                     }
@@ -236,7 +236,7 @@ struct InstrumentBuilderView: View {
                         }
                         Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)
                             .disabled(studio.patchRunning)
-                        if physical && draft.routes.contains(where: { $0.source == .camera }) {
+                        if physical && syntheticSource != .camera && draft.routes.contains(where: { $0.source == .camera }) {
                             DisclosureGroup("Camera setup") {
                                 VStack(alignment: .leading, spacing: 5) {
                                     HStack {
