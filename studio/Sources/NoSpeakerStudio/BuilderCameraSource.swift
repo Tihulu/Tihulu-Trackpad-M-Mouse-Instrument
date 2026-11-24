@@ -11,6 +11,7 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
     enum Event: Sendable {
         case ready
         case frame(AirHandSample?, Double)
+        case dualFrame(Int?, Double, AirHandSample?, Double)
         case fault(String)
     }
     private let queue = DispatchQueue(label: "com.tihulu.builder.camera", qos: .userInitiated)
@@ -23,6 +24,8 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
     private var capture: AVCaptureSession?
     private let request = VNDetectHumanHandPoseRequest()
     private var lastFrame = -1.0
+    private var dualMode = false
+    private var swapRoles = false
     private var observers: [NSObjectProtocol] = []
 
     static var authorization: AVAuthorizationStatus { AVCaptureDevice.authorizationStatus(for: .video) }
@@ -37,9 +40,11 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    func start(deviceID: String) {
+    func start(deviceID: String, dualMode: Bool = false, swapRoles: Bool = false) {
         queue.async { [self] in
             guard !isClosed else { return }
+            self.dualMode = dualMode
+            self.swapRoles = swapRoles
             do {
                 guard Self.authorization == .authorized else { throw CameraError.permission }
                 let device = deviceID.isEmpty ? AVCaptureDevice.default(for: .video) :
@@ -135,6 +140,36 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
         lastFrame = now
         do {
             try VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: .up, options: [:]).perform([request])
+            if dualMode {
+                guard let hands = request.results, hands.count == 2,
+                      let left = hands.first(where: { $0.chirality == .left }),
+                      let right = hands.first(where: { $0.chirality == .right }) else {
+                    push(.dualFrame(nil, 0, nil, now)); return
+                }
+                let chord = swapRoles ? right : left
+                let helper = swapRoles ? left : right
+                let points = try chord.recognizedPoints(.all)
+                let chains: [(VNHumanHandPoseObservation.JointName, VNHumanHandPoseObservation.JointName, VNHumanHandPoseObservation.JointName)] = [
+                    (.thumbCMC, .thumbMP, .thumbTip), (.indexMCP, .indexPIP, .indexTip),
+                    (.middleMCP, .middlePIP, .middleTip), (.ringMCP, .ringPIP, .ringTip),
+                    (.littleMCP, .littlePIP, .littleTip)]
+                func convert(_ p: VNRecognizedPoint) -> AirHandPoint {
+                    .init(x: Double(p.location.x), y: Double(p.location.y), confidence: Double(p.confidence))
+                }
+                let fingers = chains.compactMap { chain -> AirFingerChain? in
+                    guard let a = points[chain.0], let b = points[chain.1], let c = points[chain.2] else { return nil }
+                    return .init(base: convert(a), joint: convert(b), tip: convert(c))
+                }
+                let confidence = fingers.flatMap { [$0.base.confidence, $0.joint.confidence, $0.tip.confidence] }.min() ?? 0
+                let hp = try helper.recognizedPoints(.all)
+                guard let thumb = hp[.thumbTip], let index = hp[.indexTip],
+                      let wrist = hp[.wrist], let middle = hp[.middleMCP] else {
+                    push(.dualFrame(nil, 0, nil, now)); return
+                }
+                let sample = AirHandSample(thumb: convert(thumb), index: convert(index), wrist: convert(wrist), middleBase: convert(middle))
+                push(.dualFrame(AirFingerCount.classify(fingers), confidence, sample, now))
+                return
+            }
             guard let hands = request.results, hands.count == 1, let hand = hands.first else {
                 push(.frame(nil, now)); return
             }
@@ -148,7 +183,10 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
                 push(.frame(nil, now)); return
             }
             push(.frame(AirHandSample(thumb: thumb, index: index, wrist: wrist, middleBase: middle), now))
-        } catch { push(.frame(nil, now)) }
+        } catch {
+            if dualMode { push(.dualFrame(nil, 0, nil, now)) }
+            else { push(.frame(nil, now)) }
+        }
     }
 
     private enum CameraError: LocalizedError {
