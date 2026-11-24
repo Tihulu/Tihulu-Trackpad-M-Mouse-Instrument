@@ -199,7 +199,7 @@ public struct PhysicalPatchRuntime: Sendable {
                      piano: pianoMasks[source] ?? 0, pedals: pedalMasks[source] ?? 0)
     }
 
-    // Internal projection API; not reachable from the v1–7 network protocol.
+    // Internal projection API. The wire path must first accept the request in receiveRemote.
     func remoteMappingPage(_ id: UUID, page: Int, sequence: UInt64) throws -> RemoteMappingPage {
         guard remoteEnabled, let peer = remotePeers[id], peer.isIdle,
               let projection = mappingProjections[peer.source] else { throw RemoteTouchError.unavailable }
@@ -210,8 +210,29 @@ public struct PhysicalPatchRuntime: Sendable {
         guard var peer = remotePeers[id], remoteEnabled else { return .close([]) }
         guard let frame = try? RemoteTouchFrame.read(bytes), peer.accept(frame, now: now)
         else { return .close(revokeRemote(id)) }
+        // Legacy clients may omit v8 entirely. Once metadata begins, only the
+        // next mapping page is accepted until that snapshot is complete.
+        if peer.mappingStarted != nil && !peer.mappingComplete && frame.kind != .mapping {
+            return .close(revokeRemote(id))
+        }
+        if frame.kind != .heartbeat && frame.kind != .capabilities && frame.kind != .mapping {
+            peer.performanceStarted = true
+        }
         switch frame.kind {
         case .heartbeat, .capabilities:
+            if frame.kind == .capabilities { peer.capabilitiesSeen = true }
+            remotePeers[id] = peer
+            return .accepted([])
+        case .mapping:
+            guard peer.capabilitiesSeen, !peer.performanceStarted, !peer.mappingComplete,
+                  let index = frame.page, index == peer.mappingNext,
+                  peer.mappingLast.map({ now-$0 >= 0.05-1e-9 }) ?? true,
+                  let page = try? remoteMappingPage(id,page:index,sequence:frame.sequence),
+                  (try? page.encoded()) != nil else { return .close(revokeRemote(id)) }
+            if peer.mappingStarted == nil { peer.mappingStarted = now }
+            peer.mappingLast = now
+            peer.mappingNext += 1
+            peer.mappingComplete = peer.mappingNext == page.pages
             remotePeers[id] = peer
             return .accepted([])
         case .release:
