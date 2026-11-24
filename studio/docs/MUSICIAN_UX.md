@@ -20,3 +20,6 @@ This is the first UX increment, stacked on PR #24. It is not the full Universal 
 
 ## Next UX increment
 Implement a shared versioned preset/project model and explicit Edit vs Play state. Add guided quick-start templates: solo haptic, Logic instrument, Trackpad + Mouse Helper, Touch Bar expression, camera and remote only after their actual engines exist. Build mobile with the same layout and mapping schema. Add accessible contrast, per-surface input preview, mapping confidence/calibration, no-hardware fallback and explicit resource conflicts.
+
+## Cross-device extension quality gate
+The [Expressive Controls plan](EXPRESSIVE_CONTROLS_PLAN.md#musician-first-anti-slop-gate-binding-for-all-subsequent-increments) defines the shared catalog, performance/edit separation, physically playable presets and end-to-end acceptance. Creative scope is preserved. No duplicate engine, per-effect sidebar proliferation, unsupported sensor claims or inert controls. Apply the same gate to AI, mobile, camera, Lab and Builder: feature usefulness and complete workflows over feature count. Experimental features are explicit, optional and isolated until validated.
