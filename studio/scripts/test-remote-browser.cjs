@@ -6,12 +6,13 @@ const path=require("node:path");
 const source=fs.readFileSync(path.join(__dirname,"../Sources/NoSpeakerMac/RemoteLoopbackPageServer.swift"),"utf8");
 const script=source.split('private static let script = #"""')[1].split('"""#')[0]
   .replaceAll("__REMOTE_ORIGIN__","https://local.test").replaceAll("__REMOTE_SOCKET__","wss://local.test");
-function setup(permission="granted"){
+const fullManifest={kind:"capabilities",version:7,touch:true,tilt:true,acceleration:true,rotation:true,airDrums:true,drums:255,piano:67108863,pedals:63};
+function setup(permission="granted",manifest=fullManifest){
   let time=1000, ticker, socket;
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id]});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
   class WS{
@@ -23,7 +24,9 @@ function setup(permission="granted"){
   vm.runInNewContext(script,{document,window,location:{origin:"https://local.test"},WebSocket:WS,performance:{now:()=>time},
     setTimeout:()=>1,clearTimeout(){},setInterval:f=>(ticker=f,1),clearInterval(){ticker=null;}});
   elements.secret.value="aa".repeat(32);elements.connect.emit("click");socket.onopen();socket.onmessage({data:"admitted"});
-  return {elements,window,document,socket,step(ms=25){time+=ms;ticker?.()},ack(){socket.onmessage({data:"accepted"})},
+  const query=socket.frames.shift();
+  if(manifest!==null)socket.onmessage({data:typeof manifest==="string"?manifest:JSON.stringify(manifest)});
+  return {query,elements,window,document,socket,step(ms=25){time+=ms;ticker?.()},ack(){socket.onmessage({data:"accepted"})},
     orientation(beta=0){window.emit("deviceorientation",{alpha:0,beta,gamma:0})}};
 }
 test("permission denial never attaches listener or sends motion",async()=>{
@@ -242,4 +245,45 @@ test("pedal held refresh and stale binary edge fail closed",()=>{
   assert.equal(a.socket.frames.at(-1).mask,16);
   a.elements.pedalToggle4.emit("click");a.step(151);
   assert.equal(a.socket.closed,true);
+});
+
+test("authenticated manifest required before any control input",()=>{
+  const a=setup("granted",null);
+  assert.deepEqual(a.query,{version:7,sequence:1,kind:"capabilities"});
+  assert.equal(a.elements.touchSection.hidden,true);
+  a.elements.drumEnable.emit("click");a.elements.drum0.emit("pointerdown",drumEvent(1));
+  a.elements.pad.emit("pointerdown",{...drumEvent(2),clientX:25,clientY:25});
+  assert.equal(a.socket.frames.length,0);
+  a.socket.onmessage({data:JSON.stringify(fullManifest)});
+  assert.equal(a.elements.drumSection.hidden,false);
+});
+test("partial manifest hides absent sections and rejects unmapped events",async()=>{
+  const a=setup("granted",{...fullManifest,touch:false,tilt:false,acceleration:false,rotation:false,airDrums:false,drums:2,piano:0,pedals:0});
+  assert.equal(a.elements.touchSection.hidden,true);assert.equal(a.elements.pianoSection.hidden,true);
+  assert.equal(a.elements.inertialSection.hidden,true);assert.equal(a.elements.drum0.hidden,true);
+  await a.elements.motionStart.emit("click");await a.elements.accelStart.emit("click");
+  a.elements.drumEnable.emit("click");a.elements.drum0.emit("pointerdown",drumEvent(1));
+  assert.equal(a.socket.frames.length,0);
+  a.elements.drum1.emit("pointerdown",drumEvent(2));assert.equal(a.socket.frames.at(-1).mask,2);
+});
+test("high-octave-only piano selects available view and rejects missing sustain",()=>{
+  const a=setup("granted",{...fullManifest,piano:1<<24});
+  assert.equal(a.elements.octaveLabel.textContent,"C4–C5");
+  a.elements.pianoEnable.emit("click");a.elements.octaveDown.emit("click");
+  assert.equal(a.elements.octaveLabel.textContent,"C4–C5");
+  assert.equal(a.elements.piano0.disabled,true);assert.equal(a.elements.pianoSustain.hidden,true);
+  a.elements.piano0.emit("pointerdown",drumEvent(1));assert.equal(a.socket.frames.length,0);
+  a.elements.piano12.emit("pointerdown",drumEvent(2));assert.equal(a.socket.frames.at(-1).mask,1<<24);
+});
+test("malformed manifest closes, with no legacy fallback",()=>{
+  for(const m of ["accepted",{...fullManifest,pedals:64},{...fullManifest,airDrums:true,acceleration:false},{...fullManifest,extra:1}]){
+    const a=setup("granted",m);assert.equal(a.socket.closed,true);assert.equal(a.elements.drumSection.hidden,true);
+  }
+});
+test("partial pedals and sensor notices reflect manifest",()=>{
+  const a=setup("granted",{...fullManifest,pedals:16,rotation:false,airDrums:false});
+  assert.equal(a.elements.rotationSection.hidden,true);assert.equal(a.elements.airDrumNotice.hidden,true);
+  a.elements.pedalEnable.emit("click");assert.equal(a.elements.pedalToggle0.disabled,true);
+  a.elements.pedalToggle0.emit("click");assert.equal(a.socket.frames.length,0);
+  a.elements.pedalToggle4.emit("click");assert.equal(a.socket.frames.at(-1).mask,16);
 });
