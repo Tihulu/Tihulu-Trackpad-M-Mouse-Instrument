@@ -1,0 +1,97 @@
+#if os(macOS)
+import SwiftUI
+import NoSpeakerCore
+
+struct CustomScalePanel: View {
+    @EnvironmentObject private var studio: StudioController
+    @State private var draft = CustomScale()
+    @State private var editing = false
+
+    var body: some View {
+        GroupBox("Scale & tuning editor") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(studio.chordBank.scaleName).font(.headline)
+                    Spacer()
+                    Button("Edit custom scale") {
+                        var next = CustomScale()
+                        next.intervals = studio.chordBank.scale.intervals
+                        draft = studio.chordBank.customScale ?? next
+                        editing = true
+                    }
+                    if studio.chordBank.customScale != nil {
+                        Button("Use built-in scale") {
+                            var bank = studio.chordBank
+                            bank.customScale = nil
+                            studio.updateChordBank(bank)
+                        }
+                    }
+                }
+                if let scale = studio.chordBank.customScale {
+                    Text(scale.intervals.map { String($0 * 100 + (scale.centOffsets[$0] ?? 0)) + "¢" }.joined(separator: " · "))
+                        .font(.caption.monospacedDigit())
+                    if scale.isMicrotonal {
+                        Text(scale.allowEqualTemperedMIDI
+                             ? "Trackpad: tuned frequencies. MIDI: explicitly allowed 12-TET approximation."
+                             : "Trackpad: tuned frequencies. MIDI/Both cannot arm until approximation is explicitly allowed.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Text("Root-relative octave scale, used by generated chords, progressions and arpeggios. Custom chord MIDI notes stay fixed; tuning applies by pitch class. Does not retune Touch Instrument or external synths yet.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(8)
+        }
+        .sheet(isPresented: $editing) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Custom scale & intonation").font(.title2.bold())
+                TextField("Scale name", text: $draft.name)
+                Text("Select at least two degrees including the root. Adjust each selected degree by ±49 cents from its nominal semitone.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(0..<12, id: \.self) { degree in degreeRow(degree) }
+                    }
+                }.frame(maxHeight: 340)
+                Toggle("Allow equal-tempered MIDI approximation", isOn: $draft.allowEqualTemperedMIDI)
+                Text("Independent polyphonic MIDI tuning is not implemented. This option does not send pitch bend or retune a receiver. Trackpad output uses the exact requested cent offsets within the existing frequency limits.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Zero cent offsets") { draft.centOffsets = [:] }
+                    Spacer()
+                    Button("Cancel") { editing = false }
+                    Button("Apply scale") {
+                        var bank = studio.chordBank
+                        bank.customScale = draft
+                        studio.updateChordBank(bank)
+                        editing = false
+                    }.buttonStyle(.borderedProminent)
+                        .disabled(!draft.isValid || studio.chordArmed)
+                }
+            }.padding(22).frame(width: 510)
+        }
+    }
+
+    private func degreeRow(_ degree: Int) -> some View {
+        let included = draft.intervals.contains(degree)
+        return HStack {
+            Toggle(degree == 0 ? "Root" : "+\(degree) semitones", isOn: Binding(
+                get: { draft.intervals.contains(degree) },
+                set: { enabled in
+                    if enabled { draft.intervals = Array(Set(draft.intervals + [degree])).sorted() }
+                    else {
+                        draft.intervals.removeAll { $0 == degree }
+                        draft.centOffsets.removeValue(forKey: degree)
+                    }
+                }
+            )).disabled(degree == 0)
+            Spacer()
+            Stepper("\(draft.centOffsets[degree] ?? 0)¢", value: Binding(
+                get: { draft.centOffsets[degree] ?? 0 },
+                set: { draft.centOffsets[degree] = $0 }
+            ), in: -49...49).disabled(!included || degree == 0)
+            Text("\(degree * 100 + (draft.centOffsets[degree] ?? 0))¢")
+                .monospacedDigit().frame(width: 65, alignment: .trailing)
+        }
+    }
+}
+#endif

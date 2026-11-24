@@ -84,9 +84,9 @@ struct ChordPadPanel: View {
                                     Text((try? MusicTheory.noteName(midi: note)) ?? String(note)).tag(note)
                                 }
                             }
-                            Picker("Scale", selection: binding(\.scale)) {
+                            Picker("Built-in scale", selection: binding(\.scale)) {
                                 ForEach(ChordScale.allCases) { Text($0.rawValue).tag($0) }
-                            }
+                            }.disabled(studio.chordBank.customScale != nil)
                         }
                         HStack {
                             Picker("Voicing", selection: binding(\.stack)) {
@@ -104,10 +104,11 @@ struct ChordPadPanel: View {
                                 Stepper("Gate \(studio.chordBank.gateMS) ms", value: binding(\.gateMS), in: 100...2000, step: 100)
                             }
                         }
-                        Text("Makam-inspired options are equal-tempered pitch collections, not authentic makam intonation or melodic seyir. Scale stacks are creative harmony, not traditional makam chord rules.")
+                        Text("Built-in makam-inspired options are equal-tempered pitch collections. Custom tuning is an arranging tool, not authentic makam seyir or traditional chord rules.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8).disabled(studio.chordArmed)
                 }
+                CustomScalePanel().disabled(studio.chordArmed)
             } else {
                 Text(compactSummary)
                     .font(.caption).foregroundStyle(.secondary)
@@ -139,7 +140,7 @@ struct ChordPadPanel: View {
 
     private var compactSummary: String {
         let bank = studio.chordBank
-        return [bank.scale.rawValue, bank.effectiveOutput.rawValue,
+        return [bank.scaleName, bank.effectiveOutput.rawValue,
                 bank.latch ? "Latch" : "Timed gate", "Ch " + String(bank.channel)].joined(separator: " · ")
     }
 
