@@ -5,9 +5,9 @@ function load(s,exports){const m={exports:{}};new Function("module",s+"\nmodule.
 const ptr=id=>({pointerId:id,button:0,clientX:25,clientY:25,preventDefault(){}});
 const combos={motion:["touch","orientation","acceleration"],keys:["pianoKeys","pedalboard"],all:["touch","orientation","acceleration","rotation","drumPads","pianoKeys","pedalboard"]};
 function maxWindow(times){let lo=0,max=0;for(let hi=0;hi<times.length;hi++){while(times[hi]-times[lo]>=1000)lo++;max=Math.max(max,hi-lo+1);}return max;}
-async function run(source,inherited,experiment,scheduler,execute){
+async function run(source,inherited,experiment,scheduler,execute,policies=["actual","oldest","guarded","releaseAware"]){
  const h=load(experiment,"{helpers}").helpers(inherited),t=load(scheduler,"{transform}").transform,original=h.extract(source),rows=[];
- for(const policy of ["actual","oldest","guarded"])for(const [profile,opts] of Object.entries({rtt5:{rtt:5},rtt20:{rtt:20},jitter40:{rtt:40,jitter:15},rtt60:{rtt:60}}))for(const hostDelay of [0,2])for(const [combo,selected] of Object.entries(combos)){
+ for(const policy of policies)for(const [profile,opts] of Object.entries({rtt5:{rtt:5},rtt20:{rtt:20},jitter40:{rtt:40,jitter:15},rtt60:{rtt:60}}))for(const hostDelay of [0,2])for(const [combo,selected] of Object.entries(combos)){
   const a=h.setup(t(original,policy),execute,{...opts,hostDelay});a.c.run(100);
   const has=k=>selected.includes(k);
   for(const [k,id] of [["orientation","motionStart"],["acceleration","accelStart"],["rotation","rotationStart"]])if(has(k))await a.el(id).emit("click");
