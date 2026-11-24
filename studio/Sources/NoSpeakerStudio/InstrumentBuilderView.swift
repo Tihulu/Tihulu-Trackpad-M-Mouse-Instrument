@@ -72,6 +72,20 @@ struct InstrumentBuilderView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8).disabled(studio.patchRunning)
                 }
+                GroupBox("Mobile Piano") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Picker("Device", selection: $drumSource) {
+                                Text("Phone").tag(SensorSource.phone)
+                                Text("Tablet").tag(SensorSource.tablet)
+                            }
+                            Button("Add missing piano keys & sustain") { addMobilePiano() }
+                                .disabled(draft.routes.count >= SensorRouter.maxMappings)
+                        }
+                        Text("Adds 25 chromatic keys (C3–C5) and sustain on MIDI channel 1, preserving existing routes. Customize mappings below. Enable Piano on the paired browser. Scale hints assume the default note mapping.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8).disabled(studio.patchRunning)
+                }
                 GroupBox("Routes · \(draft.routes.count)/64") {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach($draft.routes) { $route in
@@ -277,6 +291,17 @@ struct InstrumentBuilderView: View {
                 }.padding(4)
             }
         }
+    }
+
+    private func addMobilePiano() {
+        var next = draft
+        let missing = RemotePiano.routes(source: drumSource).filter { candidate in
+            !next.routes.contains { $0.source == candidate.source && $0.signal == candidate.signal }
+        }
+        next.routes += missing
+        guard next.isValid else { message = "Cannot add piano: check route capacity or existing mappings."; return }
+        draft = next
+        message = missing.isEmpty ? "All piano keys and sustain already mapped." : "Added \(missing.count) missing piano routes."
     }
 
     private func addMobileDrumPads() {
