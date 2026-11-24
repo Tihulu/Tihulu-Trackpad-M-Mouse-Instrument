@@ -49,3 +49,51 @@ import Testing
     #expect(sim.release(pad).isEmpty)
     #expect(sim.stop() == [.init(bend, value: 8192)])
 }
+
+
+@Test func layoutEditingPreservesDormantLabelsAndUnchangedXYFallback() throws {
+    let x = SensorMapping(id:"x",source:.phone,signal:.x,destination:.init(.controlChange,number:74))
+    let y = SensorMapping(id:"y",source:.phone,signal:.y,destination:.init(.controlChange,number:71))
+    let pad = SensorMapping(id:"pad",source:.phone,signal:.drumPad1,destination:.init(.note,number:36))
+    let xy = PerformanceWidget(source:.phone,signal:.x,kind:.xy,label:"Filter",wide:true)
+    let drum = PerformanceWidget(source:.phone,signal:.drumPad1,kind:.key,label:"Kick")
+    let saved = PerformanceLayout(widgets:[xy,drum])
+    let visible = saved.resolved(for:[x])
+    #expect(visible.count == 1 && visible.first?.kind == .slider && visible.first?.label == "Filter")
+    let edited = try saved.applyingVisibleEdits(visible,for:[x])
+    #expect(edited == saved)
+    #expect(edited.resolved(for:[x,y,pad]) == [xy,drum])
+    var changed = visible
+    changed[0].label = "New single axis"
+    let replacement = try saved.applyingVisibleEdits(changed,for:[x])
+    #expect(replacement.widgets == [changed[0],drum])
+    let reset = try saved.applyingVisibleEdits(PerformanceLayout.defaults(for:[x]).widgets,for:[x],preserveDormant:false)
+    #expect(reset.widgets.count == 1 && reset.widgets.first?.label == "")
+}
+
+@Test func layoutEditingPreservesKeyStyleUntilFallbackIsEdited() throws {
+    let note = SensorMapping(id:"n",source:.trackpad,signal:.contact,destination:.init(.note,number:60))
+    let cc = SensorMapping(id:"cc",source:.trackpad,signal:.contact,destination:.init(.controlChange,number:74))
+    let key = PerformanceWidget(source:.trackpad,signal:.contact,kind:.key,label:"Chord")
+    let saved = PerformanceLayout(widgets:[key])
+    let fallback = saved.resolved(for:[cc])
+    #expect(fallback.first?.kind == .slider)
+    let retained = try saved.applyingVisibleEdits(fallback,for:[cc])
+    #expect(retained.resolved(for:[note]) == [key])
+    var edited = fallback
+    edited[0].kind = .knob
+    #expect(try saved.applyingVisibleEdits(edited,for:[cc]).widgets == edited)
+}
+
+
+@Test func layoutEditingRetainsXYWhenOnlyYRemainsMapped() throws {
+    let x = SensorMapping(id:"x",source:.phone,signal:.x,destination:.init(.controlChange,number:74))
+    let y = SensorMapping(id:"y",source:.phone,signal:.y,destination:.init(.controlChange,number:71))
+    let xy = PerformanceWidget(source:.phone,signal:.x,kind:.xy,label:"Paired axes")
+    let saved = PerformanceLayout(widgets:[xy])
+    let visible = saved.resolved(for:[y])
+    #expect(visible.count == 1 && visible.first?.signal == .y && visible.first?.label == "")
+    let retained = try saved.applyingVisibleEdits(visible,for:[y])
+    #expect(retained == saved)
+    #expect(retained.resolved(for:[x,y]) == [xy])
+}

@@ -56,8 +56,13 @@ public struct PerformanceLayout: Codable, Equatable, Sendable {
     public func resolved(for routes: [SensorMapping]) -> [PerformanceWidget] {
         guard isValid else { return [] }
         let available = Set(routes.map { PatchSimulation.Input(source: $0.source, signal: $0.signal) })
-        var result = widgets.filter { $0.inputs.allSatisfy { available.contains($0) } }.map { widget in
+        var result = widgets.compactMap { widget -> PerformanceWidget? in
             var copy = widget
+            if !widget.inputs.allSatisfy({ available.contains($0) }) {
+                // A temporarily missing Y axis must not erase the user's X label.
+                guard widget.kind == .xy, available.contains(widget.inputs[0]) else { return nil }
+                copy.kind = .slider
+            }
             if copy.kind == .key && copy.keyPressValue(for: routes) == nil { copy.kind = .slider }
             return copy
         }
@@ -66,6 +71,39 @@ public struct PerformanceLayout: Codable, Equatable, Sendable {
             result.append(.init(source: input.source, signal: input.signal))
         }
         return result
+    }
+
+    /// Save edits to the visible layout without dropping dormant custom controls.
+    /// If a temporary XY/key fallback is unchanged, retain its original style.
+    /// An explicit edit of that fallback replaces it. Reset can opt out of retention.
+    public func applyingVisibleEdits(_ edited: [PerformanceWidget], for routes: [SensorMapping],
+                                     preserveDormant: Bool = true) throws -> Self {
+        let candidate = Self(widgets:edited)
+        guard isValid, candidate.isValid else { throw SensorRouterError.invalidMappings }
+        let available = Set(routes.map { PatchSimulation.Input(source:$0.source,signal:$0.signal) })
+        guard edited.allSatisfy({ $0.inputs.allSatisfy { available.contains($0) } }) else {
+            throw SensorRouterError.invalidMappings
+        }
+        guard preserveDormant else { return candidate }
+        let baseline = resolved(for:routes)
+        var result = edited
+        for saved in widgets {
+            let inputs = Set(saved.inputs)
+            let overlaps = result.indices.filter { !inputs.isDisjoint(with:result[$0].inputs) }
+            let fullyMapped = inputs.isSubset(of:available)
+            if fullyMapped && !(saved.kind == .key && saved.keyPressValue(for:routes) == nil) { continue }
+            if overlaps.isEmpty {
+                // Only genuinely dormant controls may be restored without overlap.
+                if inputs.isDisjoint(with:available) { result.append(saved) }
+            } else if overlaps.count == 1, let index = overlaps.first,
+                      let before = baseline.first(where: { !inputs.isDisjoint(with:$0.inputs) }),
+                      before == result[index] {
+                result[index] = saved
+            }
+        }
+        let merged = Self(widgets:result)
+        guard merged.isValid else { throw SensorRouterError.invalidMappings }
+        return merged
     }
 
     public static func defaults(for routes: [SensorMapping]) -> Self {
