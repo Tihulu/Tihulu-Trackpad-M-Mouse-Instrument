@@ -84,3 +84,16 @@ import Testing
     edited[0].kind = .knob
     #expect(try saved.applyingVisibleEdits(edited,for:[cc]).widgets == edited)
 }
+
+
+@Test func layoutEditingRetainsXYWhenOnlyYRemainsMapped() throws {
+    let x = SensorMapping(id:"x",source:.phone,signal:.x,destination:.init(.controlChange,number:74))
+    let y = SensorMapping(id:"y",source:.phone,signal:.y,destination:.init(.controlChange,number:71))
+    let xy = PerformanceWidget(source:.phone,signal:.x,kind:.xy,label:"Paired axes")
+    let saved = PerformanceLayout(widgets:[xy])
+    let visible = saved.resolved(for:[y])
+    #expect(visible.count == 1 && visible.first?.signal == .y && visible.first?.label == "")
+    let retained = try saved.applyingVisibleEdits(visible,for:[y])
+    #expect(retained == saved)
+    #expect(retained.resolved(for:[x,y]) == [xy])
+}

@@ -96,7 +96,7 @@ public struct PerformanceLayout: Codable, Equatable, Sendable {
                 // Only genuinely dormant controls may be restored without overlap.
                 if inputs.isDisjoint(with:available) { result.append(saved) }
             } else if overlaps.count == 1, let index = overlaps.first,
-                      let before = baseline.first(where: { $0.id == saved.id }),
+                      let before = baseline.first(where: { !inputs.isDisjoint(with:$0.inputs) }),
                       before == result[index] {
                 result[index] = saved
             }
