@@ -16,7 +16,14 @@ struct InstrumentBuilderView: View {
     @State private var showLayout = false
     @State private var airRange = AirRangeCapture()
     @State private var drumPreset: AirDrumPreset = .snare
-    @State private var drumSource: SensorSource = .phone
+    @State private var remoteSource: SensorSource = .phone
+    @State private var routeSource: SensorSource?
+    @State private var routeSearch = ""
+    @State private var expandedRoutes: Set<String> = []
+
+    private var visibleRouteIDs: Set<String> {
+        Set(BuilderRouteTools.visibleIDs(in:draft,source:routeSource,query:routeSearch))
+    }
 
     var body: some View {
         ScrollView {
@@ -44,7 +51,7 @@ struct InstrumentBuilderView: View {
                 GroupBox("Air Drums · motion percussion") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Picker("Device", selection: $drumSource) {
+                            Picker("Device", selection: $remoteSource) {
                                 Text("Phone").tag(SensorSource.phone)
                                 Text("Tablet").tag(SensorSource.tablet)
                             }
@@ -58,56 +65,70 @@ struct InstrumentBuilderView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8).disabled(studio.patchRunning)
                 }
-                GroupBox("Mobile Drum Pads") {
+                GroupBox("Mobile instruments") {
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Picker("Device", selection: $drumSource) {
-                                Text("Phone").tag(SensorSource.phone)
-                                Text("Tablet").tag(SensorSource.tablet)
-                            }
-                            Button("Add missing drum pads") { addMobileDrumPads() }
-                                .disabled(draft.routes.count >= SensorRouter.maxMappings)
+                        Picker("Device", selection: $remoteSource) {
+                            Text("Phone").tag(SensorSource.phone)
+                            Text("Tablet").tag(SensorSource.tablet)
                         }
-                        Text("Adds missing logical pads 1–8 with General MIDI defaults on channel 10. Existing pad mappings are preserved. Customize note, channel and velocity in Routes. Start Remote, pair the selected source, then enable drum pads in the browser.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.padding(8).disabled(studio.patchRunning)
-                }
-                GroupBox("Mobile Piano") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Picker("Device", selection: $drumSource) {
-                                Text("Phone").tag(SensorSource.phone)
-                                Text("Tablet").tag(SensorSource.tablet)
+                        Text("\(max(0, SensorRouter.maxMappings - draft.routes.count)) routes available · Existing mappings and labels are preserved.")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        ForEach(BuilderRouteTools.MobilePreset.allCases) { preset in
+                            let missing = preset.missingCount(in:draft,source:remoteSource)
+                            let remaining = SensorRouter.maxMappings - draft.routes.count
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(preset.title)
+                                    Text("\(preset.signals.count - missing)/\(preset.signals.count) mapped" + (missing > remaining ? " · Not enough route slots" : ""))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button(missing == 0 ? "Mapped" : "Add \(missing) missing") { addMobilePreset(preset) }
+                                    .disabled(missing == 0 || missing > remaining || !draft.isValid)
                             }
-                            Button("Add missing piano keys & sustain") { addMobilePiano() }
-                                .disabled(draft.routes.count >= SensorRouter.maxMappings)
                         }
-                        Text("Adds 25 chromatic keys (C3–C5) and sustain on MIDI channel 1, preserving existing routes. Customize mappings below. Enable Piano on the paired browser. Scale hints assume the default note mapping.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.padding(8).disabled(studio.patchRunning)
-                }
-                GroupBox("Mobile Pedalboard") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Picker("Device", selection: $drumSource) {
-                                Text("Phone").tag(SensorSource.phone)
-                                Text("Tablet").tag(SensorSource.tablet)
-                            }
-                            Button("Add missing pedal routes") { addMobilePedalboard() }
-                                .disabled(draft.routes.count >= SensorRouter.maxMappings)
-                        }
-                        Text("Expression CC11, volume CC7, wah/filter CC74, sustain CC64, and switches CC80/81 on MIDI channel 1 by default. Configure continuous range, smoothing and release in Routes. Map effects in your DAW; switches require exact binary CC values. Use Pocket Wah for motion instead of the manual wah pedal when both target the same parameter.")
+                        Text("Defaults: drums on channel 10; piano and pedalboard on channel 1. Customize all targets in Routes. Scale guidance requires a verified default mapping; motion wah and manual wah can share a parameter only deliberately.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8).disabled(studio.patchRunning)
                 }
                 GroupBox("Routes · \(draft.routes.count)/64") {
                     VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Picker("Source filter", selection: $routeSource) {
+                                Text("All sources").tag(nil as SensorSource?)
+                                ForEach(SensorSource.allCases, id: \.self) { source in
+                                    Text(source.rawValue).tag(Optional(source))
+                                }
+                            }
+                            TextField("Search signal, MIDI target or label", text: $routeSearch)
+                            Button("Clear filter") { routeSource = nil; routeSearch = "" }
+                        }
+                        let visible = visibleRouteIDs
+                        Text("\(visible.count) of \(draft.routes.count) routes shown · Filters do not change the instrument.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if visible.isEmpty && !draft.routes.isEmpty {
+                            Text("No matching routes. Clear the filter to see all mappings.").font(.caption)
+                        }
+                        Button("Collapse all routes") { expandedRoutes.removeAll() }.controlSize(.small)
                         ForEach($draft.routes) { $route in
-                            routeEditor($route)
-                            Button("Remove route", role: .destructive) {
-                                draft.routes.removeAll { $0.id == route.id }
-                            }.font(.caption)
-                            Divider()
+                            if visible.contains(route.id) {
+                                let id = route.id
+                                DisclosureGroup(isExpanded: Binding(
+                                    get: { expandedRoutes.contains(id) },
+                                    set: { expanded in
+                                        if expanded { expandedRoutes.insert(id) } else { expandedRoutes.remove(id) }
+                                    })) {
+                                    routeEditor($route)
+                                    Button("Remove route", role: .destructive) {
+                                        expandedRoutes.remove(id)
+                                        draft.routes.removeAll { $0.id == id }
+                                    }.font(.caption)
+                                } label: {
+                                    Text(BuilderRouteTools.summary(route))
+                                        .foregroundStyle(InstrumentPatch.permits(route) ? Color.primary : Color.orange)
+                                }
+                                Divider()
+                            }
                         }
                         Button("Add Pocket Wah route (Phone · CC74)") {
                             var next = draft
@@ -169,7 +190,7 @@ struct InstrumentBuilderView: View {
                             RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI)
                         }
                         if physical && !PhysicalPatchRuntime.supports(draft) {
-                            Text("Normal native mode supports local surfaces, lid, ribbon and camera. For mapped phone/tablet X/Y/contact, drum pads, Air Drums or continuous motion signals, use the separate Remote panel above. Other remote signals remain simulation-only.")
+                            Text("Normal native mode supports local surfaces, lid, ribbon and camera. For valid phone/tablet touch, piano, drum pads, pedalboard and motion routes, use the Remote panel above. Other unsupported signals remain simulation-only.")
                                 .font(.caption).foregroundStyle(.orange)
                         }
                         HStack {
@@ -307,43 +328,20 @@ struct InstrumentBuilderView: View {
         }
     }
 
-    private func addMobilePedalboard() {
-        var next = draft
-        let missing = RemotePedalboard.routes(source: drumSource).filter { candidate in
-            !next.routes.contains { $0.source == candidate.source && $0.signal == candidate.signal }
-        }
-        next.routes += missing
-        guard next.isValid else { message = "Cannot add pedals: check route capacity, calibration and shared release values."; return }
-        draft = next
-        message = missing.isEmpty ? "All six pedals already mapped." : "Added \(missing.count) missing pedal routes."
-    }
-
-    private func addMobilePiano() {
-        var next = draft
-        let missing = RemotePiano.routes(source: drumSource).filter { candidate in
-            !next.routes.contains { $0.source == candidate.source && $0.signal == candidate.signal }
-        }
-        next.routes += missing
-        guard next.isValid else { message = "Cannot add piano: check route capacity or existing mappings."; return }
-        draft = next
-        message = missing.isEmpty ? "All piano keys and sustain already mapped." : "Added \(missing.count) missing piano routes."
-    }
-
-    private func addMobileDrumPads() {
-        var next = draft
-        let missing = RemoteDrumPads.routes(source: drumSource).filter { candidate in
-            !next.routes.contains { $0.source == candidate.source && $0.signal == candidate.signal }
-        }
-        next.routes += missing
-        guard next.isValid else { message = "Cannot add pads: check route capacity or existing mappings."; return }
-        draft = next
-        message = missing.isEmpty ? "All eight pads already mapped." : "Added \(missing.count) missing drum pads."
+    private func addMobilePreset(_ preset: BuilderRouteTools.MobilePreset) {
+        let count = preset.missingCount(in:draft,source:remoteSource)
+        do {
+            draft = try preset.appending(to:draft,source:remoteSource)
+            message = count == 0 ? "All controls already mapped." : "Added \(count) missing routes for \(remoteSource.rawValue)."
+            routeSource = remoteSource
+            routeSearch = ""
+        } catch { message = "Cannot add preset: check route capacity, invalid mappings or shared release values." }
     }
 
     private func addDrumRoute() {
         var next = draft
-        var route = drumPreset.route(source: drumSource)
-        if let existing = next.routes.first(where: { $0.source == drumSource && $0.signal == .airStrike }) {
+        var route = drumPreset.route(source: remoteSource)
+        if let existing = next.routes.first(where: { $0.source == remoteSource && $0.signal == .airStrike }) {
             route.threshold = existing.threshold
             route.hysteresis = existing.hysteresis
         }
