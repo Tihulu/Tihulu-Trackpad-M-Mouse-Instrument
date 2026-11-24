@@ -14,7 +14,7 @@ struct ChordProgressionPanel: View {
     }
 
     private func slotBinding(_ index: Int) -> Binding<Int> {
-        Binding(get: { studio.chordProgression.slots[index] ?? -1 }, set: { slot in
+        Binding(get: { studio.chordProgression.slots.indices.contains(index) ? (studio.chordProgression.slots[index] ?? -1) : -1 }, set: { slot in
             var next = studio.chordProgression
             guard next.slots.indices.contains(index) else { return }
             next.slots[index] = slot < 0 ? nil : slot
@@ -40,7 +40,7 @@ struct ChordProgressionPanel: View {
                         else { studio.startChordProgression() }
                     }.buttonStyle(.borderedProminent)
                         .disabled(!studio.chordArmed)
-                    Text(studio.progressionRunning ? "Playing" : "Stopped")
+                    Text(studio.progressionRunning ? (studio.progressionSingleSlot == nil ? "Playing" : "Pad arpeggio") : "Stopped")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Text(String(format: "%.0f BPM · %@", studio.bpm, studio.chordBank.effectiveOutput.rawValue))
@@ -48,6 +48,7 @@ struct ChordProgressionPanel: View {
                 }
                 settings
                     .disabled(studio.progressionRunning)
+                ArpeggioPanel().disabled(studio.progressionRunning)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
                     ForEach(studio.chordProgression.slots.indices, id: \.self) { index in
                         stepCell(index)
@@ -81,7 +82,7 @@ struct ChordProgressionPanel: View {
 
     private func stepCell(_ index: Int) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Step \(index + 1)" + (studio.progressionStep == index ? " · Playing" : ""))
+            Text("Step \(index + 1)" + (studio.progressionSingleSlot == nil && studio.progressionStep == index ? " · Playing" : ""))
                 .font(.caption.bold())
             Picker("Chord", selection: slotBinding(index)) {
                 Text("Rest").tag(-1)
@@ -91,7 +92,7 @@ struct ChordProgressionPanel: View {
                 }
             }.labelsHidden()
         }.padding(6)
-        .background(studio.progressionStep == index ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.06))
+        .background(studio.progressionSingleSlot == nil && studio.progressionStep == index ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }

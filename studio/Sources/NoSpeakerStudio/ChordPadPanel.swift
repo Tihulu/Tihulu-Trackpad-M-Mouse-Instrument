@@ -173,6 +173,11 @@ struct ChordPadPanel: View {
             .accessibilityLabel(accessibility)
             if !compact {
                 padEditorButtons(slot: slot, pad: pad, isCustom: isCustom)
+                if studio.chordProgression.arpeggio != nil {
+                    Button("Arp") { studio.startChordProgression(singleSlot: slot) }
+                        .disabled(!studio.chordArmed || studio.progressionRunning)
+                        .accessibilityLabel("Arpeggiate " + pad.name)
+                }
             }
         }
     }
