@@ -1,0 +1,87 @@
+{
+  "harness": "246b0915cf97527f5fdae441606c7373e16582b0",
+  "execution": "V8 virtual-time model",
+  "results": [
+    {
+      "name": "missing ACK closes at 220 ms",
+      "pass": true,
+      "closed": {
+        "at": 1320,
+        "status": "Connection timed out. Request a new invitation.",
+        "hostReason": null
+      },
+      "active": [],
+      "maxFlight": 1,
+      "elapsed": 220
+    },
+    {
+      "name": "stale queued XY onset closes without stale send",
+      "pass": true,
+      "closed": {
+        "at": 1261,
+        "status": "Touch input delayed. Reconnect explicitly.",
+        "hostReason": null
+      },
+      "active": [],
+      "maxFlight": 1,
+      "age": 151,
+      "touchFrames": 0
+    },
+    {
+      "name": "transport backlog closes",
+      "pass": true,
+      "closed": {
+        "at": 1100,
+        "status": "Backlog. Controls released by host watchdog.",
+        "hostReason": null
+      },
+      "active": [],
+      "maxFlight": 1
+    },
+    {
+      "name": "pagehide closes active touch",
+      "pass": true,
+      "closed": {
+        "at": 1140,
+        "status": "Page hidden.",
+        "hostReason": null
+      },
+      "active": [],
+      "maxFlight": 1
+    },
+    {
+      "name": "queued onset retains down coordinates; foreign lift ignored",
+      "pass": true,
+      "closed": null,
+      "active": [
+        "pianoKeys"
+      ],
+      "maxFlight": 1,
+      "wire": [
+        {
+          "version": 1,
+          "sequence": 3,
+          "kind": "touch",
+          "x": 0.25,
+          "y": 0.75
+        },
+        {
+          "version": 1,
+          "sequence": 4,
+          "kind": "release"
+        }
+      ]
+    },
+    {
+      "name": "stale sensor stops connection",
+      "pass": true,
+      "closed": {
+        "at": 1361,
+        "status": "Orientation stopped. Host releases tilt; reconnect explicitly.",
+        "hostReason": null
+      },
+      "active": [],
+      "maxFlight": 1
+    }
+  ]
+}

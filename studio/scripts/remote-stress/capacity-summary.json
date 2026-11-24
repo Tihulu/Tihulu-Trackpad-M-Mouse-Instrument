@@ -1,0 +1,1644 @@
+{
+  "base": "e55acd52d9e8ba241afa3b8574618625c0dab47e",
+  "harness": "910bf4597ba2d2343dc66327aa28c301c130e870",
+  "execution": "V8 Function, virtual timers, modeled host; two identical runs; in-memory experimental variants",
+  "profiles": {
+    "rtt5": {
+      "rtt": 5
+    },
+    "rtt20": {
+      "rtt": 20
+    },
+    "rtt40": {
+      "rtt": 40
+    },
+    "rtt60": {
+      "rtt": 60
+    },
+    "jitter20": {
+      "rtt": 20,
+      "jitter": 10
+    },
+    "jitter40": {
+      "rtt": 40,
+      "jitter": 15
+    }
+  },
+  "combinations": {
+    "touch": [
+      "touch"
+    ],
+    "piano": [
+      "pianoKeys"
+    ],
+    "drum": [
+      "drumPads"
+    ],
+    "pedal": [
+      "pedalboard"
+    ],
+    "tilt": [
+      "orientation"
+    ],
+    "touchTilt": [
+      "touch",
+      "orientation"
+    ],
+    "pianoPedal": [
+      "pianoKeys",
+      "pedalboard"
+    ],
+    "drumPiano": [
+      "drumPads",
+      "pianoKeys"
+    ],
+    "touchPianoPedal": [
+      "touch",
+      "pianoKeys",
+      "pedalboard"
+    ],
+    "inertial": [
+      "orientation",
+      "acceleration",
+      "rotation"
+    ],
+    "drumPianoPedal": [
+      "drumPads",
+      "pianoKeys",
+      "pedalboard"
+    ],
+    "touchTiltAccel": [
+      "touch",
+      "orientation",
+      "acceleration"
+    ],
+    "four": [
+      "touch",
+      "orientation",
+      "pianoKeys",
+      "pedalboard"
+    ],
+    "five": [
+      "touch",
+      "orientation",
+      "acceleration",
+      "pianoKeys",
+      "pedalboard"
+    ],
+    "six": [
+      "touch",
+      "orientation",
+      "acceleration",
+      "rotation",
+      "pianoKeys",
+      "pedalboard"
+    ],
+    "seven": [
+      "touch",
+      "orientation",
+      "acceleration",
+      "rotation",
+      "drumPads",
+      "pianoKeys",
+      "pedalboard"
+    ]
+  },
+  "summary": {
+    "frozen": {
+      "rtt5": {
+        "passed": 31,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ]
+      },
+      "rtt20": {
+        "passed": 26,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal"
+        ]
+      },
+      "rtt40": {
+        "passed": 21,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "pianoPedal",
+          "drumPiano",
+          "inertial"
+        ]
+      },
+      "rtt60": {
+        "passed": 17,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "inertial"
+        ]
+      },
+      "jitter20": {
+        "passed": 26,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal"
+        ]
+      },
+      "jitter40": {
+        "passed": 21,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "pianoPedal",
+          "drumPiano",
+          "inertial"
+        ]
+      }
+    },
+    "edgeFirst": {
+      "rtt5": {
+        "passed": 29,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ]
+      },
+      "rtt20": {
+        "passed": 32,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ]
+      },
+      "rtt40": {
+        "passed": 22,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "inertial",
+          "touchTiltAccel"
+        ]
+      },
+      "rtt60": {
+        "passed": 20,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "inertial",
+          "touchTiltAccel"
+        ]
+      },
+      "jitter20": {
+        "passed": 31,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ]
+      },
+      "jitter40": {
+        "passed": 22,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "inertial",
+          "touchTiltAccel"
+        ]
+      }
+    },
+    "deadlineAware": {
+      "rtt5": {
+        "passed": 29,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ]
+      },
+      "rtt20": {
+        "passed": 28,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ]
+      },
+      "rtt40": {
+        "passed": 19,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "drumPianoPedal"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchTiltAccel"
+        ]
+      },
+      "rtt60": {
+        "passed": 15,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "drumPianoPedal"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt"
+        ]
+      },
+      "jitter20": {
+        "passed": 28,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ]
+      },
+      "jitter40": {
+        "passed": 19,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "drumPianoPedal"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchTiltAccel"
+        ]
+      }
+    },
+    "pacedEdgeFirst": {
+      "rtt5": {
+        "passed": 32,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ]
+      },
+      "rtt20": {
+        "passed": 32,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ]
+      },
+      "rtt40": {
+        "passed": 22,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "inertial",
+          "touchTiltAccel"
+        ]
+      },
+      "rtt60": {
+        "passed": 20,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "inertial",
+          "touchTiltAccel"
+        ]
+      },
+      "jitter20": {
+        "passed": 31,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six",
+          "seven"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel",
+          "four",
+          "five",
+          "six"
+        ]
+      },
+      "jitter40": {
+        "passed": 22,
+        "total": 32,
+        "holdPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "touchPianoPedal",
+          "inertial",
+          "drumPianoPedal",
+          "touchTiltAccel"
+        ],
+        "burstPassed": [
+          "touch",
+          "piano",
+          "drum",
+          "pedal",
+          "tilt",
+          "touchTilt",
+          "pianoPedal",
+          "drumPiano",
+          "inertial",
+          "touchTiltAccel"
+        ]
+      }
+    }
+  },
+  "xy": {
+    "frozen": [
+      {
+        "case": "pending-drumPads",
+        "wire": [
+          "release"
+        ],
+        "closed": null,
+        "pass": false
+      },
+      {
+        "case": "pending-pianoKeys",
+        "wire": [
+          "release"
+        ],
+        "closed": null,
+        "pass": false
+      },
+      {
+        "case": "pending-pedalboard",
+        "wire": [
+          "release"
+        ],
+        "closed": null,
+        "pass": false
+      },
+      {
+        "case": "pending-orientation",
+        "wire": [
+          "release"
+        ],
+        "closed": null,
+        "pass": false
+      },
+      {
+        "case": "pending-acceleration",
+        "wire": [
+          "release"
+        ],
+        "closed": null,
+        "pass": false
+      },
+      {
+        "case": "pending-rotation",
+        "wire": [
+          "release"
+        ],
+        "closed": null,
+        "pass": false
+      },
+      {
+        "case": "two-taps-pointerup",
+        "wire": [
+          "release"
+        ],
+        "closed": null,
+        "pass": false
+      },
+      {
+        "case": "two-taps-pointercancel",
+        "wire": [
+          "release"
+        ],
+        "closed": null,
+        "pass": false
+      },
+      {
+        "case": "two-taps-lostpointercapture",
+        "wire": [
+          "release"
+        ],
+        "closed": null,
+        "pass": false
+      },
+      {
+        "case": "touch-overflow",
+        "closed": null,
+        "modelActive": [
+          "pianoKeys"
+        ],
+        "pass": false
+      }
+    ],
+    "edgeFirst": [
+      {
+        "case": "pending-drumPads",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-pianoKeys",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-pedalboard",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-orientation",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-acceleration",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-rotation",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-pointerup",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-pointercancel",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-lostpointercapture",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "touch-overflow",
+        "closed": {
+          "at": 1100,
+          "status": "Touch input backlog.",
+          "hostReason": null
+        },
+        "modelActive": [],
+        "pass": true
+      }
+    ],
+    "deadlineAware": [
+      {
+        "case": "pending-drumPads",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-pianoKeys",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-pedalboard",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-orientation",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-acceleration",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-rotation",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-pointerup",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-pointercancel",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-lostpointercapture",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "touch-overflow",
+        "closed": {
+          "at": 1100,
+          "status": "Touch input backlog.",
+          "hostReason": null
+        },
+        "modelActive": [],
+        "pass": true
+      }
+    ],
+    "pacedEdgeFirst": [
+      {
+        "case": "pending-drumPads",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-pianoKeys",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-pedalboard",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-orientation",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-acceleration",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "pending-rotation",
+        "wire": [
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-pointerup",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-pointercancel",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "two-taps-lostpointercapture",
+        "wire": [
+          "touch",
+          "release",
+          "touch",
+          "release"
+        ],
+        "closed": null,
+        "pass": true
+      },
+      {
+        "case": "touch-overflow",
+        "closed": {
+          "at": 1100,
+          "status": "Touch input backlog.",
+          "hostReason": null
+        },
+        "modelActive": [],
+        "pass": true
+      }
+    ]
+  },
+  "resource": {
+    "cases": [
+      {
+        "local": 0,
+        "request": [
+          7,
+          7,
+          7
+        ],
+        "accepted": [
+          true,
+          true,
+          false
+        ],
+        "used": 14,
+        "peers": 2,
+        "invariant": true
+      },
+      {
+        "local": 0,
+        "request": [
+          7,
+          4,
+          1
+        ],
+        "accepted": [
+          true,
+          true,
+          true
+        ],
+        "used": 12,
+        "peers": 3,
+        "invariant": true
+      },
+      {
+        "local": 0,
+        "request": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "accepted": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "used": 16,
+        "peers": 4,
+        "invariant": true
+      },
+      {
+        "local": 0,
+        "request": [
+          2,
+          2,
+          2,
+          2
+        ],
+        "accepted": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "used": 8,
+        "peers": 4,
+        "invariant": true
+      },
+      {
+        "local": 0,
+        "request": [
+          7,
+          7,
+          0,
+          0,
+          0
+        ],
+        "accepted": [
+          true,
+          true,
+          true,
+          true,
+          false
+        ],
+        "used": 14,
+        "peers": 4,
+        "invariant": true
+      },
+      {
+        "local": 1,
+        "request": [
+          7,
+          7,
+          7
+        ],
+        "accepted": [
+          true,
+          true,
+          false
+        ],
+        "used": 14,
+        "peers": 2,
+        "invariant": true
+      },
+      {
+        "local": 1,
+        "request": [
+          7,
+          4,
+          1
+        ],
+        "accepted": [
+          true,
+          true,
+          true
+        ],
+        "used": 12,
+        "peers": 3,
+        "invariant": true
+      },
+      {
+        "local": 1,
+        "request": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "accepted": [
+          true,
+          true,
+          true,
+          false
+        ],
+        "used": 12,
+        "peers": 3,
+        "invariant": true
+      },
+      {
+        "local": 1,
+        "request": [
+          2,
+          2,
+          2,
+          2
+        ],
+        "accepted": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "used": 8,
+        "peers": 4,
+        "invariant": true
+      },
+      {
+        "local": 1,
+        "request": [
+          7,
+          7,
+          0,
+          0,
+          0
+        ],
+        "accepted": [
+          true,
+          true,
+          true,
+          true,
+          false
+        ],
+        "used": 14,
+        "peers": 4,
+        "invariant": true
+      },
+      {
+        "local": 3,
+        "request": [
+          7,
+          7,
+          7
+        ],
+        "accepted": [
+          true,
+          false,
+          false
+        ],
+        "used": 7,
+        "peers": 1,
+        "invariant": true
+      },
+      {
+        "local": 3,
+        "request": [
+          7,
+          4,
+          1
+        ],
+        "accepted": [
+          true,
+          true,
+          true
+        ],
+        "used": 12,
+        "peers": 3,
+        "invariant": true
+      },
+      {
+        "local": 3,
+        "request": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "accepted": [
+          true,
+          true,
+          true,
+          false
+        ],
+        "used": 12,
+        "peers": 3,
+        "invariant": true
+      },
+      {
+        "local": 3,
+        "request": [
+          2,
+          2,
+          2,
+          2
+        ],
+        "accepted": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "used": 8,
+        "peers": 4,
+        "invariant": true
+      },
+      {
+        "local": 3,
+        "request": [
+          7,
+          7,
+          0,
+          0,
+          0
+        ],
+        "accepted": [
+          true,
+          false,
+          true,
+          true,
+          true
+        ],
+        "used": 7,
+        "peers": 4,
+        "invariant": true
+      },
+      {
+        "local": 5,
+        "request": [
+          7,
+          7,
+          7
+        ],
+        "accepted": [
+          true,
+          false,
+          false
+        ],
+        "used": 7,
+        "peers": 1,
+        "invariant": true
+      },
+      {
+        "local": 5,
+        "request": [
+          7,
+          4,
+          1
+        ],
+        "accepted": [
+          true,
+          true,
+          false
+        ],
+        "used": 11,
+        "peers": 2,
+        "invariant": true
+      },
+      {
+        "local": 5,
+        "request": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "accepted": [
+          true,
+          true,
+          false,
+          false
+        ],
+        "used": 8,
+        "peers": 2,
+        "invariant": true
+      },
+      {
+        "local": 5,
+        "request": [
+          2,
+          2,
+          2,
+          2
+        ],
+        "accepted": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "used": 8,
+        "peers": 4,
+        "invariant": true
+      },
+      {
+        "local": 5,
+        "request": [
+          7,
+          7,
+          0,
+          0,
+          0
+        ],
+        "accepted": [
+          true,
+          false,
+          true,
+          true,
+          true
+        ],
+        "used": 7,
+        "peers": 4,
+        "invariant": true
+      }
+    ],
+    "atomicDenial": true,
+    "afterConfirmed": true,
+    "usedAfterDisconnect": 5,
+    "localReserve": 5
+  }
+}
