@@ -84,10 +84,10 @@ struct InstrumentBuilderView: View {
                             }
                         }
                         if physical {
-                            Text("Primary contact per surface; contact size is not measured pressure. The private macOS driver groups compatible external touch surfaces under Magic Mouse; device identity is not verified here. Shared monitor is exclusive to this test. Lift or loss of input releases owned controls. No automatic pointer capture.")
+                            Text("Primary contact per surface; contact size is not measured pressure. The private macOS driver groups compatible external touch surfaces under Magic Mouse; device identity is not verified here. The shared monitor supports independent Touch Instrument and MIDI Helper sessions; route the dedicated MIDI source separately in the DAW. Lift or loss of input releases owned controls. No automatic pointer capture.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Text("Use TIHULU Instrument Builder as a dedicated DAW input if MIDI is enabled. Connect a separate instrument/channel. Stop or leave this page to release owned controls. No network access.")
+                        Text("Use TIHULU Instrument Builder as a dedicated DAW input if MIDI is enabled. Connect a separate instrument/channel. Stop or Panic releases owned controls. Physical sessions continue across pages; simulation ends when leaving. No network access.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }
@@ -102,8 +102,13 @@ struct InstrumentBuilderView: View {
                 Text(message).font(.caption).foregroundStyle(.secondary)
             }.padding(24)
         }
-        .onAppear { draft = studio.instrumentPatch }
-        .onDisappear { studio.stopInstrumentPatch() }
+        .onAppear {
+            draft = studio.instrumentPatch
+            if studio.patchRunning { physical = studio.patchPhysical }
+        }
+        .onDisappear {
+            if !studio.patchPhysical { studio.stopInstrumentPatch() }
+        }
     }
 
     private func routeEditor(_ route: Binding<SensorMapping>) -> some View {

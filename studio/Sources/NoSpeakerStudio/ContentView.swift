@@ -248,10 +248,17 @@ struct ContentView: View {
             studio.releaseOptionalTouchBarNotes()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            studio.stopInstrumentPatch()
+            studio.stopLiveSequence()
             studio.disarmChordPads()
             studio.disarmTouchBarOutput()
         }
-        .onDisappear { studio.disarmChordPads(); studio.disarmTouchBarOutput() }
+        .onDisappear {
+            studio.stopInstrumentPatch()
+            studio.stopLiveSequence()
+            studio.disarmChordPads()
+            studio.disarmTouchBarOutput()
+        }
         .onAppear {
             studio.installTouchBar()
             studio.playStartupGreetingOnce()
@@ -370,6 +377,10 @@ struct ContentView: View {
                 }
             }.help("Tap repeatedly to set the pattern tempo")
             Spacer(minLength: 4)
+            if studio.patchRunning {
+                Button("Stop Builder") { studio.stopInstrumentPatch() }
+                    .help("Release only the Instrument Builder session")
+            }
             Button("Stop Playback") { studio.stopPlayback() }.keyboardShortcut(".", modifiers: .command)
                 .help("Stop file, voice or sequencer playback; independent live sessions remain active")
             Button {
