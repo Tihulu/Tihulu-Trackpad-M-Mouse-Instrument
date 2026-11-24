@@ -21,7 +21,9 @@ final class StudioController: ObservableObject {
     @Published var bpm = 120.0
     @Published var midiRunning = false
     @Published private(set) var chordBank = StudioController.readChordBank()
-    @Published private(set) var chordArmed = false
+    @Published private(set) var chordArmed = false {
+        didSet { touchBarBridge?.refreshChordControls() }
+    }
     @Published private(set) var chordActiveSlots: Set<Int> = []
     @Published private(set) var chordStatus = "MIDI output off"
     private let chordOutput = ChordMIDIOutput()
@@ -114,6 +116,7 @@ final class StudioController: ObservableObject {
     func updateChordBank(_ proposed: ChordBank) {
         guard proposed.isValid, !chordArmed, chordOutstanding.isEmpty else { return }
         chordBank = proposed
+        touchBarBridge?.refreshChordControls()
         if let data = try? WorkspaceArchive.encode(name: "Chord bank", payload: proposed) {
             UserDefaults.standard.set(data, forKey: "TIHULU.chordBank.v1")
         }
@@ -228,6 +231,9 @@ final class StudioController: ObservableObject {
     func setTouchBarProfile(_ proposed: TouchBarProfile) {
         let next = proposed.normalized()
         guard next != touchBarProfile else { return }
+        if touchBarProfile.zones.contains(.chords) && !next.zones.contains(.chords) {
+            releaseChordPads()
+        }
         releaseTouchBarNotes()
         if touchBarSustainOn {
             touchBarSustainOn = false
@@ -289,7 +295,7 @@ final class StudioController: ObservableObject {
             midi?.sendControlChange(controller: 11, value: Int((safe * 127).rounded()), channel: channel)
         case .filter:
             midi?.sendControlChange(controller: 74, value: Int((safe * 127).rounded()), channel: channel)
-        case .keys, .sustain:
+        case .keys, .chords, .sustain:
             break
         }
     }

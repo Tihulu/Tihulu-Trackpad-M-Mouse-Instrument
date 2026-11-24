@@ -1,5 +1,6 @@
 #if os(macOS)
 import SwiftUI
+import Combine
 import AppKit
 import CoreGraphics
 import UniformTypeIdentifiers
@@ -190,7 +191,7 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 transport
                 Divider()
-                if showChordStrip && mode != .chords {
+                if showChordStrip && mode != .chords && !(mode == .touchBar && studio.touchBarProfile.zones.contains(.chords)) {
                     ChordPadPanel(compact: true).padding(8)
                     Divider()
                 }
@@ -240,6 +241,10 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             studio.releaseChordPads()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            studio.disarmChordPads()
+        }
+        .onDisappear { studio.disarmChordPads() }
         .onAppear {
             studio.installTouchBar()
             studio.playStartupGreetingOnce()
@@ -2144,6 +2149,8 @@ private struct TouchBarModeView: View {
                                         )
                                     }
                                 }
+                            case .chords:
+                                ChordPadPanel(compact: true)
                             case .sustain:
                                 HStack {
                                     Text("Sustain").frame(width: 115, alignment: .leading)
@@ -2164,7 +2171,7 @@ private struct TouchBarModeView: View {
                                 TouchBarSliderPad(zone: zone)
                             }
                         }
-                        Text("Slides send live MIDI CC/bend to the same virtual MIDI output used by Logic. Keys send Note On/Off; Touch/Helper sessions remain independent.")
+                        Text("Sliders and piano keys use the existing MIDI bridge. Chord Pads use their own armed MIDI source. Touch/Helper sessions remain independent.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }

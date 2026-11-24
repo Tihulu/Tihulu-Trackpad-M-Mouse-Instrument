@@ -10,10 +10,12 @@ import NoSpeakerCore
 final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     weak var controller: StudioController?
     private var profile = TouchBarProfile()
+    private weak var chordControl: NSSegmentedControl?
     private let prefix = "com.tihulu.instrument.touchbar."
 
     func install(profile: TouchBarProfile) {
         self.profile = profile.normalized()
+        chordControl = nil
         let bar = NSTouchBar()
         bar.delegate = self
         bar.customizationIdentifier = NSTouchBar.CustomizationIdentifier(prefix + "layout")
@@ -48,6 +50,18 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             )
             piano.segmentStyle = .rounded
             item.view = piano
+            return item
+        case .chords:
+            let item = NSCustomTouchBarItem(identifier: identifier)
+            item.customizationLabel = "Chord Pads (arm in Studio)"
+            let pads = NSSegmentedControl(
+                labels: chordLabels(), trackingMode: .momentary,
+                target: self, action: #selector(chordPadPressed(_:))
+            )
+            pads.segmentStyle = .rounded
+            pads.isEnabled = controller?.chordArmed == true
+            chordControl = pads
+            item.view = pads
             return item
         case .sustain:
             let item = NSCustomTouchBarItem(identifier: identifier)
@@ -107,6 +121,26 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             }
             return item
         }
+    }
+
+    private func chordLabels() -> [String] {
+        (0..<ChordBank.padCount).map { slot in
+            String((controller?.chordBank.pad(at: slot)?.name ?? "Pad " + String(slot + 1)).prefix(8))
+        }
+    }
+
+    func refreshChordControls() {
+        guard let control = chordControl else { return }
+        for (index, title) in chordLabels().enumerated() {
+            control.setLabel(title, forSegment: index)
+        }
+        control.isEnabled = controller?.chordArmed == true
+    }
+
+    @objc private func chordPadPressed(_ sender: NSSegmentedControl) {
+        let slot = sender.selectedSegment
+        guard (0..<ChordBank.padCount).contains(slot) else { return }
+        controller?.triggerChordPad(slot)
     }
 
     @objc private func sliderChanged(_ sender: NSSlider) {

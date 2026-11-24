@@ -3,6 +3,7 @@ import Foundation
 /// User-chosen zones for a native or on-screen Touch Bar performance surface.
 public enum TouchBarZone: String, CaseIterable, Codable, Identifiable, Sendable {
     case keys = "Piano Keys"
+    case chords = "Chord Pads"
     case fretless = "Fretless Glide"
     case pitchBend = "Pitch Bend"
     case vibrato = "Vibrato"
