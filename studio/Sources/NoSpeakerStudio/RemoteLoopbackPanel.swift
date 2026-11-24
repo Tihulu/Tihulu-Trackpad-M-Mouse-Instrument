@@ -40,7 +40,7 @@ struct RemoteLoopbackPanel: View {
                         .disabled(!studio.remoteLoopbackVerified)
                         .onChange(of: lan) { _ in confirmedLAN = false }
                     if !studio.remoteLoopbackVerified {
-                        Text("LAN is locked until the local TLS + touch/release test succeeds.").font(.caption)
+                        Text("LAN is locked until the local TLS, pairing and source-aware protocol diagnostic succeeds.").font(.caption)
                     }
                     if lan {
                         HStack {
@@ -85,15 +85,15 @@ struct RemoteLoopbackPanel: View {
                             message = ""
                         } catch { message = error.localizedDescription }
                     }.disabled(selected == nil || endpoint == nil || (lan && (!confirmedLAN || !studio.remoteLoopbackVerified)) || !PhysicalPatchRuntime.supports(patch, allowRemote: true))
-                    Text(sendMIDI ? "MIDI ON: diagnostic touch may sound mapped notes. Use a separate DAW instrument." :
-                         "MIDI OFF: diagnostic commands appear in the monitor without sending to DAW.")
+                    Text(sendMIDI ? "MIDI ON: if XY is mapped, diagnostic touch may sound notes. Use a separate DAW instrument." :
+                         "MIDI OFF: mapped diagnostic touch commands appear in the monitor without sending to DAW. Non-XY sources use an idle heartbeat.")
                         .font(.caption)
                 } else {
                     Text(studio.patchRemoteReady ? "Remote listener ready" : "Remote listener not ready").font(.headline)
                     Picker("Test source", selection: $source) {
                         ForEach(sources, id: \.self) { Text($0.rawValue).tag($0) }
                     }.disabled(studio.patchRemoteProbeRunning)
-                    Button("Run TLS + touch/release test") {
+                    Button("Run TLS + source diagnostic") {
                         clearInvitation()
                         studio.runBuilderRemoteProbe(source: source)
                     }

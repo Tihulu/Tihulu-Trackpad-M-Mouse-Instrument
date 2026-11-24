@@ -15,7 +15,7 @@ public enum RemoteLoopbackProbe {
         }
     }
 
-    public static func run(invitation: Data) async throws {
+    public static func run(invitation: Data, expected: RemoteCapabilities) async throws {
         guard invitation.count == 32 else { throw Failure.invalidInvitation }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 5
@@ -41,10 +41,22 @@ public enum RemoteLoopbackProbe {
             socket.resume()
             try await socket.send(.data(invitation))
             try await expect("admitted", from: socket)
-            try await socket.send(.string("{\"version\":1,\"sequence\":1,\"kind\":\"touch\",\"x\":0.7,\"y\":0.6}"))
-            try await expect("accepted", from: socket)
-            try await socket.send(.string("{\"version\":1,\"sequence\":2,\"kind\":\"release\"}"))
-            try await expect("accepted", from: socket)
+            try await socket.send(.string("{\"version\":7,\"sequence\":1,\"kind\":\"capabilities\"}"))
+            guard case .string(let caps) = try await socket.receive(),
+                  RemoteProbeContract.acceptsCapabilities(Data(caps.utf8),expected:expected) else { throw Failure.acknowledgment }
+            try await Task.sleep(for:.milliseconds(50))
+            try await socket.send(.string("{\"version\":8,\"sequence\":2,\"kind\":\"mapping\",\"page\":0}"))
+            guard case .string(let mapping) = try await socket.receive(),
+                  RemoteProbeContract.acceptsWithheldMapping(Data(mapping.utf8),sequence:2) else { throw Failure.acknowledgment }
+            if expected.touch {
+                try await socket.send(.string("{\"version\":1,\"sequence\":3,\"kind\":\"touch\",\"x\":0.7,\"y\":0.6}"))
+                try await expect("accepted", from: socket)
+                try await socket.send(.string("{\"version\":1,\"sequence\":4,\"kind\":\"release\"}"))
+                try await expect("accepted", from: socket)
+            } else {
+                try await socket.send(.string("{\"version\":1,\"sequence\":3,\"kind\":\"heartbeat\"}"))
+                try await expect("accepted", from: socket)
+            }
             try Task.checkCancellation()
         } onCancel: {
             socket.cancel(with: .goingAway, reason: nil)
