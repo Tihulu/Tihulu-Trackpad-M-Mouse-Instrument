@@ -30,8 +30,10 @@ public struct LegacyContinuousOwners: Sendable {
         public let value: Int
         /// Send RPN only on effective range change, before the bend value.
         public let bendRange: Int?
-        public init(_ target: SensorDestination, value: Int, bendRange: Int? = nil) {
+        public let neutral: Int
+        public init(_ target: SensorDestination, value: Int, bendRange: Int? = nil, neutral: Int? = nil) {
             self.target = target; self.value = value; self.bendRange = bendRange
+            self.neutral = neutral ?? (target.kind == .pitchBend ? 8192 : ([7,11].contains(target.number) ? 127 : 0))
         }
     }
 
@@ -62,11 +64,11 @@ public struct LegacyContinuousOwners: Sendable {
             let previous = before[index]
             if let next = winner(target) {
                 let rangeChanged = previous?.bendRange != next.bendRange
-                guard previous?.value != next.value || rangeChanged else { return nil }
-                return .init(target,value:next.value,bendRange:rangeChanged ? next.bendRange : nil)
+                guard previous?.value != next.value || previous?.neutral != next.neutral || rangeChanged else { return nil }
+                return .init(target,value:next.value,bendRange:rangeChanged ? next.bendRange : nil,neutral:next.neutral)
             }
             guard let previous, previous.value != previous.neutral else { return nil }
-            return .init(target,value:previous.neutral)
+            return .init(target,value:previous.neutral,neutral:previous.neutral)
         }
     }
 
@@ -82,7 +84,7 @@ public struct LegacyContinuousOwners: Sendable {
         let targets = sorted(Set(owners.values.flatMap(\.keys)))
         let result: [Update] = targets.compactMap { target in
             guard let previous = winner(target), previous.value != previous.neutral else { return nil }
-            return .init(target,value:previous.neutral)
+            return .init(target,value:previous.neutral,neutral:previous.neutral)
         }
         owners.removeAll()
         return result

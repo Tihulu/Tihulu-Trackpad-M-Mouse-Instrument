@@ -152,12 +152,13 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var outgoingPressure = LegacyChannelPressure()
     // Outgoing state is serialized by the existing Studio caller.
     private var gateDebt = LegacyGateReleaseDebt()
+    private var controllerDebt = LegacyControllerReleaseDebt()
     private var outgoingFault: OSStatus?
     private var controllerRecoveryRequired = false
     private var cleaningOutgoing = false
     private var outgoingFailureHandler: (@Sendable (OSStatus) -> Void)?
 
-    public var hasUnconfirmedOutgoingCleanup: Bool { !gateDebt.isEmpty || controllerRecoveryRequired }
+    public var hasUnconfirmedOutgoingCleanup: Bool { !gateDebt.isEmpty || !controllerDebt.isEmpty || controllerRecoveryRequired }
     public var outgoingFailureStatus: OSStatus? { outgoingFault }
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
@@ -267,6 +268,15 @@ public final class MIDIHapticService: @unchecked Sendable {
         // The intended-owner ledgers may already have removed failed releases.
         // Retry only the outstanding note and pedal destinations, not all channels.
         for message in gateDebt.pending { sendMIDI1(status:message.status,data1:message.data1,data2:message.data2) }
+        for channel in controllerDebt.pendingRanges {
+            let msb = sendMIDI1(status:0xb0|channel,data1:101,data2:127,rangePart:true)
+            let lsb = sendMIDI1(status:0xb0|channel,data1:100,data2:127,rangePart:true)
+            if msb && lsb { controllerDebt.completeRange(channel:channel) }
+        }
+        for message in controllerDebt.pending {
+            let neutral = (message.status & 0xf0) == 0xb0 ? message.data2 : LegacyControllerReleaseDebt.neutral(for:message)
+            sendMIDI1(status:message.status,data1:message.data1,data2:message.data2,neutral:neutral)
+        }
         cleaningOutgoing = false
         outgoingFailureHandler = nil
 
@@ -571,7 +581,7 @@ public final class MIDIHapticService: @unchecked Sendable {
                 if let range = update.bendRange { sendPitchBendRange(semitones:range,channel:target.channel) }
                 sendPitchBend(update.value,channel:target.channel)
             case .controlChange:
-                sendControlChange(controller:target.number,value:update.value,channel:target.channel)
+                sendMIDI1(status:0xb0|target.channel,data1:target.number,data2:update.value,neutral:update.neutral)
             default: break
             }
         }
@@ -899,13 +909,14 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     private func sendPitchBendRange(semitones: Int, channel: Int) {
-        let value = max(0, min(24, semitones))
-        sendMIDI1(status: 0xB0 | channel, data1: 101, data2: 0)
-        sendMIDI1(status: 0xB0 | channel, data1: 100, data2: 0)
-        sendMIDI1(status: 0xB0 | channel, data1: 6, data2: value)
-        sendMIDI1(status: 0xB0 | channel, data1: 38, data2: 0)
-        sendMIDI1(status: 0xB0 | channel, data1: 101, data2: 127)
-        sendMIDI1(status: 0xB0 | channel, data1: 100, data2: 127)
+        guard cleaningOutgoing || outgoingFault == nil else { return }
+        controllerDebt.beginRange(channel:channel)
+        let value = max(0,min(24,semitones))
+        let parts = [(101,0),(100,0),(6,value),(38,0),(101,127),(100,127)]
+        for (cc,v) in parts {
+            guard sendMIDI1(status:0xb0|channel,data1:cc,data2:v,rangePart:true) else { return }
+        }
+        controllerDebt.completeRange(channel:channel)
     }
 
     private func sendPitchBend(_ value: Int, channel: Int) {
@@ -915,8 +926,9 @@ public final class MIDIHapticService: @unchecked Sendable {
         sendMIDI1(status: 0xE0 | channel, data1: lsb, data2: msb)
     }
 
-    private func sendMIDI1(status: Int, data1: Int, data2: Int) {
-        guard cleaningOutgoing || outgoingFault == nil else { return }
+    @discardableResult
+    private func sendMIDI1(status: Int, data1: Int, data2: Int, neutral: Int? = nil, rangePart: Bool = false) -> Bool {
+        guard cleaningOutgoing || outgoingFault == nil else { return false }
         let message = LegacyGateReleaseDebt.Message(status,data1,data2)
         var result: OSStatus = -1
         if virtualSource != 0 {
@@ -931,14 +943,19 @@ public final class MIDIHapticService: @unchecked Sendable {
             if added { result = MIDIReceived(virtualSource,&packetList) }
         }
         gateDebt.record(message,succeeded:result == noErr)
-        guard result != noErr else { return }
-        if !LegacyGateReleaseDebt.isGate(message) { controllerRecoveryRequired = true }
+        let cleanupValue = neutral ?? LegacyControllerReleaseDebt.neutral(for:message)
+        if let cleanupValue {
+            controllerDebt.record(message,neutral:cleanupValue,succeeded:result == noErr)
+        }
+        guard result != noErr else { return true }
+        if !LegacyGateReleaseDebt.isGate(message) && cleanupValue == nil && !rangePart { controllerRecoveryRequired = true }
         if outgoingFault == nil {
             outgoingFault = result
             // The handler schedules scoped stop on MainActor, never reenters
             // the intended-owner state machines from inside this send.
             outgoingFailureHandler?(result)
         }
+        return false
     }
 }
 
