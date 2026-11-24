@@ -29,6 +29,7 @@ public enum TouchScale: String, CaseIterable, Identifiable, Sendable, Codable {
     }
 
     public func mappedMIDINotes(root: Int, zoneWidth: Double) -> [Int] {
+        guard (0...127).contains(root), zoneWidth.isFinite else { return [] }
         let safeWidth = min(2.5, max(0.45, zoneWidth))
         let requested = max(3, min(32, Int((Double(intervals.count) / safeWidth).rounded())))
         let degrees = octaveDegrees
@@ -142,7 +143,13 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) }
     }
 
+    public var hasValidSampleDomain: Bool {
+        TouchSampleDomain.validConfiguration(root:baseMIDINote,width:zoneWidth,span:pitchSpanSemitones,
+                                             threshold:pressThreshold,level:masterLevel)
+    }
+
     public var mappedMIDINotes: [Int] {
+        guard hasValidSampleDomain else { return [] }
         if !fretless, let customScale {
             return customScale.mappedMIDINotes(root: baseMIDINote, zoneWidth: zoneWidth)
         }
@@ -219,6 +226,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private let lock = NSLock()
 
     private var configuration = TouchInstrumentConfiguration()
+    private var sampleRevision: UInt64 = 0
     private var monitoring = false
     private var monitoringToken: UUID?
     private var patchMailbox: PatchSurfaceMailbox?
@@ -249,7 +257,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         onPerformance: @escaping @Sendable ([TouchPerformanceState]) -> Void
     ) throws {
         lock.lock()
-        self.configuration = configuration
+        applyConfigurationLocked(configuration)
         self.performanceHandler = onPerformance
         let needsStart = !monitoring
         let token = needsStart ? UUID() : monitoringToken
@@ -286,13 +294,27 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
     public func update(configuration: TouchInstrumentConfiguration) {
         lock.lock()
-        self.configuration = configuration
+        applyConfigurationLocked(configuration)
         lock.unlock()
+    }
+
+    // Caller holds lock. Invalid settings cannot retain old cached notes.
+    private func applyConfigurationLocked(_ next: TouchInstrumentConfiguration) {
+        if configuration != next { sampleRevision &+= 1 }
+        configuration = next
+        if !next.hasValidSampleDomain || next.mappedMIDINotes.isEmpty {
+            latestStatesBySurface.removeAll()
+            liveHapticStates.removeAll()
+            sustainedHapticStates.removeAll()
+            activeDrumContacts.removeAll()
+            pendingDrumHits.removeAll()
+        }
     }
 
     public func setActive(_ active: Bool) {
         if !active { renderFence.revoke() }
         lock.lock()
+        if self.active != active { sampleRevision &+= 1 }
         self.active = active
         if !active {
             sustainActive = false
@@ -371,6 +393,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.lock()
         guard monitoring, monitoringToken == token else { lock.unlock(); return }
         let config = configuration
+        let revision = sampleRevision
         let isActive = active
         let callback = performanceHandler
         // Submit under the subscription lock to serialize detachment with
@@ -382,18 +405,15 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
         let mappedNotes = config.mappedMIDINotes
         let instrument = config.instrument(for: frame.surface)
-        guard !mappedNotes.isEmpty else {
-            callback?([])
-            return
-        }
-
-        let states = frame.contacts.map { contact -> TouchPerformanceState in
-            let rawX = min(0.9999, max(0, Double(contact.x)))
-            let rawY = min(1, max(0, Double(contact.y)))
+        let states: [TouchPerformanceState] = mappedNotes.isEmpty ? [] : frame.contacts.compactMap { contact -> TouchPerformanceState? in
+            guard contact.surface == frame.surface,
+                  let sample = TouchSampleDomain.normalize(x:Double(contact.x),y:Double(contact.y),pressure:Double(contact.size)) else { return nil }
+            let rawX = sample.x
+            let rawY = sample.y
             let (x, y) = contact.surface == .magicMouse
                 ? config.magicMouseOrientation.transformed(x: rawX, y: rawY)
                 : (rawX, rawY)
-            let pressure = min(1, max(0, Double(contact.size)))
+            let pressure = sample.pressure
             let triggered = contact.isDown && (
                 config.triggerMode == .touch || pressure >= config.pressThreshold
             )
@@ -436,7 +456,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         }
 
         lock.lock()
-        guard monitoring, monitoringToken == token else { lock.unlock(); return }
+        guard monitoring, monitoringToken == token, sampleRevision == revision else { lock.unlock(); return }
         latestStatesBySurface[frame.surface] = states.filter(\.isTouching)
         let combined = TouchSurfaceKind.allCases
             .filter { config.surfaceSelection.accepts($0) }
@@ -448,7 +468,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.lock()
         // A preview is never a percussion trigger. Only a new active contact
         // queues a hit; holding/sliding a finger does not retrigger each tick.
-        guard active, monitoring, monitoringToken == token else { lock.unlock(); return }
+        guard active, monitoring, monitoringToken == token, sampleRevision == revision else { lock.unlock(); return }
         let liveConfig = configuration
         liveHapticStates = combined.filter { $0.isDown }
         let drums = liveHapticStates.filter {
