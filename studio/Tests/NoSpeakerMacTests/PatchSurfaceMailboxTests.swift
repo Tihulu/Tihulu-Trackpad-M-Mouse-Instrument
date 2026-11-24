@@ -12,4 +12,16 @@ import Testing
     mailbox.submit(frame)
     #expect(mailbox.drain().samples.isEmpty)
 }
+
+@Test func syntheticSurfaceNeverConsumesNativeMailboxCapacity() {
+    let mailbox = PatchSurfaceMailbox(excludedSurface:.magicMouse)
+    let synthetic = SurfaceTouchFrame(surface:.magicMouse,contacts:[],timestamp:0,frameNumber:1)
+    let native = SurfaceTouchFrame(surface:.trackpad,contacts:[],timestamp:0,frameNumber:2)
+    for _ in 0..<100 { mailbox.submit(synthetic) }
+    mailbox.submit(native)
+    let result = mailbox.drain()
+    #expect(!result.overflow)
+    #expect(result.samples.count == 1)
+    #expect(result.samples.first?.frame.surface == .trackpad)
+}
 #endif

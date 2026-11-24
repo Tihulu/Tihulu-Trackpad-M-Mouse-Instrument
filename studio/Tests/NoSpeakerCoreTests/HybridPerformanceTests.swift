@@ -49,3 +49,20 @@ import Testing
     var runtime = PhysicalPatchRuntime()
     #expect(throws:SensorRouterError.invalidMappings) { try runtime.configure(patch,allowRemote:true,synthetic:.external) }
 }
+
+@Test func hybridAtomicExpiryAndClockRegression() throws {
+    let patch = InstrumentPatch(routes:[
+        .init(id:"native",source:.trackpad,signal:.contact,destination:.init(.note,number:60)),
+        .init(id:"synthetic",source:.external,signal:.contact,destination:.init(.note,number:60))])
+    var runtime = PhysicalPatchRuntime()
+    try runtime.configure(patch,synthetic:.external)
+    let input = PatchSimulation.Input(source:.external,signal:.contact)
+    let note = SensorDestination(.note,number:60)
+    #expect(runtime.sendHybrid(input,value:1,now:1) == [.init(note,value:100)])
+    #expect(runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1,now:1).isEmpty)
+    #expect(runtime.expire(now:1.4) == [.init(note,value:0)])
+    #expect(runtime.refreshHybrid(now:1.5).isEmpty)
+    #expect(runtime.sendHybrid(input,value:1,now:2) == [.init(note,value:100)])
+    #expect(runtime.sendHybrid(input,value:1,now:1.9) == [.init(note,value:0)])
+    #expect(runtime.refreshHybrid(now:2.1).isEmpty)
+}

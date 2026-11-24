@@ -861,8 +861,10 @@ final class StudioController: ObservableObject {
         }
     }
 
-    func refreshHybridControls() {
-        guard patchRunning,patchHybridSource != nil else { return }
+    var patchHybridRunID:UUID? { patchHybridSource == nil ? nil : patchNativeToken }
+
+    func refreshHybridControls(runID:UUID) {
+        guard patchRunning,patchHybridRunID == runID else { return }
         recordPatchCommands(patchPhysicalRuntime.refreshHybrid(now:ProcessInfo.processInfo.systemUptime))
     }
 

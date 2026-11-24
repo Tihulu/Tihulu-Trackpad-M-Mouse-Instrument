@@ -145,6 +145,7 @@ public struct PhysicalPatchRuntime: Sendable {
     public mutating func sendHybrid(_ input:PatchSimulation.Input,value:Double,now:Double) -> [SensorCommand] {
         guard input.source == hybridSource,hybridInputs.contains(input),now.isFinite,now >= 0,
               value.isFinite,(0...1).contains(value) else { return [] }
+        if let last = hybridReceipt, now < last { return releaseHybridSource() }
         var commands = expireHybrid(now:now)
         if hybridSession == nil { hybridSession = try? router.connect(input.source,now:now) }
         guard let id = hybridSession else { return commands }

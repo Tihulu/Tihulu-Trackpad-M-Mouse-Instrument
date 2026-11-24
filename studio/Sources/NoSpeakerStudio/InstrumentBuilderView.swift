@@ -228,6 +228,7 @@ struct InstrumentBuilderView: View {
                                     }
                                 }
                             }.disabled(studio.patchRunning)
+                            .onChange(of:syntheticSource) { _ in if !studio.patchRunning { sendMIDI = false } }
                             if syntheticSource != nil {
                                 Text("Only the selected source is simulated. Other sources are native. Leaving this page releases simulated controls; a stalled UI lease expires in 350 ms. Remote is not available in this initial Hybrid mode.")
                                     .font(.caption).foregroundStyle(.secondary)
@@ -280,6 +281,12 @@ struct InstrumentBuilderView: View {
                         if studio.patchRunning && (!studio.patchPhysical || studio.patchHybridSource != nil) {
                             if studio.patchAirDebugAvailable { AirDualDebugPanel() }
                             if studio.patchHelperDebugAvailable { AirHandsHelperDebugPanel() }
+                            if studio.patchHybridSource != nil {
+                                Button("Release all synthetic controls") {
+                                    studio.releaseHybridControls()
+                                    values = [:]
+                                }
+                            }
                             PerformanceControlsView(patch: studio.instrumentPatch, values: $values)
                         }
                         if studio.patchRunning && studio.patchNativeBar, let token = studio.builderBarToken {
@@ -369,12 +376,12 @@ struct InstrumentBuilderView: View {
             draft = studio.resumeBuilderDraft()
             if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled; syntheticSource = studio.patchHybridSource }
         }
-        .task(id:studio.patchHybridSource) {
-            guard studio.patchHybridSource != nil else { return }
-            while !Task.isCancelled && studio.patchRunning && studio.patchHybridSource != nil {
+        .task(id:studio.patchHybridRunID) {
+            guard let runID = studio.patchHybridRunID else { return }
+            while !Task.isCancelled && studio.patchRunning && studio.patchHybridRunID == runID {
                 do { try await Task.sleep(for:.milliseconds(100)) } catch { return }
                 guard !Task.isCancelled else { return }
-                studio.refreshHybridControls()
+                studio.refreshHybridControls(runID:runID)
             }
         }
         .onDisappear {
