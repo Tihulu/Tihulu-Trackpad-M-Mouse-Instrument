@@ -313,6 +313,12 @@ public final class MIDIHapticService: @unchecked Sendable {
         let canSend = enabled && virtualSource != 0
         lock.unlock()
         guard canSend else { return }
+        guard configuration.pitchSpanSemitones.isFinite,
+              (0...127).contains(configuration.baseMIDINote),
+              (1...96).contains(configuration.pitchSpanSemitones) else {
+            endAllTouchOutput()
+            return
+        }
 
         // GM percussion is always MIDI Channel 10 (zero-based 9). Pitched notes
         // stay on the requested channel, except channel 10 is reserved whenever
@@ -326,7 +332,8 @@ public final class MIDIHapticService: @unchecked Sendable {
             ? 0 : selectedBase
 
         var desired = states.filter {
-            $0.isDown && configuration.output(for: $0.surface).sendsMIDI
+            $0.isDown && $0.continuousMIDI.isFinite && $0.vibrato.isFinite &&
+            configuration.surfaceSelection.accepts($0.surface) && configuration.output(for: $0.surface).sendsMIDI
         }
         if !multiTouchEnabled {
             desired = Array(desired.prefix(1))
@@ -353,10 +360,25 @@ public final class MIDIHapticService: @unchecked Sendable {
 
         var frameControls: [SensorDestination:LegacyContinuousOwners.Value] = [:]
         var framePressure: [Int:Int] = [:]
+        var processed: Set<TouchKey> = []
         for state in desired {
             let key = TouchKey(surface: state.surface, id: state.contactID)
             let drums = configuration.instrument(for: state.surface) == .drums
+            guard processed.insert(key).inserted else { continue }
             let isFretlessMelody = !drums && configuration.fretless
+            let isMPE = midiMode == .mpe && !drums
+            let standardChannel = drums ? GMDrumPads.midiChannel : safeMelodicChannel
+            let anchor = max(0,min(127,configuration.baseMIDINote +
+                Int((configuration.pitchSpanSemitones / 2.0).rounded())))
+            let targetNote = isFretlessMelody ? anchor : max(0,min(127,state.quantizedMIDI))
+            if let existing = outgoingTouches[key],
+               LegacyTouchTransition.requiresNewVoice(oldNote:existing.note,oldFretless:existing.fretless,
+                   oldMPE:existing.mpe,oldChannel:existing.channel,newNote:targetNote,newFretless:isFretlessMelody,
+                   newMPE:isMPE,standardChannel:standardChannel,
+                   sustained:outgoingSustainChannels().contains(existing.channel)) {
+                outgoingTouches.removeValue(forKey:key)
+                releaseOutgoingTouch(key,outgoing:existing)
+            }
             let channel: Int
 
             if let existing = outgoingTouches[key] {
@@ -374,12 +396,31 @@ public final class MIDIHapticService: @unchecked Sendable {
                 channel = safeMelodicChannel
             }
 
+            // Onsets must not inherit a retired member's expression/pressure.
+            // Ordinary shared channels still use the existing final-contact rule.
+            if !drums {
+                let vibrato = max(0,min(127,Int((min(1,max(0,state.vibrato))*127).rounded())))
+                let modulation = SensorDestination(.controlChange,channel:channel,number:1)
+                frameControls[modulation] = .init(vibrato,neutral:0)
+                if configuration.pressureToExpression {
+                    let expression = SensorDestination(.controlChange,channel:channel,number:11)
+                    frameControls[expression] = .init(max(0,min(127,state.expression)),neutral:127)
+                    if isMPE { framePressure[channel] = max(0,min(127,state.expression)) }
+                }
+                if outgoingTouches[key] == nil {
+                    // Preserve other active channels while initializing this one.
+                    var staged = continuousOwners.values(for:.touch).filter { $0.key.channel != channel }
+                    for (target,value) in frameControls where target.channel == channel { staged[target] = value }
+                    sendContinuousUpdates(continuousOwners.replace(.touch,values:staged))
+                    if isMPE {
+                        var pressure = outgoingPressure.values
+                        pressure[channel] = framePressure[channel]
+                        sendPressureUpdates(outgoingPressure.replace(pressure))
+                    }
+                }
+            }
             if isFretlessMelody {
                 let bendRange = max(1, min(24, Int(ceil(configuration.pitchSpanSemitones / 2.0))))
-                let anchor = max(0, min(127,
-                    configuration.baseMIDINote +
-                    Int((configuration.pitchSpanSemitones / 2.0).rounded())
-                ))
 
                 let delta = max(-Double(bendRange),
                     min(Double(bendRange), state.continuousMIDI - Double(anchor)))
@@ -417,16 +458,6 @@ public final class MIDIHapticService: @unchecked Sendable {
                 }
             }
 
-            guard !drums else { continue }
-            let vibrato = max(0, min(127, Int((state.vibrato * 127.0).rounded())))
-            frameControls[.init(.controlChange,channel:channel,number:1)] = .init(vibrato,neutral:0)
-
-            if configuration.pressureToExpression {
-                frameControls[.init(.controlChange,channel:channel,number:11)] = .init(max(0,min(127,state.expression)),neutral:127)
-                if midiMode == .mpe {
-                    framePressure[channel] = max(0,min(127,state.expression))
-                }
-            }
         }
         // Retired MPE channels keep their final controller values until pedal off.
         for (target,value) in continuousOwners.values(for:.touch) where mpeChannels.reserved.contains(target.channel) {
@@ -653,7 +684,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         let safeVelocity = max(1, min(127, velocity))
         let safeChannel = max(0, min(15, channel))
 
-        if !isDown {
+        if !isDown || !continuousMIDI.isFinite || !(0...127).contains(rootMIDI) {
             endTouchOutput()
             return
         }
