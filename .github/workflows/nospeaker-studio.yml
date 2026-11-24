@@ -2,10 +2,12 @@ name: TIHULU Trackpad Instrument CI
 
 on:
   push:
+    branches: [main]
     paths:
       - 'install-studio.sh'
       - 'studio/**'
       - '.github/workflows/nospeaker-studio.yml'
+  workflow_dispatch:
   pull_request:
     paths:
       - 'install-studio.sh'

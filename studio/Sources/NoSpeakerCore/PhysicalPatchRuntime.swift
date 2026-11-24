@@ -440,9 +440,13 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     public mutating func revokeRemote(_ id: UUID) -> [SensorCommand] {
-        guard let peer = remotePeers.removeValue(forKey: id) else { return [] }
-        let inertialSessions = [SensorSignal.accelerationMagnitude, .rotationMagnitude].compactMap { peer.inertial[$0]?.session }
-        return ([peer.routerSession, peer.motionSession, peer.drumSession, peer.pianoSession, peer.pedalSession].compactMap { $0 } + inertialSessions).flatMap { router.disconnect($0) }
+        router.disconnect(sessions:removeRemoteSessions(id))
+    }
+
+    private mutating func removeRemoteSessions(_ id: UUID) -> Set<UUID> {
+        guard let peer = remotePeers.removeValue(forKey:id) else { return [] }
+        let inertialSessions = [SensorSignal.accelerationMagnitude,.rotationMagnitude].compactMap { peer.inertial[$0]?.session }
+        return Set([peer.routerSession,peer.motionSession,peer.drumSession,peer.pianoSession,peer.pedalSession].compactMap { $0 } + inertialSessions)
     }
 
     public mutating func cancelRemotePairing() { pairing.clear() }
@@ -452,18 +456,23 @@ public struct PhysicalPatchRuntime: Sendable {
         remoteEnabled = false
         pairing.clear()
         mappingProjections = [:]
-        let ids = remotePeers.keys.sorted { $0.uuidString < $1.uuidString }
-        return ids.flatMap { revokeRemote($0) }
+        let ids = Array(remotePeers.keys)
+        var removed: Set<UUID> = []
+        for id in ids { removed.formUnion(removeRemoteSessions(id)) }
+        return router.disconnect(sessions:removed)
     }
 
     public mutating func expire(now: Double) -> [SensorCommand] {
         guard now.isFinite else { return [] }
         let stale = sessions.keys.filter { now - (seen[$0] ?? 0) >= Self.timeout }
             .sorted { $0.rawValue < $1.rawValue }
-        var commands = stale.flatMap { disconnect($0) }
-        let expiredPeers = remotePeers.filter { $0.value.expired(now: now) }.map(\.key)
-            .sorted { $0.uuidString < $1.uuidString }
-        for id in expiredPeers { commands += revokeRemote(id) }
+        var removed: Set<UUID> = []
+        for source in stale {
+            if let id = sessions.removeValue(forKey:source) { removed.insert(id) }
+        }
+        let expiredPeers = remotePeers.filter { $0.value.expired(now:now) }.map(\.key)
+        for id in expiredPeers { removed.formUnion(removeRemoteSessions(id)) }
+        var commands = router.disconnect(sessions:removed)
         for id in remotePeers.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
             guard var peer = remotePeers[id], var stream = peer.inertial[.accelerationMagnitude],
                   let deadline = stream.strikeReleaseAt, now >= deadline, let session = stream.session else { continue }

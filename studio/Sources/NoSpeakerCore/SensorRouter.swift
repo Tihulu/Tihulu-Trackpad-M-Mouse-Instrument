@@ -276,8 +276,16 @@ public struct SensorRouter: Sendable {
     /// Closing one device releases only its ownership. Other devices may
     /// continue holding a note, sustain or a shared continuous control.
     public mutating func disconnect(_ id: UUID) -> [SensorCommand] {
-        guard sessions.removeValue(forKey: id) != nil else { return [] }
-        contributions = contributions.filter { $0.key.session != id }
+        disconnect(sessions:[id])
+    }
+
+    /// A departing group is removed before reconciliation. Never restore a
+    /// lower-priority owner that is itself part of the same departing group.
+    public mutating func disconnect(sessions ids: Set<UUID>) -> [SensorCommand] {
+        let removed = ids.intersection(sessions.keys)
+        guard !removed.isEmpty else { return [] }
+        for id in removed { sessions.removeValue(forKey:id) }
+        contributions = contributions.filter { !removed.contains($0.key.session) }
         return reconcile()
     }
 
@@ -285,10 +293,7 @@ public struct SensorRouter: Sendable {
     public mutating func expire(now: Double, timeout: Double = 2) -> [SensorCommand] {
         guard now.isFinite, timeout.isFinite, (0.1...60).contains(timeout) else { return [] }
         let stale = Set(sessions.compactMap { now - $0.value.lastSeen >= timeout ? $0.key : nil })
-        guard !stale.isEmpty else { return [] }
-        for id in stale { sessions.removeValue(forKey: id) }
-        contributions = contributions.filter { !stale.contains($0.key.session) }
-        return reconcile()
+        return disconnect(sessions:stale)
     }
 
     public mutating func panic() -> [SensorCommand] {
