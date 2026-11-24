@@ -8,7 +8,7 @@ public enum SensorSource: String, Codable, CaseIterable, Sendable {
 /// No adapter or device is started by constructing a router.
 public enum SensorSignal: String, Codable, CaseIterable, Sendable {
     case x, y, contact, contactSize, pressure, angle, speed, gesture, expression
-    case tiltYaw, tiltPitch, tiltRoll, accelerationMagnitude, rotationMagnitude
+    case tiltYaw, tiltPitch, tiltRoll, accelerationMagnitude, rotationMagnitude, airStrike
 }
 
 public struct SensorCalibration: Codable, Equatable, Sendable {
@@ -234,7 +234,11 @@ public struct SensorRouter: Sendable {
             let owner = Owner(session: event.session, mapping: mapping.id)
             let value: Int
             var filtered = normalized
-            if mapping.destination.isGate {
+            if mapping.signal == .airStrike && mapping.destination.kind == .note {
+                // Host onset detector supplies strength; route velocity caps output.
+                // No synthetic zero is used for release; remove ownership instead.
+                value = event.value > 0 ? max(1, Int((normalized * Double(mapping.velocity)).rounded())) : 0
+            } else if mapping.destination.isGate {
                 let wasOn = (contributions[owner]?.value ?? 0) > 0
                 let active = normalized >= (wasOn ? mapping.threshold - mapping.hysteresis : mapping.threshold)
                 value = active ? (mapping.destination.kind == .note ? mapping.velocity : 127) : 0

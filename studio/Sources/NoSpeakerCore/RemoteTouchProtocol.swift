@@ -96,6 +96,8 @@ struct RemotePairingGate: Sendable {
 struct RemoteInertialStream: Sendable {
     var lastReceipt: Double
     var session: UUID?
+    var strikeDetector = AirStrikeDetector()
+    var strikeReleaseAt: Double?
     func expired(now: Double) -> Bool {
         !now.isFinite || now < lastReceipt || now-lastReceipt >= 0.35
     }
