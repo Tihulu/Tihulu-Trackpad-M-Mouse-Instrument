@@ -31,3 +31,17 @@ import Testing
     #expect(!profile.accepts(oldProfile))
     #expect(gesture.accepts(newGesture))
 }
+
+@Test func touchBarOldOptionalDebtPreservesLegacyGesture() {
+    for sendsHaptics in [false,true] {
+        for armed in [false,true] {
+            var epoch = TouchBarGestureEpoch()
+            let captured = epoch.revision
+            // The caller retries old optional debt in all four cases.
+            // Only the active optional scope may cancel its tap timers.
+            let cancelTimers = epoch.invalidateOptionalOutput(sendsHaptics:sendsHaptics,armed:armed)
+            #expect(cancelTimers == (sendsHaptics || armed))
+            #expect(epoch.accepts(captured) == !cancelTimers)
+        }
+    }
+}

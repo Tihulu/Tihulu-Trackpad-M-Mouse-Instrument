@@ -1220,10 +1220,11 @@ final class StudioController: ObservableObject {
         // optional output. Otherwise an app-focus change could strand a note.
         guard touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed ||
               !touchBarOutputLedger.isEmpty else { return }
-        if touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed {
-            touchBarGestureEpoch.invalidate()
+        if touchBarGestureEpoch.invalidateOptionalOutput(
+            sendsHaptics: touchBarProfile.effectiveOutput.sendsHaptics, armed: touchBarOutputArmed
+        ) {
+            nativePianoTokens.removeAll()
         }
-        nativePianoTokens.removeAll()
         let channel = touchBarProfile.channel
         _ = touchBarLocalState.reset(channel: channel)
         touchBarHaptics?.update(frame: nil, masterLevel: 0)
