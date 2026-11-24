@@ -155,7 +155,7 @@ struct ContentView: View {
     @State private var pendingWorkspace: QuickWorkspace?
 
     private var workspaceEditable: Bool {
-        !studio.touchRunning && !studio.midiHelperRunning && !studio.midiRunning && !studio.sequenceRunning &&
+        !studio.touchRunning && !studio.midiHelperRunning && !studio.midiRunning && !studio.sequenceRunning && !studio.patchRunning &&
         !studio.speakerBusy && !studio.chordArmed && !studio.touchBarOutputArmed && !studio.isPlaying && !studio.liveHingeEnabled &&
         !studio.captureArmed && !studio.pointerCaptured && !studio.touchBarSustainOn
     }
@@ -207,7 +207,7 @@ struct ContentView: View {
                         workspaceMessage: workspaceMessage, workspaceEditable: workspaceEditable,
                         choose: { pendingWorkspace = $0 }, save: saveWorkspace, load: loadWorkspace
                     )
-                    case .mapping: SensorMappingLabView()
+                    case .mapping: InstrumentBuilderView()
                     case .chords: ChordPadPanel(compact: false)
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
                     case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture)
@@ -563,9 +563,9 @@ private struct PerformanceOverview: View {
                     launch("Note Sequencer", "Build a melodic pattern", "music.note.list", .notes)
                     launch("Drum Sequencer", "Build a rhythmic pattern", "circle.grid.cross", .drums)
                     launch("Voice", "Render speech on the trackpad", "text.bubble", .voice)
-                    launch("Mapping Lab", "Test custom sensor-to-MIDI rules without sending MIDI", "point.3.connected.trianglepath.dotted", .mapping)
+                    launch("Instrument Builder", "Create and test custom sensor-to-MIDI mappings", "point.3.connected.trianglepath.dotted", .mapping)
                 }
-                Text("Mapping Lab provides an isolated software preview. Live Camera, Remote and the full Instrument Builder are planned.")
+                Text("Instrument Builder supports saved mappings and simulated inputs with optional dedicated MIDI output. Physical sensor adapters, Camera and Remote are planned.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(24)
         }
