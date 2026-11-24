@@ -1427,6 +1427,9 @@ final class StudioController: ObservableObject {
         captureStatus = "Stopped · cursor released"
         engineReady = false
         engineStatus = "Stopped — press Reconnect to reopen the trackpad"
+        if midi?.hasUnconfirmedOutgoingCleanup == true {
+            lastError = "MIDI cleanup remains unconfirmed. Reset the DAW before reconnecting."
+        }
     }
 
     func reconnect() {
@@ -1987,7 +1990,17 @@ final class StudioController: ObservableObject {
         guard let session = midiSessionEpoch.token else { return }
         do {
             let generation = engineGeneration
-            try midi.start(masterLevel: masterLevel) { [weak self] message in
+            try midi.start(masterLevel: masterLevel,onFailure:{ [weak self] status in
+                Task { @MainActor in
+                    guard let self, self.engineGeneration == generation,
+                          self.midiSessionEpoch.accepts(session) else { return }
+                    // Stop only producers on the shared legacy source.
+                    if self.touchRunning && self.touchMIDIOutEnabled { self.stopTouch() }
+                    if self.midiHelperRunning { self.stopMIDIHelper() }
+                    self.stopMIDI()
+                    self.lastError = "MIDI output failed (OSStatus \(status)). Check the DAW; cleanup is not receiver-confirmed."
+                }
+            }) { [weak self] message in
                 Task { @MainActor in
                     guard let self, self.engineGeneration == generation, self.midiRunning,
                           self.midiSessionEpoch.accepts(session) else { return }
@@ -2044,6 +2057,9 @@ final class StudioController: ObservableObject {
         activeMIDINoteMap.removeAll()
         activeMIDINotes = []
         engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
+        if midi?.hasUnconfirmedOutgoingCleanup == true {
+            lastError = "MIDI cleanup remains unconfirmed. Retry Stop for notes/pedals. Reset DAW controllers before reconnecting."
+        }
     }
 
     func startMIDIHelperPreview(surfaceSelection: TouchSurfaceSelection) {
