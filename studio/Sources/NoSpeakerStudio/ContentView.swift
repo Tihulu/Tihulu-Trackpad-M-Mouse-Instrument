@@ -151,7 +151,7 @@ struct ContentView: View {
 
     private var workspaceEditable: Bool {
         !studio.touchRunning && !studio.midiHelperRunning && !studio.midiRunning &&
-        !studio.speakerBusy && !studio.chordArmed && !studio.isPlaying && !studio.liveHingeEnabled &&
+        !studio.speakerBusy && !studio.chordArmed && !studio.touchBarOutputArmed && !studio.isPlaying && !studio.liveHingeEnabled &&
         !studio.captureArmed && !studio.pointerCaptured && !studio.touchBarSustainOn
     }
 
@@ -240,11 +240,13 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             studio.releaseChordPads()
+            studio.releaseOptionalTouchBarNotes()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             studio.disarmChordPads()
+            studio.disarmTouchBarOutput()
         }
-        .onDisappear { studio.disarmChordPads() }
+        .onDisappear { studio.disarmChordPads(); studio.disarmTouchBarOutput() }
         .onAppear {
             studio.installTouchBar()
             studio.playStartupGreetingOnce()
@@ -339,7 +341,7 @@ struct ContentView: View {
         case .midiHelper: studio.midiHelperRunning
         case .midi: studio.midiRunning
         case .speaker: studio.systemAudioRunning
-        case .touchBar: studio.liveHingeEnabled || studio.touchBarSustainOn
+        case .touchBar: studio.liveHingeEnabled || studio.touchBarSustainOn || studio.touchBarOutputArmed
         default: false
         }
     }
@@ -508,6 +510,9 @@ private struct PerformanceOverview: View {
                         Divider()
                         session("Trackpad Speaker", detail: "Live system audio", symbol: "speaker.wave.2",
                                 active: studio.systemAudioRunning, page: .speaker, stop: { studio.stopSystemAudio() })
+                        Divider()
+                        session("Touch Bar Output", detail: studio.touchBarOutputStatus, symbol: "pianokeys",
+                                active: studio.touchBarOutputArmed, page: .touchBar, stop: { studio.disarmTouchBarOutput() })
                         Divider()
                         session("Lid Sensor", detail: studio.hingeSensorStatus, symbol: "laptopcomputer",
                                 active: studio.liveHingeEnabled, page: .touchBar, stop: { studio.enableLiveHinge(false) })
@@ -2057,6 +2062,41 @@ private struct SpeakerModeView: View {
     }
 }
 
+private struct TouchBarOutputSettings: View {
+    @EnvironmentObject private var studio: StudioController
+    var body: some View {
+        GroupBox("Piano & fretless output") {
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("Destination", selection: Binding(
+                    get: { studio.touchBarProfile.effectiveOutput },
+                    set: { output in
+                        var profile = studio.touchBarProfile
+                        profile.musicalOutput = output
+                        studio.setTouchBarProfile(profile)
+                    }
+                )) {
+                    ForEach(MusicalOutput.allCases) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.segmented).disabled(studio.touchBarOutputArmed)
+                if studio.touchBarProfile.effectiveOutput.sendsHaptics {
+                    HStack {
+                        Button(studio.touchBarOutputArmed ? "Disarm" : "Arm Output") {
+                            if studio.touchBarOutputArmed { studio.disarmTouchBarOutput() }
+                            else { studio.armTouchBarOutput() }
+                        }.buttonStyle(.borderedProminent)
+                        Button("Release All") { studio.releaseOptionalTouchBarNotes() }
+                        Text(studio.touchBarOutputStatus).font(.caption)
+                    }
+                    Text("Trackpad supports notes, fretless bend, expression and sustain. Vibrato/filter are MIDI controls in Both. Both uses the TIHULU Touch Bar source. The motor is reserved while armed; disarm before another haptic session.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Existing MIDI bridge behavior; no new haptic session is started.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }.padding(8)
+        }
+    }
+}
+
 private struct TouchBarModeView: View {
     @EnvironmentObject private var studio: StudioController
 
@@ -2074,6 +2114,7 @@ private struct TouchBarModeView: View {
                     subtitle: "Customize a native Touch Bar performance surface or use the same MIDI controls on screen while Trackpad and Magic Mouse sessions continue."
                 )
 
+                TouchBarOutputSettings()
                 GroupBox("Touch Bar layout · Customize simultaneous zones") {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Choose the zones to display in your preferred order. Native Touch Bar controls appear on supported MacBook Pro models; the on-screen strip works everywhere.")
@@ -2171,7 +2212,7 @@ private struct TouchBarModeView: View {
                                 TouchBarSliderPad(zone: zone)
                             }
                         }
-                        Text("Sliders and piano keys use the existing MIDI bridge. Chord Pads use their own armed MIDI source. Touch/Helper sessions remain independent.")
+                        Text("MIDI-only keeps the existing bridge. Optional Trackpad/Both uses the dedicated armed output. Chord Pads have their own output selector.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }
@@ -2244,7 +2285,7 @@ private struct TouchBarSliderPad: View {
                 if zone == .fretless {
                     // Fretless keyboard is a playable base note with a
                     // continuously changing pitch bend, not an inert slider.
-                    studio.touchBarKey(studio.touchBarProfile.baseNote, pressed: editing)
+                    studio.touchBarKey(studio.touchBarProfile.baseNote, pressed: editing, owner: .screenRibbon)
                 }
                 if !editing && (zone == .pitchBend || zone == .fretless) {
                     value = 0.5

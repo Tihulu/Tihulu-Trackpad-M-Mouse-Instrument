@@ -92,7 +92,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             slider.onPress = { [weak self, weak slider] pressed in
                 guard let self else { return }
                 let note = self.profile.baseNote
-                self.controller?.touchBarKey(note, pressed: pressed)
+                self.controller?.touchBarKey(note, pressed: pressed, owner: .nativeRibbon)
                 if !pressed {
                     // Neutralize pitch bend and let go of the note on release.
                     self.controller?.touchBarValue(.fretless, normalized: 0.5)
@@ -159,12 +159,8 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     @objc private func pianoKeyPressed(_ sender: NSSegmentedControl) {
         guard sender.selectedSegment >= 0 else { return }
         let note = profile.baseNote + sender.selectedSegment
-        controller?.touchBarKey(note, pressed: true)
-        // Native segmented controls deliver tap actions rather than per-finger
-        // release callbacks. Give each key a brief, bounded note duration.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
-            self?.controller?.touchBarKey(note, pressed: false)
-        }
+        // Controller owns the bounded tap and invalidates delayed releases on stop.
+        controller?.touchBarNativeTap(note)
     }
 
     @objc private func sustainToggled(_ sender: NSButton) {
