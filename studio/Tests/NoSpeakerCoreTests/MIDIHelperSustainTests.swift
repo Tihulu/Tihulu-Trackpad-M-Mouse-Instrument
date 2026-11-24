@@ -142,3 +142,36 @@ import Testing
     let hybrid = MIDIHelperAssignments.hybrid
     #expect(hybrid.vibrato && hybrid.pitchBend && hybrid.expression)
 }
+
+@Test func mouseTapThresholdRequiresFreshQualifiedOnset() {
+    var state = MIDIHelperSustainState()
+    let config = MIDIHelperSustainSettings(magicMouseEnabled:true,magicMouseGesture:.tapToggle,magicMouseTapThreshold:0.5)
+    func sample(_ touching:Bool,_ sizes:[Double]) -> MIDIHelperSustainSnapshot {
+        state.update(trackpadContactSizes:[],magicMouseTouching:touching,settings:config,magicMouseContactSizes:sizes)
+    }
+    #expect(!sample(true,[0.49]).isActive)
+    #expect(!sample(true,[0.9]).isActive)
+    #expect(!sample(false,[]).isActive)
+    #expect(sample(true,[0.5]).isActive)
+    #expect(sample(true,[0.1]).isActive)
+    #expect(sample(true,[0.9]).isActive)
+    #expect(sample(false,[]).isActive)
+    #expect(!sample(true,[0.8]).isActive)
+}
+
+@Test func mouseTapThresholdRejectsMissingAndInvalidSizes() {
+    for sizes: [Double] in [[],[.nan],[.infinity],[-1],[1.1]] {
+        var state = MIDIHelperSustainState()
+        let config = MIDIHelperSustainSettings(magicMouseEnabled:true,magicMouseGesture:.tapToggle,magicMouseTapThreshold:0.5)
+        #expect(!state.update(trackpadContactSizes:[],magicMouseTouching:true,settings:config,magicMouseContactSizes:sizes).isActive)
+    }
+}
+
+@Test func mouseTapThresholdDoesNotChangeTrackpadOrMouseHold() {
+    var state = MIDIHelperSustainState()
+    let config = MIDIHelperSustainSettings(trackpadEnabled:true,magicMouseEnabled:true,magicMouseGesture:.touchHold,magicMouseTapThreshold:0.9)
+    let both = state.update(trackpadContactSizes:[0.8],magicMouseTouching:true,settings:config,magicMouseContactSizes:[0.1])
+    #expect(both.trackpadActive && both.magicMouseActive)
+    let remaining = state.update(trackpadContactSizes:[0.8],magicMouseTouching:false,settings:config)
+    #expect(remaining.trackpadActive && !remaining.magicMouseActive)
+}

@@ -38,6 +38,8 @@ public struct MIDIHelperSustainSettings: Sendable, Equatable {
     public var trackpadSensor: TrackpadSustainSensor
     public var magicMouseEnabled: Bool
     public var magicMouseGesture: MagicMouseSustainGesture
+    /// Zero preserves legacy any-contact tap behavior; a positive value requires a valid size at onset.
+    public var magicMouseTapThreshold: Double
 
     public init(
         trackpadEnabled: Bool = false,
@@ -45,7 +47,8 @@ public struct MIDIHelperSustainSettings: Sendable, Equatable {
         magicMouseEnabled: Bool = false,
         magicMouseGesture: MagicMouseSustainGesture = .touchHold,
         trackpadGesture: TrackpadSustainGesture = .contactThreshold,
-        trackpadSensor: TrackpadSustainSensor = .contactSize
+        trackpadSensor: TrackpadSustainSensor = .contactSize,
+        magicMouseTapThreshold: Double = 0
     ) {
         self.trackpadEnabled = trackpadEnabled
         self.trackpadContactThreshold = trackpadContactThreshold
@@ -53,6 +56,7 @@ public struct MIDIHelperSustainSettings: Sendable, Equatable {
         self.trackpadSensor = trackpadSensor
         self.magicMouseEnabled = magicMouseEnabled
         self.magicMouseGesture = magicMouseGesture
+        self.magicMouseTapThreshold = magicMouseTapThreshold
     }
 
     public var needsPhysicalClicks: Bool {
@@ -111,7 +115,8 @@ public struct MIDIHelperSustainState: Sendable {
         settings: MIDIHelperSustainSettings,
         trackpadClickDown: Bool = false,
         magicMouseClickDown: Bool = false,
-        trackpadClickPressure: Double? = nil
+        trackpadClickPressure: Double? = nil,
+        magicMouseContactSizes: [Double] = []
     ) -> MIDIHelperSustainSnapshot {
         let threshold = max(0.05, min(1, settings.trackpadContactThreshold))
         let contactSize = trackpadContactSizes
@@ -176,7 +181,14 @@ public struct MIDIHelperSustainState: Sendable {
                 mouseLatched = false
                 mouseActive = magicMouseTouching
             case .tapToggle:
-                if magicMouseTouching && !mouseWasTouching {
+                // Only a new contact session can toggle. A rejected onset
+                // cannot become a tap later through size changes while held.
+                let threshold = settings.magicMouseTapThreshold
+                let qualified = threshold == 0 || (
+                    threshold.isFinite && (0...1).contains(threshold) &&
+                    magicMouseContactSizes.contains { $0.isFinite && (0...1).contains($0) && $0 >= threshold }
+                )
+                if magicMouseTouching && !mouseWasTouching && qualified {
                     mouseLatched.toggle()
                 }
                 mouseActive = mouseLatched

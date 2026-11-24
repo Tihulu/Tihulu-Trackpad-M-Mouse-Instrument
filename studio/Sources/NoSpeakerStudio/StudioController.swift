@@ -2130,7 +2130,8 @@ final class StudioController: ObservableObject {
         magicMouseSustainEnabled: Bool = false,
         magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold,
         trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold,
-        trackpadSustainSensor: TrackpadSustainSensor = .contactSize
+        trackpadSustainSensor: TrackpadSustainSensor = .contactSize,
+        magicMouseTapThreshold: Double = 0
     ) {
         guard allowLivePerformance() else { return }
         guard !sendToDAW || HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
@@ -2148,7 +2149,8 @@ final class StudioController: ObservableObject {
             magicMouseEnabled: magicMouseSustainEnabled,
             magicMouseGesture: magicMouseSustainGesture,
             trackpadGesture: trackpadSustainGesture,
-            trackpadSensor: trackpadSustainSensor
+            trackpadSensor: trackpadSustainSensor,
+            magicMouseTapThreshold: magicMouseTapThreshold
         )
         let oldRouting = HelperRoutingSnapshot(sendToDAW:helperSendToDAW,channel:helperTargetChannel,
             bendRange:helperPitchBendRange,vibratoCC:helperVibratoCC,expressionCC:helperExpressionCC)
@@ -2252,7 +2254,8 @@ final class StudioController: ObservableObject {
             settings: helperSustainSettings,
             trackpadClickDown: clickedSurface == .trackpad,
             magicMouseClickDown: clickedSurface == .magicMouse,
-            trackpadClickPressure: trackpadClickPressure
+            trackpadClickPressure: trackpadClickPressure,
+            magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure)
         )
         midiHelperTrackpadSustainActive = snapshot.trackpadActive
         midiHelperMagicMouseSustainActive = snapshot.magicMouseActive
@@ -2458,7 +2461,9 @@ final class StudioController: ObservableObject {
             magicMouseTouching: active.contains { $0.surface == .magicMouse },
             settings: touchSustainSettings,
             trackpadClickDown: clickedSurface == .trackpad,
-            magicMouseClickDown: clickedSurface == .magicMouse
+            magicMouseClickDown: clickedSurface == .magicMouse,
+            trackpadClickPressure: trackpadClickPressure,
+            magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure)
         )
         let hapticsEnabled = currentTouchConfiguration.localHapticSound &&
             currentTouchConfiguration.selectedSurfaces.contains {

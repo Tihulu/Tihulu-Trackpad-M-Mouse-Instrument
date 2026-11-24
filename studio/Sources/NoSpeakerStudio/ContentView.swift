@@ -41,6 +41,7 @@ private struct TouchDraft: Codable {
     var sustainTrackpadSensor: TrackpadSustainSensor = .contactSize
     var sustainMouseEnabled: Bool = false
     var sustainMouseGesture: MagicMouseSustainGesture = .touchHold
+    var sustainMouseTapThreshold: Double? = nil
 }
 
 private struct HelperDraft: Codable {
@@ -61,6 +62,7 @@ private struct HelperDraft: Codable {
     var trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold
     var magicMouseSustainEnabled: Bool = false
     var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
+    var magicMouseTapThreshold: Double? = nil
 }
 
 private struct NoteDraft: Codable {
@@ -98,11 +100,13 @@ private struct WorkspaceSettings: Codable {
         (1...127).contains(touch.fixedVelocity) &&
         (1...16).contains(touch.midiChannel) &&
         (0.1...1).contains(touch.sustainTrackpadThreshold) &&
+        (0...1).contains(touch.sustainMouseTapThreshold ?? 0) &&
         (1...16).contains(helper.targetChannel) &&
         [2, 5, 12, 24].contains(helper.pitchBendRange) &&
         (0...127).contains(helper.vibratoCC) &&
         (0...127).contains(helper.expressionCC) &&
         (0.1...1).contains(helper.trackpadSustainThreshold) &&
+        (0...1).contains(helper.magicMouseTapThreshold ?? 0) &&
         notes.notes.count == 16 &&
         notes.notes.allSatisfy { $0.map { (0...127).contains($0) } ?? true } &&
         (48...95).contains(notes.selectedMIDI) &&
@@ -210,8 +214,8 @@ struct ContentView: View {
                     case .mapping: InstrumentBuilderView()
                     case .chords: ChordPadPanel(compact: false)
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
-                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture)
-                    case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture)
+                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
+                    case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture, magicMouseTapThreshold: $helperDraft.magicMouseTapThreshold)
                     case .touchBar: TouchBarModeView()
                     case .notes: NoteSequencerView(notes: $noteDraft.notes, selectedMIDI: $noteDraft.selectedMIDI, velocity: $noteDraft.velocity, loop: $noteDraft.loop, groove: $noteDraft.groove, output: $noteDraft.output)
                     case .drums: DrumSequencerView(active: $drumDraft.active, loop: $drumDraft.loop, groove: $drumDraft.groove, output: $drumDraft.output)
@@ -756,6 +760,7 @@ private struct TouchInstrumentView: View {
     @Binding var sustainTrackpadSensor: TrackpadSustainSensor
     @Binding var sustainMouseEnabled: Bool
     @Binding var sustainMouseGesture: MagicMouseSustainGesture
+    @Binding var sustainMouseTapThreshold: Double?
 
     private var effectivePitchSpan: Double { 24.0 / zoneWidth }
 
@@ -845,7 +850,8 @@ private struct TouchInstrumentView: View {
                                     magicMouseEnabled: sustainEnabled && sustainMouseEnabled,
                                     magicMouseGesture: sustainMouseGesture,
                                     trackpadGesture: sustainTrackpadGesture,
-                                    trackpadSensor: sustainTrackpadSensor
+                                    trackpadSensor: sustainTrackpadSensor,
+                                    magicMouseTapThreshold: sustainMouseTapThreshold ?? 0
                                 )
                             )
                         }
@@ -1101,7 +1107,9 @@ private struct TouchInstrumentView: View {
                                 trackpadThreshold: $sustainTrackpadThreshold,
                                 trackpadSensor: $sustainTrackpadSensor,
                                 magicMouseEnabled: $sustainMouseEnabled,
-                                magicMouseGesture: $sustainMouseGesture
+                                magicMouseGesture: $sustainMouseGesture,
+                                magicMouseTapThreshold: $sustainMouseTapThreshold,
+                                mouseContactSize: studio.touchStates.filter { $0.surface == .magicMouse && $0.isTouching }.map(\.pressure).max()
                             )
                             .disabled(studio.touchRunning)
                         }
@@ -1546,6 +1554,7 @@ private struct MIDIHelperView: View {
     @Binding var trackpadSustainGesture: TrackpadSustainGesture
     @Binding var magicMouseSustainEnabled: Bool
     @Binding var magicMouseSustainGesture: MagicMouseSustainGesture
+    @Binding var magicMouseTapThreshold: Double?
 
 
     private var assignments: MIDIHelperAssignments {
@@ -1676,7 +1685,9 @@ private struct MIDIHelperView: View {
                                 trackpadThreshold: $trackpadSustainThreshold,
                                 trackpadSensor: $trackpadSustainSensor,
                                 magicMouseEnabled: $magicMouseSustainEnabled,
-                                magicMouseGesture: $magicMouseSustainGesture
+                                magicMouseGesture: $magicMouseSustainGesture,
+                                magicMouseTapThreshold: $magicMouseTapThreshold,
+                                mouseContactSize: studio.midiHelperStates.filter { $0.surface == .magicMouse && $0.isTouching }.map(\.pressure).max()
                             )
                         }
 
@@ -1738,6 +1749,7 @@ private struct MIDIHelperView: View {
         .onChange(of: trackpadSustainGesture) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainEnabled) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainGesture) { _ in syncIfRunning() }
+        .onChange(of: magicMouseTapThreshold) { _ in syncIfRunning() }
     }
 
     private func startHelper() {
@@ -1755,7 +1767,8 @@ private struct MIDIHelperView: View {
             magicMouseSustainEnabled: sustainEnabled && magicMouseSustainEnabled,
             magicMouseSustainGesture: magicMouseSustainGesture,
             trackpadSustainGesture: trackpadSustainGesture,
-            trackpadSustainSensor: trackpadSustainSensor
+            trackpadSustainSensor: trackpadSustainSensor,
+            magicMouseTapThreshold: magicMouseTapThreshold ?? 0
         )
     }
 
@@ -1775,6 +1788,8 @@ private struct SustainSettingsPanel: View {
     @Binding var trackpadSensor: TrackpadSustainSensor
     @Binding var magicMouseEnabled: Bool
     @Binding var magicMouseGesture: MagicMouseSustainGesture
+    @Binding var magicMouseTapThreshold: Double?
+    let mouseContactSize: Double?
 
     var body: some View {
         GroupBox("Sustain Pedal / MIDI CC64") {
@@ -1821,6 +1836,27 @@ private struct SustainSettingsPanel: View {
                         }
                     }
                     .disabled(!surfaceSelection.accepts(.magicMouse))
+                    if magicMouseGesture == .tapToggle {
+                        HStack {
+                            Text("Tap contact threshold").font(.caption)
+                            Slider(value: Binding(
+                                get: { magicMouseTapThreshold ?? 0 },
+                                set: { magicMouseTapThreshold = $0 }
+                            ), in: 0...1, step: 0.05)
+                            Text("\(Int((magicMouseTapThreshold ?? 0) * 100))%")
+                                .font(.caption.monospacedDigit())
+                        }
+                        .disabled(playing || !surfaceSelection.accepts(.magicMouse))
+                        if let size = mouseContactSize, size.isFinite, (0...1).contains(size) {
+                            ProgressView(value: size) {
+                                Text("Live contact size: \(Int(size * 100))%").font(.caption)
+                            }
+                        } else {
+                            Text("Live contact size: no contact").font(.caption)
+                        }
+                        Text("0% accepts any new contact. Higher thresholds require a larger first contact; lifting is required before another toggle. Contact size is not pressure.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
 
                 HStack {
