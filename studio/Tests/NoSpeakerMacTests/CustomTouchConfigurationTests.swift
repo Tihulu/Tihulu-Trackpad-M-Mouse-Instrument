@@ -93,4 +93,19 @@ import NoSpeakerCore
     #expect(!config.permitsStringMIDI(isMPE:false))
     #expect(config.permitsStringMIDI(isMPE:true))
 }
+@Test func microtonalFrettedMIDIRequiresMPEButHapticDoesNot() {
+    var config = TouchInstrumentConfiguration(surfaceSelection:.both,
+        trackpadInstrument:.guitar,magicMouseInstrument:.guitar,
+        trackpadOutput:.midiInstrument,magicMouseOutput:.trackpadHaptic,
+        stringLayout:.init(),mouseStringLayout:.init(fretDivision:.edo53))
+    #expect(config.permitsStringMIDI(isMPE:false))
+    config.magicMouseOutput = .both
+    #expect(!config.permitsStringMIDI(isMPE:false))
+    #expect(config.permitsStringMIDI(isMPE:true))
+    config.mouseStringLayout = .init(customFretCents:[0,181,355,1200])
+    #expect(!config.permitsStringMIDI(isMPE:false))
+    #expect(config.permitsStringMIDI(isMPE:true))
+    config.mouseStringLayout = .init(customFretCents:[0,1201])
+    #expect(!config.permitsStringMIDI(isMPE:true))
+}
 #endif

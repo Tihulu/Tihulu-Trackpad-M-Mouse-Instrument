@@ -222,23 +222,34 @@ public struct StringSurfaceLayout: Codable, Equatable, Sendable {
     /// Optional so archives without custom tuning keep their preset.
     public var customOpenNotes: [Int]?
     public var fretDivision: StringFretDivision?
+    /// Absolute offsets from the open string, in integer cents. Custom
+    /// intervals override EDO, not the continuous fretless span.
+    public var customFretCents: [Int]?
     public init(tuning:StringTuning = .standard, frets:Int = 12, customOpenNotes:[Int]? = nil,
-                fretDivision:StringFretDivision? = nil) {
+                fretDivision:StringFretDivision? = nil, customFretCents:[Int]? = nil) {
         self.tuning = tuning; self.frets = frets; self.customOpenNotes = customOpenNotes
         self.fretDivision = fretDivision
+        self.customFretCents = customFretCents
     }
     public var effectiveDivision: StringFretDivision { fretDivision ?? .edo12 }
-    public var isMicrotonal: Bool { effectiveDivision != .edo12 }
+    public var isMicrotonal: Bool { customFretCents != nil || effectiveDivision != .edo12 }
     public var openNotes: [Int] { customOpenNotes ?? tuning.openNotes }
     public var isValid: Bool {
-        guard (4...24).contains(frets), (4...8).contains(openNotes.count) else { return false }
-        return openNotes.allSatisfy { (0...(127-frets)).contains($0) }
+        guard (4...24).contains(frets), (3...8).contains(openNotes.count),
+              openNotes.allSatisfy({ (0...(127-frets)).contains($0) }) else { return false }
+        if let cents = customFretCents {
+            guard (2...107).contains(cents.count), cents.first == 0,
+                  cents.allSatisfy({ (0...(frets*100)).contains($0) }),
+                  zip(cents,cents.dropFirst()).allSatisfy({ $0.0 < $0.1 }) else { return false }
+        }
+        return true
     }
     public var rows: Int { isValid ? openNotes.count : 0 }
-    public var columns: Int { isValid ? frets * effectiveDivision.rawValue / 12 + 1 : 0 }
+    public var columns: Int { isValid ? (customFretCents?.count ?? (frets * effectiveDivision.rawValue / 12 + 1)) : 0 }
     /// Only complete EDO steps inside the requested span; no out-of-range extra fret.
     public func semitoneOffset(at step:Int) -> Double? {
         guard isValid, (0..<columns).contains(step) else { return nil }
+        if let cents = customFretCents { return Double(cents[step])/100 }
         return Double(step) * 12 / Double(effectiveDivision.rawValue)
     }
     public struct Cell: Equatable, Sendable {
@@ -287,6 +298,18 @@ public struct StringSurfaceLayout: Codable, Equatable, Sendable {
         let bend = Int((8192+delta*(delta < 0 ? 8192 : 8191)).rounded())
         return .init(string:cell.string,pitch:pitch,anchor:anchor,bendRange:2,
                      bend:min(16383,max(0,bend)))
+    }
+
+    /// Parse a bounded, explicit cents list; no silent sorting or clipping.
+    public static func parseFretCents(_ text:String) -> [Int]? {
+        guard text.utf8.count <= 2048 else { return nil }
+        let tokens = text.split(whereSeparator:{ $0 == "," || $0.isWhitespace })
+        guard (2...107).contains(tokens.count) else { return nil }
+        let values = tokens.compactMap { Int($0) }
+        guard values.count == tokens.count, values.first == 0,
+              values.allSatisfy({ (0...2400).contains($0) }),
+              zip(values,values.dropFirst()).allSatisfy({ $0.0 < $0.1 }) else { return nil }
+        return values
     }
 
     public func permitsMIDI(mixedFretless:Bool,isMPE:Bool) -> Bool {

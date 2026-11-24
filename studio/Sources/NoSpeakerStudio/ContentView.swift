@@ -1292,6 +1292,8 @@ private struct TouchInstrumentView: View {
 
 private struct StringLayoutEditor: View {
     @Binding var layout: StringSurfaceLayout
+    @State private var fretText = ""
+    @State private var fretError = ""
     var body: some View {
                         VStack(alignment:.leading,spacing:8) {
                             Picker("Tuning",selection:Binding(
@@ -1306,11 +1308,39 @@ private struct StringLayoutEditor: View {
                             ),in:4...24)
                             Picker("Fret division",selection:Binding(
                                 get:{ layout.effectiveDivision },
-                                set:{ var next = layout; next.fretDivision = $0 == .edo12 ? nil : $0; layout = next }
+                                set:{ var next = layout; next.fretDivision = $0 == .edo12 ? nil : $0; next.customFretCents = nil; layout = next; fretError = "" }
                             )) {
                                 ForEach(StringFretDivision.allCases) { Text($0.title).tag($0) }
                             }
-                            Text("\(layout.columns) discrete positions including open string. 24-EDO gives quarter tones; 53-EDO gives equal commas, not a complete makam. Microtonal MIDI requires MPE. Fretless mode ignores fret divisions.")
+                            HStack {
+                                TextField("Custom fret cents, e.g. 0, 200, 350, 500, 700, 1200",text:$fretText)
+                                Button("Apply") {
+                                    guard let cents = StringSurfaceLayout.parseFretCents(fretText) else {
+                                        fretError = "Enter 2–107 increasing integer cent values, starting at 0."
+                                        return
+                                    }
+                                    var next = layout
+                                    next.customFretCents = cents
+                                    guard next.isValid else {
+                                        fretError = "Custom frets must fit inside the selected pitch span."
+                                        return
+                                    }
+                                    layout = next
+                                    fretError = ""
+                                }
+                                Button("Reset to EDO") {
+                                    var next = layout
+                                    next.customFretCents = nil
+                                    layout = next
+                                    fretError = ""
+                                }.disabled(layout.customFretCents == nil)
+                            }
+                            if let cents = layout.customFretCents {
+                                Text("Custom frets: " + cents.map(String.init).joined(separator:", "))
+                                    .font(.caption).textSelection(.enabled)
+                            }
+                            if !fretError.isEmpty { Text(fretError).font(.caption).foregroundStyle(.orange) }
+                            Text("\(layout.columns) discrete positions including open string. 24-EDO gives quarter tones; 53-EDO gives equal commas, not a complete makam. Custom fret cents override the EDO choice. Microtonal MIDI requires MPE. Fretless mode ignores fret divisions.")
                                 .font(.caption).foregroundStyle(.secondary)
                             Toggle("Custom open-string tuning",isOn:Binding(
                                 get:{ layout.customOpenNotes != nil },
@@ -1324,14 +1354,14 @@ private struct StringLayoutEditor: View {
                                 Stepper("Strings: \(notes.count)",value:Binding(
                                     get:{ notes.count },
                                     set:{ count in
-                                        guard (4...8).contains(count) else { return }
+                                        guard (3...8).contains(count) else { return }
                                         var next = layout
                                         var pitches = Array(notes.prefix(count))
                                         while pitches.count < count { pitches.append(max(0,(pitches.last ?? 40)-5)) }
                                         next.customOpenNotes = pitches
                                         if next.isValid { layout = next }
                                     }
-                                ),in:4...8)
+                                ),in:3...8)
                                 ForEach(notes.indices,id:\.self) { row in
                                     Stepper("String \(row+1): \((try? MusicTheory.noteName(midi:notes[row])) ?? String(notes[row])) · MIDI \(notes[row])",
                                         value:Binding(
@@ -1399,7 +1429,20 @@ private struct TouchSurfaceMap: View {
                                 .position(x:(CGFloat(cell.fret)+0.5)*w,y:(CGFloat(cell.string)+0.5)*h)
                         }
                     }
-                } else if instrument.isStringSurface && stringLayout.isValid {
+                } else if instrument == .fretlessStrings && stringLayout.isValid {
+                    let height = proxy.size.height / CGFloat(stringLayout.rows)
+                    ForEach(0..<stringLayout.rows,id:\.self) { row in
+                        let openNote = stringLayout.openNotes[row]
+                        ZStack(alignment:.leading) {
+                            Rectangle().fill(states.contains { $0.isDown && stringLayout.continuousCell(x:$0.x,y:$0.y)?.string == row }
+                                ? Color.accentColor.opacity(0.20) : Color.secondary.opacity(0.04))
+                            Rectangle().fill(Color.secondary.opacity(0.6)).frame(height:1)
+                            Text((try? MusicTheory.noteName(midi:openNote)) ?? String(openNote))
+                                .font(.caption2).padding(4).background(.background)
+                        }.frame(width:proxy.size.width,height:height)
+                        .position(x:proxy.size.width/2,y:(CGFloat(row)+0.5)*height)
+                    }
+                } else if instrument == .guitar && stringLayout.isValid {
                     let width = proxy.size.width / CGFloat(stringLayout.columns)
                     let height = proxy.size.height / CGFloat(stringLayout.rows)
                     ForEach(0..<stringLayout.rows,id:\.self) { row in

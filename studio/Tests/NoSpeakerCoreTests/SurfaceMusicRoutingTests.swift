@@ -209,7 +209,7 @@ import Testing
     #expect(custom.rows == 8)
     #expect(custom.cell(x:1,y:0)?.note == 52)
     #expect(try JSONDecoder().decode(StringSurfaceLayout.self,from:JSONEncoder().encode(custom)) == custom)
-    for notes in [[],[0,1,2],[1,2,3,104],[1,2,3,-1],[1,2,3,Int.max],Array(repeating:40,count:9)] {
+    for notes in [[],[0,1],[1,2,3,104],[1,2,3,-1],[1,2,3,Int.max],Array(repeating:40,count:9)] {
         let invalid = StringSurfaceLayout(frets:24,customOpenNotes:notes)
         #expect(!invalid.isValid)
         #expect(invalid.cell(x:1,y:1) == nil)
@@ -279,4 +279,27 @@ import Testing
     let tuned = StringSurfaceLayout(fretDivision:.edo53)
     #expect(try JSONDecoder().decode(StringSurfaceLayout.self,from:JSONEncoder().encode(tuned)) == tuned)
     #expect(tuned.continuousCell(x:0.25,y:0.5) == normal.continuousCell(x:0.25,y:0.5))
+}
+
+@Test func customFretCentsAreExactBoundedAndBackwardCompatible() throws {
+    let layout = StringSurfaceLayout(frets:12,customOpenNotes:[62,57,50],customFretCents:[0,181,355,498,702,1200])
+    #expect(layout.isValid && layout.rows == 3 && layout.columns == 6)
+    for index in 0..<layout.columns {
+        let cell = try #require(layout.microtonalCell(x:(Double(index)+0.5)/6,y:1))
+        #expect(abs(cell.pitch-(62+Double(layout.customFretCents![index])/100)) < 0.000001)
+        let delta = Double(cell.bend-8192)
+        #expect(abs(Double(cell.anchor)+2*delta/Double(delta < 0 ? 8192 : 8191)-cell.pitch) < 0.00013)
+    }
+    #expect(try JSONDecoder().decode(StringSurfaceLayout.self,from:JSONEncoder().encode(layout)) == layout)
+    #expect(StringSurfaceLayout.parseFretCents("0, 181 355, 1200") == [0,181,355,1200])
+    for text in ["","0","1,200","0,200,200","0,300,200","0,-1","0,2401","0,NaN","0,1.5",String(repeating:"0",count:2049)] {
+        #expect(StringSurfaceLayout.parseFretCents(text) == nil)
+    }
+    for offsets in [[0,1201],[0,200,100],[0,Int.max],[0,0],[]] {
+        let invalid = StringSurfaceLayout(frets:12,customFretCents:offsets)
+        #expect(!invalid.isValid)
+        #expect(invalid.microtonalCell(x:0,y:1) == nil)
+    }
+    let plain = StringSurfaceLayout(frets:12,customOpenNotes:[62,57,50])
+    #expect(layout.continuousCell(x:0.5,y:0.5) == plain.continuousCell(x:0.5,y:0.5))
 }
