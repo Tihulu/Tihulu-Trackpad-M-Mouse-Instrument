@@ -114,6 +114,17 @@ For Turkish voice profiles beyond the macOS-provided voices, opt-in local Piper 
 
 These are **development features pending macOS CI and physical Mac acceptance**; do not mistake them for a completed stable DMG release.
 
+## Experimental v0.3.0 Remote preview
+
+This development candidate adds a customizable local MIDI controller for phones and tablets, integrated with Instrument Builder. It is **not the stable release** and has not completed physical acceptance. The install commands above still target stable; do not use them for preview.
+
+- XY touch, drum pads, piano, pedalboard, tilt/Pocket Wah, acceleration/Air Drums and gyroscope.
+- Source-specific MIDI routing, optional destination and custom-label disclosure, unified Play / Setup / Connection views.
+- Conservative combinations by default; experimental combinations may interrupt under load. Release my controls releases the current peer's owners, not other performers.
+- Trusted local TLS only, explicit invitation and private LAN confirmation, no automatic sensor permissions or certificate trust bypass.
+
+See [Remote preview user guide](docs/REMOTE_R9_USER_GUIDE.md), [isolated package verification](docs/REMOTE_R9_PREVIEW_ACCEPTANCE.md) and [acceptance matrix](docs/REMOTE_R9_ACCEPTANCE_MATRIX.md). Use the matching successful CI artifact only, not a release installer or an arbitrary older preview.
+
 ## Requirements and safety
 
 - macOS 13 or newer; SwiftUI native app.
