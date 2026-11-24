@@ -51,3 +51,17 @@ private func takePatch() -> InstrumentPatch {
     #expect(full.events.count <= EnsembleTake.maximumEvents)
     #expect(full.events.last?.command == .init(a,value:0))
 }
+
+@Test func ensembleTakeLateInputClosesAtDurationLimitAndFailureMarksPartial() throws {
+    let note = SensorDestination(.note,number:60)
+    var take = try #require(EnsembleTake(patch:takePatch(),bpm:120,now:1))
+    #expect(take.append(.init(note,value:100),now:2))
+    #expect(!take.append(.init(note,value:0),now:123))
+    #expect(take.endTick == 230400)
+    #expect(take.events.last?.command == .init(note,value:0))
+    var fault = try #require(EnsembleTake(patch:takePatch(),bpm:120,now:1))
+    #expect(fault.append(.init(note,value:100),now:2))
+    fault.interrupt(now:3)
+    #expect(fault.truncated && fault.endTick == 3840)
+    #expect(fault.events.last?.command == .init(note,value:0))
+}

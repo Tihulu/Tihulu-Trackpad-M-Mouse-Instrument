@@ -30,6 +30,8 @@ public struct EnsembleTake: Sendable {
     @discardableResult
     public mutating func append(_ command:SensorCommand,now:Double) -> Bool {
         guard endTick == nil else { return false }
+        checkTime(now:now)
+        guard endTick == nil else { return false }
         guard now.isFinite,now >= lastTime,now-origin < Self.maximumDuration,
               events.count < Self.maximumEvents-SensorRouter.maxMappings,
               let release = releases[command.destination],
@@ -45,6 +47,11 @@ public struct EnsembleTake: Sendable {
         guard endTick == nil else { return }
         if !now.isFinite || now < lastTime { truncated = true; finish(now:lastTime) }
         else if now-origin >= Self.maximumDuration { truncated = true; finish(now:origin+Self.maximumDuration) }
+    }
+    public mutating func interrupt(now:Double) {
+        guard endTick == nil else { return }
+        truncated = true
+        finish(now:now)
     }
     public mutating func finish(now:Double) {
         guard endTick == nil else { return }

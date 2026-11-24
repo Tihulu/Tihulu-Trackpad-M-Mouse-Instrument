@@ -38,6 +38,8 @@ final class StudioController: ObservableObject {
     var patchDebugCameraRunID:UUID? { patchRunning ? debugCameraRunToken : nil }
     private var patchLedger = PatchOutputLedger()
     private var ensembleTake:EnsembleTake?
+    private var ensembleTakeTimeout:Task<Void,Never>?
+    private var ensembleTakeToken:UUID?
     @Published var ensembleRecordNext = false
     @Published var ensembleRecordBPM = 120.0
     @Published private(set) var ensembleRecording = false
@@ -52,10 +54,21 @@ final class StudioController: ObservableObject {
         ensembleRecording = true
         ensembleTakeReady = false
         ensembleTakeStatus = "Recording reconciled Builder commands"
+        let token = UUID()
+        ensembleTakeToken = token
+        ensembleTakeTimeout = Task { [weak self] in
+            do { try await Task.sleep(for:.seconds(EnsembleTake.maximumDuration)) } catch { return }
+            guard let self,self.ensembleTakeToken == token,self.ensembleRecording,!Task.isCancelled else { return }
+            self.ensembleTake?.interrupt(now:ProcessInfo.processInfo.systemUptime)
+            self.updateEnsembleTakeState()
+        }
     }
 
     private func updateEnsembleTakeState() {
         guard let take = ensembleTake, take.endTick != nil else { return }
+        ensembleTakeToken = nil
+        ensembleTakeTimeout?.cancel()
+        ensembleTakeTimeout = nil
         ensembleRecording = false
         ensembleTakeReady = !take.events.isEmpty
         ensembleTakeStatus = "\(take.events.count) events · " + (take.truncated ? "bounded partial take" : "take finished")
@@ -1007,6 +1020,10 @@ final class StudioController: ObservableObject {
         for command in commands {
             attempted.append(command)
             if patchMIDIEnabled && !patchLedger.deliver(command, send: { patchMIDI.send($0) }) {
+                if ensembleRecording {
+                    ensembleTake?.interrupt(now:ProcessInfo.processInfo.systemUptime)
+                    updateEnsembleTakeState()
+                }
                 stopInstrumentPatch()
                 patchStatus = "MIDI delivery failed. Check DAW and retry Stop."
                 break

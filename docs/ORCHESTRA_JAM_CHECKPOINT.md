@@ -11,3 +11,5 @@ The Builder exposes a visual beat indicator and separately opted-in MIDI Start/C
 
 ## Multi-channel take checkpoint
 Arm recording before starting a Builder run. Capture the reconciled command stream, including notes, sustain, pitch bend and CC, after successful host send if MIDI is enabled (or intended commands if disabled). Finish the take independently of live inputs. In-memory maximum 120 seconds / 32768 events including closure. Export SMF type 1, fixed tempo, one track per MIDI channel. No audio, video, raw sensor data, peer IDs, MPE-specific metadata or verified DAW receipt. Stop/Panic closes the recorded take; file-only release events do not change live performance. Previous unsaved takes require replacement confirmation.
+
+A run-scoped timer bounds even idle takes. Late events close at the duration limit; MIDI delivery failures close the take as partial, rather than claiming a complete successful recording. No timeout or export action alters live ownership.
