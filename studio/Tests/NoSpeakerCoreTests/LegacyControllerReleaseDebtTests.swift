@@ -32,3 +32,22 @@ import Testing
     #expect(owners.release(.helper) == [.init(cc,value:60,neutral:0)])
     #expect(owners.releaseAll() == [.init(cc,value:0)])
 }
+
+@Test func legacyRecoverySendAndReplacementPolicyExhaustive() {
+    for enabled in [false,true] {
+        for faulted in [false,true] {
+            for cleaning in [false,true] {
+                #expect(LegacyRecoveryPolicy.permitsSend(enabled:enabled,faulted:faulted,cleaning:cleaning) ==
+                    (cleaning || (enabled && !faulted)))
+            }
+        }
+    }
+    for gates in [false,true] {
+        for controllers in [false,true] {
+            for unknown in [false,true] {
+                #expect(LegacyRecoveryPolicy.permitsReplacement(gatesPending:gates,controllersPending:controllers,unknownFailure:unknown) ==
+                    (!gates && !controllers && !unknown))
+            }
+        }
+    }
+}

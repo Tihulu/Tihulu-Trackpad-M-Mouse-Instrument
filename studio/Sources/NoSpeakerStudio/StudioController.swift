@@ -1290,6 +1290,18 @@ final class StudioController: ObservableObject {
 
     private func prepareEngine() {
         guard !engineReady, !speakerBusy else { return }
+        // Reconnect must not discard possibly delivered MIDI state together
+        // with the old endpoint. Retry its scoped cleanup before replacement.
+        if let midi, midi.hasUnconfirmedOutgoingCleanup {
+            midi.stop()
+            guard !midi.hasUnconfirmedOutgoingCleanup else {
+                engineStatus = "Stopped · MIDI cleanup unresolved"
+                lastError = midi.requiresManualDAWReset
+                    ? "Reset the DAW controllers, then quit and relaunch this app. Reconnect is blocked while MIDI state is uncertain."
+                    : "MIDI release remains unconfirmed. Keep the receiving DAW available and retry Reconnect."
+                return
+            }
+        }
         // Only initialize after the previous session has been retired.
         engineGeneration &+= 1
         let generation = engineGeneration
@@ -1428,7 +1440,9 @@ final class StudioController: ObservableObject {
         engineReady = false
         engineStatus = "Stopped — press Reconnect to reopen the trackpad"
         if midi?.hasUnconfirmedOutgoingCleanup == true {
-            lastError = "MIDI cleanup remains unconfirmed. Reset the DAW before reconnecting."
+            lastError = midi?.requiresManualDAWReset == true
+                ? "Reset DAW controllers and quit/relaunch this app."
+                : "MIDI cleanup remains unconfirmed. Retry Reconnect to attempt scoped cleanup."
         }
     }
 
@@ -2061,7 +2075,9 @@ final class StudioController: ObservableObject {
         activeMIDINotes = []
         engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
         if midi?.hasUnconfirmedOutgoingCleanup == true {
-            lastError = "MIDI cleanup remains unconfirmed. Retry Stop for notes/pedals. Reset DAW controllers before reconnecting."
+            lastError = midi?.requiresManualDAWReset == true
+                ? "Reset DAW controllers and quit/relaunch this app."
+                : "MIDI cleanup remains unconfirmed. Retry Stop to release pending notes and controllers."
         }
     }
 

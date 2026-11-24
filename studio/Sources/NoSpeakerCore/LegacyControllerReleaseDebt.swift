@@ -56,3 +56,14 @@ public struct LegacyControllerReleaseDebt: Sendable {
         else { targets[key] = release }
     }
 }
+
+/// Keep cleanup submissions possible after input and normal output stop.
+/// Replacement must not discard unresolved receiver-state obligations.
+public enum LegacyRecoveryPolicy {
+    public static func permitsSend(enabled: Bool, faulted: Bool, cleaning: Bool) -> Bool {
+        cleaning || (enabled && !faulted)
+    }
+    public static func permitsReplacement(gatesPending: Bool, controllersPending: Bool, unknownFailure: Bool) -> Bool {
+        !gatesPending && !controllersPending && !unknownFailure
+    }
+}
