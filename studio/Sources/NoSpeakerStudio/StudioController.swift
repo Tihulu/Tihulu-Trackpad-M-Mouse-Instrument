@@ -94,6 +94,7 @@ final class StudioController: ObservableObject {
     private var chordMPEState = ChordMPEState()
     // Retain the actual endpoint selection until all attempted notes are released.
     private var chordMPEActive = false
+    private var chordMPESelectors = MIDISelectorCleanup()
     private var activeChordMIDIOutput: ChordMIDIOutput { chordMPEActive ? chordMPEOutput : chordOutput }
     private var chordHaptics: LiveNoteHapticOutput?
     @Published private(set) var sharedNoteOutputEnabled = false
@@ -108,9 +109,10 @@ final class StudioController: ObservableObject {
     private var touchBarHaptics: LiveNoteHapticOutput?
     private let touchBarDedicatedMIDI = ChordMIDIOutput(name: "TIHULU Touch Bar")
     private var touchBarLocalState = TouchBarNoteState()
-    private var touchBarOutstanding: Set<SensorDestination> = []
+    private var touchBarOutputLedger = TouchBarOutputLedger()
     private var touchBarOutputToken: UUID?
     private var nativePianoTokens: [Int: UUID] = [:]
+    private(set) var touchBarGestureEpoch = TouchBarGestureEpoch()
     var touchBarOwnsHaptics: Bool { touchBarOutputArmed }
     var liveNoteOwnsHaptics: Bool { chordOwnsHaptics || touchBarOwnsHaptics }
     @Published private(set) var chordProgression = StudioController.readChordProgression()
@@ -701,7 +703,7 @@ final class StudioController: ObservableObject {
     }
 
     func updateChordBank(_ proposed: ChordBank) {
-        guard proposed.isValid, !chordArmed, chordOutstanding.isEmpty else { return }
+        guard proposed.isValid, !chordArmed, chordOutstanding.isEmpty, chordMPESelectors.isEmpty else { return }
         chordBank = proposed
         touchBarBridge?.refreshChordControls()
         if let data = try? WorkspaceArchive.encode(name: "Chord bank", payload: proposed) {
@@ -731,8 +733,8 @@ final class StudioController: ObservableObject {
     func armChordPads() {
         guard !chordArmed else { return }
         releaseChordPads()
-        guard chordOutstanding.isEmpty else {
-            chordStatus = "Unreleased MIDI notes. Reset the receiving DAW before retrying."
+        guard chordOutstanding.isEmpty, chordMPESelectors.isEmpty else {
+            chordStatus = "Unreleased MIDI notes or selectors. Reset the receiving DAW before retrying."
             return
         }
         let selected = chordBank.effectiveOutput
@@ -760,10 +762,9 @@ final class StudioController: ObservableObject {
             if selected.sendsMIDI {
                 try activeChordMIDIOutput.open()
                 if chordMPEActive {
-                    for command in ChordMPEState.configuration() {
-                        guard activeChordMIDIOutput.send(command) else {
-                            throw ChordMPEConfigurationError.delivery
-                        }
+                    guard chordMPESelectors.configure(ChordMPEState.configuration(), send:{ chordMPEOutput.send($0) }) else {
+                        _ = chordMPESelectors.releaseAll(send:{ chordMPEOutput.send($0) })
+                        throw ChordMPEConfigurationError.delivery
                     }
                 }
             }
@@ -790,7 +791,8 @@ final class StudioController: ObservableObject {
             chordHaptics?.stop()
             chordHaptics = nil
             releaseSharedOutputIfIdle()
-            chordStatus = error.localizedDescription
+            chordStatus = chordMPESelectors.isEmpty ? error.localizedDescription
+                : "MPE selector cleanup failed. Reset the DAW and retry Release All."
         }
     }
 
@@ -965,7 +967,9 @@ final class StudioController: ObservableObject {
             if activeChordMIDIOutput.send(.init(key, value: 0)) { chordOutstanding.remove(key) }
         }
         if chordOutstanding.isEmpty { chordMPEState.clearAfterRelease() }
-        if !chordOutstanding.isEmpty {
+        // The original MPE endpoint is retained independently of bank selection.
+        let selectorsReleased = chordMPESelectors.releaseAll(send:{ chordMPEOutput.send($0) })
+        if !chordOutstanding.isEmpty || !selectorsReleased {
             chordHapticToken = nil
             chordHaptics?.stop()
             chordHaptics = nil
@@ -982,7 +986,7 @@ final class StudioController: ObservableObject {
         releaseSharedOutputIfIdle()
         releaseChordPads()
         chordArmed = false
-        if chordOutstanding.isEmpty { chordStatus = "Output off" }
+        if chordOutstanding.isEmpty && chordMPESelectors.isEmpty { chordStatus = "Output off" }
     }
 
     private static func readSavedCaptureShortcut() -> PerformanceCaptureShortcut {
@@ -1033,6 +1037,7 @@ final class StudioController: ObservableObject {
     }
 
     func releaseTouchBarNotes() {
+        touchBarGestureEpoch.invalidate()
         nativePianoTokens.removeAll()
         releaseOptionalTouchBarNotes()
         for command in midiTouchBarNotes.reset(channel:touchBarProfile.channel) {
@@ -1060,7 +1065,8 @@ final class StudioController: ObservableObject {
         }
     }
 
-    func touchBarValue(_ zone: TouchBarZone, normalized value: Double) {
+    func touchBarValue(_ zone: TouchBarZone, normalized value: Double, releaseOnly: Bool = false) {
+        guard value.isFinite, [.pitchBend, .fretless, .vibrato, .expression, .filter].contains(zone) else { return }
         if touchBarProfile.effectiveOutput.sendsHaptics {
             guard touchBarOutputArmed, value.isFinite else { return }
             let safe = min(1, max(0, value))
@@ -1080,9 +1086,10 @@ final class StudioController: ObservableObject {
             if deliverTouchBarCommands(commands) { updateTouchBarHaptics() }
             return
         }
+        guard LegacyRecoveryPolicy.permitsControlEvent(running:midiRunning,releaseOnly:releaseOnly) else { return }
         cancelStartupGreeting()
         if !midiRunning { startMIDI() }
-        guard midiRunning, value.isFinite else { return }
+        guard midiRunning else { return }
         let safe = max(0, min(1, value))
         let channel = touchBarProfile.channel
         switch zone {
@@ -1111,6 +1118,7 @@ final class StudioController: ObservableObject {
             if deliverTouchBarCommands(commands) { updateTouchBarHaptics() }
             return
         }
+        guard LegacyRecoveryPolicy.permitsSustainEvent(running:midiRunning,pressed:isPressed) else { return }
         cancelStartupGreeting()
         if !midiRunning { startMIDI() }
         guard midiRunning else { return }
@@ -1143,7 +1151,7 @@ final class StudioController: ObservableObject {
             return
         }
         releaseOptionalTouchBarNotes()
-        guard touchBarOutstanding.isEmpty else {
+        guard touchBarOutputLedger.isEmpty else {
             touchBarOutputStatus = "MIDI release failed. Reset the DAW and retry."
             return
         }
@@ -1158,12 +1166,13 @@ final class StudioController: ObservableObject {
             if touchBarProfile.effectiveOutput.sendsMIDI {
                 try touchBarDedicatedMIDI.open()
                 let channel = touchBarProfile.channel
-                // Dedicated endpoint: set the same +/-12-semitone bend range as local sound.
-                for (cc, value) in [(101,0),(100,0),(6,12),(38,0),(101,127),(100,127)] {
-                    guard touchBarDedicatedMIDI.send(.init(.init(.controlChange, channel: channel, number: cc), value: value)) else {
-                        touchBarOutputStatus = "Unable to configure dedicated MIDI output."
-                        return
-                    }
+                // Track partial RPN setup separately from performance CCs.
+                guard touchBarOutputLedger.configureBendRange(channel:channel, send:{ touchBarDedicatedMIDI.send($0) }) else {
+                    releaseOptionalTouchBarNotes()
+                    touchBarOutputStatus = touchBarOutputLedger.isEmpty
+                        ? "Unable to configure dedicated MIDI output."
+                        : "MIDI selector cleanup failed. Reset the DAW and retry."
+                    return
                 }
             }
             let output = makeLiveNoteOutput(driver: driver, source: .touchBar)
@@ -1197,14 +1206,11 @@ final class StudioController: ObservableObject {
     private func deliverTouchBarCommands(_ commands: [SensorCommand]) -> Bool {
         guard touchBarProfile.effectiveOutput.sendsMIDI else { return true }
         for command in commands {
-            let isNote = command.destination.kind == .note
-            if isNote && command.value > 0 { touchBarOutstanding.insert(command.destination) }
-            guard touchBarDedicatedMIDI.send(command) else {
+            guard touchBarOutputLedger.deliver(command, send:{ touchBarDedicatedMIDI.send($0) }) else {
                 disarmTouchBarOutput()
-                touchBarOutputStatus = "MIDI delivery failed; check note release in the DAW."
+                touchBarOutputStatus = "MIDI delivery failed; check note and controller release in the DAW."
                 return false
             }
-            if isNote && command.value == 0 { touchBarOutstanding.remove(command.destination) }
         }
         return true
     }
@@ -1213,27 +1219,24 @@ final class StudioController: ObservableObject {
         // Do not invalidate legacy MIDI tap timers when merely releasing the
         // optional output. Otherwise an app-focus change could strand a note.
         guard touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed ||
-              !touchBarOutstanding.isEmpty else { return }
-        nativePianoTokens.removeAll()
+              !touchBarOutputLedger.isEmpty else { return }
+        if touchBarGestureEpoch.invalidateOptionalOutput(
+            sendsHaptics: touchBarProfile.effectiveOutput.sendsHaptics, armed: touchBarOutputArmed
+        ) {
+            nativePianoTokens.removeAll()
+        }
         let channel = touchBarProfile.channel
         _ = touchBarLocalState.reset(channel: channel)
         touchBarHaptics?.update(frame: nil, masterLevel: 0)
         if touchBarOutputArmed { touchBarSustainOn = false }
-        for note in Array(touchBarOutstanding) {
-            if touchBarDedicatedMIDI.send(.init(note, value: 0)) { touchBarOutstanding.remove(note) }
-        }
-        if touchBarOutputArmed && touchBarProfile.effectiveOutput.sendsMIDI {
-            _ = touchBarDedicatedMIDI.send(.init(.init(.pitchBend, channel: channel), value: 8192))
-            _ = touchBarDedicatedMIDI.send(.init(.init(.controlChange, channel: channel, number: 1), value: 0))
-            _ = touchBarDedicatedMIDI.send(.init(.init(.controlChange, channel: channel, number: 11), value: 127))
-        }
-        if !touchBarOutstanding.isEmpty {
+        let released = touchBarOutputLedger.releaseAll(send:{ touchBarDedicatedMIDI.send($0) })
+        if !released {
             touchBarOutputToken = nil
             touchBarHaptics?.stop()
             touchBarHaptics = nil
             releaseSharedOutputIfIdle()
             touchBarOutputArmed = false
-            touchBarOutputStatus = "Some MIDI releases failed; reset the receiving DAW."
+            touchBarOutputStatus = "Some MIDI note/controller releases failed; reset the receiving DAW and retry."
         }
     }
 
@@ -1244,7 +1247,7 @@ final class StudioController: ObservableObject {
         releaseSharedOutputIfIdle()
         releaseOptionalTouchBarNotes()
         touchBarOutputArmed = false
-        if touchBarOutstanding.isEmpty { touchBarOutputStatus = "Optional Trackpad output off" }
+        if touchBarOutputLedger.isEmpty { touchBarOutputStatus = "Optional Trackpad output off" }
     }
 
     func enableLiveHinge(_ enable: Bool) {
@@ -1275,8 +1278,18 @@ final class StudioController: ObservableObject {
         }
     }
 
+    func returnTiltToNeutral() {
+        guard patchHinge == nil, let neutral = touchBarProfile.neutralTilt else { return }
+        // Retire the live producer first so its next poll cannot overwrite
+        // the neutral. Neutralization itself must not start a stopped bridge.
+        enableLiveHinge(false)
+        simulatedHingeAngle = neutral.angle
+        touchBarValue(neutral.zone, normalized: neutral.value, releaseOnly: true)
+    }
+
     func applySimulatedHingeAngle(_ degrees: Double) {
-        simulatedHingeAngle = degrees
+        guard degrees.isFinite else { return }
+        simulatedHingeAngle = min(175, max(5, degrees))
         guard patchHinge == nil else { return }
         guard let value = touchBarProfile.normalizedTilt(degrees) else { return }
         switch touchBarProfile.tiltTarget {
@@ -1290,6 +1303,18 @@ final class StudioController: ObservableObject {
 
     private func prepareEngine() {
         guard !engineReady, !speakerBusy else { return }
+        // Reconnect must not discard possibly delivered MIDI state together
+        // with the old endpoint. Retry its scoped cleanup before replacement.
+        if let midi, midi.hasUnconfirmedOutgoingCleanup {
+            midi.stop()
+            guard !midi.hasUnconfirmedOutgoingCleanup else {
+                engineStatus = "Stopped · MIDI cleanup unresolved"
+                lastError = midi.requiresManualDAWReset
+                    ? "Reset the DAW controllers, then quit and relaunch this app. Reconnect is blocked while MIDI state is uncertain."
+                    : "MIDI release remains unconfirmed. Keep the receiving DAW available and retry Reconnect."
+                return
+            }
+        }
         // Only initialize after the previous session has been retired.
         engineGeneration &+= 1
         let generation = engineGeneration
@@ -1388,6 +1413,8 @@ final class StudioController: ObservableObject {
         renderGeneration &+= 1
         cancelStartupGreeting()
         enableLiveHinge(false)
+        midiSessionEpoch.end()
+        midi?.stop()
         releaseTouchBarNotes()
         touchBarSustainOn = false
         captureMonitor?.stop()
@@ -1399,8 +1426,6 @@ final class StudioController: ObservableObject {
         playback?.stop(closeDriver: false)
         surfaceMonitorToken = nil
         touch?.stopPreview()
-        midiSessionEpoch.end()
-        midi?.stop()
         // Terminal revocation drains an in-flight submission and blocks any
         // late producer or monitoring request on this exact driver instance.
         driver?.panicStop()
@@ -1428,7 +1453,9 @@ final class StudioController: ObservableObject {
         engineReady = false
         engineStatus = "Stopped — press Reconnect to reopen the trackpad"
         if midi?.hasUnconfirmedOutgoingCleanup == true {
-            lastError = "MIDI cleanup remains unconfirmed. Reset the DAW before reconnecting."
+            lastError = midi?.requiresManualDAWReset == true
+                ? "Reset DAW controllers and quit/relaunch this app."
+                : "MIDI cleanup remains unconfirmed. Retry Reconnect to attempt scoped cleanup."
         }
     }
 
@@ -1897,7 +1924,7 @@ final class StudioController: ObservableObject {
         touchMultiTouchEnabled = multiTouch
         touchMIDIChannel = max(0, min(15, midiChannel))
         touchSustainSettings = sustainSettings
-        touch?.invalidatePendingSamples()
+        touch.invalidatePendingSamples()
         touchSustainState.reset()
 
         if !instrumentPreviewRequested {
@@ -2036,32 +2063,34 @@ final class StudioController: ObservableObject {
             engineStatus = "MIDI remains active for running instruments"
             return
         }
+        // Retire the legacy Tilt producer before stopping its MIDI bridge.
+        // Otherwise the next hardware poll can auto-start the stopped source.
+        if !touchBarProfile.effectiveOutput.sendsHaptics { enableLiveHinge(false) }
+        // The whole legacy source is stopping: settle actual attempted
+        // MIDI output before individual UI owners can perform a handoff.
+        midiSessionEpoch.end()
+        midi?.stop()
         if !touchBarProfile.effectiveOutput.sendsHaptics {
             releaseTouchBarNotes()
-            midi?.releaseTouchBarSustain()
             touchBarSustainOn = false
         }
         captureMonitor?.releasePointer()
-        midi?.releaseTouchSustain()
         touchSustainState.reset()
         touchInstrumentSustainActive = false
-        midi?.releaseHelperSustain()
         helperSustainState.reset()
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
         midiHelperMagicMouseSustainActive = false
         midiHelperRunning = false
-        midi?.endAllTouchOutput()
-        // The active Helper must already have stopped and released its controls.
-        midiSessionEpoch.end()
-        midi?.stop()
         midiRunning = false
         stopCaptureMonitorIfIdle()
         activeMIDINoteMap.removeAll()
         activeMIDINotes = []
         engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
         if midi?.hasUnconfirmedOutgoingCleanup == true {
-            lastError = "MIDI cleanup remains unconfirmed. Retry Stop for notes/pedals. Reset DAW controllers before reconnecting."
+            lastError = midi?.requiresManualDAWReset == true
+                ? "Reset DAW controllers and quit/relaunch this app."
+                : "MIDI cleanup remains unconfirmed. Retry Stop to release pending notes and controllers."
         }
     }
 

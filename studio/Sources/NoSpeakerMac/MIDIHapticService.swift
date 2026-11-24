@@ -43,7 +43,7 @@ public enum MIDIHapticError: LocalizedError {
         case .destination(let status): return "CoreMIDI virtual input creation failed (OSStatus \(status))."
         case .source(let status): return "CoreMIDI virtual output creation failed (OSStatus \(status))."
         case .inputPort(let status): return "CoreMIDI input port creation failed (OSStatus \(status))."
-        case .outgoingRecoveryRequired: return "MIDI cleanup is unconfirmed. Retry Stop; if controller recovery is required, reset the DAW before reconnecting."
+        case .outgoingRecoveryRequired: return "MIDI cleanup is unconfirmed. Retry Stop. For an unknown controller failure, reset the DAW and quit/relaunch this app."
         }
     }
 }
@@ -158,7 +158,18 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var cleaningOutgoing = false
     private var outgoingFailureHandler: (@Sendable (OSStatus) -> Void)?
 
-    public var hasUnconfirmedOutgoingCleanup: Bool { !gateDebt.isEmpty || !controllerDebt.isEmpty || controllerRecoveryRequired }
+    public var hasUnconfirmedOutgoingCleanup: Bool {
+        !LegacyRecoveryPolicy.permitsReplacement(gatesPending:!gateDebt.isEmpty,
+            controllersPending:!controllerDebt.isEmpty,unknownFailure:controllerRecoveryRequired)
+    }
+    public var requiresManualDAWReset: Bool { controllerRecoveryRequired }
+
+    private var permitsOutgoingSend: Bool {
+        lock.lock()
+        let running = enabled
+        lock.unlock()
+        return LegacyRecoveryPolicy.permitsSend(enabled:running,faulted:outgoingFault != nil,cleaning:cleaningOutgoing)
+    }
     public var outgoingFailureStatus: OSStatus? { outgoingFault }
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
@@ -260,13 +271,17 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.unlock()
         renderFence.revoke()
         cleaningOutgoing = true
-        releaseAllOutgoingSustain()
-        endAllTouchOutput()
-        sendOwnedNotes(noteOwners.releaseAll())
-        sendContinuousUpdates(continuousOwners.releaseAll())
-        sendPressureUpdates(outgoingPressure.replace([:]))
-        // The intended-owner ledgers may already have removed failed releases.
-        // Retry only the outstanding note and pedal destinations, not all channels.
+        // Full shutdown: every logical owner is leaving. Never emit a
+        // fallback value from a departing owner or a neutral for an onset
+        // suppressed after a fault. The actual-attempt ledgers are sufficient.
+        noteOwners = LegacyNoteOwners<OutgoingNoteOwner>()
+        continuousOwners = LegacyContinuousOwners()
+        outgoingPressure = LegacyChannelPressure()
+        mpeChannels = LegacyMPEChannelPool()
+        touchOutputNote = nil
+        touchOutputFretless = false
+        // Retry only the outstanding attempted note/pedal destinations.
+        // Sustain-off precedes note-off; continuous cleanup follows the gates.
         for message in gateDebt.pending { sendMIDI1(status:message.status,data1:message.data1,data2:message.data2) }
         for channel in controllerDebt.pendingRanges {
             let msb = sendMIDI1(status:0xb0|channel,data1:101,data2:127,rangePart:true)
@@ -909,7 +924,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     private func sendPitchBendRange(semitones: Int, channel: Int) {
-        guard cleaningOutgoing || outgoingFault == nil else { return }
+        guard permitsOutgoingSend else { return }
         controllerDebt.beginRange(channel:channel)
         let value = max(0,min(24,semitones))
         let parts = [(101,0),(100,0),(6,value),(38,0),(101,127),(100,127)]
@@ -928,7 +943,7 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     @discardableResult
     private func sendMIDI1(status: Int, data1: Int, data2: Int, neutral: Int? = nil, rangePart: Bool = false) -> Bool {
-        guard cleaningOutgoing || outgoingFault == nil else { return false }
+        guard permitsOutgoingSend else { return false }
         let message = LegacyGateReleaseDebt.Message(status,data1,data2)
         var result: OSStatus = -1
         if virtualSource != 0 {

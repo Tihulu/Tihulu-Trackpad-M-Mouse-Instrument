@@ -246,7 +246,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var performanceHandler: (@Sendable ([TouchPerformanceState],TouchSnapshotStamp) -> Void)?
     private var latestStatesBySurface: [TouchSurfaceKind: [TouchPerformanceState]] = [:]
     private var liveHapticStates: [TouchPerformanceState] = []
-    private var sustainedHapticStates: [String: TouchPerformanceState] = [:]
+    private var sustainedHapticStates = HapticSustainVoices<TouchPerformanceState>()
     private var sustainActive = false
     private var activeDrumContacts: Set<String> = []
     private var pendingDrumHits: [HapticFrame] = []
@@ -393,7 +393,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         sustainActive = isOn
         if isOn {
             for state in liveHapticStates where configuration.output(for: state.surface).sendsHaptics && configuration.instrument(for: state.surface) == .melodic {
-                sustainedHapticStates[state.id] = state
+                sustainedHapticStates.remember(id:state.id,value:state)
             }
         } else {
             sustainedHapticStates.removeAll()
@@ -539,7 +539,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         activeDrumContacts = Set(drums.map(\.id))
         if sustainActive {
             for state in liveHapticStates where liveConfig.output(for: state.surface).sendsHaptics && liveConfig.instrument(for: state.surface) == .melodic {
-                sustainedHapticStates[state.id] = state
+                sustainedHapticStates.remember(id:state.id,value:state)
             }
         }
         lock.unlock()
@@ -548,7 +548,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
     private func renderHapticFrame(token: UUID) {
         var snapshot: (TouchInstrumentConfiguration, [TouchPerformanceState],
-                        [String: TouchPerformanceState], Bool, [HapticFrame], UInt64)?
+                        HapticSustainVoices<TouchPerformanceState>, Bool, [HapticFrame], UInt64)?
         renderFence.submit(token) {
             lock.lock()
             defer { lock.unlock() }
@@ -576,15 +576,13 @@ public final class TouchInstrumentService: @unchecked Sendable {
         // before refreshing a continuous melodic voice.
         guard now >= drumPriorityUntil else { return }
 
-        var byID: [String: TouchPerformanceState] =
-            isSustained ? sustained.filter {
-                config.output(for: $0.value.surface).sendsHaptics &&
-                config.instrument(for: $0.value.surface) == .melodic
-            } : [:]
-        for state in current where config.output(for: state.surface).sendsHaptics && config.instrument(for: state.surface) == .melodic {
-            byID[state.id] = state
+        let sounding = sustained.sounding(
+            live:current.map { (id:$0.id,value:$0) },
+            includeSustained:isSustained
+        ) { state in
+            config.output(for:state.surface).sendsHaptics &&
+            config.instrument(for:state.surface) == .melodic
         }
-        let sounding = byID.values.sorted { $0.id < $1.id }.prefix(6)
         guard !sounding.isEmpty else { return }
 
         var tones: [HapticTone] = []

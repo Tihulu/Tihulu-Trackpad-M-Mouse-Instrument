@@ -27,5 +27,21 @@ final class TouchBarProfileTests: XCTestCase {
     }
     func testDisabledTiltDoesNotSendMIDI() {
         XCTAssertNil(TouchBarProfile().normalizedTilt(90))
+        XCTAssertNil(TouchBarProfile().neutralTilt)
+    }
+    func testTiltNeutralMatchesControllerAndCalibration() throws {
+        let targets: [(TiltMIDITarget, TouchBarZone, Double)] = [
+            (.filter, .filter, 0), (.vibrato, .vibrato, 0),
+            (.expression, .expression, 1), (.pitchBend, .pitchBend, 0.5)
+        ]
+        for (target, zone, value) in targets {
+            for (minimum, maximum) in [(50.0, 135.0), (0.0, 200.0), (170.0, 50.0)] {
+                let profile = TouchBarProfile(tiltTarget: target, tiltMinDegrees: minimum, tiltMaxDegrees: maximum)
+                let neutral = try XCTUnwrap(profile.neutralTilt)
+                XCTAssertEqual(neutral.zone, zone)
+                XCTAssertEqual(neutral.value, value)
+                XCTAssertEqual(try XCTUnwrap(profile.normalizedTilt(neutral.angle)), value, accuracy: 0.000001)
+            }
+        }
     }
 }

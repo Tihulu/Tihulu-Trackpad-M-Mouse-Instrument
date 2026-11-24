@@ -75,6 +75,23 @@ public struct TouchBarProfile: Codable, Equatable, Sendable {
         return copy
     }
 
+    /// Neutral values follow the same convention as the MIDI release ledger.
+    /// The calibrated angle is for the simulator display, not a new live sample.
+    public var neutralTilt: (zone: TouchBarZone, value: Double, angle: Double)? {
+        let zone: TouchBarZone
+        let value: Double
+        switch tiltTarget {
+        case .disabled: return nil
+        case .filter: zone = .filter; value = 0
+        case .vibrato: zone = .vibrato; value = 0
+        case .expression: zone = .expression; value = 1
+        case .pitchBend: zone = .pitchBend; value = 0.5
+        }
+        let config = normalized()
+        let angle = config.tiltMinDegrees + value * (config.tiltMaxDegrees - config.tiltMinDegrees)
+        return (zone, value, angle)
+    }
+
     public func normalizedTilt(_ degrees: Double) -> Double? {
         let config = normalized()
         guard degrees.isFinite, config.tiltTarget != .disabled else { return nil }

@@ -10,6 +10,9 @@ import NoSpeakerCore
 final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     weak var controller: StudioController?
     private var profile = TouchBarProfile()
+    private var profileEpoch = TouchBarGestureEpoch()
+    private let profileControls = NSHashTable<NSControl>.weakObjects()
+    private weak var installedBar: NSTouchBar?
     private weak var chordControl: NSSegmentedControl?
     private let prefix = "com.tihulu.instrument.touchbar."
 
@@ -18,7 +21,12 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
 
     func install(profile: TouchBarProfile, builderToken: UUID? = nil) {
         self.builderToken = builderToken
-        self.profile = profile.normalized()
+        let normalized = profile.normalized()
+        if normalized != self.profile {
+            profileEpoch.invalidate()
+            profileControls.removeAllObjects()
+        }
+        self.profile = normalized
         chordControl = nil
         let bar = NSTouchBar()
         bar.delegate = self
@@ -29,6 +37,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             bar.defaultItemIdentifiers.append(builderID)
             bar.customizationAllowedItemIdentifiers.append(builderID)
         }
+        installedBar = bar
         NSApplication.shared.touchBar = bar
         NSApplication.shared.isAutomaticCustomizeTouchBarMenuItemEnabled = true
     }
@@ -44,6 +53,8 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     }
 
     func touchBar(_ touchBar: NSTouchBar, makeItemForIdentifier identifier: NSTouchBarItem.Identifier) -> NSTouchBarItem? {
+        guard touchBar === installedBar else { return nil }
+        let profileStamp = profileEpoch.revision
         if identifier == builderID, let token = builderToken {
             let item = NSCustomTouchBarItem(identifier: identifier)
             item.customizationLabel = "Builder ribbon"
@@ -65,6 +76,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
                 target: self,
                 action: #selector(pianoKeyPressed(_:))
             )
+            profileControls.add(piano)
             piano.segmentStyle = .rounded
             item.view = piano
             return item
@@ -75,6 +87,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
                 labels: chordLabels(), trackingMode: .momentary,
                 target: self, action: #selector(chordPadPressed(_:))
             )
+            profileControls.add(pads)
             pads.segmentStyle = .rounded
             pads.isEnabled = controller?.chordArmed == true
             chordControl = pads
@@ -85,50 +98,69 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             item.customizationLabel = "Sustain"
             if profile.sustainMode == .hold {
                 let button = HoldSustainButton(title: "Sustain Hold", target: nil, action: nil)
+                var gesture: UInt64?
                 button.onPress = { [weak self] pressed in
-                    self?.controller?.touchBarSustainPressed(pressed)
+                    guard let self, self.profileEpoch.accepts(profileStamp), let controller = self.controller else { return }
+                    if pressed {
+                        guard gesture == nil else { return }
+                        gesture = controller.touchBarGestureEpoch.revision
+                        controller.touchBarSustainPressed(true)
+                    } else if let captured = gesture {
+                        gesture = nil
+                        if controller.touchBarGestureEpoch.accepts(captured) { controller.touchBarSustainPressed(false) }
+                    }
                 }
                 item.view = button
             } else {
-                item.view = NSButton(
-                    title: "Sustain Toggle",
-                    target: self,
-                    action: #selector(sustainToggled(_:))
-                )
+                let button = NSButton(title: "Sustain Toggle", target: self, action: #selector(sustainToggled(_:)))
+                profileControls.add(button)
+                item.view = button
             }
             return item
         case .fretless:
             let item = NSCustomTouchBarItem(identifier: identifier)
             item.customizationLabel = "Fretless Piano"
-            let slider = FretlessTouchSlider(
+            let slider = PerformanceTouchSlider(
                 value: 0.5, minValue: 0, maxValue: 1,
                 target: self, action: #selector(sliderChanged(_:))
             )
             slider.tag = 2
             slider.isContinuous = true
+            profileControls.add(slider)
             slider.onPress = { [weak self, weak slider] pressed in
-                guard let self else { return }
+                guard let self, let slider, self.profileEpoch.accepts(profileStamp), let controller = self.controller else { return }
                 let note = self.profile.baseNote
-                self.controller?.touchBarKey(note, pressed: pressed, owner: .nativeRibbon)
-                if !pressed {
-                    // Neutralize pitch bend and let go of the note on release.
-                    self.controller?.touchBarValue(.fretless, normalized: 0.5)
-                    slider?.doubleValue = 0.5
+                if pressed {
+                    guard slider.gesture == nil else { return }
+                    slider.gesture = controller.touchBarGestureEpoch.revision
+                    controller.touchBarKey(note, pressed: true, owner: .nativeRibbon)
+                } else if let captured = slider.gesture {
+                    slider.gesture = nil
+                    slider.doubleValue = 0.5
+                    guard controller.touchBarGestureEpoch.accepts(captured) else { return }
+                    controller.touchBarKey(note, pressed: false, owner: .nativeRibbon)
+                    controller.touchBarValue(.fretless, normalized: 0.5, releaseOnly: true)
                 }
             }
             item.view = slider
             return item
         case .pitchBend, .vibrato, .expression, .filter:
-            let item = NSSliderTouchBarItem(identifier: identifier)
+            let item = NSCustomTouchBarItem(identifier: identifier)
             item.customizationLabel = zone.rawValue
-            item.label = zone.rawValue
-            item.slider.minValue = 0
-            item.slider.maxValue = 1
-            item.slider.doubleValue = zone == .pitchBend || zone == .fretless ? 0.5 : 0
-            item.slider.isContinuous = true
-            item.slider.target = self
-            item.slider.action = #selector(sliderChanged(_:))
-            item.slider.tag = switch zone {
+            let slider = PerformanceTouchSlider(
+                value: zone == .pitchBend ? 0.5 : 0, minValue: 0, maxValue: 1,
+                target: self, action: #selector(sliderChanged(_:))
+            )
+            slider.isContinuous = true
+            slider.setAccessibilityLabel(zone.rawValue)
+            profileControls.add(slider)
+            slider.onPress = { [weak self, weak slider] pressed in
+                guard let slider else { return }
+                if !pressed { slider.gesture = nil; return }
+                guard let self, self.profileEpoch.accepts(profileStamp), let controller = self.controller else { return }
+                slider.gesture = controller.touchBarGestureEpoch.revision
+            }
+            slider.tag = switch zone {
             case .pitchBend: 1
             case .fretless: 2
             case .vibrato: 3
@@ -136,6 +168,14 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             case .filter: 5
             default: 0
             }
+            // Preserve the control label and continuous/latched behavior.
+            let label = NSTextField(labelWithString: zone.rawValue)
+            let controls = NSStackView(views: [label, slider])
+            controls.orientation = .horizontal
+            controls.alignment = .centerY
+            controls.spacing = 4
+            slider.widthAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
+            item.view = controls
             return item
         }
     }
@@ -155,12 +195,17 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     }
 
     @objc private func chordPadPressed(_ sender: NSSegmentedControl) {
+        guard profileControls.contains(sender) else { return }
         let slot = sender.selectedSegment
         guard (0..<ChordBank.padCount).contains(slot) else { return }
         controller?.triggerChordPad(slot)
     }
 
     @objc private func sliderChanged(_ sender: NSSlider) {
+        guard profileControls.contains(sender) else { return }
+        guard let controller else { return }
+        if let slider = sender as? PerformanceTouchSlider,
+           !controller.touchBarGestureEpoch.permitsSample(captured: slider.gesture) { return }
         let zone: TouchBarZone
         switch sender.tag {
         case 1: zone = .pitchBend
@@ -170,17 +215,18 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         case 5: zone = .filter
         default: return
         }
-        controller?.touchBarValue(zone, normalized: sender.doubleValue)
+        controller.touchBarValue(zone, normalized: sender.doubleValue)
     }
 
     @objc private func pianoKeyPressed(_ sender: NSSegmentedControl) {
-        guard sender.selectedSegment >= 0 else { return }
+        guard profileControls.contains(sender), sender.selectedSegment >= 0 else { return }
         let note = profile.baseNote + sender.selectedSegment
         // Controller owns the bounded tap and invalidates delayed releases on stop.
         controller?.touchBarNativeTap(note)
     }
 
     @objc private func sustainToggled(_ sender: NSButton) {
+        guard profileControls.contains(sender) else { return }
         controller?.touchBarSustainPressed(true)
         sender.title = controller?.touchBarSustainOn == true ? "Sustain ON" : "Sustain Toggle"
     }
@@ -200,12 +246,13 @@ private final class BuilderRibbonSlider: NSSlider {
 }
 
 @MainActor
-private final class FretlessTouchSlider: NSSlider {
+private final class PerformanceTouchSlider: NSSlider {
+    var gesture: UInt64?
     var onPress: ((Bool) -> Void)?
     override func mouseDown(with event: NSEvent) {
         onPress?(true)
+        defer { onPress?(false) }
         super.mouseDown(with: event)
-        onPress?(false)
     }
 }
 

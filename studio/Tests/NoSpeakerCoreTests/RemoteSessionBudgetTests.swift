@@ -149,3 +149,47 @@ private func budgetFrame(_ sequence: Int, _ version: Int, _ kind: String, _ payl
     #expect(runtime.activeRouterSessionCount == 0 && runtime.remotePeerIDs.isEmpty)
     #expect(runtime.expire(now:1.7).isEmpty)
 }
+
+
+@Test func remoteRevocationNeverRestoresAnotherDepartingStream() throws {
+    let target = SensorDestination(.controlChange,number:74)
+    var runtime = PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"local",source:.trackpad,signal:.x,destination:target,priority:0),
+        .init(id:"touch",source:.phone,signal:.x,destination:target,priority:20),
+        .init(id:"motion",source:.phone,signal:.tiltPitch,destination:target,priority:10)
+    ]),allowRemote:true)
+    let peer = try capacityPair(&runtime,.phone,1)
+    let local = runtime.receive(source:.trackpad,x:0.2,y:0.5,size:0.5,hostTime:1.01,now:1.01)
+    #expect(local.count == 1)
+    #expect(runtime.receiveRemote(peer,bytes:budgetFrame(1,1,"touch",",\"x\":0.9,\"y\":0.5"),now:1.02) == .accepted([.init(target,value:114)]))
+    #expect(runtime.receiveRemote(peer,bytes:budgetFrame(2,2,"orientationArm",",\"alpha\":0,\"beta\":0,\"gamma\":0"),now:1.03) == .accepted([]))
+    #expect(runtime.receiveRemote(peer,bytes:budgetFrame(3,2,"orientation",",\"alpha\":0,\"beta\":20,\"gamma\":0"),now:1.04) == .accepted([]))
+    #expect(runtime.activeRouterSessionCount == 3)
+    #expect(runtime.revokeRemote(peer) == local)
+    #expect(runtime.activeRouterSessionCount == 1)
+    #expect(runtime.revokeRemote(peer).isEmpty)
+}
+
+@Test func remoteDisableAndExpiryReconcileOnlySurvivingOwners() throws {
+    let target = SensorDestination(.controlChange,number:74)
+    let routes: [SensorMapping] = [
+        .init(id:"local",source:.trackpad,signal:.x,destination:target,priority:0),
+        .init(id:"phone",source:.phone,signal:.x,destination:target,priority:20),
+        .init(id:"tablet",source:.tablet,signal:.x,destination:target,priority:10)
+    ]
+    for expire in [false,true] {
+        var runtime = PhysicalPatchRuntime()
+        try runtime.configure(.init(routes:routes),allowRemote:true)
+        let phone = try capacityPair(&runtime,.phone,1)
+        let tablet = try capacityPair(&runtime,.tablet,1.01)
+        let local = runtime.receive(source:.trackpad,x:0.2,y:0.5,size:0.5,hostTime:1.02,now:1.02)
+        _ = runtime.receiveRemote(tablet,bytes:budgetFrame(1,1,"touch",",\"x\":0.6,\"y\":0.5"),now:1.03)
+        _ = runtime.receiveRemote(phone,bytes:budgetFrame(1,1,"touch",",\"x\":0.9,\"y\":0.5"),now:1.04)
+        #expect(runtime.activeRouterSessionCount == 3)
+        let actual = expire ? runtime.expire(now:1.5) : runtime.disableRemote()
+        #expect(actual == (expire ? [.init(target,value:0)] : local))
+        #expect(runtime.activeRouterSessionCount == (expire ? 0 : 1))
+        #expect(runtime.remotePeerIDs.isEmpty)
+    }
+}

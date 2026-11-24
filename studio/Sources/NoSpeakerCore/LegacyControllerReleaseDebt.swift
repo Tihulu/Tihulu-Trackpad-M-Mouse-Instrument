@@ -56,3 +56,22 @@ public struct LegacyControllerReleaseDebt: Sendable {
         else { targets[key] = release }
     }
 }
+
+/// Keep cleanup submissions possible after input and normal output stop.
+/// Replacement must not discard unresolved receiver-state obligations.
+public enum LegacyRecoveryPolicy {
+    /// Release callbacks arriving after Stop are not new performance intent.
+    public static func permitsSustainEvent(running: Bool, pressed: Bool) -> Bool {
+        running || pressed
+    }
+    /// A neutralization callback is cleanup, not permission to start output.
+    public static func permitsControlEvent(running: Bool, releaseOnly: Bool) -> Bool {
+        running || !releaseOnly
+    }
+    public static func permitsSend(enabled: Bool, faulted: Bool, cleaning: Bool) -> Bool {
+        cleaning || (enabled && !faulted)
+    }
+    public static func permitsReplacement(gatesPending: Bool, controllersPending: Bool, unknownFailure: Bool) -> Bool {
+        !gatesPending && !controllersPending && !unknownFailure
+    }
+}
