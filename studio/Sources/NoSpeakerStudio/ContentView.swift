@@ -149,7 +149,7 @@ struct ContentView: View {
 
     private var workspaceEditable: Bool {
         !studio.touchRunning && !studio.midiHelperRunning && !studio.midiRunning &&
-        !studio.systemAudioRunning && !studio.isPlaying && !studio.liveHingeEnabled &&
+        !studio.speakerBusy && !studio.isPlaying && !studio.liveHingeEnabled &&
         !studio.captureArmed && !studio.pointerCaptured && !studio.touchBarSustainOn
     }
 
@@ -1982,19 +1982,45 @@ private struct SpeakerModeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            PageHeader(title: "Trackpad Speaker", subtitle: "Use the Force Touch motor as an experimental, quiet haptic speaker.")
-            Picker("Speaker Profile", selection: $studio.activeProfile) { ForEach(AudioHapticProfile.allCases) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented)
+            PageHeader(title: "Trackpad Speaker", subtitle: "Experimental speech-aware live audio. The Force Touch motor is not a conventional speaker.")
+            Picker("Live profile", selection: $studio.speakerProfile) {
+                Text("Speech Clarity").tag(AudioHapticProfile.voice)
+                Text("Melody").tag(AudioHapticProfile.melody)
+                Text("Rhythm").tag(AudioHapticProfile.rhythm)
+                Text("Full Mix").tag(AudioHapticProfile.fullMix)
+            }.pickerStyle(.segmented).disabled(studio.speakerBusy)
+            GroupBox("Live audio processing") {
+                VStack(alignment: .leading, spacing: 10) {
+                    if studio.speakerProfile == .voice {
+                        Toggle("Speech formants (off = legacy spectral comparison)", isOn: $studio.speakerOptimized)
+                    }
+                    Toggle("Automatic gain control", isOn: $studio.speakerAutomaticGain)
+                    Toggle("Silence / low-level noise gate", isOn: $studio.speakerNoiseGate)
+                    HStack {
+                        Text("Playback buffer")
+                        Slider(value: $studio.speakerBufferMS, in: 50...350, step: 25)
+                        Text("\(Int(studio.speakerBufferMS)) ms").monospacedDigit().frame(width: 70)
+                    }
+                    Text("Changes apply on the next Start. Lower buffer reduces latency; higher buffer tolerates more capture jitter.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }.padding(6).disabled(studio.speakerBusy)
+            }
             GroupBox("Play a file as haptic audio") {
                 HStack { Text(studio.currentFileName); Spacer(); Button("Choose Audio…") { importing = true } }.padding(6)
+                    .disabled(studio.speakerBusy)
             }
             GroupBox("Live system audio") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Capture macOS system audio with ScreenCaptureKit and convert it to haptic output in real time.")
                     Text("macOS will request Screen Recording permission. This mode does not install a virtual audio driver and does not appear as a selectable physical output device in Sound Settings.")
                         .font(.callout).foregroundStyle(.secondary)
-                    Button(studio.systemAudioRunning ? "Stop System Audio" : "Start System Audio → Trackpad") {
-                        studio.systemAudioRunning ? studio.stopSystemAudio() : studio.startSystemAudio()
-                    }.buttonStyle(.borderedProminent)
+                    HStack {
+                        Button(studio.systemAudioStopping ? "Stopping…" : (studio.speakerBusy ? "Stop System Audio" : "Start System Audio → Trackpad")) {
+                            studio.speakerBusy ? studio.stopSystemAudio() : studio.startSystemAudio()
+                        }.buttonStyle(.borderedProminent).disabled(studio.systemAudioStopping)
+                        Text(studio.systemAudioStarting ? "Requesting capture…" : (studio.systemAudioRunning ? "Live · buffered" : "Idle"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }.padding(6)
             }
             Text("The trackpad actuator is not a hi-fi loudspeaker. Studio keeps the original project's normal motor level ceiling and prioritizes safety over loudness.")
