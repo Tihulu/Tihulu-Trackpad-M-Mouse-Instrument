@@ -289,3 +289,14 @@ import Testing
     let allowed6 = gate.permits(touching:true,clicking:true)
     #expect(allowed6)
 }
+
+@Test func helperRearmCannotUseCachedClickCallbackAsIdleEvidence() {
+    var gate = HelperRearmGate()
+    gate.invalidate()
+    let cached = gate.permits(touching:false,clicking:false,freshFrame:false)
+    #expect(!cached && gate.waiting)
+    let real = gate.permits(touching:false,clicking:false,freshFrame:true)
+    #expect(!real && !gate.waiting)
+    let next = gate.permits(touching:true,clicking:false,freshFrame:true)
+    #expect(next)
+}

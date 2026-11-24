@@ -315,9 +315,9 @@ public struct HelperRearmGate: Sendable {
     public init() {}
     public mutating func invalidate() { waiting = true }
     public mutating func reset() { waiting = false }
-    public mutating func permits(touching:Bool,clicking:Bool) -> Bool {
+    public mutating func permits(touching:Bool,clicking:Bool,freshFrame:Bool = true) -> Bool {
         guard waiting else { return true }
-        if !touching && !clicking { waiting = false }
+        if freshFrame && !touching && !clicking { waiting = false }
         return false
     }
 }

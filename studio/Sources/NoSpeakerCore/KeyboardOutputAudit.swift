@@ -13,7 +13,7 @@ public struct KeyboardOutputAudit: Equatable, Sendable {
     public private(set) var attempts = 0
     public static let limit = 100_000
     public var saturated:Bool { attempts >= Self.limit }
-    public var onlyPedal:Bool { attempts > 0 && pedal == attempts && failed == 0 }
+    public var onlyPedal:Bool { !saturated && attempts > 0 && pedal == attempts && failed == 0 }
     public init() {}
     public mutating func record(_ m:LegacyGateReleaseDebt.Message,succeeded:Bool) {
         guard !saturated else { return }

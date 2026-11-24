@@ -22,5 +22,6 @@ import Testing
     var audit = KeyboardOutputAudit()
     for _ in 0...KeyboardOutputAudit.limit { audit.record(.init(0xb0,64,0),succeeded:true) }
     #expect(audit.saturated && audit.attempts == KeyboardOutputAudit.limit)
+    #expect(!audit.onlyPedal)
     #expect(audit.pedal == KeyboardOutputAudit.limit)
 }

@@ -328,7 +328,7 @@ final class StudioController: ObservableObject {
     @Published private(set) var keyboardAuditRunning = false
     @Published private(set) var keyboardAuditResult:KeyboardOutputAudit?
     func startKeyboardAudit() {
-        guard requireEngine(),let midi else { return }
+        guard !keyboardAuditRunning,requireEngine(),let midi else { return }
         midi.beginKeyboardOutputAudit()
         keyboardAuditResult = nil
         keyboardAuditRunning = true
@@ -351,6 +351,7 @@ final class StudioController: ObservableObject {
     private var helperSustainSettings = MIDIHelperSustainSettings()
     private var helperSustainState = MIDIHelperSustainState()
     private var helperRearmGate = HelperRearmGate()
+    private var helperEffectsRearmGate = HelperRearmGate()
     private var touchSustainSettings = MIDIHelperSustainSettings()
     private var touchSustainState = MIDIHelperSustainState()
     private var captureMonitor: PerformanceCaptureMonitor?
@@ -1812,6 +1813,8 @@ final class StudioController: ObservableObject {
                 return
             }
         }
+        // Preserve audit evidence before retiring the measured endpoint.
+        finishKeyboardAudit()
         // Only initialize after the previous session has been retired.
         engineGeneration &+= 1
         driver?.close()
@@ -1856,6 +1859,7 @@ final class StudioController: ObservableObject {
         enableLiveHinge(false)
         midiSessionEpoch.end()
         midi?.stop()
+        finishKeyboardAudit()
         releaseTouchBarNotes()
         touchBarSustainOn = false
         clickedSurface = nil
@@ -2283,7 +2287,7 @@ final class StudioController: ObservableObject {
             let helperStates = states.filter {
                 helperSurfaceSelection.accepts($0.surface)
             }
-            handleMIDIHelperStates(helperStates)
+            handleMIDIHelperStates(helperStates,freshFrame:true)
         }
     }
 
@@ -2611,34 +2615,32 @@ final class StudioController: ObservableObject {
             bendRange:helperPitchBendRange,vibratoCC:helperVibratoCC,expressionCC:helperExpressionCC,configureReceiverBendRange:helperConfigureReceiverBendRange)
         let nextRouting = HelperRoutingSnapshot(sendToDAW:sendToDAW,channel:targetChannel,
             bendRange:pitchBendRange,vibratoCC:vibratoCC,expressionCC:expressionCC,configureReceiverBendRange:configureReceiverBendRange)
-        let otherMappingChanged = newSustainSettings != helperSustainSettings ||
-            assignments != helperAssignments || surfaceSelection != helperSurfaceSelection || sharePedalSurface != helperSharePedalSurface
-        if !midiHelperRunning || otherMappingChanged || oldRouting != nextRouting { touch?.invalidatePendingSamples() }
-        if midiHelperRunning && oldRouting.requiresRelease(before:nextRouting,otherMappingChanged:otherMappingChanged) {
-            midi?.resetHelperControls(
-                assignments: helperAssignments,
-                channel: helperTargetChannel,
-                vibratoCC: helperVibratoCC,
-                expressionCC: helperExpressionCC
-            )
-            // Changing surface, channel or sustain mapping safely clears an
-            // existing CC64 latch before the new routing becomes active.
-            midi?.releaseHelperSustain()
-            helperSustainState.reset()
-            midiHelperSustainActive = false
-            midiHelperTrackpadSustainActive = false
-            midiHelperMagicMouseSustainActive = false
+        let transition = HelperMappingTransition(old:oldRouting,next:nextRouting,
+            oldAssignments:helperAssignments,nextAssignments:assignments,
+            pedalSettingsChanged:newSustainSettings != helperSustainSettings,
+            surfaceChanged:surfaceSelection != helperSurfaceSelection,
+            sharingChanged:sharePedalSurface != helperSharePedalSurface)
+        if !midiHelperRunning || transition.pedalChanged || transition.effectsChanged { touch?.invalidatePendingSamples() }
+        if midiHelperRunning {
+            if transition.effectsChanged {
+                if helperSendToDAW {
+                    midi?.resetHelperControls(assignments:helperAssignments,channel:helperTargetChannel,
+                        vibratoCC:helperVibratoCC,expressionCC:helperExpressionCC)
+                }
+                helperEffectsRearmGate.invalidate()
+            }
+            if transition.pedalChanged {
+                midi?.releaseHelperSustain()
+                helperSustainState.reset()
+                helperRearmGate.invalidate()
+                midiHelperSustainActive = false
+                midiHelperTrackpadSustainActive = false
+                midiHelperMagicMouseSustainActive = false
+            }
+        } else {
+            helperRearmGate.reset()
+            helperEffectsRearmGate.reset()
         }
-
-        if midiHelperRunning && (otherMappingChanged || oldRouting != nextRouting) {
-            helperRearmGate.invalidate()
-            // Reset local latch state even if the old configuration was preview-only.
-            helperSustainState.reset()
-            midiHelperSustainActive = false
-            midiHelperTrackpadSustainActive = false
-            midiHelperMagicMouseSustainActive = false
-        }
-        if !midiHelperRunning { helperRearmGate.reset() }
         helperSustainSettings = newSustainSettings
         helperAssignments = assignments
         helperSharePedalSurface = sharePedalSurface
@@ -2673,6 +2675,7 @@ final class StudioController: ObservableObject {
         touch?.invalidatePendingSamples()
         midi?.releaseHelperSustain()
         helperRearmGate.reset()
+        helperEffectsRearmGate.reset()
         helperSustainState.reset()
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
@@ -2701,13 +2704,16 @@ final class StudioController: ObservableObject {
         stopCaptureMonitorIfIdle()
     }
 
-    private func handleMIDIHelperStates(_ states: [TouchPerformanceState]) {
+    private func handleMIDIHelperStates(_ states: [TouchPerformanceState],freshFrame:Bool = false) {
         midiHelperStates = states
         guard midiHelperRunning else { return }
 
         let selectedClick = clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false
-        guard helperRearmGate.permits(touching:states.contains(where: { $0.isTouching }),clicking:selectedClick) else { return }
+        let touching = states.contains(where: { $0.isTouching })
+        let pedalReady = helperRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame)
+        let effectsReady = helperEffectsRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame)
         let active = states.filter { $0.isTouching && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
+        if pedalReady {
         let snapshot = helperSustainState.update(
             trackpadContactSizes: active
                 .filter { $0.surface == .trackpad }
@@ -2723,11 +2729,10 @@ final class StudioController: ObservableObject {
         midiHelperMagicMouseSustainActive = snapshot.magicMouseActive
         midiHelperSustainActive = snapshot.isActive && helperSendToDAW
 
-        guard helperSendToDAW else {
-            midi?.releaseHelperSustain()
-            return
+        if helperSendToDAW { midi?.setHelperSustain(snapshot.isActive,channel:helperTargetChannel) }
+        else { midi?.releaseHelperSustain() }
         }
-        midi?.setHelperSustain(snapshot.isActive,channel:helperTargetChannel)
+        guard helperSendToDAW,effectsReady else { return }
         // Sustain-only is a strict gate path. No pitch, CC7/11, pressure,
         // note or RPN generation from these contacts.
         guard helperAssignments.hasEffects else { return }
