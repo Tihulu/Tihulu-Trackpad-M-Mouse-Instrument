@@ -69,5 +69,8 @@ P4 / v0.6: advanced patchbay, rules, presets, motion recording, Touch Bar/tilt m
 P5 / v0.7+: advanced local synth/audio, AR/native mobile optional, generative Lab and interoperability.
 P6 / v1.0: validated integrated platform, polished accessibility, rollback/install/uninstall, reproducible artifacts, full documentation. Versions may be adjusted based on measured readiness.
 
+### Cross-device expressive controls extension
+The additive [Expressive Controls plan](EXPRESSIVE_CONTROLS_PLAN.md) specifies reusable virtual pedals and macros across Trackpad, Magic Mouse, Touch Bar, hinge, phone/tablet touch and motion, camera and external controllers. Implement using the existing Builder/router, preserve legacy controls and stable releases, and stage adapter capabilities alongside P2/P3/P4. No separate real-time AI dependency.
+
 ## 14. Acceptance and work rules
 Each phase: inspect exact HEAD and current evidence, small branch, tests, draft PR, exact-head CI, real hardware acceptance where applicable, release candidate and rollback. Keep existing versions and user settings. Do not auto-enable Global Capture, remote server, camera, mic or experimental tilt. Check permissions after re-signing; no disabling OS security. Test on MacBook with/without Touch Bar, compatible Force Touch hardware and Magic Mouse, Logic Pro, Continuity Microphone, iOS Safari and Android browser where applicable. Test idle resource usage, device loss, sleep/wake, repeated Stop/Panic, conflicts and stale notes; no false PASS. Provide an auditable progress matrix with implemented vs CI verified vs physical verified vs planned. Publish stable DMG only after gates. 
