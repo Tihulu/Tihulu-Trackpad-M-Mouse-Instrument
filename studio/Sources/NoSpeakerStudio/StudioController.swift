@@ -362,17 +362,18 @@ final class StudioController: ObservableObject {
     func runBuilderRemoteProbe(source: SensorSource) {
         guard patchRemoteReady, patchRemoteEndpoint?.isLoopback == true, !patchRemoteProbeRunning else { return }
         do {
+            let expected = try RemoteProbeContract.expected(patch:instrumentPatch,source:source)
             let invitation = try issueBuilderRemoteInvitation(source: source)
             let token = UUID()
             patchRemoteProbeToken = token
             patchRemoteProbeRunning = true
-            patchRemoteProbeStatus = "Testing TLS, pairing, touch and release…"
+            patchRemoteProbeStatus = "Testing TLS, pairing and metadata…"
             patchRemoteProbeTask = Task { [weak self] in
                 do {
-                    try await RemoteLoopbackProbe.run(invitation: invitation)
+                    try await RemoteLoopbackProbe.run(invitation: invitation, expected:expected)
                     guard let self, self.patchRemoteProbeToken == token else { return }
                     self.remoteLoopbackVerified = true
-                    self.patchRemoteProbeStatus = "TLS + pairing + touch/release acknowledgments received. Check command monitor."
+                    self.patchRemoteProbeStatus = expected.touch ? "TLS, pairing, metadata and touch/release ACKs received. Check command monitor." : "TLS, pairing, metadata and idle heartbeat ACK received. No performance output tested."
                 } catch {
                     guard let self, self.patchRemoteProbeToken == token else { return }
                     self.patchRemoteProbeStatus = "Loopback test failed. Check certificate trust and listener; no trust bypass."
