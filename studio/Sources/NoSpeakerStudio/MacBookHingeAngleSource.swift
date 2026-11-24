@@ -83,7 +83,7 @@ final class MacBookHingeAngleSource {
         // Reject physically implausible values so unsupported sensor reports
         // can never trigger extreme pitch/CC transitions.
         guard value.isFinite, (5...175).contains(value) else {
-            readDiagnostic += " · angle candidate outside supported range"
+            readDiagnostic += " · angle candidate \(Int(value)) outside supported range"
             return nil
         }
         readDiagnostic += " · plausible angle"

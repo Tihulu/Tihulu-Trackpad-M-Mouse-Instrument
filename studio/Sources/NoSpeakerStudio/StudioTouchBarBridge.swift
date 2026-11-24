@@ -29,6 +29,11 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         }
         self.profile = normalized
         chordControl = nil
+        // Detach only our own old bar before installing a replacement.
+        if let oldBar = installedBar, let oldWindow = attachedWindow, oldWindow.touchBar === oldBar {
+            oldWindow.touchBar = nil
+        }
+        attachedWindow = nil
         let bar = NSTouchBar()
         bar.delegate = self
         bar.customizationIdentifier = NSTouchBar.CustomizationIdentifier(prefix + "layout")
@@ -46,7 +51,8 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
 
     /// Window-level responder routing supplements the application fallback.
     func attachToKeyWindow() {
-        guard let bar = installedBar, let window = NSApplication.shared.keyWindow else { return }
+        guard let bar = installedBar, let window = NSApplication.shared.mainWindow,
+              window.isVisible, !window.isSheet else { return }
         if let old = attachedWindow, old !== window, old.touchBar === bar { old.touchBar = nil }
         window.touchBar = bar
         attachedWindow = window
