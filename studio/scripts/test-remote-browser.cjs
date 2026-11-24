@@ -7,12 +7,12 @@ const source=fs.readFileSync(path.join(__dirname,"../Sources/NoSpeakerMac/Remote
 const script=source.split('private static let script = #"""')[1].split('"""#')[0]
   .replaceAll("__REMOTE_ORIGIN__","https://local.test").replaceAll("__REMOTE_SOCKET__","wss://local.test");
 const fullManifest={kind:"capabilities",version:7,touch:true,tilt:true,acceleration:true,rotation:true,airDrums:true,drums:255,piano:67108863,pedals:63};
-function setup(permission="granted",manifest=fullManifest,experimental=true){
+function setup(permission="granted",manifest=fullManifest,experimental=true,autoMapping=true){
   let time=1000, ticker, socket, nextTimer=0;const timers=new Map();
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["mappingSection","mappingStatus","mappingDetails","pianoBoard","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id]});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
   class WS{
@@ -26,8 +26,11 @@ function setup(permission="granted",manifest=fullManifest,experimental=true){
   elements.secret.value="aa".repeat(32);elements.connect.emit("click");socket.onopen();socket.onmessage({data:"admitted"});
   const query=socket.frames.shift();
   time+=13;if(manifest!==null)socket.onmessage({data:typeof manifest==="string"?manifest:JSON.stringify(manifest)});
+  function step(ms=25){time+=ms;for(const [id,t] of [...timers])if(t.at<=time&&timers.delete(id))t.f();ticker?.()}
+  function withheld(){step(50);const q=socket.frames.at(-1);if(q?.kind==="mapping"){socket.frames.pop();time+=13;socket.onmessage({data:JSON.stringify({kind:"mapping",version:8,sequence:q.sequence,page:0,pages:1,total:0,detail:false,rows:[]})});}}
+  if(autoMapping&&!socket.closed&&manifest!==null)withheld();
   if(experimental&&!socket.closed&&manifest!==null)elements.workloadMode.emit("click");
-  return {query,elements,window,document,socket,step(ms=25){time+=ms;for(const [id,t] of [...timers])if(t.at<=time&&timers.delete(id))t.f();ticker?.()},ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
+  return {query,elements,window,document,socket,step,withheld,ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
     orientation(beta=0){window.emit("deviceorientation",{alpha:0,beta,gamma:0})}};
 }
 test("permission denial never attaches listener or sends motion",async()=>{
@@ -172,10 +175,10 @@ test("piano polyphonic short taps and independent release",()=>{
 test("octave change waits for zero snapshot ACK",()=>{
   const a=setup();a.elements.pianoEnable.emit("click");
   a.elements.piano0.emit("pointerdown",drumEvent(1));a.ack();
-  a.elements.octaveUp.emit("click");assert.equal(a.elements.octaveLabel.textContent,"C3–C4");
+  a.elements.octaveUp.emit("click");assert.equal(a.elements.octaveLabel.textContent,"Keys 1–13");
   a.elements.piano0.emit("pointerup",drumEvent(1));a.step();
-  a.elements.octaveUp.emit("click");assert.equal(a.elements.octaveLabel.textContent,"C3–C4");
-  a.ack();a.elements.octaveUp.emit("click");assert.equal(a.elements.octaveLabel.textContent,"C4–C5");
+  a.elements.octaveUp.emit("click");assert.equal(a.elements.octaveLabel.textContent,"Keys 1–13");
+  a.ack();a.elements.octaveUp.emit("click");assert.equal(a.elements.octaveLabel.textContent,"Keys 13–25");
   a.elements.piano12.emit("pointerdown",drumEvent(2));a.step();
   assert.equal(a.socket.frames.at(-1).mask,1<<24);
 });
@@ -255,7 +258,7 @@ test("authenticated manifest required before any control input",()=>{
   a.elements.drumEnable.emit("click");a.elements.drum0.emit("pointerdown",drumEvent(1));
   a.elements.pad.emit("pointerdown",{...drumEvent(2),clientX:25,clientY:25});
   assert.equal(a.socket.frames.length,0);
-  a.socket.onmessage({data:JSON.stringify(fullManifest)});
+  a.socket.onmessage({data:JSON.stringify(fullManifest)});a.withheld();
   assert.equal(a.elements.drumSection.hidden,false);
 });
 test("partial manifest hides absent sections and rejects unmapped events",async()=>{
@@ -269,9 +272,9 @@ test("partial manifest hides absent sections and rejects unmapped events",async(
 });
 test("high-octave-only piano selects available view and rejects missing sustain",()=>{
   const a=setup("granted",{...fullManifest,piano:1<<24});
-  assert.equal(a.elements.octaveLabel.textContent,"C4–C5");
+  assert.equal(a.elements.octaveLabel.textContent,"Keys 13–25");
   a.elements.pianoEnable.emit("click");a.elements.octaveDown.emit("click");
-  assert.equal(a.elements.octaveLabel.textContent,"C4–C5");
+  assert.equal(a.elements.octaveLabel.textContent,"Keys 13–25");
   assert.equal(a.elements.piano0.disabled,true);assert.equal(a.elements.pianoSustain.hidden,true);
   a.elements.piano0.emit("pointerdown",drumEvent(1));assert.equal(a.socket.frames.length,0);
   a.elements.piano12.emit("pointerdown",drumEvent(2));assert.equal(a.socket.frames.at(-1).mask,1<<24);
@@ -387,4 +390,44 @@ test("experimental choice only when idle; reset on disconnect",()=>{
   assert.match(a.elements.workloadStatus.textContent,/streams: 2/);
   a.window.emit("pagehide");assert.equal(a.elements.workloadSection.hidden,true);
   assert.match(a.elements.workloadMode.textContent,/Enable experimental/);
+});
+
+const touchOnly={...fullManifest,tilt:false,acceleration:false,rotation:false,airDrums:false,drums:0,piano:0,pedals:0};
+function mappingResponse(a,rows,overrides={}){
+  a.step(50);const q=a.socket.frames.at(-1);
+  a.socket.onmessage({data:JSON.stringify({kind:"mapping",version:8,sequence:q.sequence,page:q.page,pages:1,total:rows.length,detail:true,rows,...overrides})});
+}
+test("v8 keeps controls hidden until complete validated mapping",()=>{
+  const a=setup("granted",touchOnly,false,false);
+  a.elements.pad.emit("pointerdown",xyEvent(1));assert.equal(a.socket.frames.length,0);
+  mappingResponse(a,[[0,1,2,74,1],[2,0,0,60,2]]);
+  assert.equal(a.elements.touchSection.hidden,false);
+  assert.match(a.elements.mappingDetails.textContent,/Ch 3 · CC 74/);
+  assert.match(a.elements.mappingDetails.textContent,/Note 60 ×2/);
+  a.step(13);a.elements.pad.emit("pointerdown",xyEvent(1));assert.equal(a.socket.frames.at(-1).kind,"touch");
+});
+test("v8 rejects wrong coverage, malformed targets, wrong sequence and duplicate members",()=>{
+  for(const [rows,overrides] of [[[[9,0,0,60,1]],{}],[[[0,1,0,64,1]],{}],[[[0,1,0,74,1]],{sequence:99}],[[[0,1,0,74,1],[0,1,0,74,1]],{}]]){
+    const a=setup("granted",touchOnly,false,false);mappingResponse(a,rows,overrides);assert.equal(a.socket.closed,true);assert.equal(a.elements.touchSection.hidden,true);
+  }
+  const a=setup("granted",touchOnly,false,false);a.step(50);
+  a.socket.onmessage({data:'{"kind":"mapping","version":8,"sequence":2,"page":0,"pages":1,"total":1,"detail":true,"rows":[[0,1,0,74,1]],"page":0}'});
+  assert.equal(a.socket.closed,true);
+});
+test("v8 stages two pages and rejects interrupted negotiation",()=>{
+  const a=setup("granted",touchOnly,false,false);
+  mappingResponse(a,Array.from({length:8},(_,i)=>[0,1,0,70+i,1]),{pages:2,total:9});
+  assert.equal(a.elements.touchSection.hidden,true);
+  mappingResponse(a,[[2,0,0,60,1]],{pages:2,total:9});
+  assert.equal(a.elements.touchSection.hidden,false);assert.match(a.elements.mappingDetails.textContent,/Note 60/);
+  a.window.emit("pagehide");assert.equal(a.elements.mappingDetails.textContent,"");
+  const b=setup("granted",touchOnly,false,false);b.step(50);b.step(220);assert.equal(b.socket.closed,true);
+});
+test("v8 custom piano disables scale; exact default note enables it",()=>{
+  const manifest={...touchOnly,touch:false,piano:1};
+  for(const note of [48,62]){
+    const a=setup("granted",manifest,false,false);mappingResponse(a,[[17,0,0,note,1]]);
+    assert.equal(a.elements.pianoScale.disabled,note!==48);
+    assert.equal(a.elements.piano0.textContent,note===48?"C3":"K1");
+  }
 });
