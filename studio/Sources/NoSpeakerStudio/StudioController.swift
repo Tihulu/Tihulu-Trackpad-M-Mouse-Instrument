@@ -1926,7 +1926,7 @@ final class StudioController: ObservableObject {
     ) {
         guard allowLivePerformance() else { return }
         guard configuration.permitsStringMIDI(isMPE:midiMode == .mpe) else {
-            lastError = "Guitar MIDI cannot share a Standard MIDI channel with fretless pitch. Choose MPE or separate the routes."
+            lastError = "Fretless String MIDI requires MPE. Fretted strings cannot share Standard MIDI with a fretless melodic surface. Check the string layout and select MPE or separate routes."
             return
         }
         guard configuration.permitsPhysicalChordMIDI(isMPE:midiMode == .mpe) else {

@@ -187,7 +187,9 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
     }
 
     public func permitsStringMIDI(isMPE:Bool) -> Bool {
-        guard selectedSurfaces.contains(where: { instrument(for:$0) == .guitar && output(for:$0).sendsMIDI }) else { return true }
+        let stringSurfaces = selectedSurfaces.filter { instrument(for:$0).isStringSurface && output(for:$0).sendsMIDI }
+        guard !stringSurfaces.isEmpty else { return true }
+        if stringSurfaces.contains(where: { instrument(for:$0) == .fretlessStrings }) && !isMPE { return false }
         let mixedFretless = fretless && selectedSurfaces.contains {
             instrument(for:$0) == .melodic && output(for:$0).sendsMIDI
         }
@@ -508,8 +510,13 @@ public final class TouchInstrumentService: @unchecked Sendable {
             )
 
             let quantized: Int
+            var stringPitch: Double? = nil
             var chordSlot: Int? = nil
-            if instrument == .guitar {
+            if instrument == .fretlessStrings {
+                guard let cell = config.stringLayout.continuousCell(x:x,y:y) else { return nil }
+                stringPitch = cell.pitch
+                quantized = Int(cell.pitch.rounded())
+            } else if instrument == .guitar {
                 guard let cell = config.stringLayout.cell(x:x,y:y) else { return nil }
                 quantized = cell.note
             } else if instrument == .chords {
@@ -524,7 +531,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 let zoneIndex = min(mappedNotes.count - 1, Int(x * Double(mappedNotes.count)))
                 quantized = mappedNotes[zoneIndex]
             }
-            let continuous = min(
+            let continuous = stringPitch ?? min(
                 127,
                 max(0, Double(config.baseMIDINote) + x * max(1, config.pitchSpanSemitones))
             )
@@ -678,7 +685,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 continue
             }
             let baseFrequency: Double
-            if config.fretless && config.instrument(for: state.surface) == .melodic {
+            if config.instrument(for:state.surface) == .fretlessStrings ||
+                (config.fretless && config.instrument(for: state.surface) == .melodic) {
                 baseFrequency = 440.0 * pow(2.0, (state.continuousMIDI - 69.0) / 12.0)
             } else if config.instrument(for:state.surface) == .guitar {
                 guard let frequency = try? MusicTheory.frequency(midi:state.quantizedMIDI) else { continue }
@@ -690,7 +698,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 baseFrequency = frequency
             }
             // Y selects the string; it must not simultaneously add vibrato.
-            let vibrato = config.instrument(for:state.surface) == .guitar ? 0 : 0.5 * state.vibrato * sin(now * 6 * 2 * Double.pi)
+            let vibrato = config.instrument(for:state.surface).isStringSurface ? 0 : 0.5 * state.vibrato * sin(now * 6 * 2 * Double.pi)
             tones.append(.init(frequencyHz: baseFrequency * pow(2, vibrato / 12)))
             level = max(level, Double(state.velocity) / 127)
         }

@@ -778,8 +778,8 @@ private struct TouchInstrumentView: View {
     }
 
     private var hasGuitar: Bool {
-        (surfaceSelection.accepts(.trackpad) && trackpadInstrument == .guitar) ||
-        (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument == .guitar)
+        (surfaceSelection.accepts(.trackpad) && trackpadInstrument.isStringSurface) ||
+        (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument.isStringSurface)
     }
     private var effectiveStringLayout: StringSurfaceLayout { stringLayout ?? .init() }
 
@@ -1108,7 +1108,7 @@ private struct TouchInstrumentView: View {
                                         ),in:0...(127-effectiveStringLayout.frets))
                                 }
                             }
-                            Text("X selects fret, Y selects string. Slide across frets to change notes. Equal-tempered layout; fretless strings and strum gestures are follow-ups. High open notes may limit the available fret count. The haptic motor has a narrower frequency range than MIDI.")
+                            Text("X selects pitch, Y selects string. Fretted mode steps between notes; fretless mode slides continuously over the same semitone span and requires MPE for MIDI. Strum gestures are a follow-up. The haptic motor has a narrower frequency range than MIDI.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }.padding(6)
                     }.disabled(studio.touchRunning)
@@ -1332,7 +1332,7 @@ private struct TouchSurfaceMap: View {
                 RoundedRectangle(cornerRadius: 18)
                     .fill(.quaternary.opacity(active ? 0.58 : 0.42))
 
-                if instrument == .guitar && stringLayout.isValid {
+                if instrument.isStringSurface && stringLayout.isValid {
                     let width = proxy.size.width / CGFloat(stringLayout.columns)
                     let height = proxy.size.height / CGFloat(stringLayout.rows)
                     ForEach(0..<stringLayout.rows,id:\.self) { row in
@@ -1340,11 +1340,11 @@ private struct TouchSurfaceMap: View {
                         ForEach(0..<stringLayout.columns,id:\.self) { fret in
                             let hit = states.contains {
                                 $0.isDown && stringLayout.cell(x:$0.x,y:$0.y)?.string == row &&
-                                stringLayout.cell(x:$0.x,y:$0.y)?.fret == fret
+                                (instrument == .fretlessStrings || stringLayout.cell(x:$0.x,y:$0.y)?.fret == fret)
                             }
                             ZStack {
                                 Rectangle().fill(hit ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(fret == 0 ? 0.18 : 0.04))
-                                Rectangle().strokeBorder(Color.secondary.opacity(0.18))
+                                Rectangle().strokeBorder(Color.secondary.opacity(instrument == .fretlessStrings ? 0.035 : 0.18))
                                 Rectangle().fill(Color.secondary.opacity(0.6)).frame(height:1)
                                 if fret == 0 {
                                     Text((try? MusicTheory.noteName(midi:openNote)) ?? String(openNote)).font(.caption2)

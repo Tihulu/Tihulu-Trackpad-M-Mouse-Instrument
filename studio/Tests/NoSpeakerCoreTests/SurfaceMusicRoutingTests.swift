@@ -215,3 +215,37 @@ import Testing
         #expect(invalid.cell(x:1,y:1) == nil)
     }
 }
+
+@Test func fretlessStringPitchIsContinuousAndBendReconstructsPitch() throws {
+    for tuning in StringTuning.allCases {
+        for span in 4...24 {
+            let layout = StringSurfaceLayout(tuning:tuning,frets:span)
+            for row in 0..<layout.rows {
+                let y = 1-(Double(row)+0.5)/Double(layout.rows)
+                var prior = -1.0
+                for step in 0...100 {
+                    let x = Double(step)/100
+                    let cell = try #require(layout.continuousCell(x:x,y:y))
+                    #expect(cell.string == row)
+                    #expect(cell.pitch > prior)
+                    prior = cell.pitch
+                    #expect((1...12).contains(cell.bendRange))
+                    #expect((0...16383).contains(cell.bend))
+                    let delta = Double(cell.bend-8192)
+                    let reconstructed = Double(cell.anchor) + delta/Double(delta < 0 ? 8192 : 8191)*Double(cell.bendRange)
+                    #expect(abs(reconstructed-cell.pitch) <= 0.001)
+                    #expect(abs(cell.pitch-(Double(layout.openNotes[row])+x*Double(span))) < 0.000001)
+                }
+            }
+        }
+    }
+}
+@Test func fretlessStringInvalidCoordinatesAndRangeAreRejected() {
+    let layout = StringSurfaceLayout()
+    #expect(layout.continuousCell(x:.nan,y:0) == nil)
+    #expect(layout.continuousCell(x:0,y:.infinity) == nil)
+    #expect(layout.continuousCell(x:-0.001,y:0) == nil)
+    #expect(layout.continuousCell(x:1.001,y:0) == nil)
+    #expect(StringSurfaceLayout(frets:Int.max).continuousCell(x:0,y:0) == nil)
+    #expect(StringSurfaceLayout(frets:24,customOpenNotes:[104,1,2,3]).continuousCell(x:0,y:0) == nil)
+}

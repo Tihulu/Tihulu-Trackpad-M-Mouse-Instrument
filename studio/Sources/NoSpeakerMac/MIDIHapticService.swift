@@ -375,7 +375,8 @@ public final class MIDIHapticService: @unchecked Sendable {
         var desired = states.filter {
             $0.isDown && $0.continuousMIDI.isFinite && $0.vibrato.isFinite &&
             configuration.surfaceSelection.accepts($0.surface) && configuration.output(for: $0.surface).sendsMIDI &&
-            (configuration.instrument(for:$0.surface) != .guitar || stringRouteAllowed)
+            (!configuration.instrument(for:$0.surface).isStringSurface || stringRouteAllowed) &&
+            (configuration.instrument(for:$0.surface) != .fretlessStrings || configuration.stringLayout.continuousCell(x:$0.x,y:$0.y) != nil)
         }
         if !multiTouchEnabled {
             desired = Array(desired.prefix(1))
@@ -423,18 +424,21 @@ public final class MIDIHapticService: @unchecked Sendable {
             let key = TouchKey(surface: state.surface, id: state.contactID)
             let drums = configuration.instrument(for: state.surface) == .drums
             guard processed.insert(key).inserted else { continue }
-            let isGuitar = configuration.instrument(for:state.surface) == .guitar
-            let isFretlessMelody = configuration.instrument(for:state.surface) == .melodic && configuration.fretless
+            let instrument = configuration.instrument(for:state.surface)
+            let isGuitar = instrument.isStringSurface
+            let stringCell = instrument == .fretlessStrings
+                ? configuration.stringLayout.continuousCell(x:state.x,y:state.y) : nil
+            let isFretlessMelody = stringCell != nil || (instrument == .melodic && configuration.fretless)
             let isMPE = midiMode == .mpe && !drums
             let standardChannel = drums ? GMDrumPads.midiChannel : safeMelodicChannel
-            let anchor = max(0,min(127,configuration.baseMIDINote +
+            let anchor = stringCell?.anchor ?? max(0,min(127,configuration.baseMIDINote +
                 Int((configuration.pitchSpanSemitones / 2.0).rounded())))
             let targetNote = isFretlessMelody ? anchor : max(0,min(127,state.quantizedMIDI))
             if let existing = outgoingTouches[key],
-               LegacyTouchTransition.requiresNewVoice(oldNote:existing.note,oldFretless:existing.fretless,
+               ((stringCell != nil && existing.note != anchor) || LegacyTouchTransition.requiresNewVoice(oldNote:existing.note,oldFretless:existing.fretless,
                    oldMPE:existing.mpe,oldChannel:existing.channel,newNote:targetNote,newFretless:isFretlessMelody,
                    newMPE:isMPE,standardChannel:standardChannel,
-                   sustained:outgoingSustainChannels().contains(existing.channel)) {
+                   sustained:outgoingSustainChannels().contains(existing.channel))) {
                 outgoingTouches.removeValue(forKey:key)
                 releaseOutgoingTouch(key,outgoing:existing)
             }
@@ -479,11 +483,11 @@ public final class MIDIHapticService: @unchecked Sendable {
                 }
             }
             if isFretlessMelody {
-                let bendRange = max(1, min(24, Int(ceil(configuration.pitchSpanSemitones / 2.0))))
+                let bendRange = stringCell?.bendRange ?? max(1, min(24, Int(ceil(configuration.pitchSpanSemitones / 2.0))))
 
                 let delta = max(-Double(bendRange),
                     min(Double(bendRange), state.continuousMIDI - Double(anchor)))
-                let bend = Int((8192.0 + (delta / Double(bendRange)) * 8191.0).rounded())
+                let bend = stringCell?.bend ?? Int((8192.0 + (delta / Double(bendRange)) * 8191.0).rounded())
                 let target = SensorDestination(.pitchBend,channel:channel)
                 let value = LegacyContinuousOwners.Value(max(0,min(16383,bend)),neutral:8192,bendRange:bendRange)
                 frameControls[target] = value

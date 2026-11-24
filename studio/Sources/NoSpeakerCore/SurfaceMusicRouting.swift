@@ -6,6 +6,9 @@ public enum SurfaceInstrumentMode: String, CaseIterable, Identifiable, Sendable,
     case drums = "Drums"
     case chords = "Chord Pads"
     case guitar = "Guitar Pad (Fretted)"
+    case fretlessStrings = "String Pad (Fretless)"
+
+    public var isStringSurface: Bool { self == .guitar || self == .fretlessStrings }
 
     public var id: String { rawValue }
 }
@@ -230,6 +233,28 @@ public struct StringSurfaceLayout: Codable, Equatable, Sendable {
         let string = min(rows-1,Int((1-y)*Double(rows)))
         let fret = min(columns-1,Int(x*Double(columns)))
         return .init(string:string,fret:fret,note:openNotes[string]+fret)
+    }
+
+    public struct ContinuousCell: Equatable, Sendable {
+        public let string: Int
+        public let pitch: Double
+        public let anchor: Int
+        public let bendRange: Int
+        public let bend: Int
+    }
+
+    /// Same physical extent and string rows as fretted mode. X traverses
+    /// the configured semitone span continuously, including both endpoints.
+    public func continuousCell(x: Double, y: Double) -> ContinuousCell? {
+        guard let cell = cell(x:x,y:y) else { return nil }
+        let open = openNotes[cell.string]
+        let pitch = Double(open) + x * Double(frets)
+        let anchor = open + (frets + 1) / 2
+        let range = (frets + 1) / 2
+        let delta = (pitch - Double(anchor)) / Double(range)
+        let bend = Int((8192 + delta * (delta < 0 ? 8192 : 8191)).rounded())
+        return .init(string:cell.string,pitch:pitch,anchor:anchor,bendRange:range,
+                     bend:min(16383,max(0,bend)))
     }
 
     public func permitsMIDI(mixedFretless:Bool,isMPE:Bool) -> Bool {
