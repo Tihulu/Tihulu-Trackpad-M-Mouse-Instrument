@@ -177,13 +177,20 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         return scale.mappedMIDINotes(root: baseMIDINote, zoneWidth: zoneWidth)
     }
 
-    public var permitsMelodicMIDI: Bool {
+    public var permitsMelodicMIDI: Bool { permitsMelodicMIDI(isMPE:false) }
+
+    public func permitsMelodicMIDI(isMPE:Bool) -> Bool {
         guard !fretless, let customScale else { return true }
         guard customScale.isValid else { return false }
         let sendsMelodicMIDI = selectedSurfaces.contains {
             instrument(for: $0) == .melodic && output(for: $0).sendsMIDI
         }
-        return !sendsMelodicMIDI || !customScale.isMicrotonal || customScale.allowEqualTemperedMIDI
+        return !sendsMelodicMIDI || !customScale.isMicrotonal || isMPE || customScale.allowEqualTemperedMIDI
+    }
+
+    public func melodicMPEPitch(midi:Int,isMPE:Bool) -> CustomScale.TunedMIDIPitch? {
+        guard isMPE,!fretless,let customScale,customScale.isMicrotonal else { return nil }
+        return customScale.mpePitch(midi:midi,root:baseMIDINote)
     }
 
     public func frettedFrequency(midi: Int) -> Double? {

@@ -13,12 +13,16 @@ import NoSpeakerCore
     #expect(config.permitsMelodicMIDI)
     config.trackpadOutput = .midiInstrument
     #expect(!config.permitsMelodicMIDI)
+    #expect(config.permitsMelodicMIDI(isMPE:true))
+    #expect(config.melodicMPEPitch(midi:64,isMPE:true)?.bend == 7168)
+    #expect(config.melodicMPEPitch(midi:64,isMPE:false) == nil)
     config.trackpadInstrument = .drums
     #expect(config.permitsMelodicMIDI)
     config.trackpadInstrument = .melodic
     config.fretless = true
     #expect(config.permitsMelodicMIDI)
     #expect(config.mappedMIDINotes == Array(60...84))
+    #expect(config.melodicMPEPitch(midi:64,isMPE:true) == nil)
     config.fretless = false
     custom.allowEqualTemperedMIDI = true
     config.customScale = custom

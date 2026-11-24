@@ -991,7 +991,7 @@ private struct TouchInstrumentView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             } else if let custom = studio.touchCustomScale {
                                 Text("Copied from the chord bank; follows the Touch root and note width. Re-copy after editing the bank. " +
-                                     (custom.isMicrotonal ? "Haptic notes use cent offsets. MIDI uses nominal notes only if approximation was allowed." : "Equal-tempered custom degrees."))
+                                     (custom.isMicrotonal ? "Haptic notes use cent offsets. MPE preserves tuning; Standard MIDI requires explicit approximation." : "Equal-tempered custom degrees."))
                                     .font(.caption).foregroundStyle(.secondary)
                             } else {
                                 Text("Optional: reuse any built-in or custom chord-bank scale for fretted notes.")

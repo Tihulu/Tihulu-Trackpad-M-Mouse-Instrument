@@ -32,7 +32,7 @@ struct CustomScalePanel: View {
                         .font(.caption.monospacedDigit())
                     if scale.isMicrotonal {
                         Text(studio.chordBank.microtonalMPE == true
-                             ? "Chord MIDI: dedicated MPE tuning. Touch Instrument still needs a haptic route or explicit 12-TET approximation."
+                             ? "Chord MIDI: dedicated MPE tuning. Touch Instrument supports tuned MPE, haptic output or explicit 12-TET approximation."
                              : (scale.allowEqualTemperedMIDI
                                 ? "Trackpad: tuned frequencies. MIDI: explicitly allowed 12-TET approximation."
                                 : "Trackpad: tuned frequencies. MIDI/Both require dedicated MPE or explicit approximation."))
@@ -55,7 +55,7 @@ struct CustomScalePanel: View {
                     }
                 }.frame(maxHeight: 340)
                 Toggle("Allow equal-tempered MIDI approximation", isOn: $draft.allowEqualTemperedMIDI)
-                Text("This fallback sends nominal MIDI notes without tuning. Dedicated chord MPE is configured separately in Chord Pads Output. Touch Instrument does not yet use the new MPE tuning route.")
+                Text("This fallback sends nominal MIDI notes without tuning. Dedicated chord MPE is configured separately in Chord Pads Output. For tuned melodic Touch MIDI choose MPE. Standard MIDI uses the explicit approximation only.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Zero cent offsets") { draft.centOffsets = [:] }

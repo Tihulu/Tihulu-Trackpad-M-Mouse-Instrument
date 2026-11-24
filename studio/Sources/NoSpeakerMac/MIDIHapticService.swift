@@ -372,10 +372,12 @@ public final class MIDIHapticService: @unchecked Sendable {
         let safeMelodicChannel = SurfaceMIDIChannel.melodic(base: baseChannel, hasMIDIDrums: anyDrums)
 
         let stringRouteAllowed = configuration.permitsStringMIDI(isMPE:midiMode == .mpe)
+        let melodicRouteAllowed = configuration.permitsMelodicMIDI(isMPE:midiMode == .mpe)
         var desired = states.filter {
             $0.isDown && $0.continuousMIDI.isFinite && $0.vibrato.isFinite &&
             configuration.surfaceSelection.accepts($0.surface) && configuration.output(for: $0.surface).sendsMIDI &&
             (!configuration.instrument(for:$0.surface).isStringSurface || stringRouteAllowed) &&
+            (configuration.instrument(for:$0.surface) != .melodic || melodicRouteAllowed) &&
             (configuration.instrument(for:$0.surface) != .fretlessStrings || configuration.strings(for:$0.surface).continuousCell(x:$0.x,y:$0.y) != nil)
         }
         if !multiTouchEnabled {
@@ -434,14 +436,19 @@ public final class MIDIHapticService: @unchecked Sendable {
                 if let old = outgoingTouches.removeValue(forKey:key) { releaseOutgoingTouch(key,outgoing:old) }
                 continue
             }
-            let isFretlessMelody = stringCell != nil || (instrument == .melodic && configuration.fretless)
+            let tunedMelody = instrument == .melodic ? configuration.melodicMPEPitch(midi:state.quantizedMIDI,isMPE:midiMode == .mpe) : nil
+            if instrument == .melodic && !configuration.fretless && midiMode == .mpe && configuration.customScale?.isMicrotonal == true && tunedMelody == nil {
+                if let old = outgoingTouches.removeValue(forKey:key) { releaseOutgoingTouch(key,outgoing:old) }
+                continue
+            }
+            let isFretlessMelody = stringCell != nil || tunedMelody != nil || (instrument == .melodic && configuration.fretless)
             let isMPE = midiMode == .mpe && !drums
             let standardChannel = drums ? GMDrumPads.midiChannel : safeMelodicChannel
-            let anchor = stringCell?.anchor ?? max(0,min(127,configuration.baseMIDINote +
+            let anchor = stringCell?.anchor ?? tunedMelody?.anchor ?? max(0,min(127,configuration.baseMIDINote +
                 Int((configuration.pitchSpanSemitones / 2.0).rounded())))
             let targetNote = isFretlessMelody ? anchor : max(0,min(127,state.quantizedMIDI))
             if let existing = outgoingTouches[key],
-               ((stringCell != nil && existing.note != anchor) || LegacyTouchTransition.requiresNewVoice(oldNote:existing.note,oldFretless:existing.fretless,
+               (((stringCell != nil || tunedMelody != nil) && existing.note != anchor) || LegacyTouchTransition.requiresNewVoice(oldNote:existing.note,oldFretless:existing.fretless,
                    oldMPE:existing.mpe,oldChannel:existing.channel,newNote:targetNote,newFretless:isFretlessMelody,
                    newMPE:isMPE,standardChannel:standardChannel,
                    sustained:outgoingSustainChannels().contains(existing.channel))) {
@@ -489,11 +496,11 @@ public final class MIDIHapticService: @unchecked Sendable {
                 }
             }
             if isFretlessMelody {
-                let bendRange = stringCell?.bendRange ?? max(1, min(24, Int(ceil(configuration.pitchSpanSemitones / 2.0))))
+                let bendRange = stringCell?.bendRange ?? tunedMelody?.bendRange ?? max(1, min(24, Int(ceil(configuration.pitchSpanSemitones / 2.0))))
 
                 let delta = max(-Double(bendRange),
                     min(Double(bendRange), state.continuousMIDI - Double(anchor)))
-                let bend = stringCell?.bend ?? Int((8192.0 + (delta / Double(bendRange)) * 8191.0).rounded())
+                let bend = stringCell?.bend ?? tunedMelody?.bend ?? Int((8192.0 + (delta / Double(bendRange)) * 8191.0).rounded())
                 let target = SensorDestination(.pitchBend,channel:channel)
                 let value = LegacyContinuousOwners.Value(max(0,min(16383,bend)),neutral:8192,bendRange:bendRange)
                 frameControls[target] = value

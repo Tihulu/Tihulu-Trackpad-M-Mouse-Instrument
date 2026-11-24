@@ -2185,8 +2185,8 @@ final class StudioController: ObservableObject {
             lastError = "Physical chord MIDI requires Standard mode, no shared fretless MIDI, and explicit approximation for microtonal banks."
             return
         }
-        guard configuration.permitsMelodicMIDI else {
-            lastError = "Custom cent offsets require Trackpad output or explicit equal-tempered MIDI approximation in the Scale Editor. Drum MIDI is unaffected."
+        guard configuration.permitsMelodicMIDI(isMPE:midiMode == .mpe) else {
+            lastError = "Custom cent offsets require MPE, Trackpad output or explicit equal-tempered MIDI approximation in the Scale Editor. Drum MIDI is unaffected."
             return
         }
         cancelStartupGreeting()

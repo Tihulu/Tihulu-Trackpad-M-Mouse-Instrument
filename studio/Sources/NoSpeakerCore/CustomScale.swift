@@ -36,6 +36,20 @@ public struct CustomScale: Codable, Equatable, Sendable {
         }
     }
 
+    public struct TunedMIDIPitch: Equatable, Sendable {
+        public let anchor: Int
+        public let bend: Int
+        public var bendRange: Int { 2 }
+    }
+
+    /// Root-relative intonation on an isolated MPE member. Standard MIDI
+    /// must not use this channel-wide bend for simultaneously held pitches.
+    public func mpePitch(midi:Int,root:Int) -> TunedMIDIPitch? {
+        guard isValid,(0...127).contains(midi),(0...127).contains(root),
+              let bend = ChordMPEState.bend(cents:centOffsets[(midi-root+144)%12] ?? 0) else { return nil }
+        return .init(anchor:midi,bend:bend)
+    }
+
     public func tunedFrequency(midi: Int, root: Int) -> Double? {
         guard isValid, (0...127).contains(root), (0...127).contains(midi),
               let hz = try? MusicTheory.frequency(midi: midi) else { return nil }
