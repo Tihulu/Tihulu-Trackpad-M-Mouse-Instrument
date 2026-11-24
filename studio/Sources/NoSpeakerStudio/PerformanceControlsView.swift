@@ -165,8 +165,15 @@ struct PerformanceControlsView: View {
                     ProgressView(value: values[input] ?? 0).tint(.accentColor)
                     Slider(value: value(input), in: 0...1).accessibilityLabel(widget.title + " position")
                 case .pad:
-                    Button("Tap · 150 ms") { studio.pulsePatchInput(input) }
-                        .buttonStyle(.borderedProminent).frame(maxWidth: .infinity)
+                    let press = widget.pulseValue(for: patch.routes)
+                    Button("Tap · 150 ms") {
+                        if let press { studio.pulsePatchInput(input, value: press) }
+                    }.buttonStyle(.borderedProminent).frame(maxWidth: .infinity)
+                        .disabled(press == nil)
+                    if press == nil {
+                        Text("No common gate endpoint. Adjust calibration or choose a slider.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                 case .knob:
                     RotaryPerformanceControl(value: value(input), label: widget.title)
                 case .ribbon:
