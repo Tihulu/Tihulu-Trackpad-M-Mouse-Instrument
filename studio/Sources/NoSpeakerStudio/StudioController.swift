@@ -604,8 +604,10 @@ final class StudioController: ObservableObject {
                 stopBuilderCamera(reason: "Camera permission lost. Restart Builder explicitly.")
                 return
             }
-            for event in camera.drain() {
+            let events = camera.drain()
+            for event in events {
                 guard patchRunning else { return }
+                let now = ProcessInfo.processInfo.systemUptime
                 switch event {
                 case .ready: patchCameraStatus = "Camera running · show configured hands"
                 case .fault(let message):
