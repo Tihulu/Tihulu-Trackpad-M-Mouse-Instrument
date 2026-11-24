@@ -16,3 +16,17 @@ public struct HelperRoutingSnapshot: Equatable, Sendable {
         sendToDAW && (self != next || otherMappingChanged)
     }
 }
+
+
+/// Arbitrary expressive sliders must not bypass dedicated sustain, RPN/NRPN,
+/// bank selection or channel-mode state. Disabled controls do not reserve CCs.
+public enum HelperCCPolicy {
+    public static func permits(_ cc: Int) -> Bool {
+        (0...119).contains(cc) && ![0,6,32,38,64,96,97,98,99,100,101].contains(cc)
+    }
+    public static var choices: [Int] { (0...119).filter(permits) }
+    public static func permits(vibrato: Bool, expression: Bool, vibratoCC: Int, expressionCC: Int) -> Bool {
+        (!vibrato || permits(vibratoCC)) && (!expression || permits(expressionCC)) &&
+            !(vibrato && expression && vibratoCC == expressionCC)
+    }
+}

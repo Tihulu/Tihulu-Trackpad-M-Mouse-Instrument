@@ -513,7 +513,9 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         lock.unlock()
-        guard canSend else { return }
+        guard canSend, x.isFinite, y.isFinite, contactSize.isFinite,
+              HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
+                                     vibratoCC:vibratoCC,expressionCC:expressionCC) else { return }
         let safeChannel = max(0, min(15, channel))
         let safeX = min(1, max(0, x))
         let safeY = min(1, max(0, y))
@@ -549,8 +551,8 @@ public final class MIDIHapticService: @unchecked Sendable {
     ) {
         let safeChannel = max(0, min(15, channel))
         if assignments.pitchBend { sendPitchBend(8192, channel: safeChannel) }
-        if assignments.vibrato { sendControlChange(controller: vibratoCC, value: 0, channel: safeChannel) }
-        if assignments.expression { sendControlChange(controller: expressionCC, value: 127, channel: safeChannel) }
+        if assignments.vibrato && HelperCCPolicy.permits(vibratoCC) { sendControlChange(controller: vibratoCC, value: 0, channel: safeChannel) }
+        if assignments.expression && HelperCCPolicy.permits(expressionCC) { sendControlChange(controller: expressionCC, value: 127, channel: safeChannel) }
     }
 
     public func sendHelperGesture(
@@ -566,7 +568,10 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         lock.unlock()
-        guard canSend else { return }
+        guard canSend, x.isFinite, y.isFinite, pressure.isFinite,
+              HelperCCPolicy.permits(vibrato:mode == .vibrato || mode == .hybrid,
+                                     expression:mode == .expression || mode == .hybrid,
+                                     vibratoCC:vibratoCC,expressionCC:expressionCC) else { return }
 
         let safeChannel = max(0, min(15, channel))
         let safeX = min(1, max(0, x))
@@ -607,10 +612,10 @@ public final class MIDIHapticService: @unchecked Sendable {
         if mode == .pitchBend || mode == .hybrid {
             sendPitchBend(8192, channel: safeChannel)
         }
-        if mode == .vibrato || mode == .hybrid {
+        if (mode == .vibrato || mode == .hybrid) && HelperCCPolicy.permits(vibratoCC) {
             sendControlChange(controller: vibratoCC, value: 0, channel: safeChannel)
         }
-        if mode == .expression || mode == .hybrid {
+        if (mode == .expression || mode == .hybrid) && HelperCCPolicy.permits(expressionCC) {
             sendControlChange(controller: expressionCC, value: 127, channel: safeChannel)
         }
     }

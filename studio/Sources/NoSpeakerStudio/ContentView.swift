@@ -1645,8 +1645,23 @@ private struct MIDIHelperView: View {
                                     Text("±12 semitones").tag(12)
                                     Text("±24 semitones").tag(24)
                                 }
-                                Stepper("Vibrato CC \(vibratoCC)", value: $vibratoCC, in: 0...127)
-                                Stepper("Expression CC \(expressionCC)", value: $expressionCC, in: 0...127)
+                                Picker("Vibrato CC", selection: $vibratoCC) {
+                                    if !HelperCCPolicy.permits(vibratoCC) {
+                                        Text("CC \(vibratoCC) · Reserved").tag(vibratoCC)
+                                    }
+                                    ForEach(HelperCCPolicy.choices,id:\.self) { cc in Text("CC \(cc)").tag(cc) }
+                                }
+                                Picker("Expression CC", selection: $expressionCC) {
+                                    if !HelperCCPolicy.permits(expressionCC) {
+                                        Text("CC \(expressionCC) · Reserved").tag(expressionCC)
+                                    }
+                                    ForEach(HelperCCPolicy.choices,id:\.self) { cc in Text("CC \(cc)").tag(cc) }
+                                }
+                                if !HelperCCPolicy.permits(vibrato:vibratoEnabled,expression:expressionEnabled,
+                                                           vibratoCC:vibratoCC,expressionCC:expressionCC) {
+                                    Text("Choose distinct expressive CCs. Reserved controls cannot be sent from the Helper.")
+                                        .font(.caption).foregroundStyle(.orange)
+                                }
                             }
                             .padding(6)
                         }
