@@ -63,7 +63,7 @@ private func pairTilt(_ runtime: inout PhysicalPatchRuntime, now: Double = 1) th
     #expect(heartbeat == .close([.init(bend, value: 8192)]))
 }
 
-@Test func remoteOrientationCannotDriveNotesOrMixActiveTouch() throws {
+@Test func remoteOrientationCannotDriveNotesAndCanMixActiveTouch() throws {
     let forbidden = InstrumentPatch(routes: [.init(id: "gate", source: .phone, signal: .tiltPitch,
                                                   destination: .init(.note, number: 60))])
     #expect(!PhysicalPatchRuntime.supports(forbidden, allowRemote: true))
@@ -74,5 +74,45 @@ private func pairTilt(_ runtime: inout PhysicalPatchRuntime, now: Double = 1) th
     _ = runtime.receiveRemote(id, bytes: tiltBytes(2, "orientation", beta: 45), now: 1.2)
     let touch = Data("{\"version\":1,\"sequence\":3,\"kind\":\"touch\",\"x\":0.5,\"y\":0.5}".utf8)
     let mixed = runtime.receiveRemote(id, bytes: touch, now: 1.3)
-    #expect(mixed == .close([.init(bend, value: 8192)]))
+    let note = SensorDestination(.note, number: 60)
+    #expect(mixed == .accepted([.init(note, value: 100)]))
+    let release = runtime.receiveRemote(id, bytes: tiltBytes(4, "release", version: 1), now: 1.31)
+    #expect(release == .accepted([.init(note, value: 0)]))
+    let stopTilt = runtime.receiveRemote(id, bytes: tiltBytes(5, "motionRelease"), now: 1.32)
+    #expect(stopTilt == .accepted([.init(bend, value: 8192)]))
+}
+
+@Test func remoteConcurrentStreamsCannotMaskEachOtherTimeout() throws {
+    let note = SensorDestination(.note, number: 60)
+    let touch = Data("{\"version\":1,\"sequence\":3,\"kind\":\"touch\",\"x\":0.5,\"y\":0.5}".utf8)
+    for staleTouch in [true, false] {
+        var runtime = PhysicalPatchRuntime()
+        try runtime.configure(patch, allowRemote: true)
+        let id = try pairTilt(&runtime)
+        _ = runtime.receiveRemote(id, bytes: tiltBytes(1, "orientationArm"), now: 1.1)
+        _ = runtime.receiveRemote(id, bytes: tiltBytes(2, "orientation", beta: 45), now: 1.2)
+        _ = runtime.receiveRemote(id, bytes: touch, now: 1.21)
+        let fresh = staleTouch ? tiltBytes(4, "orientation", beta: 45) :
+            Data("{\"version\":1,\"sequence\":4,\"kind\":\"touch\",\"x\":0.5,\"y\":0.5}".utf8)
+        let refreshed = runtime.receiveRemote(id, bytes: fresh, now: 1.4)
+        #expect(refreshed == .accepted([]))
+        let expired = runtime.expire(now: 1.6)
+        #expect(expired.contains(.init(note, value: 0)))
+        #expect(expired.contains(.init(bend, value: 8192)))
+        #expect(runtime.remotePeerIDs.isEmpty)
+    }
+}
+
+@Test func remoteConcurrentTiltReleaseKeepsHeldTouch() throws {
+    var runtime = PhysicalPatchRuntime()
+    try runtime.configure(patch, allowRemote: true)
+    let id = try pairTilt(&runtime)
+    let touch = Data("{\"version\":1,\"sequence\":1,\"kind\":\"touch\",\"x\":0.5,\"y\":0.5}".utf8)
+    _ = runtime.receiveRemote(id, bytes: touch, now: 1.1)
+    _ = runtime.receiveRemote(id, bytes: tiltBytes(2, "orientationArm"), now: 1.2)
+    _ = runtime.receiveRemote(id, bytes: tiltBytes(3, "orientation", beta: 45), now: 1.21)
+    let release = runtime.receiveRemote(id, bytes: tiltBytes(4, "motionRelease"), now: 1.22)
+    #expect(release == .accepted([.init(bend, value: 8192)]))
+    let end = runtime.receiveRemote(id, bytes: tiltBytes(5, "release", version: 1), now: 1.23)
+    #expect(end == .accepted([.init(.init(.note, number: 60), value: 0)]))
 }

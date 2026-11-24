@@ -82,6 +82,8 @@ struct RemoteTouchPeer: Sendable {
     var motionSession: UUID?
     var tilt: RemoteTiltCalibration?
     var motionFreshness = RemoteMotionFreshness()
+    var lastTouch: Double?
+    var lastOrientation: Double?
     private var lastSeen: Double
     private var lastSequence: UInt64 = 0
     private var windowStart: Double
@@ -92,8 +94,16 @@ struct RemoteTouchPeer: Sendable {
         windowStart = now
     }
     func expired(now: Double) -> Bool {
-        !now.isFinite || now < lastSeen ||
-        now-lastSeen >= (routerSession == nil && tilt == nil ? 2.0 : 0.35)
+        guard now.isFinite, now >= lastSeen, now-lastSeen < 2 else { return true }
+        // Neither stream may extend the other's lifetime. Fail closed for the
+        // whole connection on an expired active stream; explicit release is independent.
+        if routerSession != nil {
+            guard let lastTouch, now >= lastTouch, now-lastTouch < 0.35 else { return true }
+        }
+        if tilt != nil {
+            guard let lastOrientation, now >= lastOrientation, now-lastOrientation < 0.35 else { return true }
+        }
+        return false
     }
     mutating func accept(_ frame: RemoteTouchFrame, now: Double) -> Bool {
         guard !expired(now: now), frame.sequence > lastSequence,
