@@ -35,6 +35,7 @@ private struct TouchDraft: Codable {
     var magicMouseOutput: SurfaceOutputRoute = .midiInstrument
     var drumLayout: DrumPadLayout = .standard12
     var stringLayout: StringSurfaceLayout? = nil
+    var mouseStringLayout: StringSurfaceLayout? = nil
     var sustainEnabled: Bool = false
     var sustainTrackpadEnabled: Bool = true
     var sustainTrackpadGesture: TrackpadSustainGesture = .contactThreshold
@@ -101,6 +102,7 @@ private struct WorkspaceSettings: Codable {
         (1...127).contains(touch.fixedVelocity) &&
         (1...16).contains(touch.midiChannel) &&
         (touch.stringLayout?.isValid ?? true) &&
+        (touch.mouseStringLayout?.isValid ?? true) &&
         (0.1...1).contains(touch.sustainTrackpadThreshold) &&
         (0...1).contains(touch.sustainMouseTapThreshold ?? 0) &&
         (1...16).contains(helper.targetChannel) &&
@@ -216,7 +218,7 @@ struct ContentView: View {
                     case .mapping: InstrumentBuilderView()
                     case .chords: ChordPadPanel(compact: false)
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
-                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, stringLayout: $touchDraft.stringLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
+                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, stringLayout: $touchDraft.stringLayout, mouseStringLayout: $touchDraft.mouseStringLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
                     case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture, magicMouseTapThreshold: $helperDraft.magicMouseTapThreshold)
                     case .touchBar: TouchBarModeView()
                     case .notes: NoteSequencerView(notes: $noteDraft.notes, selectedMIDI: $noteDraft.selectedMIDI, velocity: $noteDraft.velocity, loop: $noteDraft.loop, groove: $noteDraft.groove, output: $noteDraft.output)
@@ -759,6 +761,7 @@ private struct TouchInstrumentView: View {
     @Binding var magicMouseOutput: SurfaceOutputRoute
     @Binding var drumLayout: DrumPadLayout
     @Binding var stringLayout: StringSurfaceLayout?
+    @Binding var mouseStringLayout: StringSurfaceLayout?
     @Binding var sustainEnabled: Bool
     @Binding var sustainTrackpadEnabled: Bool
     @Binding var sustainTrackpadGesture: TrackpadSustainGesture
@@ -819,7 +822,8 @@ private struct TouchInstrumentView: View {
             drumLayout: drumLayout,
             customScale: studio.touchCustomScale,
             physicalChordBank: hasChords ? studio.chordBank : nil,
-            stringLayout: effectiveStringLayout
+            stringLayout: effectiveStringLayout,
+            mouseStringLayout: mouseStringLayout
         )
     }
 
@@ -1062,56 +1066,32 @@ private struct TouchInstrumentView: View {
                 }
 
                 if hasGuitar {
-                    GroupBox("Guitar / Bass Pad") {
-                        VStack(alignment:.leading,spacing:8) {
-                            Picker("Tuning",selection:Binding(
-                                get:{ effectiveStringLayout.tuning },
-                                set:{ var next = effectiveStringLayout; next.tuning = $0; next.customOpenNotes = nil; stringLayout = next }
-                            )) {
-                                ForEach(StringTuning.allCases) { Text($0.rawValue).tag($0) }
-                            }
-                            Stepper("Frets: \(effectiveStringLayout.frets) + open string",value:Binding(
-                                get:{ effectiveStringLayout.frets },
-                                set:{ var next = effectiveStringLayout; next.frets = $0; if next.isValid { stringLayout = next } }
-                            ),in:4...24)
-                            Toggle("Custom open-string tuning",isOn:Binding(
-                                get:{ effectiveStringLayout.customOpenNotes != nil },
-                                set:{ enabled in
-                                    var next = effectiveStringLayout
-                                    next.customOpenNotes = enabled ? next.tuning.openNotes : nil
-                                    stringLayout = next
-                                }
+                    if surfaceSelection.accepts(.trackpad) && trackpadInstrument.isStringSurface {
+                        GroupBox("Trackpad · Strings") {
+                            StringLayoutEditor(layout:Binding(
+                                get:{ effectiveStringLayout },
+                                set:{ stringLayout = $0 }
                             ))
-                            if let notes = effectiveStringLayout.customOpenNotes {
-                                Stepper("Strings: \(notes.count)",value:Binding(
-                                    get:{ notes.count },
-                                    set:{ count in
-                                        guard (4...8).contains(count) else { return }
-                                        var next = effectiveStringLayout
-                                        var pitches = Array(notes.prefix(count))
-                                        while pitches.count < count { pitches.append(max(0,(pitches.last ?? 40)-5)) }
-                                        next.customOpenNotes = pitches
-                                        if next.isValid { stringLayout = next }
-                                    }
-                                ),in:4...8)
-                                ForEach(notes.indices,id:\.self) { row in
-                                    Stepper("String \(row+1): \((try? MusicTheory.noteName(midi:notes[row])) ?? String(notes[row])) · MIDI \(notes[row])",
-                                        value:Binding(
-                                            get:{ notes[row] },
-                                            set:{ pitch in
-                                                var next = effectiveStringLayout
-                                                guard var pitches = next.customOpenNotes, pitches.indices.contains(row) else { return }
-                                                pitches[row] = pitch
-                                                next.customOpenNotes = pitches
-                                                if next.isValid { stringLayout = next }
-                                            }
-                                        ),in:0...(127-effectiveStringLayout.frets))
+                        }.disabled(studio.touchRunning)
+                    }
+                    if surfaceSelection.accepts(.magicMouse) && magicMouseInstrument.isStringSurface {
+                        GroupBox("Magic Mouse · Strings") {
+                            VStack(alignment:.leading,spacing:8) {
+                                Toggle("Independent mouse tuning and span",isOn:Binding(
+                                    get:{ mouseStringLayout != nil },
+                                    set:{ mouseStringLayout = $0 ? effectiveStringLayout : nil }
+                                ))
+                                StringLayoutEditor(layout:Binding(
+                                    get:{ mouseStringLayout ?? effectiveStringLayout },
+                                    set:{ mouseStringLayout = $0 }
+                                )).disabled(mouseStringLayout == nil)
+                                if mouseStringLayout == nil {
+                                    Text("Using the shared/Trackpad string layout. Enable independent tuning to edit the mouse separately.")
+                                        .font(.caption).foregroundStyle(.secondary)
                                 }
-                            }
-                            Text("X selects pitch, Y selects string. Fretted mode steps between notes; fretless mode slides continuously over the same semitone span and requires MPE for MIDI. Strum gestures are a follow-up. The haptic motor has a narrower frequency range than MIDI.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }.padding(6)
-                    }.disabled(studio.touchRunning)
+                            }.padding(6)
+                        }.disabled(studio.touchRunning)
+                    }
                 }
                 if hasChords {
                     GroupBox("Physical Chord Pads") {
@@ -1260,6 +1240,7 @@ private struct TouchInstrumentView: View {
         .onChange(of: magicMouseOutput) { _ in syncConfiguration() }
         .onChange(of: drumLayout) { _ in syncConfiguration() }
         .onChange(of: stringLayout) { _ in syncConfiguration() }
+        .onChange(of: mouseStringLayout) { _ in syncConfiguration() }
         .onChange(of: studio.masterLevel) { _ in syncConfiguration() }
     }
 
@@ -1285,7 +1266,7 @@ private struct TouchInstrumentView: View {
                 notes: mappedMIDINotes,
                 drumLayout: drumLayout,
                 chordBank: studio.chordBank,
-                stringLayout: effectiveStringLayout,
+                stringLayout: configuration.strings(for:surface),
                 instrument: instrument,
                 rootMIDI: root,
                 fretless: fretless,
@@ -1306,6 +1287,60 @@ private struct TouchInstrumentView: View {
 
     private func syncConfiguration() {
         studio.updateTouchConfiguration(configuration)
+    }
+}
+
+private struct StringLayoutEditor: View {
+    @Binding var layout: StringSurfaceLayout
+    var body: some View {
+                        VStack(alignment:.leading,spacing:8) {
+                            Picker("Tuning",selection:Binding(
+                                get:{ layout.tuning },
+                                set:{ var next = layout; next.tuning = $0; next.customOpenNotes = nil; layout = next }
+                            )) {
+                                ForEach(StringTuning.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            Stepper("Frets: \(layout.frets) + open string",value:Binding(
+                                get:{ layout.frets },
+                                set:{ var next = layout; next.frets = $0; if next.isValid { layout = next } }
+                            ),in:4...24)
+                            Toggle("Custom open-string tuning",isOn:Binding(
+                                get:{ layout.customOpenNotes != nil },
+                                set:{ enabled in
+                                    var next = layout
+                                    next.customOpenNotes = enabled ? next.tuning.openNotes : nil
+                                    layout = next
+                                }
+                            ))
+                            if let notes = layout.customOpenNotes {
+                                Stepper("Strings: \(notes.count)",value:Binding(
+                                    get:{ notes.count },
+                                    set:{ count in
+                                        guard (4...8).contains(count) else { return }
+                                        var next = layout
+                                        var pitches = Array(notes.prefix(count))
+                                        while pitches.count < count { pitches.append(max(0,(pitches.last ?? 40)-5)) }
+                                        next.customOpenNotes = pitches
+                                        if next.isValid { layout = next }
+                                    }
+                                ),in:4...8)
+                                ForEach(notes.indices,id:\.self) { row in
+                                    Stepper("String \(row+1): \((try? MusicTheory.noteName(midi:notes[row])) ?? String(notes[row])) · MIDI \(notes[row])",
+                                        value:Binding(
+                                            get:{ notes[row] },
+                                            set:{ pitch in
+                                                var next = layout
+                                                guard var pitches = next.customOpenNotes, pitches.indices.contains(row) else { return }
+                                                pitches[row] = pitch
+                                                next.customOpenNotes = pitches
+                                                if next.isValid { layout = next }
+                                            }
+                                        ),in:0...(127-layout.frets))
+                                }
+                            }
+                            Text("X selects pitch, Y selects string. Fretted mode steps between notes; fretless mode slides continuously over the same semitone span and requires MPE for MIDI. Strum gestures are a follow-up. The haptic motor has a narrower frequency range than MIDI.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }.padding(6)
     }
 }
 

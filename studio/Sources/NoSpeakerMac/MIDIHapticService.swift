@@ -376,7 +376,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             $0.isDown && $0.continuousMIDI.isFinite && $0.vibrato.isFinite &&
             configuration.surfaceSelection.accepts($0.surface) && configuration.output(for: $0.surface).sendsMIDI &&
             (!configuration.instrument(for:$0.surface).isStringSurface || stringRouteAllowed) &&
-            (configuration.instrument(for:$0.surface) != .fretlessStrings || configuration.stringLayout.continuousCell(x:$0.x,y:$0.y) != nil)
+            (configuration.instrument(for:$0.surface) != .fretlessStrings || configuration.strings(for:$0.surface).continuousCell(x:$0.x,y:$0.y) != nil)
         }
         if !multiTouchEnabled {
             desired = Array(desired.prefix(1))
@@ -427,7 +427,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             let instrument = configuration.instrument(for:state.surface)
             let isGuitar = instrument.isStringSurface
             let stringCell = instrument == .fretlessStrings
-                ? configuration.stringLayout.continuousCell(x:state.x,y:state.y) : nil
+                ? configuration.strings(for:state.surface).continuousCell(x:state.x,y:state.y) : nil
             let isFretlessMelody = stringCell != nil || (instrument == .melodic && configuration.fretless)
             let isMPE = midiMode == .mpe && !drums
             let standardChannel = drums ? GMDrumPads.midiChannel : safeMelodicChannel
