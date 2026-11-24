@@ -2101,13 +2101,13 @@ final class StudioController: ObservableObject {
             trackpadGesture: trackpadSustainGesture,
             trackpadSensor: trackpadSustainSensor
         )
-        let newChannel = max(0, min(15, targetChannel))
-        if midiHelperRunning &&
-            (newSustainSettings != helperSustainSettings ||
-             assignments != helperAssignments ||
-             newChannel != helperTargetChannel ||
-             sendToDAW != helperSendToDAW ||
-             surfaceSelection != helperSurfaceSelection) {
+        let oldRouting = HelperRoutingSnapshot(sendToDAW:helperSendToDAW,channel:helperTargetChannel,
+            bendRange:helperPitchBendRange,vibratoCC:helperVibratoCC,expressionCC:helperExpressionCC)
+        let nextRouting = HelperRoutingSnapshot(sendToDAW:sendToDAW,channel:targetChannel,
+            bendRange:pitchBendRange,vibratoCC:vibratoCC,expressionCC:expressionCC)
+        let otherMappingChanged = newSustainSettings != helperSustainSettings ||
+            assignments != helperAssignments || surfaceSelection != helperSurfaceSelection
+        if midiHelperRunning && oldRouting.requiresRelease(before:nextRouting,otherMappingChanged:otherMappingChanged) {
             midi?.resetHelperControls(
                 assignments: helperAssignments,
                 channel: helperTargetChannel,
@@ -2123,6 +2123,13 @@ final class StudioController: ObservableObject {
             midiHelperMagicMouseSustainActive = false
         }
 
+        if midiHelperRunning && (otherMappingChanged || oldRouting != nextRouting) {
+            // Reset local latch state even if the old configuration was preview-only.
+            helperSustainState.reset()
+            midiHelperSustainActive = false
+            midiHelperTrackpadSustainActive = false
+            midiHelperMagicMouseSustainActive = false
+        }
         helperSustainSettings = newSustainSettings
         helperAssignments = assignments
         helperSurfaceSelection = surfaceSelection
@@ -2151,17 +2158,20 @@ final class StudioController: ObservableObject {
     }
 
     func stopMIDIHelper() {
+        guard midiHelperRunning else { return }
         midi?.releaseHelperSustain()
         helperSustainState.reset()
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
         midiHelperMagicMouseSustainActive = false
-        midi?.resetHelperControls(
-            assignments: helperAssignments,
-            channel: helperTargetChannel,
-            vibratoCC: helperVibratoCC,
-            expressionCC: helperExpressionCC
-        )
+        if helperSendToDAW {
+            midi?.resetHelperControls(
+                assignments: helperAssignments,
+                channel: helperTargetChannel,
+                vibratoCC: helperVibratoCC,
+                expressionCC: helperExpressionCC
+            )
+        }
         midi?.setInputHapticsEnabled(true)
         midiHelperRunning = false
         if !helperPreviewRequested { midiHelperStates = [] }

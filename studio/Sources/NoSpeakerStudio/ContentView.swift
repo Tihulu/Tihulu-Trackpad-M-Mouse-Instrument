@@ -1704,8 +1704,8 @@ private struct MIDIHelperView: View {
             studio.stopMIDIHelperPreview()
         }
         .onChange(of: surfaceSelection) { _ in
-            studio.updateMIDIHelperSurface(surfaceSelection)
-            syncIfRunning()
+            if studio.midiHelperRunning { syncIfRunning() }
+            else { studio.updateMIDIHelperSurface(surfaceSelection) }
         }
         .onChange(of: sendToDAW) { _ in syncIfRunning() }
         .onChange(of: localSound) { _ in syncIfRunning() }
