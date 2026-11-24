@@ -1911,7 +1911,7 @@ final class StudioController: ObservableObject {
         touchMultiTouchEnabled = multiTouch
         touchMIDIChannel = max(0, min(15, midiChannel))
         touchSustainSettings = sustainSettings
-        touch?.invalidatePendingSamples()
+        touch.invalidatePendingSamples()
         touchSustainState.reset()
 
         if !instrumentPreviewRequested {
