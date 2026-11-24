@@ -12,7 +12,7 @@ private struct VoiceDraft {
     var selectedVoice: String = ""
 }
 
-private struct TouchDraft {
+private struct TouchDraft: Codable {
     var root: Int = 67
     var scale: TouchScale = .pentatonic
     var fretless: Bool = false
@@ -42,7 +42,7 @@ private struct TouchDraft {
     var sustainMouseGesture: MagicMouseSustainGesture = .touchHold
 }
 
-private struct HelperDraft {
+private struct HelperDraft: Codable {
     var surfaceSelection: TouchSurfaceSelection = .trackpad
     var sendToDAW: Bool = true
     var localSound: Bool = false
@@ -62,16 +62,75 @@ private struct HelperDraft {
     var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
 }
 
-private struct NoteDraft {
+private struct NoteDraft: Codable {
     var notes: [Int?] = Array(repeating: nil, count: 16)
     var selectedMIDI: Int = 72
     var velocity: Double = 0.85
     var loop: Bool = false
 }
 
-private struct DrumDraft {
+private struct DrumDraft: Codable {
     var active: Set<String> = ["kick:0","kick:8","snare:4","snare:12","closedHat:0","closedHat:2","closedHat:4","closedHat:6","closedHat:8","closedHat:10","closedHat:12","closedHat:14"]
     var loop: Bool = false
+}
+
+/// A saved workspace is declarative settings, not an executable instrument or a
+/// running session. It deliberately excludes voice text, files, permissions,
+/// remote addresses and capture shortcuts.
+private struct WorkspaceSettings: Codable {
+    var touch: TouchDraft
+    var helper: HelperDraft
+    var notes: NoteDraft
+    var drums: DrumDraft
+    var bpm: Double
+    var orientation: SurfaceOrientation
+
+    var isValid: Bool {
+        (24...96).contains(touch.root) &&
+        (0.5...2.0).contains(touch.zoneWidth) &&
+        (1...96).contains(touch.pitchSpan) &&
+        (0.1...1).contains(touch.pressThreshold) &&
+        (1...127).contains(touch.fixedVelocity) &&
+        (1...16).contains(touch.midiChannel) &&
+        (0.1...1).contains(touch.sustainTrackpadThreshold) &&
+        (1...16).contains(helper.targetChannel) &&
+        [2, 5, 12, 24].contains(helper.pitchBendRange) &&
+        (0...127).contains(helper.vibratoCC) &&
+        (0...127).contains(helper.expressionCC) &&
+        (0.1...1).contains(helper.trackpadSustainThreshold) &&
+        notes.notes.count == 16 &&
+        notes.notes.allSatisfy { $0.map { (0...127).contains($0) } ?? true } &&
+        (48...95).contains(notes.selectedMIDI) &&
+        (0.1...1).contains(notes.velocity) &&
+        drums.active.count <= 96 &&
+        drums.active.isSubset(of: Self.validDrumSteps) &&
+        (20...300).contains(bpm)
+    }
+
+    private static var validDrumSteps: Set<String> {
+        Set(["kick", "snare", "closedHat", "openHat", "clap", "tom"].flatMap { voice in
+            (0..<16).map { "\(voice):\($0)" }
+        })
+    }
+}
+
+private enum QuickWorkspace: String, CaseIterable, Identifiable {
+    case solo = "Solo Haptic"
+    case logic = "Logic Instrument"
+    case hybrid = "Trackpad + Mouse Helper"
+    case reverse = "Mouse + Trackpad Helper"
+    case drums = "GM Drum Kit"
+
+    var id: String { rawValue }
+    var detail: String {
+        switch self {
+        case .solo: "Trackpad melody, local haptic output."
+        case .logic: "Trackpad melody routed to your DAW."
+        case .hybrid: "Trackpad plays notes; Magic Mouse controls expression."
+        case .reverse: "Magic Mouse plays notes; Trackpad controls expression."
+        case .drums: "Trackpad GM percussion, 16 pads, local haptics."
+        }
+    }
 }
 
 struct ContentView: View {
@@ -84,6 +143,15 @@ struct ContentView: View {
     @State private var drumDraft = DrumDraft()
     @State private var tapTempo = TapTempo()
     @State private var compactTransport = false
+    @State private var workspaceName = "Untitled Workspace"
+    @State private var workspaceMessage = ""
+    @State private var pendingWorkspace: QuickWorkspace?
+
+    private var workspaceEditable: Bool {
+        !studio.touchRunning && !studio.midiHelperRunning && !studio.midiRunning &&
+        !studio.systemAudioRunning && !studio.isPlaying && !studio.liveHingeEnabled &&
+        !studio.captureArmed && !studio.pointerCaptured && !studio.touchBarSustainOn
+    }
 
     private var navigationGroups: [(String, [StudioMode])] {
         [
@@ -123,7 +191,11 @@ struct ContentView: View {
                 Divider()
                 Group {
                     switch mode ?? .performance {
-                    case .performance: PerformanceOverview(open: { mode = $0 })
+                    case .performance: PerformanceOverview(
+                        open: { mode = $0 }, workspaceName: workspaceName,
+                        workspaceMessage: workspaceMessage, workspaceEditable: workspaceEditable,
+                        choose: { pendingWorkspace = $0 }, save: saveWorkspace, load: loadWorkspace
+                    )
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
                     case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture)
                     case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture)
@@ -146,9 +218,102 @@ struct ContentView: View {
         )) {
             Button("OK") { studio.lastError = nil }
         } message: { Text(studio.lastError ?? "Unknown error") }
+        .confirmationDialog("Replace instrument and helper settings?", isPresented: Binding(
+            get: { pendingWorkspace != nil },
+            set: { if !$0 { pendingWorkspace = nil } }
+        ), titleVisibility: .visible, presenting: pendingWorkspace) { template in
+            Button("Prepare " + template.rawValue) {
+                prepareWorkspace(template)
+                pendingWorkspace = nil
+            }
+            Button("Cancel", role: .cancel) { pendingWorkspace = nil }
+        } message: { _ in
+            Text("This changes the instrument and helper drafts, not your sequencer patterns. It will not start a session.")
+        }
         .onAppear {
             studio.installTouchBar()
             studio.playStartupGreetingOnce()
+        }
+    }
+
+    private func prepareWorkspace(_ template: QuickWorkspace) {
+        guard workspaceEditable else { return }
+        var instrument = TouchDraft()
+        var helper = HelperDraft()
+        switch template {
+        case .solo: break
+        case .logic:
+            instrument.trackpadOutput = .midiInstrument
+        case .hybrid:
+            instrument.trackpadOutput = .midiInstrument
+            helper.surfaceSelection = .magicMouse
+        case .reverse:
+            instrument.surfaceSelection = .magicMouse
+            instrument.magicMouseOutput = .midiInstrument
+            helper.surfaceSelection = .trackpad
+        case .drums:
+            instrument.trackpadInstrument = .drums
+            instrument.drumLayout = .extended16
+        }
+        touchDraft = instrument
+        helperDraft = helper
+        workspaceName = template.rawValue
+        workspaceMessage = "Prepared. Open Touch Instrument and press Start when ready. Start MIDI Helper separately if needed."
+        mode = .touch
+    }
+
+    private func saveWorkspace() {
+        guard workspaceEditable else { return }
+        let settings = WorkspaceSettings(touch: touchDraft, helper: helperDraft,
+            notes: noteDraft, drums: drumDraft, bpm: TapTempo.safeBPM(studio.bpm),
+            orientation: studio.magicMouseOrientation)
+        guard settings.isValid else {
+            workspaceMessage = "Invalid settings. Check the instrument and pattern values."
+            return
+        }
+        do {
+            let data = try WorkspaceArchive.encode(name: workspaceName, payload: settings)
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.json]
+            panel.nameFieldStringValue = "TIHULU Workspace.json"
+            guard panel.runModal() == .OK, let url = panel.url, workspaceEditable else { return }
+            try data.write(to: url, options: .atomic)
+            workspaceMessage = "Workspace saved. Voice text, permissions and running sessions were not exported."
+        } catch {
+            workspaceMessage = "Unable to save workspace: " + error.localizedDescription
+        }
+    }
+
+    private func loadWorkspace() {
+        guard workspaceEditable else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url, workspaceEditable else { return }
+        do {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let data = try handle.read(upToCount: WorkspaceArchive.maximumBytes + 1) ?? Data()
+            let archive = try WorkspaceArchive.decode(WorkspaceSettings.self, from: data)
+            guard archive.payload.isValid else { throw WorkspaceArchiveError.invalidPayload }
+            let prompt = NSAlert()
+            prompt.messageText = "Replace the current workspace?"
+            prompt.informativeText = "This replaces instrument, helper and sequencer drafts. It does not start playback or enable capture."
+            prompt.addButton(withTitle: "Load")
+            prompt.addButton(withTitle: "Cancel")
+            guard prompt.runModal() == .alertFirstButtonReturn, workspaceEditable else { return }
+            let settings = archive.payload
+            touchDraft = settings.touch
+            helperDraft = settings.helper
+            noteDraft = settings.notes
+            drumDraft = settings.drums
+            studio.bpm = settings.bpm
+            studio.setMagicMouseOrientation(settings.orientation)
+            workspaceName = archive.name
+            workspaceMessage = "Workspace loaded. Start each instrument explicitly when ready."
+        } catch {
+            workspaceMessage = "Unable to load workspace: " + error.localizedDescription
         }
     }
 
@@ -295,6 +460,12 @@ struct ContentView: View {
 private struct PerformanceOverview: View {
     @EnvironmentObject private var studio: StudioController
     let open: (StudioMode) -> Void
+    let workspaceName: String
+    let workspaceMessage: String
+    let workspaceEditable: Bool
+    let choose: (QuickWorkspace) -> Void
+    let save: () -> Void
+    let load: () -> Void
 
     var body: some View {
         ScrollView {
@@ -316,6 +487,37 @@ private struct PerformanceOverview: View {
                         Divider()
                         session("Lid Sensor", detail: studio.hingeSensorStatus, symbol: "laptopcomputer",
                                 active: studio.liveHingeEnabled, page: .touchBar, stop: { studio.enableLiveHinge(false) })
+                    }.padding(6)
+                }
+                GroupBox("Workspace & quick setup") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text(workspaceName).font(.headline)
+                            Spacer()
+                            Button("Save Workspace", action: save)
+                            Button("Load Workspace", action: load)
+                        }
+                        .disabled(!workspaceEditable)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 8)], spacing: 8) {
+                            ForEach(QuickWorkspace.allCases) { template in
+                                Button { choose(template) } label: {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(template.rawValue).font(.headline)
+                                        Text(template.detail).font(.caption).foregroundStyle(.secondary)
+                                    }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                        .padding(8)
+                                        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+                                }.buttonStyle(.plain)
+                            }
+                        }.disabled(!workspaceEditable)
+                        if !workspaceEditable {
+                            Text("Stop live sessions and playback, disable the MIDI bridge, hinge and Global Capture before replacing a workspace.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        if !workspaceMessage.isEmpty {
+                            Text(workspaceMessage).font(.caption).foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
                     }.padding(6)
                 }
                 Text("Play & compose").font(.headline)

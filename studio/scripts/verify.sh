@@ -31,7 +31,7 @@ for root in roots:
             # One explicitly approved Turkish audio string is localized data,
             # not a Turkish UI label, source comment or documentation sentence.
             if (p == Path('Sources/NoSpeakerStudio/StudioController.swift')
-                    and line.strip() == 'static let startupGreeting = "KOMUTAN LOGAR, BİR CİSİM YAKLAŞIYOR EFENDİM."'):
+                    and line.strip() == 'nonisolated static let startupGreeting = "KOMUTAN LOGAR, BİR CİSİM YAKLAŞIYOR EFENDİM."'):
                 continue
             if any(ch in bad_chars for ch in line): found.append((p,n,line))
 if found:

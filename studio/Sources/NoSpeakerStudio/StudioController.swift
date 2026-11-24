@@ -48,7 +48,7 @@ final class StudioController: ObservableObject {
 
     private var driver: HapticTrackpadDriver?
     private var playback: HapticPlaybackEngine?
-    static let startupGreeting = "KOMUTAN LOGAR, BİR CİSİM YAKLAŞIYOR EFENDİM."
+    nonisolated static let startupGreeting = "KOMUTAN LOGAR, BİR CİSİM YAKLAŞIYOR EFENDİM."
     private var startupGreetingAttempted = false
     private var startupGreetingPlaying = false
     private var startupGreetingTask: Task<Void, Never>?

@@ -2,7 +2,7 @@ import Foundation
 
 /// Input modes are explicit: a contact is not a Force Touch pressure reading.
 /// Physical clicks are provided separately by the macOS event monitor.
-public enum TrackpadSustainGesture: String, CaseIterable, Identifiable, Sendable {
+public enum TrackpadSustainGesture: String, CaseIterable, Identifiable, Sendable, Codable {
     case contactThreshold = "Contact Threshold"
     case touchHold = "Touch Hold"
     case tapToggle = "Tap Toggle"
@@ -14,14 +14,14 @@ public enum TrackpadSustainGesture: String, CaseIterable, Identifiable, Sendable
 
 /// Explicit sensor source for the Trackpad Contact Threshold sustain mode.
 /// CoreGraphics click pressure is experimental and requires a physical click.
-public enum TrackpadSustainSensor: String, CaseIterable, Identifiable, Sendable {
+public enum TrackpadSustainSensor: String, CaseIterable, Identifiable, Sendable, Codable {
     case contactSize = "Contact Size"
     case clickPressure = "Click Pressure (Experimental)"
 
     public var id: String { rawValue }
 }
 
-public enum MagicMouseSustainGesture: String, CaseIterable, Identifiable, Sendable {
+public enum MagicMouseSustainGesture: String, CaseIterable, Identifiable, Sendable, Codable {
     case touchHold = "Touch Hold"
     case tapToggle = "Tap Toggle"
     case physicalClickHold = "Physical Click Hold"
