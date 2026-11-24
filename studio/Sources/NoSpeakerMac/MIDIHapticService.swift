@@ -96,12 +96,6 @@ public final class MIDIHapticService: @unchecked Sendable {
         let note: Int
     }
 
-    private struct ActiveNote {
-        var velocity: Int
-        var keyDownCount: Int
-        var releasedWhileSustained: Bool
-    }
-
     private struct TouchKey: Hashable {
         let surface: TouchSurfaceKind
         let id: Int
@@ -128,14 +122,9 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var receiveEpoch = LegacyReceiveEpoch()
     private var callback: (@Sendable (LiveMIDIMessage) -> Void)?
 
-    private var activeNotes: [NoteKey: ActiveNote] = [:]
-    private var sustainByChannel: [Int: Bool] = [:]
+    private var incomingNotes = LegacyIncomingNotes()
     private var pitchBendByChannel: [Int: Int] = [:]
-    private var pitchBendRangeByChannel: [Int: Double] = [:]
-    private var rpnMSBByChannel: [Int: Int] = [:]
-    private var rpnLSBByChannel: [Int: Int] = [:]
-    private var bendRangeSemitonesByChannel: [Int: Int] = [:]
-    private var bendRangeCentsByChannel: [Int: Int] = [:]
+    private var incomingBendRanges: [Int:LegacyBendRangeState] = [:]
     private var modulationByChannel: [Int: Int] = [:]
     private var volumeByChannel: [Int: Int] = [:]
     private var expressionByChannel: [Int: Int] = [:]
@@ -195,14 +184,9 @@ public final class MIDIHapticService: @unchecked Sendable {
         self.inputHapticsEnabled = true
         receiveEpoch.begin()
         enabled = true
-        activeNotes.removeAll()
-        sustainByChannel.removeAll()
+        incomingNotes = LegacyIncomingNotes()
         pitchBendByChannel.removeAll()
-        pitchBendRangeByChannel.removeAll()
-        rpnMSBByChannel.removeAll()
-        rpnLSBByChannel.removeAll()
-        bendRangeSemitonesByChannel.removeAll()
-        bendRangeCentsByChannel.removeAll()
+        incomingBendRanges.removeAll()
         modulationByChannel.removeAll()
         volumeByChannel.removeAll()
         expressionByChannel.removeAll()
@@ -268,14 +252,9 @@ public final class MIDIHapticService: @unchecked Sendable {
 
         lock.lock()
         enabled = false
-        activeNotes.removeAll()
-        sustainByChannel.removeAll()
+        incomingNotes = LegacyIncomingNotes()
         pitchBendByChannel.removeAll()
-        pitchBendRangeByChannel.removeAll()
-        rpnMSBByChannel.removeAll()
-        rpnLSBByChannel.removeAll()
-        bendRangeSemitonesByChannel.removeAll()
-        bendRangeCentsByChannel.removeAll()
+        incomingBendRanges.removeAll()
         modulationByChannel.removeAll()
         volumeByChannel.removeAll()
         expressionByChannel.removeAll()
@@ -753,9 +732,9 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         let active = enabled
         let hapticsEnabled = inputHapticsEnabled
-        let notes = Array(activeNotes.prefix(6))
+        let notes = Array(incomingNotes.notes.prefix(6))
         let bends = pitchBendByChannel
-        let bendRanges = pitchBendRangeByChannel
+        let bendRanges = incomingBendRanges
         let modulation = modulationByChannel
         let volumes = volumeByChannel
         let expressions = expressionByChannel
@@ -772,7 +751,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             guard let frequency = try? MusicTheory.frequency(midi: key.note) else { continue }
 
             let bend14 = bends[key.channel] ?? 8192
-            let bendRange = bendRanges[key.channel] ?? 2.0
+            let bendRange = bendRanges[key.channel]?.range ?? 2.0
             let bendNormalized = (Double(bend14) - 8192.0) / 8192.0
             let bendSemitones = bendNormalized * bendRange
 
@@ -850,116 +829,53 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
     }
 
+    private func notifyIncoming(_ commands: [SensorCommand], using notify: (@Sendable (LiveMIDIMessage) -> Void)?) {
+        for c in commands {
+            notify?(.init(channel:c.destination.channel,note:c.destination.number,velocity:c.value,isNoteOn:c.value>0))
+        }
+    }
+
     private func noteOn(channel: Int, note: Int, velocity: Int, token: UInt64) {
-        let key = NoteKey(channel: channel, note: note)
         lock.lock()
         guard receiveEpoch.accepts(token) else { lock.unlock(); return }
-        if var state = activeNotes[key] {
-            state.velocity = max(state.velocity, velocity)
-            state.keyDownCount += 1
-            state.releasedWhileSustained = false
-            activeNotes[key] = state
-        } else {
-            activeNotes[key] = ActiveNote(
-                velocity: velocity,
-                keyDownCount: 1,
-                releasedWhileSustained: false
-            )
-        }
+        let commands = incomingNotes.noteOn(channel:channel,note:note,velocity:velocity)
         let notify = callback
         lock.unlock()
-        notify?(.init(channel: channel, note: note, velocity: velocity, isNoteOn: true))
+        notifyIncoming(commands,using:notify)
     }
 
     private func noteOff(channel: Int, note: Int, velocity: Int, token: UInt64) {
-        let key = NoteKey(channel: channel, note: note)
         lock.lock()
         guard receiveEpoch.accepts(token) else { lock.unlock(); return }
-        if var state = activeNotes[key] {
-            state.keyDownCount = max(0, state.keyDownCount - 1)
-            if state.keyDownCount > 0 {
-                activeNotes[key] = state
-            } else if sustainByChannel[channel] == true {
-                state.releasedWhileSustained = true
-                activeNotes[key] = state
-            } else {
-                activeNotes.removeValue(forKey: key)
-            }
-        }
+        let commands = incomingNotes.noteOff(channel:channel,note:note)
         let notify = callback
         lock.unlock()
-        notify?(.init(channel: channel, note: note, velocity: velocity, isNoteOn: false))
+        notifyIncoming(commands,using:notify)
     }
 
     private func controlChange(channel: Int, controller: Int, value: Int, token: UInt64) {
-        let safeValue = max(0, min(127, value))
-
+        let safeValue = max(0,min(127,value))
         lock.lock()
         guard receiveEpoch.accepts(token) else { lock.unlock(); return }
+        let commands = incomingNotes.control(channel:channel,controller:controller,value:safeValue)
         switch controller {
-        case 1:
-            // Modulation wheel. Use it as vibrato depth, matching the musical role
-            // players expect from the wheel beside pitch bend.
-            modulationByChannel[channel] = safeValue
-
-        case 7:
-            volumeByChannel[channel] = safeValue
-
-        case 11:
-            expressionByChannel[channel] = safeValue
-
-        case 64:
-            let sustainOn = safeValue >= 64
-            sustainByChannel[channel] = sustainOn
-            if !sustainOn {
-                activeNotes = activeNotes.filter { key, state in
-                    key.channel != channel || state.keyDownCount > 0
-                }
-            }
-
-        case 100:
-            rpnLSBByChannel[channel] = safeValue
-
-        case 101:
-            rpnMSBByChannel[channel] = safeValue
-
-        case 6:
-            // RPN 0,0 = Pitch Bend Sensitivity, MSB = semitones.
-            if rpnMSBByChannel[channel] == 0, rpnLSBByChannel[channel] == 0 {
-                bendRangeSemitonesByChannel[channel] = safeValue
-                let cents = bendRangeCentsByChannel[channel] ?? 0
-                pitchBendRangeByChannel[channel] = Double(safeValue) + Double(cents) / 100.0
-            }
-
-        case 38:
-            // RPN 0,0 Data Entry LSB = cents.
-            if rpnMSBByChannel[channel] == 0, rpnLSBByChannel[channel] == 0 {
-                bendRangeCentsByChannel[channel] = min(99, safeValue)
-                let semitones = bendRangeSemitonesByChannel[channel] ?? 2
-                pitchBendRangeByChannel[channel] = Double(semitones) + Double(min(99, safeValue)) / 100.0
-            }
-
-        case 120, 123:
-            // All Sound Off / All Notes Off.
-            activeNotes = activeNotes.filter { key, _ in key.channel != channel }
-
+        case 1: modulationByChannel[channel] = safeValue
+        case 7: volumeByChannel[channel] = safeValue
+        case 11: expressionByChannel[channel] = safeValue
+        case 6,38,98,99,100,101:
+            incomingBendRanges[channel,default:.init()].control(controller,value:safeValue)
         case 121:
-            // Reset All Controllers.
-            sustainByChannel[channel] = false
+            incomingBendRanges.removeValue(forKey:channel)
             pitchBendByChannel[channel] = 8192
-            pitchBendRangeByChannel[channel] = 2.0
             modulationByChannel[channel] = 0
             volumeByChannel[channel] = 127
             expressionByChannel[channel] = 127
             channelPressureByChannel[channel] = 0
-            activeNotes = activeNotes.filter { key, state in
-                key.channel != channel || state.keyDownCount > 0
-            }
-
-        default:
-            break
+        default: break
         }
+        let notify = callback
         lock.unlock()
+        notifyIncoming(commands,using:notify)
     }
 
     private func sendPitchBendRange(semitones: Int, channel: Int) {
