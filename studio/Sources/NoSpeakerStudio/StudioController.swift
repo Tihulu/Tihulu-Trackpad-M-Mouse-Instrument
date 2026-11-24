@@ -174,6 +174,10 @@ final class StudioController: ObservableObject {
             return
         }
         let selected = chordBank.effectiveOutput
+        guard chordBank.permitsSelectedOutput else {
+            chordStatus = "Microtonal MIDI is not implemented. Choose Trackpad or explicitly allow equal-tempered MIDI in Scale Editor."
+            return
+        }
         if selected.sendsHaptics {
             guard (!touchBarOwnsHaptics || sharedNoteOutputEnabled), !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
                   !isPlaying, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
@@ -204,6 +208,9 @@ final class StudioController: ObservableObject {
             }
             chordArmed = true
             chordStatus = selected.rawValue + (selected.sendsHaptics && sharedNoteOutputEnabled ? " ready (shared experimental)" : " ready")
+            if chordBank.customScale?.isMicrotonal == true && selected.sendsMIDI {
+                chordStatus += " · MIDI 12-TET approximation"
+            }
         } catch {
             chordHapticToken = nil
             chordHaptics?.stop()
@@ -333,7 +340,8 @@ final class StudioController: ObservableObject {
 
     private func updateChordHaptics() {
         guard chordOwnsHaptics else { return }
-        let frame = NoteHapticRenderer.frame(notes: chordState.activeNotes, velocity: chordBank.velocity)
+        let frame = NoteHapticRenderer.frame(notes: chordState.activeNotes, velocity: chordBank.velocity,
+                                              centsByPitchClass: chordBank.centsByPitchClass)
         chordHaptics?.update(frame: frame, masterLevel: masterLevel)
     }
 

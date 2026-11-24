@@ -1,6 +1,6 @@
 import Foundation
 
-/// All automatic chords in this increment use 12-tone equal temperament.
+/// Built-in automatic chord scales use 12-tone equal temperament.
 /// Makam-inspired pitch collections are arranging aids, not makam tuning or seyir.
 public enum ChordScale: String, Codable, CaseIterable, Identifiable, Sendable {
     case major = "Major"
@@ -107,6 +107,14 @@ public struct ChordPad: Codable, Equatable, Sendable {
 public struct ChordBank: Codable, Equatable, Sendable {
     public var root = 60
     public var scale: ChordScale = .major
+    /// Optional for backward compatibility; nil selects the built-in scale.
+    public var customScale: CustomScale?
+    public var scaleName: String { customScale?.name ?? scale.rawValue }
+    public var centsByPitchClass: [Int: Int] { customScale?.offsetsByPitchClass(root: root) ?? [:] }
+    public var permitsSelectedOutput: Bool {
+        guard let customScale, customScale.isMicrotonal, effectiveOutput.sendsMIDI else { return true }
+        return customScale.allowEqualTemperedMIDI
+    }
     public var stack: ChordStack = .triads
     public var inversion = 0
     public var channel = 1
@@ -123,7 +131,7 @@ public struct ChordBank: Codable, Equatable, Sendable {
     public var isValid: Bool {
         (36...71).contains(root) && (0...2).contains(inversion) &&
         (1...16).contains(channel) && (1...127).contains(velocity) &&
-        (100...2000).contains(gateMS) &&
+        (100...2000).contains(gateMS) && (customScale?.isValid ?? true) &&
         overrides.count <= Self.padCount &&
         overrides.allSatisfy { (0..<Self.padCount).contains($0.key) && $0.value.isValid }
     }
@@ -131,7 +139,7 @@ public struct ChordBank: Codable, Equatable, Sendable {
     public func pad(at index: Int) -> ChordPad? {
         guard isValid, (0..<Self.padCount).contains(index) else { return nil }
         if let custom = overrides[index] { return custom }
-        let intervals = scale.intervals
+        let intervals = customScale?.intervals ?? scale.intervals
         func pitch(_ degree: Int) -> Int {
             root + intervals[degree % intervals.count] + 12 * (degree / intervals.count)
         }
@@ -162,6 +170,8 @@ public struct ChordBank: Codable, Equatable, Sendable {
         }
         notes.sort()
         guard notes.allSatisfy({ (0...127).contains($0) }), Set(notes).count == notes.count else { return nil }
+        // Chord quality names describe the nominal MIDI voicing, not the
+        // exact acoustic quality of a microtonally displaced interval.
         return ChordPad(name: names[fundamental % 12] + quality, notes: notes)
     }
 }
