@@ -28,13 +28,18 @@ function variant(s,policy){
   }
   // ACK-driven work conservation; the original 25/50 ms eligibility remains.
   R('syncControls();if(pedalEmergency||pedalQueue.length||pedalDirty||pianoEmergency||pianoQueue.length||drumEmergency||drumQueue.length||releaseDue||mode==="releasing"||streams.some(s=>s.mode==="releasing"))tick();','syncControls();tick();');
-  const rank=policy==="edgeFirst"
+  const rank=policy!=="deadlineAware"
     ?'x=>[x.edge===undefined?1:0,x.edge??x.last]'
     // 250 ms target for refresh prioritization gives headroom under 350 ms
     // watchdog; not a safety deadline change. Arms have no active ownership.
     :'x=>[0,x.edge!==undefined?x.edge+150:Number.isFinite(x.last)?x.last+250:Infinity]';
   R('if(ready.length){ready.reduce((a,b)=>a.last<b.last?a:b).run();return;}',
     'if(ready.length){const rank='+rank+';ready.reduce((a,b)=>{const x=rank(a),y=rank(b);return x[0]<y[0]||(x[0]===y[0]&&x[1]<y[1])?a:b;}).run();return;}');
+  if(policy==="pacedEdgeFirst"){
+    R("let caps=null;let touchEdges=[];","let caps=null;let touchEdges=[];let paceTimer=null;");
+    R("clearDeadline();if(timer!==null)","if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)");
+    R("if(pending)return;\n    // Release", "if(pending)return;\n    // Bound all sends to <=77 per second, including releases. No queue is popped while waiting.\n    if(now-lastSend<13){if(paceTimer===null)paceTimer=setTimeout(()=>{paceTimer=null;tick();},13-(now-lastSend));return;}\n    // Release");
+  }
   // Assert the existing deadlines are still present. No changes to host policy.
   for(const anchor of ['wait(220)','now-drumQueue[0].at>=150','now-pianoQueue[0].at>=150','now-pedalQueue[0].at>=150','now-sampleAt>=250','setInterval(tick,25)'])
     if(!s.includes(anchor))throw Error("Safety anchor lost: "+anchor);
@@ -173,7 +178,7 @@ const combinations={
 };
 async function run(source,inherited,execute){
   const h=helpers(inherited),original=h.extract(source),results=[],xy={};
-  for(const policy of ["frozen","edgeFirst","deadlineAware"]){
+  for(const policy of ["frozen","edgeFirst","deadlineAware","pacedEdgeFirst"]){
     const script=variant(original,policy);
     for(const [profile,options] of Object.entries(profiles))
       for(const [combo,selected] of Object.entries(combinations))
@@ -182,7 +187,7 @@ async function run(source,inherited,execute){
     xy[policy]=await xyCases(h,script,execute);
   }
   const summary={};
-  for(const policy of ["frozen","edgeFirst","deadlineAware"]){
+  for(const policy of ["frozen","edgeFirst","deadlineAware","pacedEdgeFirst"]){
     summary[policy]={};
     for(const profile of Object.keys(profiles)){
       const subset=results.filter(x=>x.policy===policy&&x.profile===profile);
