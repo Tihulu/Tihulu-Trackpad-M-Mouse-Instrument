@@ -20,6 +20,7 @@ public struct PhysicalPatchRuntime: Sendable {
     private static let strikeDuration = 0.06
     private var remoteEnabled = false
     private var pairing = RemotePairingGate()
+    private var mappingProjections: [SensorSource:RemoteMappingProjection] = [:]
     private var remotePeers: [UUID: RemoteTouchPeer] = [:]
     public static let maximumRemotePeers = 4
     // One session for each supported local source: trackpad, mouse, lid, Touch Bar, camera.
@@ -65,7 +66,14 @@ public struct PhysicalPatchRuntime: Sendable {
 
     public mutating func configure(_ patch: InstrumentPatch, allowRemote: Bool = false) throws {
         guard sessions.isEmpty, remotePeers.isEmpty, Self.supports(patch, allowRemote: allowRemote) else { throw SensorRouterError.invalidMappings }
+        var projections: [SensorSource:RemoteMappingProjection] = [:]
+        if allowRemote {
+            for source in [SensorSource.phone,.tablet] where patch.routes.contains(where: { $0.source == source }) {
+                projections[source] = try RemoteMappingProjection(patch:patch,source:source)
+            }
+        }
         try router.configure(patch.routes)
+        mappingProjections = projections
         supported = Set(patch.routes.map(\.source))
         touchSources = Set(patch.routes.filter { [.x,.y,.contact].contains($0.signal) }.map(\.source))
         motionSources = Set(patch.routes.filter { [.tiltYaw,.tiltPitch,.tiltRoll].contains($0.signal) }.map(\.source))
@@ -157,16 +165,17 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     /// Host-only API: a future transport must bind returned IDs to connections.
-    public mutating func issueRemotePairing(secret: Data, source: SensorSource, now: Double) throws {
+    public mutating func issueRemotePairing(secret: Data, source: SensorSource, now: Double, mappingDetails: Bool = false) throws {
         guard remoteEnabled, supported.contains(source), source == .phone || source == .tablet
         else { throw RemoteTouchError.unavailable }
-        try pairing.issue(secret: secret, source: source, now: now)
+        try pairing.issue(secret: secret, source: source, now: now, mappingDetails: mappingDetails)
     }
 
     public mutating func admitRemote(secret: Data, now: Double) throws -> UUID {
         guard remoteEnabled else { throw RemoteTouchError.unavailable }
         guard remotePeers.count < Self.maximumRemotePeers else { throw RemoteTouchError.capacity }
-        let source = try pairing.consume(secret: secret, now: now)
+        let invitation = try pairing.consumeWithConsent(secret:secret,now:now)
+        let source = invitation.source
         guard supported.contains(source) else { throw RemoteTouchError.unavailable }
         let cost = remoteSessionCost(source)
         // Reserve the full advertised source capability before admitting a peer.
@@ -174,7 +183,7 @@ public struct PhysicalPatchRuntime: Sendable {
         guard cost > 0 else { throw RemoteTouchError.unavailable }
         guard reservedRemoteSessions + cost <= Self.maximumRemoteSessions else { throw RemoteTouchError.capacity }
         let id = UUID()
-        remotePeers[id] = RemoteTouchPeer(source: source, now: now)
+        remotePeers[id] = RemoteTouchPeer(source: source, now: now, mappingDetails: invitation.mappingDetails)
         return id
     }
 
@@ -188,6 +197,13 @@ public struct PhysicalPatchRuntime: Sendable {
                      rotation: inertialSignals[source]?.contains(.rotationMagnitude) == true,
                      airDrums: strikeSettings[source] != nil, drums: drumMasks[source] ?? 0,
                      piano: pianoMasks[source] ?? 0, pedals: pedalMasks[source] ?? 0)
+    }
+
+    // Internal projection API; not reachable from the v1–7 network protocol.
+    func remoteMappingPage(_ id: UUID, page: Int, sequence: UInt64) throws -> RemoteMappingPage {
+        guard remoteEnabled, let peer = remotePeers[id], peer.isIdle,
+              let projection = mappingProjections[peer.source] else { throw RemoteTouchError.unavailable }
+        return try projection.page(page,sequence:sequence,detail:peer.mappingDetails)
     }
 
     public mutating func receiveRemote(_ id: UUID, bytes: Data, now: Double) -> RemoteTouchResult {
