@@ -252,6 +252,16 @@ public struct SensorRouter: Sendable {
         return reconcile()
     }
 
+    /// Release an on-screen control without disconnecting its sibling axes.
+    /// Remove its contribution instead of feeding a synthetic zero (which
+    /// could retrigger an inverted gate or bypass a custom release position).
+    public mutating func releaseSignal(session id: UUID, signal: SensorSignal) -> [SensorCommand] {
+        guard let session = sessions[id] else { return [] }
+        let ids = Set(mappings.filter { $0.source == session.source && $0.signal == signal }.map(\.id))
+        contributions = contributions.filter { $0.key.session != id || !ids.contains($0.key.mapping) }
+        return reconcile()
+    }
+
     /// Closing one device releases only its ownership. Other devices may
     /// continue holding a note, sustain or a shared continuous control.
     public mutating func disconnect(_ id: UUID) -> [SensorCommand] {
