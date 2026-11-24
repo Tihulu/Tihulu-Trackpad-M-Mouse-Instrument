@@ -111,9 +111,12 @@ public struct ChordBank: Codable, Equatable, Sendable {
     public var customScale: CustomScale?
     public var scaleName: String { customScale?.name ?? scale.rawValue }
     public var centsByPitchClass: [Int: Int] { customScale?.offsetsByPitchClass(root: root) ?? [:] }
+    /// Explicit opt-in; older banks retain their existing standard MIDI route.
+    public var microtonalMPE: Bool?
+    public var usesMPE: Bool { microtonalMPE == true && effectiveOutput.sendsMIDI }
     public var permitsSelectedOutput: Bool {
         guard let customScale, customScale.isMicrotonal, effectiveOutput.sendsMIDI else { return true }
-        return customScale.allowEqualTemperedMIDI
+        return usesMPE || customScale.allowEqualTemperedMIDI
     }
     public var stack: ChordStack = .triads
     public var inversion = 0

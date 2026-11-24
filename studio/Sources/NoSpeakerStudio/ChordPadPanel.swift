@@ -71,8 +71,22 @@ struct ChordPadPanel: View {
                         )) {
                             ForEach(MusicalOutput.allCases) { Text($0.rawValue).tag($0) }
                         }.pickerStyle(.segmented).disabled(studio.chordArmed)
+                        if studio.chordBank.effectiveOutput.sendsMIDI {
+                            Toggle("Dedicated MPE tuning (experimental)", isOn: Binding(
+                                get: { studio.chordBank.microtonalMPE == true },
+                                set: { enabled in
+                                    var bank = studio.chordBank
+                                    bank.microtonalMPE = enabled
+                                    studio.updateChordBank(bank)
+                                }
+                            )).disabled(studio.chordArmed)
+                            if studio.chordBank.microtonalMPE == true {
+                                Text("Use only the TIHULU Chord MPE source with an MPE-compatible receiver. Lower zone: 15 member channels, ±2 semitone bend range. The ordinary MIDI channel setting is bypassed. Configure the receiver before arming; re-arm after changing the receiver.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                         SharedNoteOutputSetting()
-                        Text("Trackpad uses up to six tones with octave folding. MIDI retains the complete voicing. Other legacy haptic performances require disarming first.")
+                        Text("Trackpad uses up to six tones with octave folding. Standard MIDI retains the complete voicing; dedicated MPE supports up to 15 simultaneous notes. Other legacy haptic performances require disarming first.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }
@@ -96,6 +110,7 @@ struct ChordPadPanel: View {
                         }
                         HStack {
                             Stepper("MIDI channel \(studio.chordBank.channel)", value: binding(\.channel), in: 1...16)
+                                .disabled(studio.chordBank.usesMPE)
                             Stepper("Velocity \(studio.chordBank.velocity)", value: binding(\.velocity), in: 1...127)
                         }
                         HStack {

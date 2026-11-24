@@ -31,13 +31,15 @@ struct CustomScalePanel: View {
                     Text(scale.intervals.map { String($0 * 100 + (scale.centOffsets[$0] ?? 0)) + "¢" }.joined(separator: " · "))
                         .font(.caption.monospacedDigit())
                     if scale.isMicrotonal {
-                        Text(scale.allowEqualTemperedMIDI
-                             ? "Trackpad: tuned frequencies. MIDI: explicitly allowed 12-TET approximation."
-                             : "Trackpad: tuned frequencies. MIDI/Both cannot arm until approximation is explicitly allowed.")
+                        Text(studio.chordBank.microtonalMPE == true
+                             ? "Chord MIDI: dedicated MPE tuning. Touch Instrument still needs a haptic route or explicit 12-TET approximation."
+                             : (scale.allowEqualTemperedMIDI
+                                ? "Trackpad: tuned frequencies. MIDI: explicitly allowed 12-TET approximation."
+                                : "Trackpad: tuned frequencies. MIDI/Both require dedicated MPE or explicit approximation."))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Text("Root-relative octave scale, used by generated chords, progressions and arpeggios. Custom chord MIDI notes stay fixed; tuning applies by pitch class. Does not retune Touch Instrument or external synths yet.")
+                Text("Root-relative octave scale, used by generated chords, progressions and arpeggios. Custom chord MIDI notes stay fixed; tuning applies by pitch class. Copy the scale from Touch Instrument to use fretted tuning. External chord tuning requires a compatible MPE receiver.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(8)
         }
@@ -53,7 +55,7 @@ struct CustomScalePanel: View {
                     }
                 }.frame(maxHeight: 340)
                 Toggle("Allow equal-tempered MIDI approximation", isOn: $draft.allowEqualTemperedMIDI)
-                Text("Independent polyphonic MIDI tuning is not implemented. This option does not send pitch bend or retune a receiver. Trackpad output uses the exact requested cent offsets within the existing frequency limits.")
+                Text("This fallback sends nominal MIDI notes without tuning. Dedicated chord MPE is configured separately in Chord Pads Output. Touch Instrument does not yet use the new MPE tuning route.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Zero cent offsets") { draft.centOffsets = [:] }

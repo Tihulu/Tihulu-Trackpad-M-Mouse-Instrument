@@ -11,6 +11,11 @@ struct ActiveMIDINote: Identifiable, Equatable {
     var velocity: Int
 }
 
+private enum ChordMPEConfigurationError: LocalizedError {
+    case delivery
+    var errorDescription: String? { "Could not configure the dedicated MPE output. Check CoreMIDI and re-arm." }
+}
+
 @MainActor
 final class StudioController: ObservableObject {
     @Published var engineStatus = "Initializing haptic engine…"
@@ -29,6 +34,11 @@ final class StudioController: ObservableObject {
     @Published private(set) var chordActiveSlots: Set<Int> = []
     @Published private(set) var chordStatus = "Output off"
     private let chordOutput = ChordMIDIOutput()
+    private let chordMPEOutput = ChordMIDIOutput(name: "TIHULU Chord MPE")
+    private var chordMPEState = ChordMPEState()
+    // Retain the actual endpoint selection until all attempted notes are released.
+    private var chordMPEActive = false
+    private var activeChordMIDIOutput: ChordMIDIOutput { chordMPEActive ? chordMPEOutput : chordOutput }
     private var chordHaptics: LiveNoteHapticOutput?
     @Published private(set) var sharedNoteOutputEnabled = false
     private var sharedNoteOutput: SharedLiveNoteOutput?
@@ -176,7 +186,7 @@ final class StudioController: ObservableObject {
         }
         let selected = chordBank.effectiveOutput
         guard chordBank.permitsSelectedOutput else {
-            chordStatus = "Microtonal MIDI is not implemented. Choose Trackpad or explicitly allow equal-tempered MIDI in Scale Editor."
+            chordStatus = "Choose Trackpad, enable dedicated MPE, or explicitly allow equal-tempered MIDI in Scale Editor."
             return
         }
         if selected.sendsHaptics {
@@ -195,7 +205,17 @@ final class StudioController: ObservableObject {
             chordHaptics = makeLiveNoteOutput(driver: driver, source: .chords)
         }
         do {
-            if selected.sendsMIDI { try chordOutput.open() }
+            chordMPEActive = chordBank.usesMPE
+            if selected.sendsMIDI {
+                try activeChordMIDIOutput.open()
+                if chordMPEActive {
+                    for command in ChordMPEState.configuration() {
+                        guard activeChordMIDIOutput.send(command) else {
+                            throw ChordMPEConfigurationError.delivery
+                        }
+                    }
+                }
+            }
             if selected.sendsHaptics {
                 let token = UUID()
                 chordHapticToken = token
@@ -209,7 +229,9 @@ final class StudioController: ObservableObject {
             }
             chordArmed = true
             chordStatus = selected.rawValue + (selected.sendsHaptics && sharedNoteOutputEnabled ? " ready (shared experimental)" : " ready")
-            if chordBank.customScale?.isMicrotonal == true && selected.sendsMIDI {
+            if chordMPEActive {
+                chordStatus += " · dedicated MPE"
+            } else if chordBank.customScale?.isMicrotonal == true && selected.sendsMIDI {
                 chordStatus += " · MIDI 12-TET approximation"
             }
         } catch {
@@ -348,14 +370,28 @@ final class StudioController: ObservableObject {
 
     private func deliverChordCommands(_ commands: [SensorCommand]) -> Bool {
         guard chordBank.effectiveOutput.sendsMIDI else { return true }
-        for command in commands {
-            if command.value > 0 { chordOutstanding.insert(command.destination) }
-            guard chordOutput.send(command) else {
-                disarmChordPads()
-                chordStatus = "MIDI delivery failed. Check the DAW; note release is not confirmed."
-                return false
+        for logical in commands {
+            let routed: [SensorCommand]
+            if chordMPEActive {
+                guard let next = chordMPEState.route(logical, centsByPitchClass: chordBank.centsByPitchClass) else {
+                    disarmChordPads()
+                    chordStatus = "MPE note limit or invalid tuning. Output stopped; check the DAW."
+                    return false
+                }
+                routed = next
+            } else {
+                routed = [logical]
             }
-            if command.value == 0 { chordOutstanding.remove(command.destination) }
+            for command in routed {
+                let isNote = command.destination.kind == .note
+                if isNote && command.value > 0 { chordOutstanding.insert(command.destination) }
+                guard activeChordMIDIOutput.send(command) else {
+                    disarmChordPads()
+                    chordStatus = "MIDI delivery failed. Check the DAW; note release is not confirmed."
+                    return false
+                }
+                if isNote && command.value == 0 { chordOutstanding.remove(command.destination) }
+            }
         }
         return true
     }
@@ -375,8 +411,9 @@ final class StudioController: ObservableObject {
         chordHaptics?.update(frame: nil, masterLevel: 0)
         // Retry all possibly transmitted notes, including a failed Note On.
         for key in Array(chordOutstanding) {
-            if chordOutput.send(.init(key, value: 0)) { chordOutstanding.remove(key) }
+            if activeChordMIDIOutput.send(.init(key, value: 0)) { chordOutstanding.remove(key) }
         }
+        if chordOutstanding.isEmpty { chordMPEState.clearAfterRelease() }
         if !chordOutstanding.isEmpty {
             chordHapticToken = nil
             chordHaptics?.stop()
