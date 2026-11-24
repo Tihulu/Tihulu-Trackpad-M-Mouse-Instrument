@@ -743,9 +743,7 @@ private struct TouchInstrumentView: View {
 
     private var effectivePitchSpan: Double { 24.0 / zoneWidth }
 
-    private var mappedMIDINotes: [Int] {
-        scale.mappedMIDINotes(root: root, zoneWidth: zoneWidth)
-    }
+    private var mappedMIDINotes: [Int] { configuration.mappedMIDINotes }
 
     private var hasMelodic: Bool {
         (surfaceSelection.accepts(.trackpad) && trackpadInstrument == .melodic) ||
@@ -780,7 +778,8 @@ private struct TouchInstrumentView: View {
             magicMouseInstrument: magicMouseInstrument,
             trackpadOutput: trackpadOutput,
             magicMouseOutput: magicMouseOutput,
-            drumLayout: drumLayout
+            drumLayout: drumLayout,
+            customScale: studio.touchCustomScale
         )
     }
 
@@ -890,7 +889,7 @@ private struct TouchInstrumentView: View {
                             ForEach(TouchScale.allCases) { Text($0.rawValue).tag($0) }
                         }
                         .frame(width: 190)
-                        .disabled(studio.touchRunning)
+                        .disabled(studio.touchRunning || (!fretless && studio.touchCustomScale != nil))
 
                         Stepper("Root \(rootName)", value: $root, in: 24...96)
                             .frame(width: 170)
@@ -928,6 +927,35 @@ private struct TouchInstrumentView: View {
                     )
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(studio.touchPreviewRunning ? Color.green : Color.secondary)
+                }
+
+                if hasMelodic {
+                    GroupBox("Shared scale & tuning") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Button("Use chord-bank scale") { studio.useChordBankScaleForTouch() }
+                                if let custom = studio.touchCustomScale {
+                                    Text(custom.name).font(.headline)
+                                    Button("Use built-in Touch scale") { studio.clearTouchCustomScale() }
+                                }
+                            }.disabled(studio.touchRunning || fretless)
+                            if fretless {
+                                Text("Fretless uses continuous pitch; custom fret tuning is bypassed.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let custom = studio.touchCustomScale {
+                                Text("Copied from the chord bank; follows the Touch root and note width. Re-copy after editing the bank. " +
+                                     (custom.isMicrotonal ? "Haptic notes use cent offsets. MIDI uses nominal notes only if approximation was allowed." : "Equal-tempered custom degrees."))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text("Optional: reuse any built-in or custom chord-bank scale for fretted notes.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            if !configuration.permitsMelodicMIDI {
+                                Text("Choose a haptic melodic route or allow equal-tempered MIDI in the bank's Scale Editor, then re-copy.")
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
+                        }.padding(6)
+                    }
                 }
 
                 if surfaceSelection.accepts(.trackpad) {
@@ -1113,6 +1141,7 @@ private struct TouchInstrumentView: View {
         }
         .onChange(of: root) { _ in syncConfiguration() }
         .onChange(of: scale) { _ in syncConfiguration() }
+        .onChange(of: studio.touchCustomScale) { _ in syncConfiguration() }
         .onChange(of: fretless) { _ in syncConfiguration() }
         .onChange(of: zoneWidth) { _ in syncConfiguration() }
         .onChange(of: pitchSpan) { _ in syncConfiguration() }

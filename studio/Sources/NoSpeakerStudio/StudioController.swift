@@ -103,6 +103,7 @@ final class StudioController: ObservableObject {
     private var midi: MIDIHapticService?
     private var systemAudio: SystemAudioHapticCapture?
     private var currentTouchConfiguration = TouchInstrumentConfiguration()
+    @Published private(set) var touchCustomScale: CustomScale?
     private var touchMIDIOutEnabled = false
     private var touchMIDIMode: TouchMIDIMode = .standard
     private var touchMultiTouchEnabled = true
@@ -1097,6 +1098,24 @@ final class StudioController: ObservableObject {
         }
     }
 
+    /// Explicitly copy the current bank scale. Live performances never retune
+    /// as a side effect of editing the bank on another page.
+    func useChordBankScaleForTouch() {
+        guard !touchRunning else { return }
+        var scale = chordBank.customScale ?? CustomScale()
+        if chordBank.customScale == nil {
+            scale.name = chordBank.scale.rawValue
+            scale.intervals = chordBank.scale.intervals
+        }
+        guard scale.isValid else { return }
+        touchCustomScale = scale
+    }
+
+    func clearTouchCustomScale() {
+        guard !touchRunning else { return }
+        touchCustomScale = nil
+    }
+
     func startTouchPreview(configuration: TouchInstrumentConfiguration) {
         guard requireEngine() else { return }
         // Reopening the view never overwrites an already running performance
@@ -1147,6 +1166,10 @@ final class StudioController: ObservableObject {
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
         guard allowOtherPerformance() else { return }
+        guard configuration.permitsMelodicMIDI else {
+            lastError = "Custom cent offsets require Trackpad output or explicit equal-tempered MIDI approximation in the Scale Editor. Drum MIDI is unaffected."
+            return
+        }
         cancelStartupGreeting()
         guard requireEngine(), let touch else { return }
         var configuration = configuration
