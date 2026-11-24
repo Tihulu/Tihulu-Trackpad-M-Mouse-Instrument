@@ -220,6 +220,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
     private var configuration = TouchInstrumentConfiguration()
     private var monitoring = false
+    private var monitoringToken: UUID?
+    private var patchMailbox: PatchSurfaceMailbox?
     private var active = false
     private var performanceHandler: (@Sendable ([TouchPerformanceState]) -> Void)?
     private var latestStatesBySurface: [TouchSurfaceKind: [TouchPerformanceState]] = [:]
@@ -250,14 +252,36 @@ public final class TouchInstrumentService: @unchecked Sendable {
         self.configuration = configuration
         self.performanceHandler = onPerformance
         let needsStart = !monitoring
+        let token = needsStart ? UUID() : monitoringToken
+        monitoringToken = token
         monitoring = true
         lock.unlock()
 
-        guard needsStart else { return }
+        guard needsStart, let token else { return }
 
-        try driver.startSurfaceMonitoring(includeExternalSurfaces: true) { [weak self] frame in
-            self?.handle(frame)
+        do {
+            try driver.startSurfaceMonitoring(includeExternalSurfaces: true) { [weak self] frame in
+                self?.handle(frame, token: token)
+            }
+        } catch {
+            lock.lock()
+            if monitoringToken == token {
+                monitoring = false
+                monitoringToken = nil
+                performanceHandler = nil
+                latestStatesBySurface.removeAll()
+            }
+            lock.unlock()
+            throw error
         }
+    }
+
+    /// A per-run bounded raw-frame subscriber. Does not register another
+    /// private callback or alter Touch Instrument rendering.
+    public func setPatchMailbox(_ mailbox: PatchSurfaceMailbox?) {
+        lock.lock()
+        patchMailbox = mailbox
+        lock.unlock()
     }
 
     public func update(configuration: TouchInstrumentConfiguration) {
@@ -313,6 +337,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         setActive(false)
         lock.lock()
         monitoring = false
+        monitoringToken = nil
         performanceHandler = nil
         latestStatesBySurface.removeAll()
         lock.unlock()
@@ -342,11 +367,15 @@ public final class TouchInstrumentService: @unchecked Sendable {
         setActive(false)
     }
 
-    private func handle(_ frame: SurfaceTouchFrame) {
+    private func handle(_ frame: SurfaceTouchFrame, token: UUID) {
         lock.lock()
+        guard monitoring, monitoringToken == token else { lock.unlock(); return }
         let config = configuration
         let isActive = active
         let callback = performanceHandler
+        // Submit under the subscription lock to serialize detachment with
+        // the bounded enqueue; no MIDI or actor dispatch in the subscriber.
+        patchMailbox?.submit(frame)
         lock.unlock()
 
         guard config.surfaceSelection.accepts(frame.surface) else { return }
@@ -407,6 +436,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         }
 
         lock.lock()
+        guard monitoring, monitoringToken == token else { lock.unlock(); return }
         latestStatesBySurface[frame.surface] = states.filter(\.isTouching)
         let combined = TouchSurfaceKind.allCases
             .filter { config.surfaceSelection.accepts($0) }
@@ -418,7 +448,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.lock()
         // A preview is never a percussion trigger. Only a new active contact
         // queues a hit; holding/sliding a finger does not retrigger each tick.
-        guard active else { lock.unlock(); return }
+        guard active, monitoring, monitoringToken == token else { lock.unlock(); return }
         let liveConfig = configuration
         liveHapticStates = combined.filter { $0.isDown }
         let drums = liveHapticStates.filter {

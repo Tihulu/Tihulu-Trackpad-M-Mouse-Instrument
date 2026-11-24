@@ -40,6 +40,7 @@ final class StudioController: ObservableObject {
     private var patchPhysicalRuntime = PhysicalPatchRuntime()
     private var patchMailbox: PatchSurfaceMailbox?
     private var patchWatchdog: Task<Void, Never>?
+    private var surfaceMonitorToken: UUID?
     @Published private(set) var sequenceRunning = false
     @Published private(set) var sequenceStatus = "Sequencer MIDI idle"
     private let sequenceMIDI = ChordMIDIOutput(name: "TIHULU Sequencer")
@@ -182,12 +183,7 @@ final class StudioController: ObservableObject {
                 patchStatus = "Live input supports only Trackpad/external touch surface X, Y, contact and contact size."
                 return
             }
-            guard !touchPreviewRunning, !touchRunning, !midiHelperRunning,
-                  !instrumentPreviewRequested, !helperPreviewRequested else {
-                patchStatus = "Stop Touch Instrument and MIDI Helper before starting physical Builder input."
-                return
-            }
-            guard requireEngine(), driver != nil else {
+            guard requireEngine(), touch != nil else {
                 patchStatus = "Native surface monitoring unavailable on this Mac."
                 return
             }
@@ -203,8 +199,12 @@ final class StudioController: ObservableObject {
                 let mailbox = PatchSurfaceMailbox()
                 patchMailbox = mailbox
                 patchPhysical = true
-                try driver?.startSurfaceMonitoring(includeExternalSurfaces: true) { frame in
-                    mailbox.submit(frame)
+                touch?.setPatchMailbox(mailbox)
+                refreshSharedSurfaceMonitoring()
+                guard touchPreviewRunning else {
+                    stopInstrumentPatch()
+                    patchStatus = "Shared native surface monitoring failed."
+                    return
                 }
                 patchInputs = []
                 patchActiveSurfaces = []
@@ -307,10 +307,12 @@ final class StudioController: ObservableObject {
     func stopInstrumentPatch() {
         patchWatchdog?.cancel()
         patchWatchdog = nil
+        let hadPhysicalInput = patchPhysical
+        touch?.setPatchMailbox(nil)
         patchMailbox?.close()
         patchMailbox = nil
-        if patchPhysical { driver?.stopSurfaceMonitoring() }
         patchPhysical = false
+        if hadPhysicalInput { refreshSharedSurfaceMonitoring() }
         patchActiveSurfaces = []
         _ = patchPhysicalRuntime.stop()
         _ = patchSimulation.stop()
@@ -1035,6 +1037,7 @@ final class StudioController: ObservableObject {
         trackpadClickPressure = nil
         stopSystemAudio()
         playback?.stop(closeDriver: false)
+        surfaceMonitorToken = nil
         touch?.stopPreview()
         midi?.stop()
         // Terminal revocation drains an in-flight submission and blocks any
@@ -1375,10 +1378,11 @@ final class StudioController: ObservableObject {
     /// Distribute the same physical frames to independently enabled Instrument
     /// and Helper consumers, filtered by surface assignment.
     private func refreshSharedSurfaceMonitoring() {
-        guard !patchPhysical, let touch else { return }
+        guard let touch else { return }
         let needed = instrumentPreviewRequested || helperPreviewRequested ||
-                     touchRunning || midiHelperRunning
+                     touchRunning || midiHelperRunning || patchPhysical
         if !needed {
+            surfaceMonitorToken = nil
             touch.stopPreview()
             touchPreviewRunning = false
             return
@@ -1403,14 +1407,19 @@ final class StudioController: ObservableObject {
 
         do {
             let generation = engineGeneration
+            let token = UUID()
+            surfaceMonitorToken = token
             try touch.startPreview(configuration: monitoringConfiguration) { [weak self] states in
                 Task { @MainActor in
-                    guard let self, self.engineGeneration == generation, self.touchPreviewRunning else { return }
+                    guard let self, self.engineGeneration == generation,
+                          self.surfaceMonitorToken == token, self.touchPreviewRunning else { return }
                     self.handleSharedSurfaceStates(states)
                 }
             }
             touchPreviewRunning = true
         } catch {
+            surfaceMonitorToken = nil
+            touchPreviewRunning = false
             fail(error)
         }
     }
@@ -1449,7 +1458,6 @@ final class StudioController: ObservableObject {
     }
 
     func startTouchPreview(configuration: TouchInstrumentConfiguration) {
-        guard !patchPhysical else { return }
         guard requireEngine() else { return }
         // Reopening the view never overwrites an already running performance
         // with fresh @State defaults from a newly constructed SwiftUI view.
@@ -1663,7 +1671,6 @@ final class StudioController: ObservableObject {
     }
 
     func startMIDIHelperPreview(surfaceSelection: TouchSurfaceSelection) {
-        guard !patchPhysical else { return }
         guard requireEngine() else { return }
         // Preserve the live helper's previously chosen surface until the user
         // explicitly changes it; navigating away/back must not re-route MIDI.
@@ -2133,10 +2140,6 @@ final class StudioController: ObservableObject {
     }
 
     private func allowOtherPerformance() -> Bool {
-        guard !patchPhysical else {
-            lastError = "Stop physical Instrument Builder input before starting another monitored performance."
-            return false
-        }
         guard !sequenceOwnsHaptics else {
             lastError = "Stop the sequencer's combined Trackpad/MIDI output first."
             return false
