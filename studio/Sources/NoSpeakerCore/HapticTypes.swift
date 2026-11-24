@@ -60,6 +60,7 @@ public struct HapticSafetyPolicy: Sendable, Equatable, Codable {
 
 public enum StudioMode: String, CaseIterable, Sendable, Identifiable, Codable {
     case performance = "Performance"
+    case mapping = "Mapping Lab"
     case voice = "Voice"
     case touch = "Touch Instrument"
     case notes = "Note Sequencer"

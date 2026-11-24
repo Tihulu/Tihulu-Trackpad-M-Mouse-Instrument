@@ -155,7 +155,7 @@ struct ContentView: View {
 
     private var navigationGroups: [(String, [StudioMode])] {
         [
-            ("Workspace", [.performance]),
+            ("Workspace", [.performance, .mapping]),
             ("Play", [.touch, .midiHelper, .touchBar]),
             ("Compose", [.notes, .drums, .midi]),
             ("Sound", [.voice, .audio, .speaker]),
@@ -196,6 +196,7 @@ struct ContentView: View {
                         workspaceMessage: workspaceMessage, workspaceEditable: workspaceEditable,
                         choose: { pendingWorkspace = $0 }, save: saveWorkspace, load: loadWorkspace
                     )
+                    case .mapping: SensorMappingLabView()
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
                     case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture)
                     case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture)
@@ -442,6 +443,7 @@ struct ContentView: View {
     private func icon(for mode: StudioMode) -> String {
         switch mode {
         case .performance: "music.note.house"
+        case .mapping: "point.3.connected.trianglepath.dotted"
         case .voice: "text.bubble"
         case .touch: "hand.point.up.left"
         case .midiHelper: "slider.horizontal.3"
@@ -528,8 +530,9 @@ private struct PerformanceOverview: View {
                     launch("Note Sequencer", "Build a melodic pattern", "music.note.list", .notes)
                     launch("Drum Sequencer", "Build a rhythmic pattern", "circle.grid.cross", .drums)
                     launch("Voice", "Render speech on the trackpad", "text.bubble", .voice)
+                    launch("Mapping Lab", "Test custom sensor-to-MIDI rules without sending MIDI", "point.3.connected.trianglepath.dotted", .mapping)
                 }
-                Text("Instrument Builder, Camera and Remote are planned modules; no simulated connection or live status is shown here.")
+                Text("Mapping Lab provides an isolated software preview. Live Camera, Remote and the full Instrument Builder are planned.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(24)
         }
