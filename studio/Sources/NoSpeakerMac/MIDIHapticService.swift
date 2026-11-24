@@ -139,6 +139,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var expressionByChannel: [Int: Int] = [:]
     private var channelPressureByChannel: [Int: Int] = [:]
     private var renderTimer: DispatchSourceTimer?
+    private let renderFence = HapticSourceFence()
     private var inputHapticsEnabled = true
 
     private var outgoingTouches: [TouchKey: OutgoingTouch] = [:]
@@ -242,6 +243,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     public func stop() {
+        renderFence.revoke()
         releaseHelperSustain()
         releaseTouchSustain()
         endAllTouchOutput()
@@ -284,6 +286,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         inputHapticsEnabled = enabled
         lock.unlock()
+        if !enabled { renderFence.drain() }
     }
 
     public func sendTouchStates(
@@ -707,17 +710,18 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     private func startRenderTimer() {
+        let token = renderFence.begin()
         let timer = DispatchSource.makeTimerSource(queue: renderQueue)
         // Match Touch Instrument's continuously refreshed feel instead of behaving like
         // isolated haptic taps. A short overlapping frame prevents audible gaps while a
         // MIDI key (or sustain pedal) remains logically active.
         timer.schedule(deadline: .now(), repeating: .milliseconds(8), leeway: .milliseconds(1))
-        timer.setEventHandler { [weak self] in self?.renderActiveNotes() }
+        timer.setEventHandler { [weak self] in self?.renderActiveNotes(token: token) }
         renderTimer = timer
         timer.resume()
     }
 
-    private func renderActiveNotes() {
+    private func renderActiveNotes(token: UUID) {
         lock.lock()
         let active = enabled
         let hapticsEnabled = inputHapticsEnabled
@@ -759,11 +763,17 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
 
         guard !tones.isEmpty else { return }
-        try? driver.play(.init(
-            tones: tones,
-            durationMS: 36,
-            level: min(1, combinedLevel * levelScale)
-        ))
+        renderFence.submit(token) {
+            lock.lock()
+            let allowed = enabled && inputHapticsEnabled
+            lock.unlock()
+            guard allowed else { return }
+            try? driver.play(.init(
+                tones: tones,
+                durationMS: 36,
+                level: min(1, combinedLevel * levelScale)
+            ))
+        }
     }
 
     private func receive(_ eventList: UnsafePointer<MIDIEventList>) {
