@@ -13,7 +13,7 @@ struct ExpressivePresetPanel: View {
     @State private var expanded = false
 
     private var signals: [SensorSignal] { ExpressivePreset.signals(for: source) }
-    private var physical: Bool { [.trackpad,.magicMouse,.touchBar,.lid].contains(source) }
+    private var physical: Bool { [.trackpad,.magicMouse,.touchBar,.lid,.camera].contains(source) }
 
     var body: some View {
         DisclosureGroup("Add expressive control", isExpanded: $expanded) {
@@ -40,7 +40,7 @@ struct ExpressivePresetPanel: View {
                     Toggle("Invert", isOn: $inverted)
                 }
                 Text(preset.instructions).font(.caption).foregroundStyle(.secondary)
-                Text(physical ? "Native input is experimental; release returns to the configured position. Select Native inputs to test the surface, lid or dedicated ribbon." :
+                Text(physical ? "Native input is experimental; release returns to the configured position. Select Native inputs to test the surface, lid, ribbon or camera." :
                     "Simulation only in this Builder version. The signal is a normalized test input, not an active hardware sensor.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
@@ -68,7 +68,7 @@ struct ExpressivePresetPanel: View {
         case .lid: "Lid angle (experimental)"
         case .phone: "Phone (simulation)"
         case .tablet: "Tablet (simulation)"
-        case .camera: "Camera (simulation)"
+        case .camera: "Camera / hand (experimental)"
         default: source.rawValue
         }
     }

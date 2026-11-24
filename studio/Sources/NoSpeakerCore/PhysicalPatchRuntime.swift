@@ -20,6 +20,7 @@ public struct PhysicalPatchRuntime: Sendable {
             case .trackpad, .magicMouse: return supportedSignals.contains($0.signal)
             case .lid: return $0.signal == .angle
             case .touchBar: return $0.signal == .x
+            case .camera: return [.x,.y,.gesture,.contact].contains($0.signal)
             default: return false
             }
         }
@@ -78,6 +79,26 @@ public struct PhysicalPatchRuntime: Sendable {
         sequence &+= 1
         return router.ingest(.init(session: session, signal: source == .lid ? .angle : .x,
                                    value: value, sequence: sequence, timestamp: hostTime), now: hostTime)
+    }
+
+    /// Camera frame identity is not tracked across hands. The adapter
+    /// rejects multiple/low-confidence hands; nil releases this source.
+    public mutating func receiveHand(_ hand: AirHandSample?, hostTime: Double, now: Double) -> [SensorCommand] {
+        let source = SensorSource.camera
+        guard supported.contains(source), hostTime.isFinite, now.isFinite,
+              hostTime >= 0, hostTime <= now, now - hostTime < Self.timeout,
+              hostTime >= (seen[source] ?? 0) else { return [] }
+        seen[source] = hostTime
+        guard let hand else { return disconnect(source) }
+        if sessions[source] == nil { sessions[source] = try? router.connect(source, now: hostTime) }
+        guard let session = sessions[source] else { return [] }
+        var result: [SensorCommand] = []
+        for (signal, value): (SensorSignal, Double) in [(.x,hand.x),(.y,hand.y),(.gesture,hand.aperture),(.contact,1)] {
+            sequence &+= 1
+            result += router.ingest(.init(session: session, signal: signal, value: value,
+                                          sequence: sequence, timestamp: hostTime), now: hostTime)
+        }
+        return result
     }
 
     public mutating func expire(now: Double) -> [SensorCommand] {

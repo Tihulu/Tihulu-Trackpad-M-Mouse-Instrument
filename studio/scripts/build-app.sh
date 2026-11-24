@@ -120,6 +120,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>NoSpeakerBuildSHA</key><string>$BUILD_SHA</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSCameraUsageDescription</key><string>Use the camera only when you start an Air Instrument mapping. Hand motion is processed locally without recording or uploading video.</string>
     <key>CFBundleIconFile</key><string>TihuluInstrument.icns</string>
     <key>NSHumanReadableCopyright</key><string>TIHULU downstream work; based on nospeaker by Cody Collier (MIT).</string>
 </dict>
