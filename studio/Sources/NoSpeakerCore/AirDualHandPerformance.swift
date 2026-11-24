@@ -8,24 +8,30 @@ public struct AirDualHandPerformance: Sendable {
     private var selection = AirChordSelection(slots: defaultBank)!
     private var pinch = AirPinchGate()
     public private(set) var soundingSlot: Int?
+    public private(set) var trackingReady = false
+    public var selectedSlot: Int? { selection.selectedSlot }
     public init() {}
 
     public mutating func reset() {
         _ = selection.invalidate()
         pinch.reset()
         soundingSlot = nil
+        trackingReady = false
     }
 
     public mutating func receive(count: Int?, confidence: Double, helper: AirHandSample?,
                                  time: Double, now: Double) -> Int? {
         guard time.isFinite, now.isFinite, time >= 0, now >= time,
-              now - time < 0.25, let helper else { reset(); return nil }
+              now - time < 0.25, let helper, let count, (0...5).contains(count),
+              confidence.isFinite, (0.75...1).contains(confidence) else { reset(); return nil }
         let change = selection.observe(count: count, confidence: confidence, time: time)
         if change == .releaseOwned {
             pinch.reset()
             soundingSlot = nil
+            trackingReady = false
             return nil
         }
+        trackingReady = selection.selectedSlot != nil
         soundingSlot = pinch.update(aperture: helper.aperture, selectedSlot: selection.selectedSlot)
         return soundingSlot
     }
