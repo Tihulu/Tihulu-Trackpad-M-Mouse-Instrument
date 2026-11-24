@@ -45,6 +45,7 @@ final class StudioController: ObservableObject {
     private var patchCamera: BuilderCameraSource?
     @Published private(set) var patchCameraStatus = "Camera OFF"
     @Published private(set) var patchCameraHand: AirHandSample?
+    var patchCameraCalibrationAvailable: Bool { patchRunning && patchPhysical && !patchMIDIEnabled && patchCameraHand != nil }
     private var patchNativeToken: UUID?
     @Published private(set) var patchNativeBar = false
     @Published private(set) var patchLidStatus = "Builder lid OFF"
