@@ -7,12 +7,13 @@ struct PerformanceLayoutEditor: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var patch: InstrumentPatch
     @State private var widgets: [PerformanceWidget] = []
+    @State private var preserveDormant = true
     @State private var message = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Performance layout").font(.title.bold())
-            Text("Choose controls for the existing mapped inputs. Reorder, rename or pair X and Y. This does not alter MIDI routing or enable hardware.")
+            Text("Choose controls for the existing mapped inputs. Reorder, rename or pair X and Y. This does not alter MIDI routing or enable hardware. Unmapped saved controls are retained unless you reset the layout; editing a temporary fallback replaces its original style.")
                 .foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
@@ -53,14 +54,16 @@ struct PerformanceLayoutEditor: View {
             }
             if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.orange) }
             HStack {
-                Button("Reset layout") { widgets = PerformanceLayout.defaults(for: patch.routes).widgets }
+                Button("Reset layout") { widgets = PerformanceLayout.defaults(for: patch.routes).widgets; preserveDormant = false; message = "Reset will replace all saved controls, including dormant labels. Cancel to keep the original layout." }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Apply layout") {
-                    let layout = PerformanceLayout(widgets: widgets)
-                    guard layout.isValid else { message = "Invalid or duplicate control; labels must be at most 64 UTF-8 bytes."; return }
-                    patch.performanceLayout = layout
-                    dismiss()
+                    do {
+                        patch.performanceLayout = try (patch.performanceLayout ?? .init()).applyingVisibleEdits(widgets,for:patch.routes,preserveDormant:preserveDormant)
+                        dismiss()
+                    } catch {
+                        message = "Invalid, duplicate or over-capacity layout. Labels must be at most 64 UTF-8 bytes. Reset explicitly if dormant controls no longer need to be saved."
+                    }
                 }.buttonStyle(.borderedProminent)
             }
         }.padding(20).frame(minWidth: 680, minHeight: 480)
