@@ -11,6 +11,7 @@ struct InstrumentBuilderView: View {
     @State private var physical = false
     @State private var values: [PatchSimulation.Input: Double] = [:]
     @State private var message = ""
+    @State private var showPatchbay = false
 
     var body: some View {
         ScrollView {
@@ -28,6 +29,7 @@ struct InstrumentBuilderView: View {
                                 .disabled(!draft.isValid)
                             Button("Export JSON") { exportPatch() }.disabled(!draft.isValid)
                             Button("Import JSON") { importPatch() }
+                            Button("Visual Patchbay") { showPatchbay = true }.buttonStyle(.borderedProminent)
                         }
                     }.padding(8).disabled(studio.patchRunning)
                 }
@@ -102,6 +104,7 @@ struct InstrumentBuilderView: View {
                 Text(message).font(.caption).foregroundStyle(.secondary)
             }.padding(24)
         }
+        .sheet(isPresented: $showPatchbay) { VisualPatchbayView(patch: $draft) }
         .onAppear {
             draft = studio.instrumentPatch
             if studio.patchRunning { physical = studio.patchPhysical }
