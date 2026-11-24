@@ -64,7 +64,7 @@ struct InstrumentBuilderView: View {
                         Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)
                             .disabled(studio.patchRunning)
                         if physical && !PhysicalPatchRuntime.supports(draft) {
-                            Text("Native mode supports Trackpad/external touch X/Y/contact/contact size, lid angle and Touch Bar X ribbon. Other sources remain simulation-only.")
+                            Text("Native mode supports Trackpad/external touch, lid angle, Touch Bar X ribbon and camera X/Y/gesture/contact. Other sources remain simulation-only.")
                                 .font(.caption).foregroundStyle(.orange)
                         }
                         HStack {
@@ -94,6 +94,20 @@ struct InstrumentBuilderView: View {
                                 Button("Release ribbon") { studio.builderBarValue(nil, token: token) }
                                 Text("No native hardware detection claim. Inactive samples release after 350 ms.")
                                     .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        if physical && draft.routes.contains(where: { $0.source == .camera }) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(studio.patchCameraStatus).font(.headline)
+                                Text("Show one hand: X/Y are index fingertip position, gesture is thumb/index aperture relative to palm length, contact is reliable hand presence. Camera permission is required. No image recording or network.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                if let hand = studio.patchCameraHand {
+                                    HStack {
+                                        Text("X"); ProgressView(value: hand.x)
+                                        Text("Y"); ProgressView(value: hand.y)
+                                        Text("Aperture"); ProgressView(value: hand.aperture)
+                                    }.font(.caption)
+                                }
                             }
                         }
                         if physical && draft.routes.contains(where: { $0.source == .lid }) {

@@ -1,6 +1,7 @@
 #if os(macOS)
 import Foundation
 import SwiftUI
+import AVFoundation
 import NoSpeakerCore
 import NoSpeakerMac
 
@@ -41,6 +42,9 @@ final class StudioController: ObservableObject {
     private var patchMailbox: PatchSurfaceMailbox?
     private var patchWatchdog: Task<Void, Never>?
     private var patchHinge: MacBookHingeAngleSource?
+    private var patchCamera: BuilderCameraSource?
+    @Published private(set) var patchCameraStatus = "Camera OFF"
+    @Published private(set) var patchCameraHand: AirHandSample?
     private var patchNativeToken: UUID?
     @Published private(set) var patchNativeBar = false
     @Published private(set) var patchLidStatus = "Builder lid OFF"
@@ -192,6 +196,18 @@ final class StudioController: ObservableObject {
                 patchStatus = "Unsupported live source or signal. Use Simulation or edit the routes."
                 return
             }
+            if sources.contains(.camera) {
+                switch BuilderCameraSource.authorization {
+                case .authorized: break
+                case .notDetermined:
+                    patchStatus = "Grant camera permission, then start explicitly again."
+                    AVCaptureDevice.requestAccess(for: .video) { _ in }
+                    return
+                default:
+                    patchStatus = "Camera permission denied or restricted. Check System Settings."
+                    return
+                }
+            }
             if sources.contains(.lid) && liveHingeEnabled {
                 patchStatus = "Stop the independent Tilt sensor before starting Builder lid input."
                 return
@@ -260,6 +276,12 @@ final class StudioController: ObservableObject {
                     guard patchRunning, patchNativeToken == token else { sensor.stop(); return }
                     patchLidStatus = sensor.status
                 }
+                if sources.contains(.camera) {
+                    let camera = BuilderCameraSource()
+                    patchCamera = camera
+                    patchCameraStatus = "Starting camera · local hand tracking"
+                    camera.start()
+                }
                 startPatchWatchdog()
             }
         } catch {
@@ -323,8 +345,31 @@ final class StudioController: ObservableObject {
             recordPatchCommands(commands)
         }
         guard patchRunning else { return }
+        if let camera = patchCamera {
+            for event in camera.drain() {
+                guard patchRunning else { return }
+                switch event {
+                case .ready: patchCameraStatus = "Camera running · show one hand"
+                case .fault(let message):
+                    stopInstrumentPatch()
+                    patchCameraStatus = message
+                    patchStatus = message
+                    return
+                case .frame(let hand, let time):
+                    guard now >= time, now - time < PhysicalPatchRuntime.timeout else { continue }
+                    patchCameraHand = hand
+                    patchCameraStatus = hand == nil ? "No reliable single hand" : "One hand tracked"
+                    recordPatchCommands(patchPhysicalRuntime.receiveHand(hand, hostTime: time, now: now))
+                }
+            }
+        }
+        guard patchRunning else { return }
         let expired = patchPhysicalRuntime.expire(now: now)
         recordPatchCommands(expired)
+        if patchCamera != nil && !patchPhysicalRuntime.activeSources.contains(.camera) {
+            patchCameraHand = nil
+            if patchCameraStatus == "One hand tracked" { patchCameraStatus = "Tracking lost · controls released" }
+        }
         guard patchRunning else { return }
         let active = patchPhysicalRuntime.activeSources
         if active != patchActiveSurfaces {
@@ -400,6 +445,10 @@ final class StudioController: ObservableObject {
         let hadNativeBar = patchNativeBar
         patchNativeToken = nil
         patchNativeBar = false
+        patchCamera?.stop()
+        patchCamera = nil
+        patchCameraHand = nil
+        patchCameraStatus = "Camera OFF"
         patchHinge?.stop()
         patchHinge = nil
         patchLidDegrees = nil
