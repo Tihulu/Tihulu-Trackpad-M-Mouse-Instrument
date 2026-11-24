@@ -798,16 +798,23 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.unlock()
         guard active else { return }
 
-        var packet = eventList.pointee.packet
-        for _ in 0..<Int(eventList.pointee.numPackets) {
-            let wordCount = Int(packet.wordCount)
-            withUnsafeBytes(of: packet.words) { bytes in
-                let words = bytes.bindMemory(to: UInt32.self)
-                for index in 0..<min(wordCount, words.count) {
-                    handleUMP(words[index])
-                }
+        // MIDIEventList contains variable-length packets inline. Traversing
+        // a copied first packet with MIDIEventPacketNext reads unrelated memory.
+        guard let packetOffset = MemoryLayout<MIDIEventList>.offset(of: \.packet),
+              let wordOffset = MemoryLayout<MIDIEventPacket>.offset(of: \.words) else { return }
+        let count = Int(eventList.pointee.numPackets)
+        var packet = UnsafeRawPointer(eventList).advanced(by:packetOffset)
+            .assumingMemoryBound(to:MIDIEventPacket.self)
+        for index in 0..<count {
+            let wordCount = Int(packet.pointee.wordCount)
+            // CoreMIDI supplies the callback's valid packet storage. Do not
+            // retain its pointer or copy the fixed-capacity C tuple.
+            let words = UnsafeRawPointer(packet).advanced(by:wordOffset)
+                .assumingMemoryBound(to:UInt32.self)
+            LegacyUMPDecoder.forEachMIDI1(in:UnsafeBufferPointer(start:words,count:wordCount)) {
+                handleUMP($0)
             }
-            packet = MIDIEventPacketNext(&packet).pointee
+            if index+1 < count { packet = UnsafePointer(MIDIEventPacketNext(packet)) }
         }
     }
 
