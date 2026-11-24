@@ -137,7 +137,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <div id="pad" aria-label="XY touch surface" aria-disabled="true"><span>Touch and move</span><div id="dot" hidden></div></div>
 <p><small>X and Y control the mapped instrument. Lift to release. One contact only.</small></p>
 <section aria-labelledby="tilt-title"><h2 id="tilt-title">Pocket Wah / Tilt</h2>
-<p>First map a phone or tablet tilt axis on the Mac. Hold the phone comfortably, nearly upright or flat but away from extreme angles, then enable and calibrate. Touch and tilt are separate modes.</p>
+<p>First map a phone or tablet tilt axis on the Mac. Hold the phone comfortably, nearly upright or flat but away from extreme angles, then enable and calibrate. Touch and tilt can be used together. Release either control independently.</p>
 <button id="motionStart" disabled>Enable &amp; calibrate tilt</button><button id="motionStop" disabled>Release tilt</button>
 <label for="tiltMeter">Relative pitch (before Mac mapping)</label><meter id="tiltMeter" min="0" max="1" value="0.5" style="width:100%;height:24px"></meter>
 <p id="motionStatus" role="status">Motion off.</p><small>Motion is opt-in, sent only to the paired Mac. No microphone, camera or storage. The host decides MIDI routing.</small></section>
@@ -151,9 +151,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   let ws=null, admitted=false, pending=false, sequence=0, pointer=null, position=null, releaseDue=false, timer=null, deadline=null, lastSend=0;
   const motionStart=get("motionStart"), motionStop=get("motionStop"), meter=get("tiltMeter"), motionStatus=get("motionStatus");
   let mode="idle", sample=null, neutral=null, sampleAt=0, sentAt=-1, permissionEpoch=0, waitingSince=0, pendingKind=null;
+  let lastTouchSend=-Infinity,lastTiltSend=-Infinity;
   function syncControls(){
-    pad.setAttribute("aria-disabled",String(!admitted||mode!=="idle"));
-    motionStart.disabled=!admitted||mode!=="idle"||pointer!==null||releaseDue||pending;
+    pad.setAttribute("aria-disabled",String(!admitted));
+    motionStart.disabled=!admitted||mode!=="idle";
     motionStop.disabled=!admitted||mode==="idle"||mode==="releasing";
   }
   function resetMotion(message){
@@ -172,7 +173,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(neutral){let delta=((beta-neutral.beta+540)%360)-180;meter.value=Math.max(0,Math.min(1,0.5+delta/90));}
   }
   async function startMotion(){
-    if(!admitted||mode!=="idle"||pointer!==null||releaseDue||pending)return;
+    if(!admitted||mode!=="idle")return;
     if(!window.isSecureContext||typeof window.DeviceOrientationEvent==="undefined"){
       motionStatus.textContent="Orientation unavailable in this secure browser.";return;
     }
@@ -197,7 +198,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
     const old=ws;ws=null;admitted=false;pending=false;sequence=0;pointer=null;position=null;releaseDue=false;
-    clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;resetMotion("Motion off.");
+    clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
   }
@@ -208,7 +209,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const motion=kind==="orientationArm"||kind==="orientation"||kind==="motionRelease";
     const frame={version:motion?2:1,sequence:++sequence,kind};
     if(axes){if(motion){frame.alpha=axes.alpha;frame.beta=axes.beta;frame.gamma=axes.gamma;}else{frame.x=axes.x;frame.y=axes.y;}}
-    pending=true;pendingKind=kind;lastSend=performance.now();syncControls();wait(220);
+    pending=true;pendingKind=kind;lastSend=performance.now();
+    if(kind==="touch")lastTouchSend=lastSend;
+    if(kind==="orientationArm"||kind==="orientation")lastTiltSend=lastSend;
+    syncControls();wait(220);
     try{ws.send(JSON.stringify(frame));}catch{close("Send failed. Request a new invitation.");}
   }
   function tick(){
@@ -217,19 +221,19 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(mode==="waiting"&&now-waitingSince>=3000){resetMotion("No valid orientation data. Check permission and device support.");}
     if((mode==="active"||mode==="arming")&&now-sampleAt>=250){close("Orientation stopped. Host releases tilt; reconnect explicitly.");return;}
     if(pending)return;
+    // Release takes precedence over new samples; one frame per ACK.
+    if(releaseDue){releaseDue=false;send("release");return;}
     if(mode==="releasing"){send("motionRelease");return;}
     if(mode==="waiting"&&sample&&now-sampleAt<150){
       neutral={...sample};sentAt=sampleAt;mode="arming";motionStatus.textContent="Calibrating…";send("orientationArm",sample);return;
     }
-    if(mode==="active"){
-      if(sample&&sampleAt>sentAt&&now-lastSend>=50&&now-sampleAt<150){sentAt=sampleAt;send("orientation",sample);}
-      return;
-    }
-    if(mode==="arming")return;
-    if(mode==="requesting"||mode==="waiting"){if(now-lastSend>=500)send("heartbeat");return;}
-    if(releaseDue){releaseDue=false;send("release");}
-    else if(pointer!==null&&position){if(performance.now()-lastSend>=50)send("touch",position);}
-    else if(performance.now()-lastSend>=500)send("heartbeat");
+    const touchDue=pointer!==null&&position&&now-lastTouchSend>=50;
+    const tiltDue=mode==="active"&&sample&&sampleAt>sentAt&&now-lastTiltSend>=50&&now-sampleAt<150;
+    // Oldest serviced eligible stream wins. A steady held touch still needs
+    // refresh; orientation never reuses a stale sample.
+    if(touchDue&&(!tiltDue||lastTouchSend<lastTiltSend)){send("touch",position);return;}
+    if(tiltDue){sentAt=sampleAt;send("orientation",sample);return;}
+    if(pointer===null&&mode!=="active"&&mode!=="arming"&&now-lastSend>=500)send("heartbeat");
   }
   connect.addEventListener("click",()=>{
     if(ws)return;
@@ -245,7 +249,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if(ws!==socket)return;
       if(!admitted){
         if(e.data!=="admitted"||socket.protocol!=="tihulu-touch-v1"){close("Pairing rejected.");return;}
-        clearDeadline();admitted=true;lastSend=performance.now();syncControls();status.textContent="Connected. Touch or explicitly enable tilt.";
+        clearDeadline();admitted=true;lastSend=performance.now();syncControls();status.textContent="Connected. Touch and optionally enable tilt.";
         timer=setInterval(tick,25);tick();return;
       }
       if(!pending||e.data!=="accepted"){close("Unexpected response.");return;}
@@ -264,9 +268,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     dot.hidden=false;dot.style.left=(position.x*100)+"%";dot.style.top=((1-position.y)*100)+"%";
   }
   pad.addEventListener("pointerdown",e=>{
-    if(!admitted||mode!=="idle"||pointer!==null||e.button!==0)return;
+    if(!admitted||pointer!==null||releaseDue||e.button!==0)return;
     e.preventDefault();pointer=e.pointerId;try{pad.setPointerCapture(pointer);}catch{close("Pointer capture failed.");return;}
-    move(e);syncControls();if(!pending&&!releaseDue)send("touch",position);
+    lastTouchSend=-Infinity;move(e);syncControls();tick();
   });
   pad.addEventListener("pointermove",e=>{if(e.pointerId===pointer){e.preventDefault();move(e);}});
   function lift(e){

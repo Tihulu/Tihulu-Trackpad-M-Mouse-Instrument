@@ -141,16 +141,16 @@ public struct PhysicalPatchRuntime: Sendable {
             remotePeers[id] = peer
             return .accepted([])
         case .release:
-            guard peer.tilt == nil else { return .close(revokeRemote(id)) }
             let commands = peer.routerSession.map { router.disconnect($0) } ?? []
             peer.routerSession = nil
+            peer.lastTouch = nil
             remotePeers[id] = peer
             return .accepted(commands)
         case .touch:
-            guard peer.tilt == nil else { return .close(revokeRemote(id)) }
             if peer.routerSession == nil { peer.routerSession = try? router.connect(peer.source, now: now) }
             guard let session = peer.routerSession, let x = frame.x, let y = frame.y
             else { return .close(revokeRemote(id)) }
+            peer.lastTouch = now
             remotePeers[id] = peer
             var commands: [SensorCommand] = []
             for (signal, value): (SensorSignal, Double) in [(.x,x),(.y,y),(.contact,1)] {
@@ -160,20 +160,22 @@ public struct PhysicalPatchRuntime: Sendable {
             }
             return .accepted(commands)
         case .orientationArm:
-            guard motionSources.contains(peer.source), peer.routerSession == nil,
+            guard motionSources.contains(peer.source),
                   peer.tilt == nil, let angles = frame.angles,
                   let calibration = RemoteTiltCalibration(neutral: angles),
                   peer.motionFreshness.arm(receipt: now, now: now)
             else { return .close(revokeRemote(id)) }
             peer.tilt = calibration
+            peer.lastOrientation = now
             remotePeers[id] = peer
             return .accepted([])
         case .orientation:
-            guard peer.routerSession == nil, let tilt = peer.tilt, let angles = frame.angles,
+            guard let tilt = peer.tilt, let angles = frame.angles,
                   peer.motionFreshness.accept(receipt: now, now: now)
             else { return .close(revokeRemote(id)) }
             if peer.motionSession == nil { peer.motionSession = try? router.connect(peer.source, now: now) }
             guard let session = peer.motionSession else { return .close(revokeRemote(id)) }
+            peer.lastOrientation = now
             remotePeers[id] = peer
             let values = tilt.normalize(angles)
             var commands: [SensorCommand] = []
@@ -188,6 +190,7 @@ public struct PhysicalPatchRuntime: Sendable {
             let commands = peer.motionSession.map { router.disconnect($0) } ?? []
             peer.motionSession = nil
             peer.tilt = nil
+            peer.lastOrientation = nil
             peer.motionFreshness.disarm()
             remotePeers[id] = peer
             return .accepted(commands)

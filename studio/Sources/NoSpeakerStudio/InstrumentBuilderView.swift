@@ -56,6 +56,13 @@ struct InstrumentBuilderView: View {
                             if next.isValid { draft = next; message = "Pocket Wah route added. Map CC74 to a wah/filter parameter in your DAW." }
                             else { message = "Cannot add route: check capacity and release-value conflicts." }
                         }.disabled(draft.routes.count >= SensorRouter.maxMappings || draft.routes.contains { $0.source == .phone && $0.signal == .tiltPitch && $0.destination == .init(.controlChange, number: 74) })
+                        Button("Add Air Whammy route (Phone · Pitch Bend)") {
+                            var next = draft
+                            next.routes.append(.init(id: UUID().uuidString, source: .phone, signal: .tiltRoll,
+                                                     destination: .init(.pitchBend), response: .init(smoothingMS: 20)))
+                            if next.isValid { draft = next; message = "Air Whammy route added. Set the pitch-bend range on your DAW instrument." }
+                            else { message = "Cannot add route: check capacity and release-value conflicts." }
+                        }.disabled(draft.routes.count >= SensorRouter.maxMappings || draft.routes.contains { $0.source == .phone && $0.signal == .tiltRoll && $0.destination == .init(.pitchBend) })
                         Button("Add route") {
                             draft.routes.append(.init(id: UUID().uuidString, source: .trackpad,
                                                      signal: .contact, destination: .init(.note, number: 60)))

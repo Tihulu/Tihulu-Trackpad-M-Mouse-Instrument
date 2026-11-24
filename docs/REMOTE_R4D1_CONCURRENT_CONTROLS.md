@@ -1,0 +1,7 @@
+# R4d1 — concurrent touch and tilt
+
+This slice removes the R4b/R4c per-connection mutual exclusion. Authenticated v1 touch and v2 orientation messages share a single monotonically sequenced, rate-limited ACK lane but own separate router sessions and independent 350 ms host freshness clocks. An explicit touch release does not alter tilt, and vice versa. Missing either active stream's deadline revokes the whole peer and releases both owners (intentional fail-closed behavior, not transparent recovery); reconnect and recalibrate. Heartbeats are still idle-only. Other peers and local owners remain independent.
+
+The browser services oldest eligible sample first, prioritizes releases, never repeats stale orientation, and coalesces each stream at up to 20 Hz. ACK latency can reduce effective rates; this is not a latency guarantee. Pointer events represent held contact, not a new physical sensor observation. Browser lifecycle fault closes the connection as before. No protocol expansion or extra network dependencies.
+
+Instrument Builder adds an editable phone roll → pitch bend Air Whammy route with 20 ms smoothing and normal center release; pitch interval is configured in the receiving DAW. No built-in audio whammy effect. Existing Pocket Wah route unchanged. Additional Swift tests cover mixed controls, independent release and both directions of watchdog starvation; Node VM test covers scheduling and independent release. Accelerometer and angular-velocity transport remain a distinct next slice. All physical acceptance remains HOLD. Stable untouched.

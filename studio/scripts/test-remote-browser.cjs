@@ -57,3 +57,19 @@ test("v1 touch still works with motion disabled",()=>{
   assert.equal(a.socket.frames.at(-1).kind,"touch");assert.equal(a.socket.frames.at(-1).version,1);a.ack();
   a.elements.pad.emit("pointerup",{pointerId:1});assert.equal(a.socket.frames.at(-1).kind,"release");
 });
+
+test("touch and tilt alternate on a single ACK lane and release independently",async()=>{
+  const a=setup();await a.elements.motionStart.emit("click");a.orientation();a.step();a.ack();
+  const down={pointerId:1,button:0,clientX:25,clientY:25,preventDefault(){}};
+  a.elements.pad.emit("pointerdown",down);
+  assert.equal(a.socket.frames.at(-1).kind,"touch");a.ack();
+  a.orientation(25);a.step(50);
+  assert.equal(a.socket.frames.at(-1).kind,"orientation");a.ack();
+  a.step(25);assert.equal(a.socket.frames.at(-1).kind,"touch");a.ack();
+  a.elements.pad.emit("pointerup",{pointerId:1});
+  assert.equal(a.socket.frames.at(-1).kind,"release");a.ack();
+  assert.equal(a.window.events.has("deviceorientation"),true);
+  a.orientation(30);a.step(50);assert.equal(a.socket.frames.at(-1).kind,"orientation");a.ack();
+  a.elements.motionStop.emit("click");assert.equal(a.socket.frames.at(-1).kind,"motionRelease");a.ack();
+  assert.equal(a.socket.closed,undefined);
+});
