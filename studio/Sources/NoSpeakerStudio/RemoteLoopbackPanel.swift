@@ -1,6 +1,7 @@
 #if os(macOS)
 import SwiftUI
 import AppKit
+import CoreImage.CIFilterBuiltins
 import NoSpeakerCore
 import NoSpeakerMac
 
@@ -13,17 +14,47 @@ struct RemoteLoopbackPanel: View {
     @State private var source: SensorSource = .phone
     @State private var message = ""
     @State private var invitation = ""
+    @State private var lan = false
+    @State private var lanChoices: [RemoteLANChoice] = []
+    @State private var selectedLAN: String?
+    @State private var confirmedLAN = false
+    private var endpoint: RemoteEndpoint? {
+        lan ? lanChoices.first(where: { $0.id == selectedLAN })?.endpoint : .loopback
+    }
     @State private var clearTask: Task<Void, Never>?
     private var sources: [SensorSource] {
         [.phone,.tablet].filter { kind in patch.routes.contains { $0.source == kind } }
     }
 
     var body: some View {
-        GroupBox("Remote · Mac-only TLS diagnostic") {
+        GroupBox("Remote · TLS controller") {
             VStack(alignment: .leading, spacing: 7) {
-                Text("Experimental loopback only. Requires an existing trusted TLS identity for 127.0.0.1. Includes a local browser test page, not LAN or phone access. No certificate installation or trust bypass.")
+                Text("Experimental. Requires a dedicated trusted TLS identity for the selected address. No automatic certificate installation or trust bypass. Run a successful Mac-only diagnostic before enabling LAN in this app session.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !studio.patchRunning {
+                    Toggle("Enable experimental LAN (trusted private network only)", isOn: $lan)
+                        .disabled(!studio.remoteLoopbackVerified)
+                        .onChange(of: lan) { _ in confirmedLAN = false }
+                    if !studio.remoteLoopbackVerified {
+                        Text("LAN is locked until the local TLS + touch/release test succeeds.").font(.caption)
+                    }
+                    if lan {
+                        HStack {
+                            Button("Refresh local addresses") {
+                                lanChoices = RemoteLANChoice.available()
+                                selectedLAN = nil
+                                confirmedLAN = false
+                            }
+                            Picker("Bind address", selection: $selectedLAN) {
+                                Text("Choose interface").tag(String?.none)
+                                ForEach(lanChoices) { choice in
+                                    Text(choice.interface + " · " + choice.endpoint.host).tag(Optional(choice.id))
+                                }
+                            }.onChange(of: selectedLAN) { _ in confirmedLAN = false }
+                        }
+                        Toggle("I trust this network and the phone trusts the matching TLS certificate", isOn: $confirmedLAN)
+                        Text("Do not forward ports or ignore certificate warnings. Phone trust must be provisioned separately. Only the selected private IPv4 address is bound.").font(.caption)
+                    }
                     HStack {
                         Button("Load Keychain identities") {
                             do {
@@ -37,21 +68,24 @@ struct RemoteLoopbackPanel: View {
                             ForEach(identities) { choice in Text(choice.name).tag(Optional(choice.id)) }
                         }
                     }
-                    Button("Start loopback listener") {
-                        guard let choice = identities.first(where: { $0.id == selected }) else { return }
+                    Button(lan ? "Start LAN listener" : "Start loopback listener") {
+                        guard let choice = identities.first(where: { $0.id == selected }), let endpoint else { return }
+                        if lan && (!studio.remoteLoopbackVerified || !confirmedLAN || !RemoteLANChoice.available().contains(where: { $0.id == selectedLAN && $0.endpoint == endpoint })) {
+                            message = "Select and confirm a current private LAN address."; return
+                        }
                         do {
-                            let transport = try choice.makeLoopbackTransport()
-                            let page = try choice.makeLoopbackPageServer()
+                            let transport = try choice.makeLoopbackTransport(endpoint: endpoint)
+                            let page = try choice.makeLoopbackPageServer(endpoint: endpoint)
                             studio.updateInstrumentPatch(patch)
                             studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: true, remoteTransport: transport, remotePage: page)
                             message = ""
                         } catch { message = error.localizedDescription }
-                    }.disabled(selected == nil || !PhysicalPatchRuntime.supports(patch, allowRemote: true))
+                    }.disabled(selected == nil || endpoint == nil || (lan && (!confirmedLAN || !studio.remoteLoopbackVerified)) || !PhysicalPatchRuntime.supports(patch, allowRemote: true))
                     Text(sendMIDI ? "MIDI ON: diagnostic touch may sound mapped notes. Use a separate DAW instrument." :
                          "MIDI OFF: diagnostic commands appear in the monitor without sending to DAW.")
                         .font(.caption)
                 } else {
-                    Text(studio.patchRemoteReady ? "Loopback listener ready" : "No ready loopback listener").font(.headline)
+                    Text(studio.patchRemoteReady ? "Remote listener ready" : "Remote listener not ready").font(.headline)
                     Picker("Test source", selection: $source) {
                         ForEach(sources, id: \.self) { Text($0.rawValue).tag($0) }
                     }.disabled(studio.patchRemoteProbeRunning)
@@ -59,13 +93,22 @@ struct RemoteLoopbackPanel: View {
                         clearInvitation()
                         studio.runBuilderRemoteProbe(source: source)
                     }
-                        .disabled(!studio.patchRemoteReady || studio.patchRemoteProbeRunning || !sources.contains(source))
+                        .disabled(!studio.patchRemoteReady || studio.patchRemoteProbeRunning || !sources.contains(source) || studio.patchRemoteEndpoint?.isLoopback != true)
                     Text(studio.patchRemoteProbeStatus).font(.caption)
                     Divider()
                     Text(studio.patchRemotePageReady ? "HTTPS controller ready" : "HTTPS controller not ready").font(.caption)
-                    Button("Open local browser controller") {
-                        if let url = URL(string: "https://127.0.0.1:9444/") { NSWorkspace.shared.open(url) }
-                    }.disabled(!studio.patchRemotePageReady)
+                    if studio.patchRemotePageReady, let endpoint = studio.patchRemoteEndpoint {
+                        Text(endpoint.pageURL).font(.caption.monospacedDigit()).textSelection(.enabled)
+                        Button("Open browser controller on this Mac") {
+                            if let url = URL(string: endpoint.pageURL) { NSWorkspace.shared.open(url) }
+                        }
+                        if !endpoint.isLoopback, let image = qrImage(endpoint.pageURL) {
+                            Image(nsImage: image).interpolation(.none).resizable()
+                                .frame(width: 160, height: 160)
+                                .accessibilityLabel("QR code for controller page address")
+                            Text("Scan the page address on your phone. Enter the separate invitation; QR contains no secret.").font(.caption)
+                        }
+                    }
                     Button("Create one-time browser invitation") {
                         clearInvitation()
                         do {
@@ -79,7 +122,7 @@ struct RemoteLoopbackPanel: View {
                     }.disabled(!studio.patchRemoteReady || !studio.patchRemotePageReady || studio.patchRemoteProbeRunning || !sources.contains(source))
                     if !invitation.isEmpty {
                         Text(invitation).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                        Text("Paste into the local page within 60 seconds. Treat this invitation as a password.")
+                        Text("Enter into the controller page within 60 seconds. Treat this invitation as a password.")
                             .font(.caption).foregroundStyle(.secondary)
                         Button("Cancel invitation") { clearInvitation() }
                     }
@@ -101,6 +144,15 @@ struct RemoteLoopbackPanel: View {
         }.onChange(of: sources) { available in
             if !available.contains(source), let first = available.first { source = first }
         }
+    }
+
+    private func qrImage(_ url: String) -> NSImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(url.utf8)
+        guard let output = filter.outputImage else { return nil }
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
+        guard let cg = CIContext().createCGImage(scaled, from: scaled.extent) else { return nil }
+        return NSImage(cgImage: cg, size: NSSize(width: scaled.extent.width, height: scaled.extent.height))
     }
 
     private func clearInvitation() {

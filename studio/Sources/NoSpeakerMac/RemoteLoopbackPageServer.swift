@@ -4,7 +4,7 @@ import Network
 import Security
 import NoSpeakerCore
 
-/// One bounded static HTTPS server, explicitly loopback-only. Separate
+/// One bounded static HTTPS server on an explicitly selected local address. Separate
 /// port from WSS, with fixed page origin; no dynamic content or file access.
 public final class RemoteLoopbackPageServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.tihulu.remote.page")
@@ -14,17 +14,21 @@ public final class RemoteLoopbackPageServer: @unchecked Sendable {
     public var status: Status { lock.lock(); defer { lock.unlock() }; return state }
     private func setStatus(_ value: Status) { lock.lock(); state = value; lock.unlock() }
     private let parameters: NWParameters
+    public let endpoint: RemoteEndpoint
+    private var attemptStart = 0.0
+    private var attempts = 0
     private var listener: NWListener?
     private var connections: [UUID: NWConnection] = [:]
     private var stopped = false
 
-    public init(identity: SecIdentity) throws {
+    public init(identity: SecIdentity, endpoint: RemoteEndpoint = .loopback) throws {
+        self.endpoint = endpoint
         guard let localIdentity = sec_identity_create(identity) else { throw RemoteLoopbackTransport.Failure.identity }
         let tls = NWProtocolTLS.Options()
         sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
         sec_protocol_options_set_local_identity(tls.securityProtocolOptions, localIdentity)
         parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
-        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: 9444)
+        parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(endpoint.host), port: 9444)
     }
     public func start() {
         queue.async { [self] in
@@ -49,7 +53,10 @@ public final class RemoteLoopbackPageServer: @unchecked Sendable {
         }
     }
     private func accept(_ connection: NWConnection) {
-        guard !stopped, connections.count < 8 else { connection.cancel(); return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if now-attemptStart >= 60 { attemptStart = now; attempts = 0 }
+        guard !stopped, connections.count < 8, attempts < 120 else { connection.cancel(); return }
+        attempts += 1
         let id = UUID()
         connections[id] = connection
         connection.stateUpdateHandler = { [weak self] state in
@@ -70,11 +77,11 @@ public final class RemoteLoopbackPageServer: @unchecked Sendable {
             guard error == nil, let data, !data.isEmpty else { self.close(id); return }
             var next = accumulated
             next.append(data)
-            switch RemotePageRequest.parse(next, authority: "127.0.0.1:9444") {
+            switch RemotePageRequest.parse(next, authority: self.endpoint.pageAuthority) {
             case .incomplete:
                 if complete { self.close(id) } else { self.read(id, accumulated: next) }
             case .page: self.respond(id, content: Self.page, type: "text/html; charset=utf-8")
-            case .script: self.respond(id, content: Self.script, type: "text/javascript; charset=utf-8")
+            case .script: self.respond(id, content: Self.script.replacingOccurrences(of: "__REMOTE_ORIGIN__", with: self.endpoint.origin).replacingOccurrences(of: "__REMOTE_SOCKET__", with: self.endpoint.socketURL), type: "text/javascript; charset=utf-8")
             case .rejected: self.close(id)
             }
         }
@@ -86,7 +93,7 @@ public final class RemoteLoopbackPageServer: @unchecked Sendable {
             "HTTP/1.1 200 OK", "Content-Type: " + type, "Content-Length: " + String(body.count),
             "Connection: close", "Cache-Control: no-store", "Referrer-Policy: no-referrer",
             "X-Content-Type-Options: nosniff", "X-Frame-Options: DENY",
-            "Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src wss://127.0.0.1:9443; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            "Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src wss://\(endpoint.socketAuthority); frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
         ].joined(separator: "\r\n") + "\r\n\r\n"
         var response = Data(headers.utf8)
         response.append(body)
@@ -122,7 +129,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pad[aria-disabled=true]{opacity:.45}#dot{position:absolute;width:22px;height:22px;background:#e34f4f;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}#dot[hidden]{display:none}
 #status{min-height:2.8em}small{color:#bdbdbd}
 </style></head>
-<body><h1>TIHULU Remote</h1><p>Local touch controller · Mac-only diagnostic</p>
+<body><h1>TIHULU Remote</h1><p>Local touch controller · Experimental</p>
 <label for="secret">One-time invitation (64 hexadecimal characters)</label>
 <input id="secret" type="password" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
 <button id="connect">Connect</button><button id="disconnect" disabled>Disconnect / release</button>
@@ -164,9 +171,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const value=secret.value.trim();secret.value="";
     if(!/^[0-9a-fA-F]{64}$/.test(value)){status.textContent="Enter a valid invitation.";return;}
     const key=new Uint8Array(32);for(let i=0;i<32;i++)key[i]=parseInt(value.slice(i*2,i*2+2),16);
-    if(location.origin!=="https://127.0.0.1:9444"){key.fill(0);close("Wrong origin. Open the local HTTPS page from the Mac app.");return;}
+    if(location.origin!=="__REMOTE_ORIGIN__"){key.fill(0);close("Wrong origin. Open the local HTTPS page from the Mac app.");return;}
     let socket;
-    try{socket=new WebSocket("wss://127.0.0.1:9443/","tihulu-touch-v1");}catch{key.fill(0);close("Connection unavailable.");return;}
+    try{socket=new WebSocket("__REMOTE_SOCKET__","tihulu-touch-v1");}catch{key.fill(0);close("Connection unavailable.");return;}
     ws=socket;connect.disabled=true;disconnect.disabled=false;status.textContent="Connecting…";wait(5000);
     socket.onopen=()=>{if(ws!==socket){key.fill(0);return;}try{socket.send(key);}catch{close("Pairing failed.");}finally{key.fill(0);}};
     socket.onmessage=e=>{
