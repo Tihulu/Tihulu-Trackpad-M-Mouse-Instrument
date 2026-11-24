@@ -55,14 +55,14 @@ function setup(script,execute,{rtt=10,jitter=0,drop=()=>false,hostDelay=0}={}){
     constructor(){socket=this;this.readyState=1;this.protocol="tihulu-touch-v1";this.bufferedAmount=0;}
     send(data){
       if(typeof data!=="string"){c.add(()=>this.onmessage?.({data:"admitted"}),1);return;}
-      const f=JSON.parse(data),at=c.now,delay=Math.max(2,rtt+(jitter?[-jitter,0,jitter,0][sent.length%4]:0));
+      const f=JSON.parse(data),at=c.now,processingDelay=typeof hostDelay==="function"?hostDelay(f):hostDelay,delay=Math.max(2,rtt+(jitter?[-jitter,0,jitter,0][sent.length%4]:0));
       check(data.length<=256,"oversized outbound frame");sent.push({f,at});maxFlight=Math.max(maxFlight,++inFlight);
       c.add(()=>{
         if(this.readyState!==1)return;
-        if(hostDelay>=100||!host.accept(f,c.now)){hostReason=hostDelay>=100?"stale host delivery":"host policy rejection";this.close();return;}
+        if(processingDelay>=100||!host.accept(f,c.now)){hostReason=processingDelay>=100?"stale host delivery":"host policy rejection";this.close();return;}
         received.push({f,at:c.now});if(drop(f))return;
         c.add(()=>{if(this.readyState!==1)return;inFlight--;ack.push({f,at:c.now,rtt:c.now-at});this.onmessage?.({data:f.kind==="capabilities"?JSON.stringify(manifest):"accepted"});if(f.kind==="capabilities")admittedAt=c.now;},Math.ceil(delay/2));
-      },Math.floor(delay/2)+hostDelay);
+      },Math.floor(delay/2)+processingDelay);
     }
     close(){if(this.readyState!==1)return;this.readyState=3;closed={at:c.now,status:el("status").textContent,hostReason};clearHost("simulated disconnect");this.onclose?.();}
   }
@@ -98,13 +98,41 @@ function tap(script,execute){
   return {expectedTouchOnsets:1,observedTouchOnsets:a.received.filter(x=>x.f.kind==="touch").length,wire:a.received.map(x=>x.f.kind),closed:a.closed};
 }
 function fault(script,execute,mode){
-  const a=setup(script,execute,{rtt:10,drop:f=>mode!=="staleHost"&&f.kind==="drumPads",hostDelay:mode==="staleHost"?100:0});
-  a.c.run(mode==="staleHost"?400:100);
-  if(mode!=="staleHost"){a.el("drumEnable").emit("click");a.el("drum0").emit("pointerdown",ptr(1));
+  const a=setup(script,execute,{rtt:10,drop:f=>["missingAck","staleQueue","overflow"].includes(mode)&&f.kind==="drumPads",hostDelay:f=>mode==="staleHost"&&f.kind==="drumPads"?100:0});
+  a.c.run(100);
+  {a.el("drumEnable").emit("click");a.el("drum0").emit("pointerdown",ptr(1));
     if(mode==="staleQueue"){a.c.run(5);a.el("drum0").emit("pointerup",ptr(1));}
+    if(mode==="pagehide"){a.c.run(20);a.window.emit("pagehide");}
     if(mode==="overflow"){for(let i=0;i<10;i++){a.el("drum0").emit("pointerup",ptr(1));a.el("drum0").emit("pointerdown",ptr(1));}}
     a.c.run(400);
   }return {closed:a.closed,modelActive:[...a.host.active.keys()],maxFlight:a.maxFlight,received:a.received.map(x=>x.f.kind),releaseEvents:a.releaseEvents};
+}
+async function edges(script,execute,rtt){
+  const a=setup(script,execute,{rtt});a.c.run(100);
+  for(const id of ["drumEnable","pianoEnable","pedalEnable"])a.el(id).emit("click");
+  const expected={drumPads:[],pianoKeys:[],pedalboard:[]};
+  for(let cycle=0;cycle<8;cycle++){
+    for(const [kind,el] of [["drumPads","drum0"],["pianoKeys","piano0"],["pedalboard","pedalToggle3"]]){
+      expected[kind].push({mask:kind==="pedalboard"?8:1,at:a.c.now});
+      a.el(el).emit(kind==="pedalboard"?"click":"pointerdown",ptr(1));
+    }
+    a.c.run(15);
+    for(const [kind,el] of [["drumPads","drum0"],["pianoKeys","piano0"],["pedalboard","pedalToggle3"]]){
+      expected[kind].push({mask:0,at:a.c.now});a.el(el).emit(kind==="pedalboard"?"click":"pointerup",ptr(1));
+    }
+    a.c.run(235);if(a.closed)break;
+  }
+  const result={closed:a.closed,streams:{}};
+  for(const kind of Object.keys(expected)){
+    let prev=0;const actual=a.received.filter(x=>x.f.kind===kind).filter(x=>{if(x.f.mask===prev)return false;prev=x.f.mask;return true;});
+    let matched=0;const latencies=[];
+    for(let i=0;i<Math.min(actual.length,expected[kind].length);i++){
+      if(actual[i].f.mask!==expected[kind][i].mask||actual[i].at<expected[kind][i].at)break;
+      matched++;latencies.push(actual[i].at-expected[kind][i].at);
+    }
+    result.streams[kind]={expected:expected[kind].length,observed:actual.length,matched,missed:expected[kind].length-matched,latency:stats(latencies)};
+  }
+  return result;
 }
 function capsModel(){
   const p=hostPolicy(1000);let accepted=0;for(let i=1;i<=91;i++)if(p.accept({kind:"heartbeat",sequence:i},1000+i))accepted++;
@@ -117,7 +145,8 @@ async function run(source,execute){
   const report={simulation:"actual browser JS, virtual timers/ACKs, simplified host model; milliseconds",concurrent:{}};
   for(const [name,options] of Object.entries({fast:{rtt:5},lan:{rtt:20},jitter:{rtt:40,jitter:15},slow:{rtt:60}}))report.concurrent[name]=await concurrent(script,execute,options);
   report.shortTouch=tap(script,execute);report.faults={};
-  for(const mode of ["missingAck","staleQueue","overflow","staleHost"])report.faults[mode]=fault(script,execute,mode);
+  for(const mode of ["missingAck","staleQueue","overflow","staleHost","pagehide"])report.faults[mode]=fault(script,execute,mode);
+  report.edges={fast:await edges(script,execute,5),lan:await edges(script,execute,20),slow:await edges(script,execute,60)};
   report.capsModel=capsModel();
   const failures=[];
   for(const [name,result] of Object.entries(report.concurrent)){
@@ -129,6 +158,7 @@ async function run(source,execute){
   }
   if(report.shortTouch.observedTouchOnsets!==1)failures.push("short touch onset lost while ACK pending");
   for(const [mode,result] of Object.entries(report.faults))if(!result.closed||result.modelActive.length)failures.push(mode+": did not fail closed in model");
+  for(const [name,result] of Object.entries(report.edges))if(result.closed||Object.values(result.streams).some(x=>x.missed||x.observed!==x.expected))failures.push(name+": concurrent edge burst lost or disconnected");
   if(report.capsModel.rateAccepted!==90)failures.push("rate model cap mismatch");
   return {...report,failures,verdict:failures.length?"FAIL":"PASS"};
 }
