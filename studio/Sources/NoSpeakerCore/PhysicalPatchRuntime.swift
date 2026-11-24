@@ -189,17 +189,13 @@ public struct PhysicalPatchRuntime: Sendable {
             airActiveSlot = nil
             return disconnect(.camera)
         }
-        var commands = receiveHand(helper, hostTime: hostTime, now: now)
-        guard let session = sessions[.camera] else { airDual.reset(); airActiveSlot = nil; return commands }
-        if airActiveSlot != slot {
-            if let old = airActiveSlot {
-                commands += router.releaseSignal(session: session, signal: AirDualHandPerformance.signals[old - 1])
-            }
-            sequence &+= 1
-            commands += router.ingest(.init(session: session, signal: AirDualHandPerformance.signals[slot - 1],
-                                            value: 1, sequence: sequence, timestamp: hostTime), now: hostTime)
-            airActiveSlot = slot
-        }
+        seen[.camera] = hostTime
+        if sessions[.camera] == nil { sessions[.camera] = try? router.connect(.camera, now: hostTime) }
+        guard let session = sessions[.camera] else { airDual.reset(); airActiveSlot = nil; return [] }
+        let commands = AirDualHandPerformance.route(slot: slot, previous: airActiveSlot, helper: helper,
+                                                    session: session, time: hostTime, router: &router,
+                                                    sequence: &sequence)
+        airActiveSlot = slot
         return commands
     }
 
