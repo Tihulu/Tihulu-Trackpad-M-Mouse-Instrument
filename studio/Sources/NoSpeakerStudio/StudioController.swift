@@ -42,6 +42,17 @@ final class StudioController: ObservableObject {
     @Published var hingeSensorStatus = "Hardware sensor OFF · manual simulator available"
     @Published var activeMIDINotes: [ActiveMIDINote] = []
     @Published var systemAudioRunning = false
+    @Published var systemAudioStarting = false
+    @Published var systemAudioStopping = false
+    @Published var speakerProfile: AudioHapticProfile = .voice
+    @Published var speakerOptimized = true
+    @Published var speakerAutomaticGain = true
+    @Published var speakerNoiseGate = true
+    @Published var speakerBufferMS = 150.0
+
+    var speakerBusy: Bool { systemAudioRunning || systemAudioStarting || systemAudioStopping }
+    private var speakerTask: Task<Void, Never>?
+    private var speakerGeneration: UInt64 = 0
     @Published var lastMIDIMessage = "No MIDI received yet"
     @Published var currentFileName = "No file loaded"
     @Published var activeProfile: AudioHapticProfile = .fullMix
@@ -195,6 +206,7 @@ final class StudioController: ObservableObject {
     }
 
     func enableLiveHinge(_ enable: Bool) {
+        if enable && !allowOtherPerformance() { return }
         if !enable {
             hingeSensor?.stop()
             hingeSensor = nil
@@ -311,10 +323,10 @@ final class StudioController: ObservableObject {
         captureHotkeyArmed = false
         clickedSurface = nil
         trackpadClickPressure = nil
+        stopSystemAudio()
         playback?.stop(closeDriver: true)
         touch?.stopPreview()
         midi?.stop()
-        Task { await systemAudio?.stop() }
         isPlaying = false
         touchRunning = false
         touchPreviewRunning = false
@@ -342,6 +354,7 @@ final class StudioController: ObservableObject {
 
     func reconnect() {
         cancelStartupGreeting()
+        if speakerBusy { stopSystemAudio(); return }
         driver?.close()
         driver = nil
         prepareEngine()
@@ -382,6 +395,7 @@ final class StudioController: ObservableObject {
     }
 
     func speak(_ text: String, voice: String?) {
+        guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine(), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         isPlaying = true
@@ -401,6 +415,7 @@ final class StudioController: ObservableObject {
     }
 
     func playNotes(_ steps: [NoteStep], length: Int = 16, loop: Bool = false) {
+        guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         do {
@@ -411,6 +426,7 @@ final class StudioController: ObservableObject {
     }
 
     func playDrums(_ hits: [DrumStep], length: Int = 16, loop: Bool = false) {
+        guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         let events = HapticPatternRenderer.drums(.init(bpm: bpm, stepsPerBeat: 4, length: length, hits: hits))
@@ -425,6 +441,7 @@ final class StudioController: ObservableObject {
     }
 
     func testTone(frequency: Double) {
+        guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         let duration = max(2, (0.04 * frequency).rounded()) / frequency * 1_000
@@ -432,6 +449,7 @@ final class StudioController: ObservableObject {
     }
 
     func sweep() {
+        guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         var events: [ScheduledHapticEvent] = []
@@ -575,6 +593,7 @@ final class StudioController: ObservableObject {
         midiChannel: Int = 0,
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
+        guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine(), let touch else { return }
         var configuration = configuration
@@ -669,6 +688,7 @@ final class StudioController: ObservableObject {
     }
 
     func startMIDI() {
+        guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine(), let midi else { return }
         do {
@@ -767,6 +787,7 @@ final class StudioController: ObservableObject {
         trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold,
         trackpadSustainSensor: TrackpadSustainSensor = .contactSize
     ) {
+        guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         let newSustainSettings = MIDIHelperSustainSettings(
             trackpadEnabled: trackpadSustainEnabled,
@@ -1092,6 +1113,7 @@ final class StudioController: ObservableObject {
     }
 
     func playMIDIFile(_ url: URL) {
+        guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         do {
@@ -1104,6 +1126,7 @@ final class StudioController: ObservableObject {
     }
 
     func playAudioFile(_ url: URL, profile: AudioHapticProfile? = nil) {
+        guard allowOtherPerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine() else { return }
         currentFileName = url.lastPathComponent
@@ -1131,22 +1154,70 @@ final class StudioController: ObservableObject {
 
     func startSystemAudio() {
         cancelStartupGreeting()
+        guard !speakerBusy else { return }
+        guard !touchRunning, !midiHelperRunning, !midiRunning, !isPlaying, !liveHingeEnabled else {
+            lastError = "Stop other performances and the MIDI bridge before starting Trackpad Speaker. The haptic motor is shared."
+            return
+        }
         guard requireEngine(), let systemAudio else { return }
-        Task {
+        playback?.stop(closeDriver: false)
+        speakerGeneration &+= 1
+        let token = speakerGeneration
+        systemAudioStarting = true
+        engineStatus = "Starting system audio capture"
+        speakerTask = Task { [weak self] in
+            guard let self else { return }
             do {
-                try await systemAudio.start(profile: activeProfile, masterLevel: masterLevel)
+                try await systemAudio.start(profile: speakerProfile, masterLevel: masterLevel,
+                    speechOptimized: speakerOptimized, automaticGain: speakerAutomaticGain,
+                    noiseGate: speakerNoiseGate, bufferSeconds: speakerBufferMS / 1000,
+                    onFailure: { [weak self] message in
+                        Task { @MainActor in
+                            guard let self, self.speakerGeneration == token else { return }
+                            self.stopSystemAudio()
+                            self.lastError = "System audio stopped: " + message
+                        }
+                    })
+                guard !Task.isCancelled, speakerGeneration == token else { return }
+                systemAudioStarting = false
                 systemAudioRunning = true
-                engineStatus = "System audio is being converted to trackpad haptics"
-            } catch { fail(error) }
+                engineStatus = "System audio active · buffered playback"
+            } catch {
+                guard speakerGeneration == token else { return }
+                systemAudioStarting = false
+                systemAudioRunning = false
+                if !Task.isCancelled { fail(error) }
+            }
         }
     }
 
     func stopSystemAudio() {
-        Task {
-            await systemAudio?.stop()
-            systemAudioRunning = false
-            engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
+        guard speakerBusy, !systemAudioStopping else { return }
+        speakerGeneration &+= 1
+        let token = speakerGeneration
+        let oldTask = speakerTask
+        let capture = systemAudio
+        oldTask?.cancel()
+        capture?.stopOutput()
+        systemAudioRunning = false
+        systemAudioStarting = false
+        systemAudioStopping = true
+        speakerTask = Task { [weak self] in
+            await oldTask?.value
+            await capture?.stop()
+            guard let self, self.speakerGeneration == token else { return }
+            self.systemAudioStopping = false
+            self.speakerTask = nil
+            if self.engineReady { self.engineStatus = "Force Touch trackpad ready" }
         }
+    }
+
+    private func allowOtherPerformance() -> Bool {
+        guard !speakerBusy else {
+            lastError = "Stop Trackpad Speaker before using another haptic or MIDI performance."
+            return false
+        }
+        return true
     }
 
     private func requireEngine() -> Bool {

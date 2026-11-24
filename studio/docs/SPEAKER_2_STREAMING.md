@@ -1,0 +1,11 @@
+# Trackpad Speaker 2.0 — streaming speech experiment
+
+This first increment replaces per-packet normalized spectral analysis and immediate prefix(12) motor calls with overlapping 25 ms windows, 10 ms slots (including silence), persistent gain reference, a bounded speech LPC spectral envelope and a monotonic playout queue. Voice uses voiced/formant and unvoiced/consonant representations. The legacy spectral voice profile remains selectable for A/B; Melody, Rhythm and Full Mix remain available. The file converter and existing text-to-haptic Voice engine are unchanged.
+
+The live pipeline is confined to a serial capture/processing queue; no global event tap work. Packet sizes, PCM buffer bounds and sample rates are checked. PTS discontinuities reset analysis. Playback waits for deadlines and drops stale slots, never catches up in a burst. Stop/Panic synchronously invalidate speaker output before closing the motor. Start/stop states and unexpected capture failure are reported. Shared motor access is conservatively exclusive while Speaker runs; other musical sessions are not silently stopped. Future shared arbitration is planned.
+
+Controls: Speech Clarity (default live profile), formants vs legacy comparison, AGC, low-level noise gate, 50–350 ms buffering. This is not AI noise separation and not true high-fidelity playback. Buffer controls and gain apply next start. No raw audio storage or cloud.
+
+Acceptance: exact-head CI, synthetic packet boundary/silence/safety/late-slot tests; real Mac A/B with the same Turkish, English and German clean speech, words scored blind where feasible; compare legacy voice vs optimized, test different buffer levels, music and silence, monitor CPU and late slots, check repeated Start/Stop and permission denial, Panic during start and playback, verify no motor reopen and no false running status. Verify existing file/voice/drum/MIDI behavior. Hardware speech intelligibility and latency remain unverified until measured.
+
+Next: live diagnostics for underruns/drops and actual measured latency, improved consonant detection, optional noise suppression/voice isolation, offline speech pipeline parity and shared motor ownership. Keep stable releases unchanged.
