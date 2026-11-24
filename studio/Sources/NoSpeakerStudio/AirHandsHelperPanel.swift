@@ -58,7 +58,7 @@ struct AirHandsHelperPanel: View {
                     patch = next; physical = true
                     message = "Added. Customize range, inversion, smoothing and MIDI destination in Routes."
                 }.disabled(patch.routes.count >= SensorRouter.maxMappings ||
-                           patch.routes.contains { $0.source == .camera && !AirHandsHelper.allSignals.contains($0.signal) })
+                           !AirHandsHelper.canAdd(to:patch.routes))
                 HStack {
                     Picker("Quick setup",selection:$preset) {
                         ForEach(AirHandsHelper.Preset.allCases) { Text($0.title).tag($0) }
@@ -72,7 +72,7 @@ struct AirHandsHelperPanel: View {
                         guard next.isValid else { message = "Preset conflicts with current routes or capacity."; return }
                         patch = next; physical = true
                         message = routes.isEmpty ? "Preset already mapped." : "Added \(routes.count) assignments."
-                    }.disabled(patch.routes.contains { $0.source == .camera && !AirHandsHelper.allSignals.contains($0.signal) })
+                    }.disabled(!AirHandsHelper.canAdd(to:patch.routes))
                 }
                 Text("Pitch bend range is set by the receiving instrument. CC77 vibrato depth, CC76 vibrato rate and CC1 modulation require DAW support. Hold pedals release on opening; toggle pedals change only on a new pinch and always release on tracking loss. No measured force is claimed.")
                     .font(.caption).foregroundStyle(.secondary)

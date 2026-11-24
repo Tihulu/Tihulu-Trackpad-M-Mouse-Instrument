@@ -187,7 +187,7 @@ public struct PhysicalPatchRuntime: Sendable {
 
     public mutating func receiveHelperHands(left:AirHandSample?,right:AirHandSample?,
                                             hostTime:Double,now:Double) -> [SensorCommand] {
-        guard cameraHandsEnabled else { return [] }
+        guard cameraHandsEnabled, !airDualEnabled else { return [] }
         guard hostTime.isFinite, now.isFinite, hostTime >= 0, now >= hostTime,
               now-hostTime < 0.25, hostTime > (seen[.camera] ?? -1) else { return releaseCamera() }
         if let last = seen[.camera], hostTime-last >= 0.25 {
@@ -205,10 +205,49 @@ public struct PhysicalPatchRuntime: Sendable {
 
     /// Dual-hand frames use the same session, router and output ledger as
     /// single-hand camera input. No additional reserved session is consumed.
+    /// Single timestamp and single reserved session for both camera roles.
+    public mutating func receiveCombinedHands(count:Int?,confidence:Double,left:AirHandSample?,
+                                              right:AirHandSample?,swapRoles:Bool,
+                                              hostTime:Double,now:Double) -> [SensorCommand] {
+        guard airDualEnabled, cameraHandsEnabled else { return [] }
+        guard hostTime.isFinite,now.isFinite,hostTime >= 0,now >= hostTime,now-hostTime < 0.25,
+              seen[.camera].map({ hostTime > $0 }) ?? true else { return releaseCamera() }
+        if let last = seen[.camera], hostTime-last >= 0.25 {
+            let commands = releaseCamera()
+            seen[.camera] = hostTime
+            return commands
+        }
+        seen[.camera] = hostTime
+        guard left != nil || right != nil else { return releaseCamera() }
+        if sessions[.camera] == nil { sessions[.camera] = try? router.connect(.camera,now:hostTime) }
+        guard let session = sessions[.camera] else { return releaseCamera() }
+        let helper = swapRoles ? left : right
+        let chord = swapRoles ? right : left
+        let slot = airDual.receive(count:chord == nil ? nil : count,confidence:confidence,
+                                   helper:helper,time:hostTime,now:now)
+        var commands = cameraHands.receive(left:left,right:right,time:hostTime,now:now,
+                                           session:session,router:&router,sequence:&sequence)
+        guard let helper, slot != nil || (airHelperEnabled && airDual.trackingReady) else {
+            commands += AirHandsHelper.releaseInstrument(session:session,router:&router)
+            airStrum?.reset()
+            airActiveSlot = nil
+            return commands
+        }
+        commands += AirDualHandPerformance.route(slot:airStrum == nil ? slot : nil,
+                                                 previous:airStrum == nil ? airActiveSlot : nil,
+                                                 helper:helper,session:session,time:hostTime,router:&router,sequence:&sequence)
+        if airStrum != nil {
+            commands += airStrum!.update(slot:slot,position:helper.x,time:hostTime,now:now,
+                                         session:session,router:&router,sequence:&sequence)
+        }
+        airActiveSlot = slot
+        return commands
+    }
+
     public mutating func receiveDualHand(count: Int?, confidence: Double,
                                          helper: AirHandSample?, hostTime: Double,
                                          now: Double) -> [SensorCommand] {
-        guard airDualEnabled else { return [] }
+        guard airDualEnabled, !cameraHandsEnabled else { return [] }
         guard hostTime.isFinite, now.isFinite, hostTime >= 0, hostTime <= now,
               now - hostTime < 0.25, hostTime > (seen[.camera] ?? -1)
         else { return releaseCamera() }

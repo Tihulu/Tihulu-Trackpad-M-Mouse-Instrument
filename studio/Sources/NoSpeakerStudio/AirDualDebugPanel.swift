@@ -10,6 +10,11 @@ struct AirDualDebugPanel: View {
     @State private var aperture = 0.8
     @State private var x = 0.5
     @State private var y = 0.5
+    @State private var chordX = 0.5
+    @State private var chordY = 0.5
+    @State private var chordAperture = 0.8
+    @State private var chordVisible = true
+    @State private var helperVisible = true
 
     var body: some View {
         GroupBox("Dual hand · frame debug") {
@@ -22,6 +27,13 @@ struct AirDualDebugPanel: View {
                 Slider(value: $aperture, in: 0...1) { Text("Helper aperture") }
                 Slider(value: $x, in: 0...1) { Text("Helper X") }
                 Slider(value: $y, in: 0...1) { Text("Helper Y") }
+                if studio.patchCombinedDebugAvailable {
+                    Toggle("Chord hand visible",isOn:$chordVisible)
+                    Toggle("Helper hand visible",isOn:$helperVisible)
+                    Slider(value:$chordX,in:0...1) { Text("Chord hand X") }
+                    Slider(value:$chordY,in:0...1) { Text("Chord hand Y") }
+                    Slider(value:$chordAperture,in:0...1) { Text("Chord hand aperture") }
+                }
                 Text("Selected: " + (studio.patchAirDebugSelected.map { String($0) } ?? "—") +
                      " · Sounding: " + (studio.patchAirDebugSounding.map { String($0) } ?? "—"))
                     .font(.caption.monospacedDigit())
@@ -36,7 +48,7 @@ struct AirDualDebugPanel: View {
                 HStack {
                     Text("Recorded frames: \(studio.patchAirTraceCount)").font(.caption.monospacedDigit())
                     Button("Replay trace") { studio.startAirReplay() }
-                        .disabled(streaming || studio.patchAirReplaying || studio.patchAirTraceCount == 0)
+                        .disabled(streaming || studio.patchAirReplaying || studio.patchAirTraceCount == 0 || studio.patchCombinedDebugAvailable)
                     Button("Stop replay") { studio.stopAirReplay() }.disabled(!studio.patchAirReplaying)
                     Button("Clear trace") { studio.clearAirTrace() }.disabled(studio.patchAirReplaying)
                 }
@@ -47,7 +59,9 @@ struct AirDualDebugPanel: View {
         .task(id: streaming) {
             guard streaming else { return }
             while !Task.isCancelled && studio.patchAirDebugAvailable {
-                studio.sendAirDebugFrame(count: count, aperture: aperture, x: x, y: y)
+                studio.sendAirDebugFrame(count:count,aperture:aperture,x:x,y:y,
+                    chordHand:AirHandSample.debugSample(x:chordX,y:chordY,aperture:chordAperture),
+                    chordVisible:chordVisible,helperVisible:helperVisible)
                 do { try await Task.sleep(for: .milliseconds(33)) } catch { return }
             }
         }

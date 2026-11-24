@@ -98,7 +98,7 @@ final class AirHandsHelperTests: XCTestCase {
         XCTAssertNil(AirHandsHelper.route(hand:.left,axis:.x,effect:.sustain))
         let helper = AirHandsHelper.route(hand:.left,axis:.pinch,effect:.sustain)!
         let local = SensorMapping(id:"local",source:.trackpad,signal:.contact,destination:.init(.sustain))
-        XCTAssertFalse(InstrumentPatch(name:"Conflict",routes:[helper]+AirDualHandPerformance.routes()).isValid)
+        XCTAssertTrue(InstrumentPatch(name:"Combined",routes:[helper]+AirDualHandPerformance.routes()).isValid)
         var live = PhysicalPatchRuntime()
         try live.configure(.init(name:"Hybrid",routes:[helper,local]))
         _ = live.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:0,now:0)

@@ -77,10 +77,11 @@ final class StudioController: ObservableObject {
     private var patchAirReplayToken: UUID?
     var patchAirRecordAvailable: Bool {
         patchRunning && patchPhysical && patchCamera != nil &&
-            AirDualHandPerformance.usesDualCamera(instrumentPatch.routes)
+            AirDualHandPerformance.usesDualCamera(instrumentPatch.routes) && !AirHandsHelper.uses(instrumentPatch.routes)
     }
     var patchAirDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasDualCamera }
-    var patchHelperDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasHelperHands }
+    var patchHelperDebugAvailable: Bool { patchRunning && !patchPhysical && patchSimulation.hasHelperHands && !patchSimulation.hasDualCamera }
+    var patchCombinedDebugAvailable: Bool { patchAirDebugAvailable && patchSimulation.hasHelperHands }
     @Published private(set) var patchCameraStatus = "Camera OFF"
     @Published private(set) var patchCameraHand: AirHandSample?
     var patchCameraCalibrationAvailable: Bool { patchRunning && patchPhysical && !patchMIDIEnabled && patchCameraHand != nil }
@@ -532,11 +533,21 @@ final class StudioController: ObservableObject {
         recordPatchCommands(patchSimulation.releaseDualHand())
     }
 
-    func sendAirDebugFrame(count: Int, aperture: Double, x: Double, y: Double) {
+    func sendAirDebugFrame(count: Int, aperture: Double, x: Double, y: Double,
+                           chordHand:AirHandSample? = nil, chordVisible:Bool = true, helperVisible:Bool = true) {
         guard patchAirDebugAvailable, !patchAirReplaying else { return }
         let now = ProcessInfo.processInfo.systemUptime
         let hand = AirHandSample.debugSample(x: x, y: y, aperture: aperture)
-        let commands = patchSimulation.receiveDualHand(count: count, confidence: 1, helper: hand, time: now, now: now)
+        let commands: [SensorCommand]
+        if patchCombinedDebugAvailable {
+            let chord = chordVisible ? chordHand : nil
+            let helper = helperVisible ? hand : nil
+            commands = patchSimulation.receiveCombinedHands(count:count,confidence:1,
+                left:patchCameraSwapRoles ? helper : chord,right:patchCameraSwapRoles ? chord : helper,
+                swapRoles:patchCameraSwapRoles,time:now,now:now)
+        } else {
+            commands = patchSimulation.receiveDualHand(count: count, confidence: 1, helper: hand, time: now, now: now)
+        }
         refreshAirDebugState()
         recordPatchCommands(commands)
     }
@@ -557,7 +568,7 @@ final class StudioController: ObservableObject {
     }
 
     func startAirReplay() {
-        guard patchAirDebugAvailable, !patchAirReplaying, !patchAirTrace.frames.isEmpty else { return }
+        guard patchAirDebugAvailable, !patchCombinedDebugAvailable, !patchAirReplaying, !patchAirTrace.frames.isEmpty else { return }
         releaseAirDebugFrame()
         guard patchAirDebugAvailable else { return }
         let frames = patchAirTrace.frames
@@ -702,6 +713,21 @@ final class StudioController: ObservableObject {
                 case .fault(let message):
                     stopBuilderCamera(reason: message)
                     return
+                case .combinedFrame(let count,let confidence,let left,let right,let time):
+                    let l = left?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
+                    let r = right?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
+                    if now >= time && now-time < 0.25 {
+                        patchCameraReceivedFrame = true
+                        patchCameraLastFrame = time
+                        patchCameraHand = patchCameraSwapRoles ? l : r
+                        patchCameraStatus = "Combined · " + (l == nil ? "Left absent" : "Left tracked") +
+                            " · " + (r == nil ? "Right absent" : "Right tracked")
+                    } else {
+                        patchCameraHand = nil
+                        patchCameraStatus = "Stale combined frame · released"
+                    }
+                    recordPatchCommands(patchPhysicalRuntime.receiveCombinedHands(count:count,confidence:confidence,
+                        left:l,right:r,swapRoles:patchCameraSwapRoles,hostTime:time,now:now))
                 case .helperFrame(let left, let right, let time):
                     let l = left?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
                     let r = right?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)

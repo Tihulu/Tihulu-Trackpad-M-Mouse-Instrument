@@ -13,6 +13,7 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
         case frame(AirHandSample?, Double)
         case dualFrame(Int?, Double, AirHandSample?, Double)
         case helperFrame(AirHandSample?, AirHandSample?, Double)
+        case combinedFrame(Int?, Double, AirHandSample?, AirHandSample?, Double)
         case fault(String)
     }
     private let queue = DispatchQueue(label: "com.tihulu.builder.camera", qos: .userInitiated)
@@ -157,8 +158,26 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
                 }
                 let left = hands.filter { $0.chirality == .left }
                 let right = hands.filter { $0.chirality == .right }
-                push(.helperFrame(left.count == 1 ? sample(left[0]) : nil,
-                                  right.count == 1 ? sample(right[0]) : nil,now))
+                let l = left.count == 1 ? sample(left[0]) : nil
+                let r = right.count == 1 ? sample(right[0]) : nil
+                if dualMode {
+                    let chord = swapRoles ? right : left
+                    let pose = chord.count == 1 ? chord[0] : nil
+                    let points = try? pose?.recognizedPoints(.all)
+                    let chains: [(VNHumanHandPoseObservation.JointName,VNHumanHandPoseObservation.JointName,VNHumanHandPoseObservation.JointName)] = [
+                        (.thumbCMC,.thumbMP,.thumbTip),(.indexMCP,.indexPIP,.indexTip),
+                        (.middleMCP,.middlePIP,.middleTip),(.ringMCP,.ringPIP,.ringTip),(.littleMCP,.littlePIP,.littleTip)]
+                    func point(_ name:VNHumanHandPoseObservation.JointName) -> AirHandPoint? {
+                        guard let p = points?[name] else { return nil }
+                        return .init(x:Double(p.location.x),y:Double(p.location.y),confidence:Double(p.confidence))
+                    }
+                    let fingers = chains.compactMap { chain -> AirFingerChain? in
+                        guard let a = point(chain.0),let b = point(chain.1),let c = point(chain.2) else { return nil }
+                        return .init(base:a,joint:b,tip:c)
+                    }
+                    let confidence = fingers.flatMap { [$0.base.confidence,$0.joint.confidence,$0.tip.confidence] }.min() ?? 0
+                    push(.combinedFrame(AirFingerCount.classify(fingers),confidence,l,r,now))
+                } else { push(.helperFrame(l,r,now)) }
                 return
             }
             if dualMode {
@@ -205,7 +224,8 @@ final class BuilderCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferD
             }
             push(.frame(AirHandSample(thumb: thumb, index: index, wrist: wrist, middleBase: middle), now))
         } catch {
-            if helperMode { push(.helperFrame(nil,nil,now)) }
+            if helperMode && dualMode { push(.combinedFrame(nil,0,nil,nil,now)) }
+            else if helperMode { push(.helperFrame(nil,nil,now)) }
             else if dualMode { push(.dualFrame(nil, 0, nil, now)) }
             else { push(.frame(nil, now)) }
         }

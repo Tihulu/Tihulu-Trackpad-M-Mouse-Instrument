@@ -87,7 +87,26 @@ public struct AirHandsHelper: Sendable {
     }
     public static func permitsCombination(_ routes:[SensorMapping]) -> Bool {
         guard uses(routes) else { return true }
-        return routes.allSatisfy { $0.source != .camera || allSignals.contains($0.signal) } && sharedSwitchTargets(routes) != nil
+        let instrument = AirDualHandPerformance.usesDualCamera(routes)
+        let camera = routes.filter { $0.source == .camera }
+        let named = camera.filter { allSignals.contains($0.signal) }
+        let other = camera.filter { !allSignals.contains($0.signal) }
+        // Separate instrument and helper domains must not compete for the
+        // same target within a camera frame. Other devices keep shared ownership.
+        guard instrument || other.isEmpty else { return false }
+        guard Set(named.map(\.destination)).isDisjoint(with:Set(other.map(\.destination))) else { return false }
+        return sharedSwitchTargets(routes) != nil
+    }
+
+    public static func canAdd(to routes:[SensorMapping]) -> Bool {
+        AirDualHandPerformance.usesDualCamera(routes) ||
+            !routes.contains { $0.source == .camera && !allSignals.contains($0.signal) }
+    }
+
+    static let instrumentSignals = Set(AirDualHandPerformance.signals +
+        AirStrumPerformance.strings.flatMap { $0 } + [.x,.y,.gesture,.contact])
+    static func releaseInstrument(session:UUID,router:inout SensorRouter) -> [SensorCommand] {
+        router.releaseSignals(session:session,signals:instrumentSignals)
     }
     public static func route(hand:Hand,axis:Axis,effect:Effect,channel:Int = 0) -> SensorMapping? {
         guard (0...15).contains(channel), !effect.isSwitch || axis == .pinch || axis == .toggle,

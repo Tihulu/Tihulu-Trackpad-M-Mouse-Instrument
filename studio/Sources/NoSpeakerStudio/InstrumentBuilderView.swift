@@ -71,18 +71,18 @@ struct InstrumentBuilderView: View {
                                 message = "Dual Hand added. Enable MIDI output, grant camera permission and start explicitly."
                             } else { message = "Cannot add dual-hand routes: check route capacity." }
                         }.disabled(draft.routes.count + 15 > SensorRouter.maxMappings ||
-                                    draft.routes.contains { $0.source == .camera })
+                                    draft.routes.contains { $0.source == .camera && !AirHandsHelper.allSignals.contains($0.signal) })
                         HStack {
                             Button("Add Air Guitar · 6 strings") {
                                 var next = draft
                                 next.routes += AirStrumPerformance.routes(bank:AirStrumPerformance.guitarBank)
                                 if next.isValid { draft = next; physical = true; message = "Select chord, pinch helper, then sweep X across strings." }
-                            }.disabled(draft.routes.count + 30 > SensorRouter.maxMappings || draft.routes.contains { $0.source == .camera })
+                            }.disabled(draft.routes.count + 30 > SensorRouter.maxMappings || draft.routes.contains { $0.source == .camera && !AirHandsHelper.allSignals.contains($0.signal) })
                             Button("Add 3-course Air · experimental") {
                                 var next = draft
                                 next.routes += AirStrumPerformance.routes(bank:AirStrumPerformance.threeCourseBank)
                                 if next.isValid { draft = next; physical = true; message = "Three-course equal-tempered preset; not makam tuning." }
-                            }.disabled(draft.routes.count + 15 > SensorRouter.maxMappings || draft.routes.contains { $0.source == .camera })
+                            }.disabled(draft.routes.count + 15 > SensorRouter.maxMappings || draft.routes.contains { $0.source == .camera && !AirHandsHelper.allSignals.contains($0.signal) })
                         }
                         if AirStrumPerformance.usesStrum(draft.routes) {
                             Text("Pinch arms the stroke; sweep X to cross virtual strings. Opening the pinch releases all string pulses. Edit each string note in Routes.")
