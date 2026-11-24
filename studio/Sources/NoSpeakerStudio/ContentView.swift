@@ -2358,12 +2358,10 @@ private struct TouchBarModeView: View {
                                         set: { value in setProfile { $0.tiltMaxDegrees = value } }
                                     ), in: 10...175, step: 5)
                         }
-                        Button("Return MIDI to Neutral") {
-                            studio.applySimulatedHingeAngle((
-                                studio.touchBarProfile.tiltMinDegrees +
-                                studio.touchBarProfile.tiltMaxDegrees
-                            ) / 2)
+                        Button("Stop Tilt & Return to Neutral") {
+                            studio.returnTiltToNeutral()
                         }
+                        .disabled(studio.touchBarProfile.tiltTarget == .disabled)
                     }.padding(8)
                 }
                 Text("Safety: Hinge sensor is explicitly opt-in and uses a read-only, undocumented HID report on compatible MacBooks. An unavailable sensor never starts monitoring. The app does not move the display, modify sleep settings, or send any telemetry.")

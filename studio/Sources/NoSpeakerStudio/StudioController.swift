@@ -1277,8 +1277,18 @@ final class StudioController: ObservableObject {
         }
     }
 
+    func returnTiltToNeutral() {
+        guard patchHinge == nil, let neutral = touchBarProfile.neutralTilt else { return }
+        // Retire the live producer first so its next poll cannot overwrite
+        // the neutral. Neutralization itself must not start a stopped bridge.
+        enableLiveHinge(false)
+        simulatedHingeAngle = neutral.angle
+        touchBarValue(neutral.zone, normalized: neutral.value, releaseOnly: true)
+    }
+
     func applySimulatedHingeAngle(_ degrees: Double) {
-        simulatedHingeAngle = degrees
+        guard degrees.isFinite else { return }
+        simulatedHingeAngle = min(175, max(5, degrees))
         guard patchHinge == nil else { return }
         guard let value = touchBarProfile.normalizedTilt(degrees) else { return }
         switch touchBarProfile.tiltTarget {
