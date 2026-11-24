@@ -1020,7 +1020,7 @@ final class StudioController: ObservableObject {
         releaseTouchBarNotes()
         if touchBarSustainOn {
             touchBarSustainOn = false
-            midi?.releaseHelperSustain()
+            midi?.releaseTouchBarSustain()
         }
         touchBarProfile = next
         if let data = try? JSONEncoder().encode(next) {
@@ -1130,9 +1130,7 @@ final class StudioController: ObservableObject {
             : isPressed
         guard next != touchBarSustainOn else { return }
         touchBarSustainOn = next
-        let helperHoldsSameChannel = midiHelperRunning && midiHelperSustainActive &&
-            helperTargetChannel == touchBarProfile.channel
-        midi?.setHelperSustain(next || helperHoldsSameChannel, channel: touchBarProfile.channel)
+        midi?.setTouchBarSustain(next,channel:touchBarProfile.channel)
     }
 
     func touchBarNativeTap(_ note: Int) {
@@ -2027,6 +2025,8 @@ final class StudioController: ObservableObject {
         }
         if !touchBarProfile.effectiveOutput.sendsHaptics {
             releaseTouchBarNotes()
+            midi?.releaseTouchBarSustain()
+            touchBarSustainOn = false
         }
         captureMonitor?.releasePointer()
         midi?.releaseTouchSustain()
@@ -2211,10 +2211,7 @@ final class StudioController: ObservableObject {
             midi?.releaseHelperSustain()
             return
         }
-        midi?.setHelperSustain(
-            snapshot.isActive || (touchBarSustainOn && touchBarProfile.channel == helperTargetChannel),
-            channel: helperTargetChannel
-        )
+        midi?.setHelperSustain(snapshot.isActive,channel:helperTargetChannel)
 
         guard !active.isEmpty else {
             midi?.resetHelperControls(
