@@ -192,7 +192,7 @@ final class StudioController: ObservableObject {
     private var helperPreviewRequested = false
     private var touchBarBridge: StudioTouchBarBridge?
     private var hingeSensor: MacBookHingeAngleSource?
-    private var heldTouchBarNotes: Set<Int> = []
+    private var midiTouchBarNotes = TouchBarNoteState()
     private var clickedSurface: TouchSurfaceKind?
     private var trackpadClickPressure: Double?
     private var activeMIDINoteMap: [String: ActiveMIDINote] = [:]
@@ -1032,12 +1032,9 @@ final class StudioController: ObservableObject {
     func releaseTouchBarNotes() {
         nativePianoTokens.removeAll()
         releaseOptionalTouchBarNotes()
-        for note in heldTouchBarNotes {
-            midi?.sendPerformanceNote(
-                note: note, velocity: 0, isOn: false, channel: touchBarProfile.channel
-            )
+        for command in midiTouchBarNotes.reset(channel:touchBarProfile.channel) {
+            midi?.sendPerformanceNote(note:command.destination.number,velocity:0,isOn:false,channel:command.destination.channel)
         }
-        heldTouchBarNotes.removeAll()
     }
 
     func touchBarKey(_ note: Int, pressed: Bool, owner: TouchBarNoteOwner = .screenPiano) {
@@ -1052,17 +1049,12 @@ final class StudioController: ObservableObject {
         if !midiRunning && pressed { startMIDI() }
         guard midiRunning else { return }
         let safeNote = max(0, min(127, note))
-        if pressed {
-            guard heldTouchBarNotes.insert(safeNote).inserted else { return }
-        } else {
-            guard heldTouchBarNotes.remove(safeNote) != nil else { return }
+        let commands = midiTouchBarNotes.key(safeNote,owner:owner,pressed:pressed,
+            channel:touchBarProfile.channel,velocity:touchBarProfile.noteVelocity)
+        for command in commands {
+            midi?.sendPerformanceNote(note:command.destination.number,velocity:command.value,
+                                      isOn:command.value>0,channel:command.destination.channel)
         }
-        midi?.sendPerformanceNote(
-            note: safeNote,
-            velocity: touchBarProfile.noteVelocity,
-            isOn: pressed,
-            channel: touchBarProfile.channel
-        )
     }
 
     func touchBarValue(_ zone: TouchBarZone, normalized value: Double) {
