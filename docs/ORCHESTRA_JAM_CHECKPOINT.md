@@ -8,3 +8,6 @@ Pair phone/tablet through the existing TLS invitation flow. Mapping details rema
 
 ## Host tempo checkpoint
 The Builder exposes a visual beat indicator and separately opted-in MIDI Start/Clock/Stop on the TIHULU Ensemble Clock virtual source. BPM and meter are immutable while running. Clock uses 24 PPQN with absolute monotonic deadlines and fail-stop on missed pulses; no catch-up bursts. Stop, Panic and page exit stop clock without changing other source owners. Failed Stop delivery retains debt for retry. Timing precision, external DAW synchronization and hardware performance require real acceptance. This is not mobile clock synchronization or an audible metronome.
+
+## Multi-channel take checkpoint
+Arm recording before starting a Builder run. Capture the reconciled command stream, including notes, sustain, pitch bend and CC, after successful host send if MIDI is enabled (or intended commands if disabled). Finish the take independently of live inputs. In-memory maximum 120 seconds / 32768 events including closure. Export SMF type 1, fixed tempo, one track per MIDI channel. No audio, video, raw sensor data, peer IDs, MPE-specific metadata or verified DAW receipt. Stop/Panic closes the recorded take; file-only release events do not change live performance. Previous unsaved takes require replacement confirmation.

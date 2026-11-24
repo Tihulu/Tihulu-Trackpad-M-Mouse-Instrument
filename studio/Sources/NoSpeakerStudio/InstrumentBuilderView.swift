@@ -297,6 +297,7 @@ struct InstrumentBuilderView: View {
                             Spacer()
                             Text(studio.patchStatus).font(.caption)
                         }
+                        EnsembleTakePanel()
                         if studio.patchRunning { EnsembleClockPanel() }
                         else if studio.ensembleClockStatus.contains("Stop delivery failed") {
                             HStack {

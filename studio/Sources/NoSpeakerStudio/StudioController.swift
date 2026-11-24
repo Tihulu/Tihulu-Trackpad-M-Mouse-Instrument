@@ -37,6 +37,45 @@ final class StudioController: ObservableObject {
     private var debugCameraRunToken:UUID?
     var patchDebugCameraRunID:UUID? { patchRunning ? debugCameraRunToken : nil }
     private var patchLedger = PatchOutputLedger()
+    private var ensembleTake:EnsembleTake?
+    @Published var ensembleRecordNext = false
+    @Published var ensembleRecordBPM = 120.0
+    @Published private(set) var ensembleRecording = false
+    @Published private(set) var ensembleTakeReady = false
+    @Published private(set) var ensembleTakeStatus = "No take recorded"
+
+    private func beginEnsembleTakeIfArmed() {
+        guard ensembleRecordNext else { return }
+        ensembleRecordNext = false
+        guard let take = EnsembleTake(patch:instrumentPatch,bpm:ensembleRecordBPM,now:ProcessInfo.processInfo.systemUptime) else { return }
+        ensembleTake = take
+        ensembleRecording = true
+        ensembleTakeReady = false
+        ensembleTakeStatus = "Recording reconciled Builder commands"
+    }
+
+    private func updateEnsembleTakeState() {
+        guard let take = ensembleTake, take.endTick != nil else { return }
+        ensembleRecording = false
+        ensembleTakeReady = !take.events.isEmpty
+        ensembleTakeStatus = "\(take.events.count) events · " + (take.truncated ? "bounded partial take" : "take finished")
+    }
+
+    func stopEnsembleTake() {
+        guard ensembleRecording else { return }
+        ensembleTake?.finish(now:ProcessInfo.processInfo.systemUptime)
+        updateEnsembleTakeState()
+    }
+
+    func discardEnsembleTake() {
+        guard !ensembleRecording else { return }
+        ensembleTake = nil; ensembleTakeReady = false; ensembleTakeStatus = "No take recorded"
+    }
+
+    func exportEnsembleTake() throws -> Data {
+        guard !ensembleRecording,let take = ensembleTake else { throw MIDIClipError.empty }
+        return try take.encoded()
+    }
     private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
     private let ensembleClockMIDI = ChordMIDIOutput(name:"TIHULU Ensemble Clock")
     private var ensembleClockTask:Task<Void,Never>?
@@ -417,6 +456,7 @@ final class StudioController: ObservableObject {
             patchMIDIEnabled = sendMIDI
             debugCameraRunToken = UUID()
             patchRunning = true
+            beginEnsembleTakeIfArmed()
             patchMessages = []
             patchStatus = physical ? (synthetic == nil ? "Native input requested · waiting for a physical contact" : "Hybrid · explicit synthetic source · waiting for input") :
                 (sendMIDI ? "Simulated inputs · live TIHULU Instrument Builder MIDI" : "Simulation only · no MIDI output")
@@ -971,6 +1011,9 @@ final class StudioController: ObservableObject {
                 patchStatus = "MIDI delivery failed. Check DAW and retry Stop."
                 break
             }
+            if ensembleRecording {
+                if ensembleTake?.append(command,now:ProcessInfo.processInfo.systemUptime) != true { updateEnsembleTakeState() }
+            }
         }
         // Deliver synchronously in the original order, publish the bounded
         // monitor only once. A failure still includes the attempted command.
@@ -978,6 +1021,7 @@ final class StudioController: ObservableObject {
     }
 
     func stopInstrumentPatch() {
+        stopEnsembleTake()
         stopEnsembleClock()
         stopAirTrace()
         patchAirReplayToken = nil
