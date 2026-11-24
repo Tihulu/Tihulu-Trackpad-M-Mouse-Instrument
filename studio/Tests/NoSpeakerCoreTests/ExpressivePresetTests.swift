@@ -68,3 +68,19 @@ import Testing
         try ExpressivePreset.whammy.appending(to:.init(),source:.phone,signal:.angle,channel:0)
     }
 }
+
+@Test func lidSweepUsesComfortableCalibratedDegrees() throws {
+    let p = try ExpressivePreset.whammy.appending(to:.init(),source:.lid,signal:.angle,channel:0,lidRange:90...120)
+    #expect(PhysicalPatchRuntime.supports(p))
+    var runtime = PhysicalPatchRuntime()
+    try runtime.configure(p)
+    let bend = SensorDestination(.pitchBend)
+    #expect(runtime.receiveScalar(source:.lid,value:PhysicalPatchRuntime.normalizedLid(90),hostTime:1,now:1) == [.init(bend,value:0)])
+    let middle = runtime.receiveScalar(source:.lid,value:PhysicalPatchRuntime.normalizedLid(105),hostTime:1.1,now:1.1)
+    #expect(middle.count == 1)
+    #expect(abs((middle.first?.value ?? 0)-8192) <= 1)
+    #expect(runtime.receiveScalar(source:.lid,value:PhysicalPatchRuntime.normalizedLid(120),hostTime:1.2,now:1.2) == [.init(bend,value:16383)])
+    #expect(runtime.receiveScalar(source:.lid,value:nil,hostTime:1.3,now:1.3) == [.init(bend,value:8192)])
+    #expect(ExpressivePreset.lidCalibration(lower:100,upper:105) == nil)
+    #expect(ExpressivePreset.lidCalibration(lower:.nan,upper:120) == nil)
+}

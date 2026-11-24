@@ -9,6 +9,8 @@ struct ExpressivePresetPanel: View {
     @State private var signal: SensorSignal = .x
     @State private var channel = 1
     @State private var inverted = false
+    @State private var lidLower = 90.0
+    @State private var lidUpper = 120.0
     @State private var message = ""
     @State private var expanded = false
 
@@ -42,6 +44,12 @@ struct ExpressivePresetPanel: View {
                     }
                     Toggle("Invert", isOn: $inverted)
                 }
+                if source == .lid {
+                    Stepper("Comfortable lower angle: \(Int(lidLower))°",value:$lidLower,in:5...165,step:5)
+                    Stepper("Comfortable upper angle: \(Int(lidUpper))°",value:$lidUpper,in:15...175,step:5)
+                    Text("Use a small comfortable sweep, never force the display. The sensor must be available; the slider is configuration, not measured movement.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Text(preset.instructions).font(.caption).foregroundStyle(.secondary)
                 Text(physical ? "Native input is experimental; release returns to the configured position. Select Native inputs to test the surface, lid, ribbon or camera." :
                     "Real paired phone/tablet input is available through the Remote panel in Native inputs. Motion sensors require browser permission and explicit arming; simulation is also available.")
@@ -51,10 +59,11 @@ struct ExpressivePresetPanel: View {
                         do {
                             patch = try preset.appending(to: patch, source: source,
                                                          signal: selectedSignal,
-                                                         channel: channel - 1, inverted: inverted)
+                                                         channel: channel - 1, inverted: inverted,
+                                                         lidRange: source == .lid && lidUpper-lidLower >= 10 ? lidLower...lidUpper : nil)
                             message = "Added to draft. Edit calibration below, then save or start a test."
                         } catch { message = error.localizedDescription }
-                    }.disabled(!preset.supports(source: source, signal: selectedSignal) || !patch.isValid)
+                    }.disabled(!preset.supports(source: source, signal: selectedSignal) || !patch.isValid || (source == .lid && lidUpper-lidLower < 10))
                     Text(message).font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(.vertical, 6)

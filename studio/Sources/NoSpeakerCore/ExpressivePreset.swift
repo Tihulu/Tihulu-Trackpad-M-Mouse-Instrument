@@ -59,11 +59,24 @@ public enum ExpressivePreset: String, CaseIterable, Identifiable, Sendable {
         return signals.contains(signal)
     }
 
+    /// Calibrate a comfortable lid sweep, without requiring extreme movement.
+    public static func lidCalibration(lower:Double,upper:Double,inverted:Bool = false) -> SensorCalibration? {
+        guard lower.isFinite,upper.isFinite,(5...175).contains(lower),(5...175).contains(upper),
+              upper-lower >= 10 else { return nil }
+        return .init(minimum:(lower-5)/170,maximum:(upper-5)/170,inverted:inverted)
+    }
+
     public func appending(to patch: InstrumentPatch, source: SensorSource, signal: SensorSignal,
-                          channel: Int, inverted: Bool = false) throws -> InstrumentPatch {
+                          channel: Int, inverted: Bool = false,
+                          lidRange: ClosedRange<Double>? = nil) throws -> InstrumentPatch {
         guard (0...15).contains(channel) else { throw ExpressivePresetError.invalidChannel }
         guard supports(source: source, signal: signal) else { throw ExpressivePresetError.unsupportedInput }
         guard patch.isValid else { throw ExpressivePresetError.invalidPatch }
+        let calibration:SensorCalibration
+        if let lidRange {
+            guard source == .lid,let value = Self.lidCalibration(lower:lidRange.lowerBound,upper:lidRange.upperBound,inverted:inverted) else { throw ExpressivePresetError.unsupportedInput }
+            calibration = value
+        } else { calibration = .init(inverted:inverted) }
         let targets: [(SensorSignal, SensorDestination)]
         switch self {
         case .wah: targets = [(signal,.init(.controlChange, channel: channel, number: 4))]
@@ -84,7 +97,7 @@ public enum ExpressivePreset: String, CaseIterable, Identifiable, Sendable {
         var result = patch
         result.routes += targets.map { input, target in
             SensorMapping(id: UUID().uuidString, source: source, signal: input, destination: target,
-                          calibration: .init(inverted: inverted),
+                          calibration: calibration,
                           response: self == .pan ? ContinuousResponse(release: 64.0 / 127.0) :
                               (self == .tiltEffects ? ContinuousResponse(smoothingMS:25) : nil))
         }
