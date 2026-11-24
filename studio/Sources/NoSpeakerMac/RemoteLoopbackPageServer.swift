@@ -121,13 +121,13 @@ public final class RemoteLoopbackPageServer: @unchecked Sendable {
 <title>TIHULU Remote</title>
 <style>
 :root{color-scheme:dark; font:16px system-ui; background:#171717;color:#f5f5f5}
-body{margin:0 auto;max-width:600px;padding:20px}h1{font-size:1.5rem;margin:0 0 6px}
+body{margin:0 auto;max-width:1100px;padding:16px} [hidden]{display:none!important} #remoteBar{position:sticky;top:0;z-index:5;background:#171717;padding:6px 0;border-bottom:1px solid #555} #remoteBar button{min-height:44px} #remoteBar button[aria-pressed=true]{border-color:#79c9a5;background:#28513f} #playView:not([hidden]){display:grid;gap:16px;grid-template-columns:minmax(0,1fr)} #playView>section{min-width:0;border:1px solid #555;padding:12px;border-radius:12px} @media(min-width:800px){#playView:not([hidden]){grid-template-columns:repeat(2,minmax(0,1fr))} #pianoSection,#pedalSection{grid-column:span 2}}h1{font-size:1.5rem;margin:0 0 6px}
 p{color:#c8c8c8;line-height:1.45}label{display:block;margin:12px 0 6px}
 input,button{font:inherit;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #777;background:#252525;color:inherit}
 input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pad{position:relative;height:clamp(180px,42vh,340px);border:1px solid #888;border-radius:12px;background:linear-gradient(90deg,transparent 49.7%,#454545 50%,transparent 50.3%),linear-gradient(transparent 49.7%,#454545 50%,transparent 50.3%),#252525;touch-action:none;user-select:none;display:grid;place-items:center}
 #pad[aria-disabled=true]{opacity:.45}#dot{position:absolute;width:22px;height:22px;background:#e34f4f;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}#dot[hidden]{display:none}
-#releaseAll{position:sticky;top:4px;z-index:4;min-height:44px;border-color:#e5a33b}#status{min-height:2.8em}small{color:#bdbdbd}
+#releaseAll{min-height:44px;border-color:#e5a33b}#status{min-height:2.8em}small{color:#bdbdbd}
 #drumGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}#drumGrid button{margin:0;min-height:80px;padding:8px;touch-action:none;user-select:none;overflow-wrap:anywhere}#drumGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5} @media(max-width:420px){#drumGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #pianoBoard{position:relative;height:clamp(145px,30vh,240px);touch-action:none;user-select:none}
 #pianoBoard button{position:absolute;margin:0;border-radius:0 0 6px 6px;padding:0 0 8px;display:flex;align-items:flex-end;justify-content:center;touch-action:none;user-select:none;font-size:12px}
@@ -143,20 +143,21 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pedalGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5}
 @media(max-width:420px){#pedalGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style></head>
-<body><h1>TIHULU Remote</h1><p>Local touch &amp; tilt controller · Experimental</p>
-<label for="secret">One-time invitation (64 hexadecimal characters)</label>
+<body><h1>TIHULU Remote</h1><p>Local MIDI performance controller · Experimental</p>
+<div id="remoteBar"><nav aria-label="Controller views"><button id="navPlay" aria-pressed="false" disabled>Play</button><button id="navSetup" aria-pressed="false" disabled>Setup</button><button id="navConnection" aria-pressed="true">Connection</button></nav><button id="releaseAll" disabled>Release my controls</button><button id="disconnect" disabled>Disconnect / release</button><p id="navStatus" role="status"></p><p id="status" role="status" aria-live="polite">Not connected.</p><small id="ackLatency">Mac ACK round trip: no sample.</small></div>
+<section id="connectionView"><label for="secret">One-time invitation (64 hexadecimal characters)</label>
 <input id="secret" type="password" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
-<button id="connect">Connect</button><button id="disconnect" disabled>Disconnect / release</button><button id="releaseAll" disabled>Release my controls</button>
-<p id="status" role="status" aria-live="polite">Not connected.</p>
+<button id="connect">Connect</button><p>Use the matching trusted TLS certificate and a new invitation for each connection. ACK round trip includes Mac processing; it is not audio or MIDI latency.</p></section>
+<div id="setupView" hidden>
 <section id="mappingSection" hidden><h2>Mapped MIDI destinations</h2><p id="mappingStatus" role="status"></p><pre id="mappingDetails" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></section>
 <section id="workloadSection" hidden aria-labelledby="workloadTitle"><h2 id="workloadTitle">Performance combinations</h2>
 <p id="workloadStatus" role="status" aria-live="polite">Conservative combinations. No physical latency guarantee.</p>
 <button id="workloadMode" type="button" aria-pressed="false" disabled>Enable experimental combinations</button>
-<small>Conservative mode allows one touch, drum, piano or pedal surface plus up to two motion streams, or all three motion streams alone. Experimental mode permits additional mapped combinations but may interrupt performance; the same safety limits apply. Change mode only when all controls are disabled and released.</small></section>
-<section id="touchSection" hidden><div id="pad" aria-label="XY touch surface" aria-disabled="true"><span>Touch and move</span><div id="dot" hidden></div></div>
+<small>Conservative mode allows one touch, drum, piano or pedal surface plus up to two motion streams, or all three motion streams alone. Experimental mode permits additional mapped combinations but may interrupt performance; the same safety limits apply. Change mode only when all controls are disabled and released.</small></section></div>
+<div id="playView" hidden><section id="touchSection" hidden><div id="pad" aria-label="XY touch surface" aria-disabled="true"><span>Touch and move</span><div id="dot" hidden></div></div>
 <p><small>X and Y control the mapped instrument. Lift to release. One contact only.</small></p></section>
 <section id="drumSection" hidden aria-labelledby="drum-title"><h2 id="drum-title">Drum Pads</h2>
-<p>Only pads mapped for this paired device are available. Pad numbers identify controls, not assumed MIDI notes. Actual destinations are listed above when shared.</p>
+<p>Only pads mapped for this paired device are available. Pad numbers identify controls, not assumed MIDI notes. Actual destinations are listed in Setup when shared.</p>
 <button id="drumEnable" disabled>Enable drum pads</button><button id="drumRelease" disabled>Release all pads</button>
 <p id="drumStatus" role="status">Off.</p><div id="drumGrid"><button id="drum0" type="button" aria-pressed="false" disabled>1 · Kick</button><button id="drum1" type="button" aria-pressed="false" disabled>2 · Snare</button><button id="drum2" type="button" aria-pressed="false" disabled>3 · Closed Hi-Hat</button><button id="drum3" type="button" aria-pressed="false" disabled>4 · Open Hi-Hat</button><button id="drum4" type="button" aria-pressed="false" disabled>5 · Low Tom</button><button id="drum5" type="button" aria-pressed="false" disabled>6 · High Tom</button><button id="drum6" type="button" aria-pressed="false" disabled>7 · Crash</button><button id="drum7" type="button" aria-pressed="false" disabled>8 · Ride</button></div>
 <small>Multiple fingers supported. Hold a pad to sustain its note; lift to release. Fixed host velocity, no pressure sensing. Release all clears pending hits.</small></section>
@@ -188,7 +189,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <div id="rotationSection" hidden><label for="rotationMeter">Rotation speed · 0–360°/s</label><meter id="rotationMeter" min="0" max="1" value="0" style="width:100%;height:24px"></meter>
 <button id="rotationStart" disabled>Enable rotation</button><button id="rotationStop" disabled>Release rotation</button><p id="rotationStatus" role="status">Off.</p></div>
 <p id="airDrumNotice" hidden>Air Drums is mapped: enabling acceleration can trigger notes. Use gentle controlled movements.</p><small>Live meters are before Mac mapping. Use only the sensors your instrument maps. If the Mac instrument maps Air Drums, enabling acceleration also enables motion-triggered notes. Hold your device securely; use small controlled motions. Never strike a surface with it.</small></section>
-<script src="/control.js" defer></script></body></html>
+</div><script src="/control.js" defer></script></body></html>
 """#
     private static let script = #"""
 "use strict";
@@ -208,6 +209,32 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function sendTouchEdge(){const edge=touchQueue.shift();send(edge.kind,edge.axes);}
   let caps=null,experimentalWorkload=false,workloadRefusal="";
   let releasingAll=false,releaseAllTimer=null;
+  let currentView="connection",ackSamples=[],ackAt=null;
+  const viewNames=["play","setup","connection"];
+  const navId=v=>"nav"+v[0].toUpperCase()+v.slice(1);
+  function navigationBusy(){return releasingAll||pending||workloadMask()!==0;}
+  function syncNavigation(){
+    for(const v of viewNames){
+      get(v+"View").hidden=currentView!==v;
+      const b=get(navId(v));b.setAttribute("aria-pressed",String(currentView===v));
+      b.disabled=v!==currentView&&(!caps||navigationBusy());
+    }
+    get("navStatus").textContent=caps&&navigationBusy()?"Release and disable controls before changing views.":"";
+  }
+  function chooseView(v){
+    if(!viewNames.includes(v)||v===currentView||!caps||navigationBusy())return;
+    currentView=v;syncNavigation();
+  }
+  function syncLatency(){
+    const recent=ackAt!==null&&performance.now()-ackAt<2000;
+    const median=ackSamples.length?[...ackSamples].sort((a,b)=>a-b)[Math.floor(ackSamples.length/2)]:null;
+    get("ackLatency").textContent=recent&&median!==null?"Mac ACK round trip (recent median): "+Math.round(median)+" ms. Not MIDI/audio latency.":"Mac ACK round trip: no recent sample.";
+  }
+  function recordAck(){
+    const now=performance.now(),elapsed=now-lastSend;
+    if(Number.isFinite(elapsed)&&elapsed>=0&&elapsed<=220){ackSamples.push(elapsed);if(ackSamples.length>8)ackSamples.shift();ackAt=now;}
+    syncLatency();
+  }
   const releaseAll=get("releaseAll");
   function cancelGlobalTimer(){if(releaseAllTimer!==null)clearTimeout(releaseAllTimer);releaseAllTimer=null;}
   function finishGlobalRelease(){
@@ -348,7 +375,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     mappingStage=null;mappingRows=null;mappingLabels=new Map();
   }
   function ready(manifest,rows,labels=new Map()){
-    clearMapping();mappingRows=rows;mappingLabels=labels;caps=manifest;
+    clearMapping();mappingRows=rows;mappingLabels=labels;caps=manifest;currentView="play";
     if(!octaveAvailable(0)&&octaveAvailable(1))pianoOctave=1;
     syncControls();renderMapping();status.textContent="Connected. Only mapped controls are available.";
     timer=setInterval(tick,25);tick();
@@ -604,7 +631,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }
   }
   async function startInertial(s){
-    if(releasingAll||!admitted||!caps?.[s.kind]||s.mode!=="idle"||streams.some(x=>x.mode==="requesting")||mode==="requesting")return;
+    if(currentView!=="play"||releasingAll||!admitted||!caps?.[s.kind]||s.mode!=="idle"||streams.some(x=>x.mode==="requesting")||mode==="requesting")return;
     if(!window.isSecureContext||typeof window.DeviceMotionEvent==="undefined"){s.status.textContent="DeviceMotion unavailable.";return;}
     if(!requestWorkload(s.kind))return;
     const epoch=++s.epoch;s.mode="requesting";s.status.textContent="Waiting for permission…";syncControls();
@@ -623,7 +650,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     s.epoch++;s.mode="releasing";s.sample=null;s.status.textContent="Releasing…";syncInertialListener();syncControls();tick();
   }
   function syncControls(){
-    pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncWorkload();
+    pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncWorkload();syncNavigation();syncLatency();
     releaseAll.disabled=!admitted||!caps||releasingAll;
     const asking=releasingAll||mode==="requesting"||streams.some(s=>s.mode==="requesting");
     if(releasingAll){drumEnable.disabled=true;pianoEnable.disabled=true;pedalEnable.disabled=true;}
@@ -647,7 +674,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(neutral){let delta=((beta-neutral.beta+540)%360)-180;meter.value=Math.max(0,Math.min(1,0.5+delta/90));}
   }
   async function startMotion(){
-    if(releasingAll||!admitted||!caps?.tilt||mode!=="idle"||streams.some(s=>s.mode==="requesting"))return;
+    if(currentView!=="play"||releasingAll||!admitted||!caps?.tilt||mode!=="idle"||streams.some(s=>s.mode==="requesting"))return;
     if(!window.isSecureContext||typeof window.DeviceOrientationEvent==="undefined"){
       motionStatus.textContent="Orientation unavailable in this secure browser.";return;
     }
@@ -672,7 +699,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
-    const old=ws;ws=null;admitted=false;caps=null;releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
+    const old=ws;ws=null;admitted=false;caps=null;currentView="connection";ackSamples=[];ackAt=null;releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
     if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();syncControls();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
@@ -702,7 +729,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function tick(){
     if(!admitted||!caps)return;
-    const now=performance.now();
+    const now=performance.now();syncLatency();
     if(mode==="waiting"&&now-waitingSince>=3000){resetMotion("No valid orientation data. Check permission and device support.");}
     if((mode==="active"||mode==="arming")&&now-sampleAt>=250){close("Orientation stopped. Host releases tilt; reconnect explicitly.");return;}
     for(const s of streams){
@@ -787,7 +814,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         if(!acceptLabels(e.data))close("Invalid label response. Reconnect explicitly.");return;
       }
       if(!pending||!caps||e.data!=="accepted"){close("Unexpected response.");return;}
-      clearDeadline();pending=false;const kind=pendingKind;pendingKind=null;
+      recordAck();clearDeadline();pending=false;const kind=pendingKind;pendingKind=null;
       if(kind==="orientationArm"&&mode==="arming"){mode="active";motionStatus.textContent="Tilt active. Move gently; release when finished.";}
       if(kind==="motionRelease")resetMotion("Tilt released.");
       for(const s of streams){
@@ -807,7 +834,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     dot.hidden=false;dot.style.left=(position.x*100)+"%";dot.style.top=((1-position.y)*100)+"%";return true;
   }
   pad.addEventListener("pointerdown",e=>{
-    if(releasingAll||!admitted||!caps?.touch||pointer!==null||e.button!==0)return;
+    if(currentView!=="play"||releasingAll||!admitted||!caps?.touch||pointer!==null||e.button!==0)return;
     if(!requestWorkload("touch"))return;
     e.preventDefault();pointer=e.pointerId;try{pad.setPointerCapture(pointer);}catch{close("Pointer capture failed.");return;}
     if(!move(e))return;syncControls();queueTouch("touch",{...position});
@@ -822,7 +849,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   // let host disconnect/watchdog release already delivered owners.
   for(const event of ["pointercancel","lostpointercapture"])pad.addEventListener(event,e=>{if(e.pointerId===pointer)close("Touch cancelled. Reconnect explicitly.");});
   drumEnable.addEventListener("click",()=>{
-    if(releasingAll||!admitted||!caps?.drums)return;
+    if(currentView!=="play"||releasingAll||!admitted||!caps?.drums)return;
     if(!drumEnabled&&!requestWorkload("drums"))return;
     drumEnabled=!drumEnabled;
     if(!drumEnabled)releaseDrums();
@@ -843,7 +870,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     b.addEventListener("blur",()=>drumUp("k"+index));
   });
   pianoEnable.addEventListener("click",()=>{
-    if(releasingAll||!admitted||!caps?.piano)return;
+    if(currentView!=="play"||releasingAll||!admitted||!caps?.piano)return;
     if(!pianoEnabled&&!requestWorkload("piano"))return;
     pianoEnabled=!pianoEnabled;
     if(!pianoEnabled)releasePiano();
@@ -867,7 +894,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     b.addEventListener("blur",()=>pianoUp("k"+i));
   });
   pedalEnable.addEventListener("click",()=>{
-    if(releasingAll||!admitted||!caps?.pedals)return;
+    if(currentView!=="play"||releasingAll||!admitted||!caps?.pedals)return;
     if(!pedalEnabled&&!requestWorkload("pedals"))return;
     pedalEnabled=!pedalEnabled;
     if(!pedalEnabled)releasePedals();
@@ -881,6 +908,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(releasingAll||!admitted||!caps||workloadMask()!==0||pending)return;
     experimentalWorkload=!experimentalWorkload;workloadRefusal="";syncControls();
   });
+  for(const v of viewNames)get(navId(v)).addEventListener("click",()=>chooseView(v));
   releaseAll.addEventListener("click",releaseMyControls);
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);
