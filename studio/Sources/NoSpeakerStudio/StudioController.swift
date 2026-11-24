@@ -554,27 +554,40 @@ final class StudioController: ObservableObject {
     }
 
     func sendPatchInput(_ input: PatchSimulation.Input, value: Double) {
-        guard patchRunning, !patchPhysical else { return }
+        guard patchRunning, !patchPhysical, patchInputs.contains(input),
+              value.isFinite, (0...1).contains(value) else { return }
+        // A later manual input supersedes the pulse's release timer.
+        // Do not release its contribution here: the new value owns it.
+        cancelPatchPulse(input)
+        deliverPatchInput(input, value: value)
+    }
+
+    private func cancelPatchPulse(_ input: PatchSimulation.Input) {
+        patchPadTasks.removeValue(forKey: input)?.cancel()
+        patchPadTokens.removeValue(forKey: input)
+    }
+
+    private func deliverPatchInput(_ input: PatchSimulation.Input, value: Double) {
         let commands = patchSimulation.send(input, value: value, now: ProcessInfo.processInfo.systemUptime)
         recordPatchCommands(commands)
     }
 
     func releasePatchInput(_ input: PatchSimulation.Input) {
         guard patchRunning, !patchPhysical else { return }
-        patchPadTasks.removeValue(forKey: input)?.cancel()
-        patchPadTokens.removeValue(forKey: input)
+        cancelPatchPulse(input)
         let commands = patchSimulation.release(input)
         recordPatchCommands(commands)
     }
 
     func pulsePatchInput(_ input: PatchSimulation.Input, value: Double = 1) {
-        guard patchRunning, !patchPhysical, patchInputs.contains(input) else { return }
+        guard patchRunning, !patchPhysical, patchInputs.contains(input),
+              value.isFinite, (0...1).contains(value) else { return }
         // Release first for an actual retrigger. No raw-zero synthesis.
         releasePatchInput(input)
         guard patchRunning else { return }
         let token = UUID()
         patchPadTokens[input] = token
-        sendPatchInput(input, value: value)
+        deliverPatchInput(input, value: value)
         guard patchRunning, patchPadTokens[input] == token else { return }
         patchPadTasks[input] = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
@@ -586,8 +599,7 @@ final class StudioController: ObservableObject {
     func disconnectPatchInput(_ source: SensorSource) {
         guard patchRunning, !patchPhysical else { return }
         for input in Array(patchPadTasks.keys) where input.source == source {
-            patchPadTasks.removeValue(forKey: input)?.cancel()
-            patchPadTokens.removeValue(forKey: input)
+            cancelPatchPulse(input)
         }
         let commands = patchSimulation.disconnect(source)
         patchInputs = patchSimulation.inputs

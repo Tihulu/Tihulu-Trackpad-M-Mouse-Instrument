@@ -35,6 +35,17 @@ public struct PerformanceWidget: Codable, Equatable, Identifiable, Sendable {
         }
     }
 
+    /// A tap pad can pulse continuous controls or gates. For gates choose
+    /// a common activating endpoint, never a synthetic zero release.
+    public func pulseValue(for routes: [SensorMapping]) -> Double? {
+        let matches = routes.filter { $0.source == source && $0.signal == signal }
+        guard !matches.isEmpty, matches.allSatisfy(\.isValid) else { return nil }
+        let gates = matches.filter { $0.destination.kind == .note || $0.destination.kind == .sustain }
+        return [1.0,0.0].first { value in
+            gates.allSatisfy { ($0.calibration.apply(value) ?? -1) >= $0.threshold }
+        }
+    }
+
     public var isValid: Bool {
         label.utf8.count <= 64 &&
         !label.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } &&
