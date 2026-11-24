@@ -35,6 +35,11 @@ final class StudioController: ObservableObject {
     private var patchLedger = PatchOutputLedger()
     private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
     private var patchMIDIEnabled = false
+    @Published private(set) var patchPhysical = false
+    @Published private(set) var patchActiveSurfaces: Set<SensorSource> = []
+    private var patchPhysicalRuntime = PhysicalPatchRuntime()
+    private var patchMailbox: PatchSurfaceMailbox?
+    private var patchWatchdog: Task<Void, Never>?
     @Published private(set) var sequenceRunning = false
     @Published private(set) var sequenceStatus = "Sequencer MIDI idle"
     private let sequenceMIDI = ChordMIDIOutput(name: "TIHULU Sequencer")
@@ -170,31 +175,115 @@ final class StudioController: ObservableObject {
         UserDefaults.standard.set(data, forKey: "TIHULU.instrumentPatch.v1")
     }
 
-    func startInstrumentPatch(sendMIDI: Bool) {
+    func startInstrumentPatch(sendMIDI: Bool, physical: Bool = false) {
         guard !patchRunning else { return }
+        if physical {
+            guard PhysicalPatchRuntime.supports(instrumentPatch) else {
+                patchStatus = "Live input supports only Trackpad/external touch surface X, Y, contact and contact size."
+                return
+            }
+            guard !touchPreviewRunning, !touchRunning, !midiHelperRunning,
+                  !instrumentPreviewRequested, !helperPreviewRequested else {
+                patchStatus = "Stop Touch Instrument and MIDI Helper before starting physical Builder input."
+                return
+            }
+            guard requireEngine(), driver != nil else {
+                patchStatus = "Native surface monitoring unavailable on this Mac."
+                return
+            }
+        }
         guard patchLedger.releaseAll(send: { patchMIDI.send($0) }) else {
             patchStatus = "Unreleased MIDI controls. Reset the DAW and retry Stop."
             return
         }
         do {
             if sendMIDI { try patchMIDI.open() }
-            try patchSimulation.start(instrumentPatch, now: ProcessInfo.processInfo.systemUptime)
+            if physical {
+                try patchPhysicalRuntime.configure(instrumentPatch)
+                let mailbox = PatchSurfaceMailbox()
+                patchMailbox = mailbox
+                patchPhysical = true
+                try driver?.startSurfaceMonitoring(includeExternalSurfaces: true) { frame in
+                    mailbox.submit(frame)
+                }
+                patchInputs = []
+                patchActiveSurfaces = []
+            } else {
+                try patchSimulation.start(instrumentPatch, now: ProcessInfo.processInfo.systemUptime)
+                patchInputs = patchSimulation.inputs
+            }
             patchMIDIEnabled = sendMIDI
             patchRunning = true
-            patchInputs = patchSimulation.inputs
             patchMessages = []
-            patchStatus = sendMIDI ? "Simulated inputs · live TIHULU Instrument Builder MIDI" : "Simulation only · no MIDI output"
-        } catch { patchStatus = error.localizedDescription }
+            patchStatus = physical ? "Native input requested · waiting for a physical contact" :
+                (sendMIDI ? "Simulated inputs · live TIHULU Instrument Builder MIDI" : "Simulation only · no MIDI output")
+            if physical { startPatchWatchdog() }
+        } catch {
+            stopInstrumentPatch()
+            patchStatus = error.localizedDescription
+        }
+    }
+
+    private func startPatchWatchdog() {
+        guard let mailbox = patchMailbox else { return }
+        patchWatchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+                guard let self, self.patchRunning, self.patchPhysical,
+                      self.patchMailbox === mailbox else { return }
+                self.drainPhysicalPatch(mailbox)
+            }
+        }
+    }
+
+    private func drainPhysicalPatch(_ mailbox: PatchSurfaceMailbox) {
+        let batch = mailbox.drain()
+        let now = ProcessInfo.processInfo.systemUptime
+        if batch.overflow || batch.samples.contains(where: { now - $0.time >= PhysicalPatchRuntime.timeout }) {
+            stopInstrumentPatch()
+            patchStatus = "Native input backlog or stale frames. Output released; restart explicitly."
+            return
+        }
+        for sample in batch.samples {
+            guard patchRunning else { return }
+            let surface = sample.frame.surface
+            let source: SensorSource = surface == .trackpad ? .trackpad : .magicMouse
+            let contact = sample.frame.contacts.filter { $0.isDown }.min { $0.id < $1.id }
+            var x: Double?
+            var y: Double?
+            var size: Double?
+            if let contact, contact.x.isFinite, contact.y.isFinite, contact.size.isFinite {
+                let rawX = min(1, max(0, Double(contact.x)))
+                let rawY = min(1, max(0, Double(contact.y)))
+                let point = surface == .magicMouse ? magicMouseOrientation.transformed(x: rawX, y: rawY) : (rawX,rawY)
+                x = point.0
+                y = point.1
+                size = min(1,max(0,Double(contact.size)))
+            }
+            let commands = patchPhysicalRuntime.receive(source: source, x: x, y: y, size: size,
+                                                        hostTime: sample.time, now: now)
+            recordPatchCommands(commands)
+        }
+        guard patchRunning else { return }
+        let expired = patchPhysicalRuntime.expire(now: now)
+        recordPatchCommands(expired)
+        guard patchRunning else { return }
+        let active = patchPhysicalRuntime.activeSources
+        if active != patchActiveSurfaces {
+            patchActiveSurfaces = active
+            patchStatus = active.isEmpty ? "No live contacts · controls released" :
+                "Live contacts · " + active.map(\.rawValue).sorted().joined(separator: ", ")
+        }
     }
 
     func sendPatchInput(_ input: PatchSimulation.Input, value: Double) {
-        guard patchRunning else { return }
+        guard patchRunning, !patchPhysical else { return }
         let commands = patchSimulation.send(input, value: value, now: ProcessInfo.processInfo.systemUptime)
         recordPatchCommands(commands)
     }
 
     func disconnectPatchInput(_ source: SensorSource) {
-        guard patchRunning else { return }
+        guard patchRunning, !patchPhysical else { return }
         let commands = patchSimulation.disconnect(source)
         patchInputs = patchSimulation.inputs
         recordPatchCommands(commands)
@@ -216,6 +305,14 @@ final class StudioController: ObservableObject {
     }
 
     func stopInstrumentPatch() {
+        patchWatchdog?.cancel()
+        patchWatchdog = nil
+        patchMailbox?.close()
+        patchMailbox = nil
+        if patchPhysical { driver?.stopSurfaceMonitoring() }
+        patchPhysical = false
+        patchActiveSurfaces = []
+        _ = patchPhysicalRuntime.stop()
         _ = patchSimulation.stop()
         patchInputs = []
         patchRunning = false
@@ -1278,7 +1375,7 @@ final class StudioController: ObservableObject {
     /// Distribute the same physical frames to independently enabled Instrument
     /// and Helper consumers, filtered by surface assignment.
     private func refreshSharedSurfaceMonitoring() {
-        guard let touch else { return }
+        guard !patchPhysical, let touch else { return }
         let needed = instrumentPreviewRequested || helperPreviewRequested ||
                      touchRunning || midiHelperRunning
         if !needed {
@@ -1352,6 +1449,7 @@ final class StudioController: ObservableObject {
     }
 
     func startTouchPreview(configuration: TouchInstrumentConfiguration) {
+        guard !patchPhysical else { return }
         guard requireEngine() else { return }
         // Reopening the view never overwrites an already running performance
         // with fresh @State defaults from a newly constructed SwiftUI view.
@@ -1565,6 +1663,7 @@ final class StudioController: ObservableObject {
     }
 
     func startMIDIHelperPreview(surfaceSelection: TouchSurfaceSelection) {
+        guard !patchPhysical else { return }
         guard requireEngine() else { return }
         // Preserve the live helper's previously chosen surface until the user
         // explicitly changes it; navigating away/back must not re-route MIDI.
@@ -2034,6 +2133,10 @@ final class StudioController: ObservableObject {
     }
 
     private func allowOtherPerformance() -> Bool {
+        guard !patchPhysical else {
+            lastError = "Stop physical Instrument Builder input before starting another monitored performance."
+            return false
+        }
         guard !sequenceOwnsHaptics else {
             lastError = "Stop the sequencer's combined Trackpad/MIDI output first."
             return false

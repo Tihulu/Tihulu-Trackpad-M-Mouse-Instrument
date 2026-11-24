@@ -8,6 +8,7 @@ struct InstrumentBuilderView: View {
     @EnvironmentObject private var studio: StudioController
     @State private var draft = InstrumentPatch()
     @State private var sendMIDI = false
+    @State private var physical = false
     @State private var values: [PatchSimulation.Input: Double] = [:]
     @State private var message = ""
 
@@ -15,7 +16,7 @@ struct InstrumentBuilderView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Instrument Builder").font(.largeTitle.bold())
-                Text("Create sensor-to-MIDI rules. Save your instrument, test it with simulated controls, or deliberately enable live MIDI. Physical inputs are not connected in this increment.")
+                Text("Create sensor-to-MIDI rules. Save your instrument, test it with simulated controls, or deliberately enable live MIDI. Native Trackpad and compatible external touch-surface input is optional and experimental.")
                     .foregroundStyle(.secondary)
                 GroupBox("Instrument") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -51,15 +52,23 @@ struct InstrumentBuilderView: View {
                 }
                 GroupBox("Test instrument") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Toggle("Send simulated controls to dedicated MIDI output", isOn: $sendMIDI)
+                        Picker("Input", selection: $physical) {
+                            Text("Simulation").tag(false)
+                            Text("Physical surfaces (experimental)").tag(true)
+                        }.pickerStyle(.segmented).disabled(studio.patchRunning)
+                        Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)
                             .disabled(studio.patchRunning)
+                        if physical && !PhysicalPatchRuntime.supports(draft) {
+                            Text("Physical mode requires only Trackpad / external touch-surface routes with X, Y, contact or contact size. Other sources remain simulation-only.")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
                         HStack {
                             Button("Start test") {
                                 studio.updateInstrumentPatch(draft)
                                 values = [:]
-                                studio.startInstrumentPatch(sendMIDI: sendMIDI)
+                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical)
                             }.buttonStyle(.borderedProminent)
-                                .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty)
+                                .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty || (physical && !PhysicalPatchRuntime.supports(draft)))
                             Button("Stop / Release All") { studio.stopInstrumentPatch() }
                             Spacer()
                             Text(studio.patchStatus).font(.caption)
@@ -74,7 +83,11 @@ struct InstrumentBuilderView: View {
                                 Button("Disconnect source") { studio.disconnectPatchInput(input.source) }
                             }
                         }
-                        Text("Use TIHULU Instrument Builder as a dedicated DAW input if MIDI is enabled. Connect a separate instrument/channel; no hardware sensor or network is started. Stop or leave this page to release owned controls.")
+                        if physical {
+                            Text("Primary contact per surface; contact size is not measured pressure. The private macOS driver groups compatible external touch surfaces under Magic Mouse; device identity is not verified here. Shared monitor is exclusive to this test. Lift or loss of input releases owned controls. No automatic pointer capture.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text("Use TIHULU Instrument Builder as a dedicated DAW input if MIDI is enabled. Connect a separate instrument/channel. Stop or leave this page to release owned controls. No network access.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }
