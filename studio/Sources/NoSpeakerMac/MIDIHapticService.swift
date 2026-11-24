@@ -371,9 +371,11 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
         let safeMelodicChannel = SurfaceMIDIChannel.melodic(base: baseChannel, hasMIDIDrums: anyDrums)
 
+        let stringRouteAllowed = configuration.permitsStringMIDI(isMPE:midiMode == .mpe)
         var desired = states.filter {
             $0.isDown && $0.continuousMIDI.isFinite && $0.vibrato.isFinite &&
-            configuration.surfaceSelection.accepts($0.surface) && configuration.output(for: $0.surface).sendsMIDI
+            configuration.surfaceSelection.accepts($0.surface) && configuration.output(for: $0.surface).sendsMIDI &&
+            (configuration.instrument(for:$0.surface) != .guitar || stringRouteAllowed)
         }
         if !multiTouchEnabled {
             desired = Array(desired.prefix(1))
@@ -421,7 +423,8 @@ public final class MIDIHapticService: @unchecked Sendable {
             let key = TouchKey(surface: state.surface, id: state.contactID)
             let drums = configuration.instrument(for: state.surface) == .drums
             guard processed.insert(key).inserted else { continue }
-            let isFretlessMelody = !drums && configuration.fretless
+            let isGuitar = configuration.instrument(for:state.surface) == .guitar
+            let isFretlessMelody = configuration.instrument(for:state.surface) == .melodic && configuration.fretless
             let isMPE = midiMode == .mpe && !drums
             let standardChannel = drums ? GMDrumPads.midiChannel : safeMelodicChannel
             let anchor = max(0,min(127,configuration.baseMIDINote +
@@ -457,7 +460,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             if !drums {
                 let vibrato = max(0,min(127,Int((min(1,max(0,state.vibrato))*127).rounded())))
                 let modulation = SensorDestination(.controlChange,channel:channel,number:1)
-                frameControls[modulation] = .init(vibrato,neutral:0)
+                if !isGuitar { frameControls[modulation] = .init(vibrato,neutral:0) }
                 if configuration.pressureToExpression {
                     let expression = SensorDestination(.controlChange,channel:channel,number:11)
                     frameControls[expression] = .init(max(0,min(127,state.expression)),neutral:127)

@@ -70,6 +70,7 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
     public var scale: TouchScale
     public var customScale: CustomScale?
     public var physicalChordBank: ChordBank?
+    public var stringLayout: StringSurfaceLayout
     public var fretless: Bool
     public var zoneWidth: Double
     public var pitchSpanSemitones: Double
@@ -109,12 +110,14 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         drumLayout: DrumPadLayout = .standard12,
         magicMouseOrientation: SurfaceOrientation = .horizontal,
         customScale: CustomScale? = nil,
-        physicalChordBank: ChordBank? = nil
+        physicalChordBank: ChordBank? = nil,
+        stringLayout: StringSurfaceLayout = .init()
     ) {
         self.baseMIDINote = baseMIDINote
         self.scale = scale
         self.customScale = customScale
         self.physicalChordBank = physicalChordBank
+        self.stringLayout = stringLayout
         self.fretless = fretless
         self.zoneWidth = zoneWidth
         self.pitchSpanSemitones = pitchSpanSemitones
@@ -181,6 +184,14 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
             return customScale.tunedFrequency(midi: midi, root: baseMIDINote)
         }
         return try? MusicTheory.frequency(midi: midi)
+    }
+
+    public func permitsStringMIDI(isMPE:Bool) -> Bool {
+        guard selectedSurfaces.contains(where: { instrument(for:$0) == .guitar && output(for:$0).sendsMIDI }) else { return true }
+        let mixedFretless = fretless && selectedSurfaces.contains {
+            instrument(for:$0) == .melodic && output(for:$0).sendsMIDI
+        }
+        return stringLayout.permitsMIDI(mixedFretless:mixedFretless,isMPE:isMPE)
     }
 
     public var hasPhysicalChords: Bool {
@@ -498,7 +509,10 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
             let quantized: Int
             var chordSlot: Int? = nil
-            if instrument == .chords {
+            if instrument == .guitar {
+                guard let cell = config.stringLayout.cell(x:x,y:y) else { return nil }
+                quantized = cell.note
+            } else if instrument == .chords {
                 guard let slot = PhysicalChordGrid.slot(x:x,y:y),
                       let pad = config.physicalChordBank?.pad(at:slot), let first = pad.notes.first else { return nil }
                 chordSlot = slot
@@ -666,13 +680,17 @@ public final class TouchInstrumentService: @unchecked Sendable {
             let baseFrequency: Double
             if config.fretless && config.instrument(for: state.surface) == .melodic {
                 baseFrequency = 440.0 * pow(2.0, (state.continuousMIDI - 69.0) / 12.0)
+            } else if config.instrument(for:state.surface) == .guitar {
+                guard let frequency = try? MusicTheory.frequency(midi:state.quantizedMIDI) else { continue }
+                baseFrequency = frequency
             } else {
                 guard let frequency = config.frettedFrequency(midi: state.quantizedMIDI) else {
                     continue
                 }
                 baseFrequency = frequency
             }
-            let vibrato = 0.5 * state.vibrato * sin(now * 6 * 2 * Double.pi)
+            // Y selects the string; it must not simultaneously add vibrato.
+            let vibrato = config.instrument(for:state.surface) == .guitar ? 0 : 0.5 * state.vibrato * sin(now * 6 * 2 * Double.pi)
             tones.append(.init(frequencyHz: baseFrequency * pow(2, vibrato / 12)))
             level = max(level, Double(state.velocity) / 127)
         }

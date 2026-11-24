@@ -34,6 +34,7 @@ private struct TouchDraft: Codable {
     var trackpadOutput: SurfaceOutputRoute = .trackpadHaptic
     var magicMouseOutput: SurfaceOutputRoute = .midiInstrument
     var drumLayout: DrumPadLayout = .standard12
+    var stringLayout: StringSurfaceLayout? = nil
     var sustainEnabled: Bool = false
     var sustainTrackpadEnabled: Bool = true
     var sustainTrackpadGesture: TrackpadSustainGesture = .contactThreshold
@@ -99,6 +100,7 @@ private struct WorkspaceSettings: Codable {
         (0.1...1).contains(touch.pressThreshold) &&
         (1...127).contains(touch.fixedVelocity) &&
         (1...16).contains(touch.midiChannel) &&
+        (touch.stringLayout?.isValid ?? true) &&
         (0.1...1).contains(touch.sustainTrackpadThreshold) &&
         (0...1).contains(touch.sustainMouseTapThreshold ?? 0) &&
         (1...16).contains(helper.targetChannel) &&
@@ -214,7 +216,7 @@ struct ContentView: View {
                     case .mapping: InstrumentBuilderView()
                     case .chords: ChordPadPanel(compact: false)
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
-                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
+                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, stringLayout: $touchDraft.stringLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
                     case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture, magicMouseTapThreshold: $helperDraft.magicMouseTapThreshold)
                     case .touchBar: TouchBarModeView()
                     case .notes: NoteSequencerView(notes: $noteDraft.notes, selectedMIDI: $noteDraft.selectedMIDI, velocity: $noteDraft.velocity, loop: $noteDraft.loop, groove: $noteDraft.groove, output: $noteDraft.output)
@@ -756,6 +758,7 @@ private struct TouchInstrumentView: View {
     @Binding var trackpadOutput: SurfaceOutputRoute
     @Binding var magicMouseOutput: SurfaceOutputRoute
     @Binding var drumLayout: DrumPadLayout
+    @Binding var stringLayout: StringSurfaceLayout?
     @Binding var sustainEnabled: Bool
     @Binding var sustainTrackpadEnabled: Bool
     @Binding var sustainTrackpadGesture: TrackpadSustainGesture
@@ -773,6 +776,12 @@ private struct TouchInstrumentView: View {
         (surfaceSelection.accepts(.trackpad) && trackpadInstrument == .melodic) ||
         (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument == .melodic)
     }
+
+    private var hasGuitar: Bool {
+        (surfaceSelection.accepts(.trackpad) && trackpadInstrument == .guitar) ||
+        (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument == .guitar)
+    }
+    private var effectiveStringLayout: StringSurfaceLayout { stringLayout ?? .init() }
 
     private var hasChords: Bool {
         (surfaceSelection.accepts(.trackpad) && trackpadInstrument == .chords) ||
@@ -809,7 +818,8 @@ private struct TouchInstrumentView: View {
             magicMouseOutput: magicMouseOutput,
             drumLayout: drumLayout,
             customScale: studio.touchCustomScale,
-            physicalChordBank: hasChords ? studio.chordBank : nil
+            physicalChordBank: hasChords ? studio.chordBank : nil,
+            stringLayout: effectiveStringLayout
         )
     }
 
@@ -881,7 +891,7 @@ private struct TouchInstrumentView: View {
                                 ForEach(SurfaceOutputRoute.allCases) { Text($0.rawValue).tag($0) }
                             }
                             .frame(width: 200)
-                            Text(trackpadInstrument == .drums ? "GM · MIDI Ch 10" : (trackpadInstrument == .chords ? "Chord Bank · 8 pads" : "Melodic instrument"))
+                            Text(trackpadInstrument == .drums ? "GM · MIDI Ch 10" : (trackpadInstrument == .chords ? "Chord Bank · 8 pads" : trackpadInstrument.rawValue))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -900,7 +910,7 @@ private struct TouchInstrumentView: View {
                                 ForEach(SurfaceOutputRoute.allCases) { Text($0.rawValue).tag($0) }
                             }
                             .frame(width: 200)
-                            Text(magicMouseInstrument == .drums ? "GM · MIDI Ch 10" : (magicMouseInstrument == .chords ? "Chord Bank · 8 pads" : "Melodic instrument"))
+                            Text(magicMouseInstrument == .drums ? "GM · MIDI Ch 10" : (magicMouseInstrument == .chords ? "Chord Bank · 8 pads" : magicMouseInstrument.rawValue))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -1051,6 +1061,24 @@ private struct TouchInstrumentView: View {
                     }
                 }
 
+                if hasGuitar {
+                    GroupBox("Guitar / Bass Pad") {
+                        VStack(alignment:.leading,spacing:8) {
+                            Picker("Tuning",selection:Binding(
+                                get:{ effectiveStringLayout.tuning },
+                                set:{ var next = effectiveStringLayout; next.tuning = $0; stringLayout = next }
+                            )) {
+                                ForEach(StringTuning.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            Stepper("Frets: \(effectiveStringLayout.frets) + open string",value:Binding(
+                                get:{ effectiveStringLayout.frets },
+                                set:{ var next = effectiveStringLayout; next.frets = $0; stringLayout = next }
+                            ),in:4...24)
+                            Text("X selects fret, Y selects string. Slide across frets to change notes. This fretted layout uses equal temperament; fretless strings, strum gestures and custom tunings are separate follow-ups.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }.padding(6)
+                    }.disabled(studio.touchRunning)
+                }
                 if hasChords {
                     GroupBox("Physical Chord Pads") {
                         Text("Eight held-contact pads from the Chord Pads page. Edit the bank while Touch Instrument is stopped. Physical pads use the Touch output and velocity, not the bank’s timed gate or latch. MIDI requires Standard mode; microtonal MIDI needs explicit approximation.")
@@ -1061,7 +1089,7 @@ private struct TouchInstrumentView: View {
                     GroupBox("Logic Pro / DAW MIDI Out") {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 14) {
-                                if hasMelodic || hasChords {
+                                if hasMelodic || hasChords || hasGuitar {
                                     Picker("Melodic MIDI Mode", selection: $midiMode) {
                                         ForEach(TouchMIDIMode.allCases) { Text($0.rawValue).tag($0) }
                                     }
@@ -1197,6 +1225,7 @@ private struct TouchInstrumentView: View {
         .onChange(of: trackpadOutput) { _ in syncConfiguration() }
         .onChange(of: magicMouseOutput) { _ in syncConfiguration() }
         .onChange(of: drumLayout) { _ in syncConfiguration() }
+        .onChange(of: stringLayout) { _ in syncConfiguration() }
         .onChange(of: studio.masterLevel) { _ in syncConfiguration() }
     }
 
@@ -1210,7 +1239,7 @@ private struct TouchInstrumentView: View {
             HStack {
                 Text(surface.rawValue)
                     .font(.headline)
-                Text(instrument == .drums ? "GM Drum Pads" : (instrument == .chords ? "Physical Chord Pads" : "Melodic Note Map"))
+                Text(instrument == .drums ? "GM Drum Pads" : (instrument == .chords ? "Physical Chord Pads" : instrument.rawValue))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -1222,6 +1251,7 @@ private struct TouchInstrumentView: View {
                 notes: mappedMIDINotes,
                 drumLayout: drumLayout,
                 chordBank: studio.chordBank,
+                stringLayout: effectiveStringLayout,
                 instrument: instrument,
                 rootMIDI: root,
                 fretless: fretless,
@@ -1250,6 +1280,7 @@ private struct TouchSurfaceMap: View {
     let drumLayout: DrumPadLayout
     private var drumPads: [DrumPad] { drumLayout.pads }
     let chordBank: ChordBank
+    let stringLayout: StringSurfaceLayout
     let instrument: SurfaceInstrumentMode
     let rootMIDI: Int
     let fretless: Bool
@@ -1267,7 +1298,32 @@ private struct TouchSurfaceMap: View {
                 RoundedRectangle(cornerRadius: 18)
                     .fill(.quaternary.opacity(active ? 0.58 : 0.42))
 
-                if instrument == .chords {
+                if instrument == .guitar && stringLayout.isValid {
+                    let width = proxy.size.width / CGFloat(stringLayout.columns)
+                    let height = proxy.size.height / CGFloat(stringLayout.rows)
+                    ForEach(0..<stringLayout.rows,id:\.self) { row in
+                        let open = stringLayout.tuning.openNotes[row]
+                        ForEach(0..<stringLayout.columns,id:\.self) { fret in
+                            let hit = states.contains {
+                                $0.isDown && stringLayout.cell(x:$0.x,y:$0.y)?.string == row &&
+                                stringLayout.cell(x:$0.x,y:$0.y)?.fret == fret
+                            }
+                            ZStack {
+                                Rectangle().fill(hit ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(fret == 0 ? 0.18 : 0.04))
+                                Rectangle().strokeBorder(Color.secondary.opacity(0.18))
+                                Rectangle().fill(Color.secondary.opacity(0.6)).frame(height:1)
+                                if fret == 0 {
+                                    Text((try? MusicTheory.noteName(midi:open)) ?? String(open)).font(.caption2)
+                                        .padding(2).background(.background)
+                                } else if row == 0 {
+                                    Text(String(fret)).font(.system(size:9,design:.monospaced))
+                                        .padding(2).background(.background)
+                                }
+                            }.frame(width:width,height:height)
+                            .position(x:(CGFloat(fret)+0.5)*width,y:(CGFloat(row)+0.5)*height)
+                        }
+                    }
+                } else if instrument == .chords {
                     let width = proxy.size.width / 4
                     let height = proxy.size.height / 2
                     ForEach(0..<ChordBank.padCount,id:\.self) { slot in

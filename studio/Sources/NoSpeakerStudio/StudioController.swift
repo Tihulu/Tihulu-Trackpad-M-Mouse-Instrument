@@ -1925,6 +1925,10 @@ final class StudioController: ObservableObject {
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
         guard allowLivePerformance() else { return }
+        guard configuration.permitsStringMIDI(isMPE:midiMode == .mpe) else {
+            lastError = "Guitar MIDI cannot share a Standard MIDI channel with fretless pitch. Choose MPE or separate the routes."
+            return
+        }
         guard configuration.permitsPhysicalChordMIDI(isMPE:midiMode == .mpe) else {
             lastError = "Physical chord MIDI requires Standard mode, no shared fretless MIDI, and explicit approximation for microtonal banks."
             return

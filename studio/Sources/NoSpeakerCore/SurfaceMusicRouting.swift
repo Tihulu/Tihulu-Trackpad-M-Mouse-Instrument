@@ -5,6 +5,7 @@ public enum SurfaceInstrumentMode: String, CaseIterable, Identifiable, Sendable,
     case melodic = "Melodic"
     case drums = "Drums"
     case chords = "Chord Pads"
+    case guitar = "Guitar Pad (Fretted)"
 
     public var id: String { rawValue }
 }
@@ -183,5 +184,49 @@ public struct PhysicalChordGates<Contact: Hashable & Comparable> {
 
     private static func less(_ lhs: SensorDestination, _ rhs: SensorDestination) -> Bool {
         lhs.channel == rhs.channel ? lhs.number < rhs.number : lhs.channel < rhs.channel
+    }
+}
+
+/// Shared string/fret geometry. Row zero is the highest-positioned string
+/// in the preview; low E is at the bottom, like a conventional tab.
+public enum StringTuning: String, CaseIterable, Identifiable, Codable, Sendable {
+    case standard = "Guitar · Standard"
+    case dropD = "Guitar · Drop D"
+    case openG = "Guitar · Open G"
+    case bass = "Bass · Standard"
+    public var id: String { rawValue }
+    public var openNotes: [Int] {
+        switch self {
+        case .standard: [64,59,55,50,45,40]
+        case .dropD: [64,59,55,50,45,38]
+        case .openG: [62,59,55,50,43,38]
+        case .bass: [43,38,33,28]
+        }
+    }
+}
+
+public struct StringSurfaceLayout: Codable, Equatable, Sendable {
+    public var tuning: StringTuning
+    public var frets: Int
+    public init(tuning:StringTuning = .standard, frets:Int = 12) {
+        self.tuning = tuning; self.frets = frets
+    }
+    public var isValid: Bool { (4...24).contains(frets) }
+    public var rows: Int { tuning.openNotes.count }
+    public var columns: Int { isValid ? frets + 1 : 0 }
+    public struct Cell: Equatable, Sendable {
+        public let string: Int
+        public let fret: Int
+        public let note: Int
+    }
+    public func cell(x:Double,y:Double) -> Cell? {
+        guard isValid, x.isFinite,y.isFinite,(0...1).contains(x),(0...1).contains(y) else { return nil }
+        let string = min(rows-1,Int((1-y)*Double(rows)))
+        let fret = min(columns-1,Int(x*Double(columns)))
+        return .init(string:string,fret:fret,note:tuning.openNotes[string]+fret)
+    }
+
+    public func permitsMIDI(mixedFretless:Bool,isMPE:Bool) -> Bool {
+        isValid && (!mixedFretless || isMPE)
     }
 }

@@ -161,3 +161,40 @@ import Testing
         ledger:&ledger,owner:{ c,t in "\(c)-\(t.number)" })
     #expect(commands == [.init(note,value:100)])
 }
+
+@Test func frettedStringGridMapsAllCentersAndBoundaries() throws {
+    for tuning in StringTuning.allCases {
+        for frets in 4...24 {
+            let layout = StringSurfaceLayout(tuning:tuning,frets:frets)
+            for row in 0..<layout.rows {
+                for fret in 0..<layout.columns {
+                    let cell = try #require(layout.cell(x:(Double(fret)+0.5)/Double(layout.columns),
+                        y:1-(Double(row)+0.5)/Double(layout.rows)))
+                    #expect(cell.string == row && cell.fret == fret)
+                    #expect(cell.note == tuning.openNotes[row]+fret)
+                }
+            }
+            #expect(layout.cell(x:0,y:1)?.note == tuning.openNotes.first)
+            #expect(layout.cell(x:1,y:0)?.note == tuning.openNotes.last.map { $0+frets })
+            #expect(layout.cell(x:.nan,y:1) == nil)
+            #expect(layout.cell(x:0,y:-0.1) == nil)
+            #expect(try JSONDecoder().decode(StringSurfaceLayout.self,from:JSONEncoder().encode(layout)) == layout)
+        }
+    }
+}
+@Test func frettedStringTuningsAndRouteSafety() {
+    #expect(StringTuning.standard.openNotes == [64,59,55,50,45,40])
+    #expect(StringTuning.dropD.openNotes.last == 38)
+    #expect(StringTuning.openG.openNotes == [62,59,55,50,43,38])
+    #expect(StringTuning.bass.openNotes == [43,38,33,28])
+    let valid = StringSurfaceLayout()
+    #expect(valid.permitsMIDI(mixedFretless:false,isMPE:false))
+    #expect(!valid.permitsMIDI(mixedFretless:true,isMPE:false))
+    #expect(valid.permitsMIDI(mixedFretless:true,isMPE:true))
+    for frets in [Int.min,0,25,Int.max] {
+        let bad = StringSurfaceLayout(frets:frets)
+        #expect(!bad.isValid)
+        #expect(bad.cell(x:0,y:0) == nil)
+        #expect(!bad.permitsMIDI(mixedFretless:false,isMPE:true))
+    }
+}
