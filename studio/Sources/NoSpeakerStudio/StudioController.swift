@@ -1018,6 +1018,7 @@ final class StudioController: ObservableObject {
             releaseChordPads()
         }
         releaseTouchBarNotes()
+        midi?.releaseTouchBarControls()
         if touchBarSustainOn {
             touchBarSustainOn = false
             midi?.releaseTouchBarSustain()
@@ -1084,20 +1085,14 @@ final class StudioController: ObservableObject {
         let channel = touchBarProfile.channel
         switch zone {
         case .pitchBend, .fretless:
-            midi?.sendHelperControls(
-                x: safe, y: 0.5, contactSize: 0.5,
-                assignments: MIDIHelperAssignments(
-                    vibrato: false, pitchBend: true, expression: false
-                ),
-                channel: channel, pitchBendRange: helperPitchBendRange,
-                vibratoCC: 1, expressionCC: 11
-            )
+            midi?.sendTouchBarControl(.init(.pitchBend,channel:channel),
+                value:Int((8192+(safe-0.5)*2*8191).rounded()),bendRange:helperPitchBendRange)
         case .vibrato:
-            midi?.sendControlChange(controller: 1, value: Int((safe * 127).rounded()), channel: channel)
+            midi?.sendTouchBarControl(.init(.controlChange,channel:channel,number:1),value:Int((safe*127).rounded()))
         case .expression:
-            midi?.sendControlChange(controller: 11, value: Int((safe * 127).rounded()), channel: channel)
+            midi?.sendTouchBarControl(.init(.controlChange,channel:channel,number:11),value:Int((safe*127).rounded()))
         case .filter:
-            midi?.sendControlChange(controller: 74, value: Int((safe * 127).rounded()), channel: channel)
+            midi?.sendTouchBarControl(.init(.controlChange,channel:channel,number:74),value:Int((safe*127).rounded()))
         case .keys, .chords, .sustain:
             break
         }

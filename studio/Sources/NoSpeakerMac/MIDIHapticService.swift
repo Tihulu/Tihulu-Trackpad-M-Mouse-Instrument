@@ -156,6 +156,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     // lock protects state shared with the incoming MIDI render path.
     private var sustainOwners = LegacySustainOwners()
     private var mpeChannels = LegacyMPEChannelPool()
+    private var continuousOwners = LegacyContinuousOwners()
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
 
@@ -249,6 +250,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         releaseAllOutgoingSustain()
         endAllTouchOutput()
         sendOwnedNotes(noteOwners.releaseAll())
+        sendContinuousUpdates(continuousOwners.releaseAll())
 
         lock.lock()
         enabled = false
@@ -500,15 +502,23 @@ public final class MIDIHapticService: @unchecked Sendable {
         if canSend { sendSustainTransitions(commands) }
     }
 
+    private func sendContinuousUpdates(_ updates: [LegacyContinuousOwners.Update]) {
+        for update in updates {
+            let target = update.target
+            switch target.kind {
+            case .pitchBend:
+                if let range = update.bendRange { sendPitchBendRange(semitones:range,channel:target.channel) }
+                sendPitchBend(update.value,channel:target.channel)
+            case .controlChange:
+                sendControlChange(controller:target.number,value:update.value,channel:target.channel)
+            default: break
+            }
+        }
+    }
+
     public func sendHelperControls(
-        x: Double,
-        y: Double,
-        contactSize: Double,
-        assignments: MIDIHelperAssignments,
-        channel: Int,
-        pitchBendRange: Int,
-        vibratoCC: Int,
-        expressionCC: Int
+        x: Double, y: Double, contactSize: Double, assignments: MIDIHelperAssignments,
+        channel: Int, pitchBendRange: Int, vibratoCC: Int, expressionCC: Int
     ) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
@@ -516,108 +526,56 @@ public final class MIDIHapticService: @unchecked Sendable {
         guard canSend, x.isFinite, y.isFinite, contactSize.isFinite,
               HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
                                      vibratoCC:vibratoCC,expressionCC:expressionCC) else { return }
-        let safeChannel = max(0, min(15, channel))
-        let safeX = min(1, max(0, x))
-        let safeY = min(1, max(0, y))
-        let safeSize = min(1, max(0, contactSize))
-
+        let ch = max(0,min(15,channel))
+        var values: [SensorDestination:LegacyContinuousOwners.Value] = [:]
         if assignments.pitchBend {
-            let normalized = (safeX - 0.5) * 2.0
-            let bend = Int((8192 + normalized * 8191.0).rounded())
-            sendPitchBendRange(semitones: max(1, min(24, pitchBendRange)), channel: safeChannel)
-            sendPitchBend(max(0, min(16383, bend)), channel: safeChannel)
+            let bend = Int((8192 + (min(1,max(0,x))-0.5)*2*8191).rounded())
+            values[.init(.pitchBend,channel:ch)] = .init(bend,neutral:8192,bendRange:max(1,min(24,pitchBendRange)))
         }
         if assignments.vibrato {
-            sendControlChange(
-                controller: vibratoCC,
-                value: Int((safeY * 127).rounded()),
-                channel: safeChannel
-            )
+            values[.init(.controlChange,channel:ch,number:vibratoCC)] = .init(Int((min(1,max(0,y))*127).rounded()),neutral:0)
         }
         if assignments.expression {
-            sendControlChange(
-                controller: expressionCC,
-                value: Int((safeSize * 127).rounded()),
-                channel: safeChannel
-            )
+            values[.init(.controlChange,channel:ch,number:expressionCC)] = .init(Int((min(1,max(0,contactSize))*127).rounded()),neutral:127)
         }
+        sendContinuousUpdates(continuousOwners.replace(.helper,values:values))
     }
 
     public func resetHelperControls(
-        assignments: MIDIHelperAssignments,
-        channel: Int,
-        vibratoCC: Int,
-        expressionCC: Int
+        assignments: MIDIHelperAssignments, channel: Int, vibratoCC: Int, expressionCC: Int
     ) {
-        let safeChannel = max(0, min(15, channel))
-        if assignments.pitchBend { sendPitchBend(8192, channel: safeChannel) }
-        if assignments.vibrato && HelperCCPolicy.permits(vibratoCC) { sendControlChange(controller: vibratoCC, value: 0, channel: safeChannel) }
-        if assignments.expression && HelperCCPolicy.permits(expressionCC) { sendControlChange(controller: expressionCC, value: 127, channel: safeChannel) }
+        sendContinuousUpdates(continuousOwners.release(.helper))
     }
 
     public func sendHelperGesture(
-        x: Double,
-        y: Double,
-        pressure: Double,
-        mode: MIDIHelperMode,
-        channel: Int,
-        pitchBendRange: Int,
-        vibratoCC: Int = 1,
-        expressionCC: Int = 11
+        x: Double, y: Double, pressure: Double, mode: MIDIHelperMode, channel: Int,
+        pitchBendRange: Int, vibratoCC: Int = 1, expressionCC: Int = 11
     ) {
-        lock.lock()
-        let canSend = enabled && virtualSource != 0
-        lock.unlock()
-        guard canSend, x.isFinite, y.isFinite, pressure.isFinite,
-              HelperCCPolicy.permits(vibrato:mode == .vibrato || mode == .hybrid,
-                                     expression:mode == .expression || mode == .hybrid,
-                                     vibratoCC:vibratoCC,expressionCC:expressionCC) else { return }
-
-        let safeChannel = max(0, min(15, channel))
-        let safeX = min(1, max(0, x))
-        let safeY = min(1, max(0, y))
-        let safePressure = min(1, max(0, pressure))
-
-        if mode == .pitchBend || mode == .hybrid {
-            let normalized = (safeX - 0.5) * 2.0
-            let bend = Int((8192.0 + normalized * 8191.0).rounded())
-            sendPitchBendRange(semitones: max(1, min(24, pitchBendRange)), channel: safeChannel)
-            sendPitchBend(max(0, min(16383, bend)), channel: safeChannel)
-        }
-
-        if mode == .vibrato || mode == .hybrid {
-            sendControlChange(
-                controller: max(0, min(127, vibratoCC)),
-                value: Int((safeY * 127.0).rounded()),
-                channel: safeChannel
-            )
-        }
-
-        if mode == .expression || mode == .hybrid {
-            sendControlChange(
-                controller: max(0, min(127, expressionCC)),
-                value: Int((safePressure * 127.0).rounded()),
-                channel: safeChannel
-            )
-        }
+        sendHelperControls(x:x,y:y,contactSize:pressure,
+            assignments:.init(vibrato:mode == .vibrato || mode == .hybrid,
+                              pitchBend:mode == .pitchBend || mode == .hybrid,
+                              expression:mode == .expression || mode == .hybrid),
+            channel:channel,pitchBendRange:pitchBendRange,vibratoCC:vibratoCC,expressionCC:expressionCC)
     }
 
     public func resetHelperGesture(
-        mode: MIDIHelperMode,
-        channel: Int,
-        vibratoCC: Int = 1,
-        expressionCC: Int = 11
+        mode: MIDIHelperMode, channel: Int, vibratoCC: Int = 1, expressionCC: Int = 11
     ) {
-        let safeChannel = max(0, min(15, channel))
-        if mode == .pitchBend || mode == .hybrid {
-            sendPitchBend(8192, channel: safeChannel)
-        }
-        if (mode == .vibrato || mode == .hybrid) && HelperCCPolicy.permits(vibratoCC) {
-            sendControlChange(controller: vibratoCC, value: 0, channel: safeChannel)
-        }
-        if (mode == .expression || mode == .hybrid) && HelperCCPolicy.permits(expressionCC) {
-            sendControlChange(controller: expressionCC, value: 127, channel: safeChannel)
-        }
+        sendContinuousUpdates(continuousOwners.release(.helper))
+    }
+
+    public func sendTouchBarControl(_ target: SensorDestination, value: Int, bendRange: Int? = nil) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        lock.unlock()
+        guard canSend else { return }
+        let neutral = target.kind == .pitchBend ? 8192 : ([7,11].contains(target.number) ? 127 : 0)
+        sendContinuousUpdates(continuousOwners.set(.touchBar,target:target,
+            value:.init(value,neutral:neutral,bendRange:bendRange)))
+    }
+
+    public func releaseTouchBarControls() {
+        sendContinuousUpdates(continuousOwners.release(.touchBar))
     }
 
     public func sendControlChange(controller: Int, value: Int, channel: Int) {
