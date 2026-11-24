@@ -454,7 +454,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
         let mappedNotes = config.mappedMIDINotes
         let instrument = config.instrument(for: frame.surface)
-        let states: [TouchPerformanceState] = mappedNotes.isEmpty ? [] : frame.contacts.compactMap { contact -> TouchPerformanceState? in
+        var states: [TouchPerformanceState] = (mappedNotes.isEmpty && instrument != .drums) ? [] : frame.contacts.compactMap { contact -> TouchPerformanceState? in
             guard contact.surface == frame.surface,
                   let sample = TouchSampleDomain.normalize(x:Double(contact.x),y:Double(contact.y),pressure:Double(contact.size)) else { return nil }
             let rawX = sample.x
@@ -469,10 +469,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
             let quantized: Int
             if instrument == .drums {
-                quantized = GMDrumPads.pad(
-                    forNormalizedX: x,
-                    layout: config.drumLayout
-                ).midiNote
+                guard let pad = config.drumLayout.pad(x:x,y:y) else { return nil }
+                quantized = pad.midiNote
             } else {
                 let zoneIndex = min(mappedNotes.count - 1, Int(x * Double(mappedNotes.count)))
                 quantized = mappedNotes[zoneIndex]
@@ -510,6 +508,15 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lastFrameBySurface[frame.surface] = frameID
         publicationSequence &+= 1
         let stamp = TouchSnapshotStamp(revision:revision,sequence:publicationSequence)
+        if instrument == .drums && config.drumLayout.isGrid {
+            let previous = latestStatesBySurface[frame.surface] ?? []
+            for index in states.indices where states[index].isDown {
+                let id = states[index].contactID
+                let oldNote = previous.first { $0.contactID == id && $0.isDown }?.quantizedMIDI
+                states[index].quantizedMIDI = config.drumLayout.strikeNote(
+                    at:states[index].quantizedMIDI, previousDownNote:oldNote)
+            }
+        }
         latestStatesBySurface[frame.surface] = states.filter(\.isTouching)
         let combined = TouchSurfaceKind.allCases
             .filter { config.surfaceSelection.accepts($0) }

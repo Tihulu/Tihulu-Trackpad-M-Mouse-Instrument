@@ -289,7 +289,7 @@ struct ContentView: View {
             helper.surfaceSelection = .trackpad
         case .drums:
             instrument.trackpadInstrument = .drums
-            instrument.drumLayout = .extended16
+            instrument.drumLayout = .grid16
         }
         touchDraft = instrument
         helperDraft = helper
@@ -1207,7 +1207,7 @@ private struct TouchInstrumentView: View {
 
             TouchSurfaceMap(
                 notes: mappedMIDINotes,
-                drumPads: drumLayout.pads,
+                drumLayout: drumLayout,
                 instrument: instrument,
                 rootMIDI: root,
                 fretless: fretless,
@@ -1217,6 +1217,12 @@ private struct TouchInstrumentView: View {
                 surfaceSelection: surface == .trackpad ? .trackpad : .magicMouse
             )
             .frame(height: surfaceSelection == .both ? 240 : 340)
+            if instrument == .drums {
+                Text(drumLayout.isGrid
+                     ? "Physical X/Y pads · lift and touch to strike another pad."
+                     : "Legacy horizontal strip · lift and touch to retrigger haptics.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -1227,7 +1233,8 @@ private struct TouchInstrumentView: View {
 
 private struct TouchSurfaceMap: View {
     let notes: [Int]
-    let drumPads: [DrumPad]
+    let drumLayout: DrumPadLayout
+    private var drumPads: [DrumPad] { drumLayout.pads }
     let instrument: SurfaceInstrumentMode
     let rootMIDI: Int
     let fretless: Bool
@@ -1246,28 +1253,29 @@ private struct TouchSurfaceMap: View {
                     .fill(.quaternary.opacity(active ? 0.58 : 0.42))
 
                 if instrument == .drums {
+                    let cellWidth = proxy.size.width / CGFloat(drumLayout.columns)
+                    let cellHeight = proxy.size.height / CGFloat(drumLayout.rows)
                     ForEach(drumPads.indices, id: \.self) { index in
                         let pad = drumPads[index]
-                        let x = segmentWidth * (CGFloat(index) + 0.5)
-                        if index > 0 {
-                            Rectangle()
-                                .fill(.secondary.opacity(0.24))
-                                .frame(width: 1, height: proxy.size.height - 18)
-                                .position(x: segmentWidth * CGFloat(index),
-                                          y: proxy.size.height / 2)
+                        let column = index % drumLayout.columns
+                        let row = index / drumLayout.columns
+                        let pressed = states.contains { $0.isDown && $0.quantizedMIDI == pad.midiNote }
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(pressed ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.08))
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.secondary.opacity(0.24))
+                            VStack(spacing: 4) {
+                                Text(pad.name).font(.system(size: 12, weight: .semibold))
+                                    .lineLimit(2).minimumScaleFactor(0.6)
+                                Text("GM \(pad.midiNote)").font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(3)
                         }
-
-                        VStack(spacing: 4) {
-                            Text(pad.name)
-                                .font(.system(size: 10, weight: .semibold))
-                                .lineLimit(2)
-                                .minimumScaleFactor(0.65)
-                            Text("GM \(pad.midiNote)")
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(width: max(24, segmentWidth - 3))
-                        .position(x: x, y: 35)
+                        .frame(width: max(1, cellWidth - 4), height: max(1, cellHeight - 4))
+                        .position(x: (CGFloat(column) + 0.5) * cellWidth,
+                                  y: (CGFloat(row) + 0.5) * cellHeight)
                     }
                 } else if fretless {
                     ForEach(notes.indices, id: \.self) { index in
@@ -1332,7 +1340,7 @@ private struct TouchSurfaceMap: View {
                     .animation(.linear(duration: 0.025), value: y)
                 }
 
-                if states.isEmpty {
+                if states.isEmpty && instrument != .drums {
                     VStack(spacing: 8) {
                         Image(systemName: surfaceSelection == .magicMouse
                               ? "computermouse" : "hand.point.up.left")
@@ -1344,14 +1352,8 @@ private struct TouchSurfaceMap: View {
                     .position(x: proxy.size.width / 2, y: proxy.size.height * 0.65)
                 }
 
-                HStack {
-                    if instrument == .drums {
-                        Text("Kick / Snare")
-                        Spacer()
-                        Text("X = GM drum pad · lift and touch to retrigger")
-                        Spacer()
-                        Text("Cymbals")
-                    } else {
+                if instrument != .drums {
+                    HStack {
                         Label("Lower pitch", systemImage: "arrow.left")
                         Spacer()
                         Text(fretless
@@ -1360,12 +1362,12 @@ private struct TouchSurfaceMap: View {
                         Spacer()
                         Label("Higher pitch", systemImage: "arrow.right")
                     }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+                    .frame(width: proxy.size.width)
+                    .position(x: proxy.size.width / 2, y: proxy.size.height - 18)
                 }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .padding(10)
-                .frame(width: proxy.size.width)
-                .position(x: proxy.size.width / 2, y: proxy.size.height - 18)
             }
             .overlay(RoundedRectangle(cornerRadius: 18)
                 .stroke(.secondary.opacity(0.24), lineWidth: 1))

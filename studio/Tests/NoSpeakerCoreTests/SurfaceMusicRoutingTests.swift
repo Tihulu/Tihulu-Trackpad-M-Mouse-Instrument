@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import NoSpeakerCore
 
@@ -61,4 +62,51 @@ import Testing
             #expect(SurfaceMIDIChannel.controlTarget(base:base,hasMIDIDrums:drums,hasMIDIMelody:true,isMPE:true) == nil)
         }
     }
+}
+
+@Test func physicalDrumGridCentersAndEdgesMatchPreviewRows() {
+    for layout in [DrumPadLayout.grid8,.grid12,.grid16] {
+        #expect(layout.columns == 4)
+        #expect(layout.rows * layout.columns == layout.pads.count)
+        for index in layout.pads.indices {
+            let x = (Double(index % layout.columns) + 0.5) / Double(layout.columns)
+            let y = 1 - (Double(index / layout.columns) + 0.5) / Double(layout.rows)
+            #expect(layout.padIndex(x:x,y:y) == index)
+            #expect(layout.pad(x:x,y:y) == layout.pads[index])
+        }
+        #expect(layout.padIndex(x:0,y:1) == 0)
+        #expect(layout.padIndex(x:1,y:0) == layout.pads.count - 1)
+        #expect(layout.padIndex(x:0.25,y:1) == 1)
+        #expect(layout.padIndex(x:.nan,y:1) == nil)
+        #expect(layout.padIndex(x:0,y:.infinity) == nil)
+        #expect(layout.padIndex(x:-0.01,y:1) == nil)
+        #expect(layout.padIndex(x:1,y:1.01) == nil)
+    }
+}
+
+@Test func legacyDrumLayoutsPreserveArchiveAndStripMapping() throws {
+    for layout in [DrumPadLayout.compact8,.standard12,.extended16] {
+        #expect(layout.rows == 1)
+        for index in layout.pads.indices {
+            let x = (Double(index)+0.5)/Double(layout.pads.count)
+            for y in [0.0,0.5,1.0] {
+                #expect(layout.pad(x:x,y:y) == GMDrumPads.pad(forNormalizedX:x,layout:layout))
+            }
+        }
+        #expect(try JSONDecoder().decode(DrumPadLayout.self,from:JSONEncoder().encode(layout)) == layout)
+    }
+    #expect(try JSONDecoder().decode(DrumPadLayout.self,from:Data("\"12 Pads\"".utf8)) == .standard12)
+}
+
+@Test func gridDrumStrikesStayOnInitialPadUntilRelease() {
+    for layout in [DrumPadLayout.grid8,.grid12,.grid16] {
+        for initial in layout.pads {
+            for dragged in layout.pads {
+                #expect(layout.strikeNote(at:dragged.midiNote,previousDownNote:initial.midiNote) == initial.midiNote)
+                #expect(layout.strikeNote(at:dragged.midiNote,previousDownNote:nil) == dragged.midiNote)
+            }
+        }
+    }
+    #expect(DrumPadLayout.grid8.strikeNote(at:36,previousDownNote:127) == 36)
+    #expect(DrumPadLayout.compact8.strikeNote(at:38,previousDownNote:36) == 38)
 }

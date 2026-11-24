@@ -72,14 +72,48 @@ public enum DrumPadLayout: String, CaseIterable, Identifiable, Sendable, Codable
     case compact8 = "8 Pads"
     case standard12 = "12 Pads"
     case extended16 = "16 Pads"
+    case grid8 = "8 Pads (2 × 4 Grid)"
+    case grid12 = "12 Pads (3 × 4 Grid)"
+    case grid16 = "16 Pads (4 × 4 Grid)"
 
     public var id: String { rawValue }
 
+    public var columns: Int {
+        switch self {
+        case .grid8, .grid12, .grid16: return 4
+        case .compact8: return 8
+        case .standard12: return 12
+        case .extended16: return 16
+        }
+    }
+    public var rows: Int { pads.count / columns }
+    public var isGrid: Bool { rows > 1 }
+
+    /// Physical y increases upward; row zero is at the top of the preview.
+    public func padIndex(x: Double, y: Double) -> Int? {
+        guard x.isFinite, y.isFinite, (0...1).contains(x), (0...1).contains(y) else { return nil }
+        let column = min(columns - 1, Int(x * Double(columns)))
+        let row = min(rows - 1, Int((1 - y) * Double(rows)))
+        return row * columns + column
+    }
+
+    public func pad(x: Double, y: Double) -> DrumPad? {
+        guard let index = padIndex(x:x,y:y) else { return nil }
+        return pads[index]
+    }
+
+    /// The caller passes the previous down contact's note only for the same ID.
+    public func strikeNote(at candidate: Int, previousDownNote: Int?) -> Int {
+        guard isGrid, let previousDownNote,
+              pads.contains(where: { $0.midiNote == previousDownNote }) else { return candidate }
+        return previousDownNote
+    }
+
     public var pads: [DrumPad] {
         switch self {
-        case .compact8: return Array(GMDrumPads.standard.prefix(8))
-        case .standard12: return Array(GMDrumPads.standard.prefix(12))
-        case .extended16: return GMDrumPads.standard
+        case .compact8, .grid8: return Array(GMDrumPads.standard.prefix(8))
+        case .standard12, .grid12: return Array(GMDrumPads.standard.prefix(12))
+        case .extended16, .grid16: return GMDrumPads.standard
         }
     }
 }
