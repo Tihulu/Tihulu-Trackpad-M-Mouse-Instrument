@@ -81,3 +81,12 @@ import Testing
     #expect(off.allSatisfy { $0.destination.channel == 4 && $0.value == 0 })
     #expect(state.activeSlots.isEmpty)
 }
+
+@Test func chordNoteEntrySupportsNamesFlatsAndMIDINumbers() {
+    #expect(ChordPad.parseNotes("C4 E4 G4 Bb4") == [60,64,67,70])
+    #expect(ChordPad.parseNotes("C-1, 64, F#4, G9") == [0,64,66,127])
+    #expect(ChordPad.parseNotes("C4 60") == nil)
+    #expect(ChordPad.parseNotes("C4 invalid") == nil)
+    #expect(ChordPad.parseNotes("G#9") == nil)
+    #expect(ChordPad.parseNotes("C9999999") == nil)
+}

@@ -124,8 +124,8 @@ struct ChordPadPanel: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Assign custom chord").font(.title2.bold())
                 TextField("Chord name", text: $customName)
-                TextField("MIDI notes", text: $customNotes)
-                Text("Enter 1–8 distinct MIDI note numbers (0–127), separated by commas or spaces. Example: 60, 64, 67, 71.")
+                TextField("Notes or MIDI numbers", text: $customNotes)
+                Text("Enter 1–8 distinct notes, separated by commas or spaces. Examples: C4 E4 G4 B4 or 60, 64, 67, 71.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !editError.isEmpty { Text(editError).foregroundStyle(.red) }
                 HStack {
@@ -140,11 +140,13 @@ struct ChordPadPanel: View {
 
     private func saveCustom() {
         guard let slot = editSlot, !studio.chordArmed else { return }
-        let pieces = customNotes.split(whereSeparator: { $0 == "," || $0.isWhitespace })
-        let notes = pieces.compactMap { Int($0) }
+        guard let notes = ChordPad.parseNotes(customNotes) else {
+            editError = "Enter 1–8 distinct valid notes or MIDI numbers."
+            return
+        }
         let pad = ChordPad(name: customName.trimmingCharacters(in: .whitespacesAndNewlines), notes: notes)
-        guard notes.count == pieces.count, pad.isValid else {
-            editError = "Enter a valid name and 1–8 distinct MIDI notes."
+        guard pad.isValid else {
+            editError = "Enter a valid chord name."
             return
         }
         var bank = studio.chordBank

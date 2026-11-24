@@ -73,6 +73,30 @@ public struct ChordPad: Codable, Equatable, Sendable {
         (1...8).contains(notes.count) && notes.allSatisfy { (0...127).contains($0) } &&
         Set(notes).count == notes.count
     }
+    /// Accept MIDI numbers or scientific pitch names, including flats and C-1.
+    public static func parseNotes(_ text: String) -> [Int]? {
+        guard text.utf8.count <= 256 else { return nil }
+        let tokens = text.split(whereSeparator: { $0 == "," || $0.isWhitespace })
+        guard (1...8).contains(tokens.count) else { return nil }
+        let pitchClasses = ["C":0,"C#":1,"DB":1,"D":2,"D#":3,"EB":3,"E":4,
+                            "F":5,"F#":6,"GB":6,"G":7,"G#":8,"AB":8,"A":9,"A#":10,"BB":10,"B":11]
+        var result: [Int] = []
+        for token in tokens {
+            let value: Int
+            if let number = Int(token) { value = number }
+            else {
+                let name = String(token).uppercased()
+                guard let start = name.firstIndex(where: { $0 == "-" || $0.isNumber }),
+                      let pitch = pitchClasses[String(name[..<start])],
+                      let octave = Int(name[start...]), (-1...9).contains(octave) else { return nil }
+                value = (octave + 1) * 12 + pitch
+            }
+            guard (0...127).contains(value), !result.contains(value) else { return nil }
+            result.append(value)
+        }
+        return result
+    }
+
     public var noteNames: String {
         notes.map { (try? MusicTheory.noteName(midi: $0)) ?? String($0) }.joined(separator: " ")
     }
@@ -127,7 +151,12 @@ public struct ChordBank: Codable, Equatable, Sendable {
         case [0,3,6,9]: quality = "dim7"
         default: quality = " [" + relative.map(String.init).joined(separator: ",") + "]"
         }
-        for _ in 0..<min(inversion, notes.count - 1) { notes.append(notes.removeFirst() + 12) }
+        for _ in 0..<min(inversion, notes.count - 1) {
+            notes.sort()
+            var moved = notes.removeFirst() + 12
+            while notes.contains(moved) { moved += 12 }
+            notes.append(moved)
+        }
         notes.sort()
         guard notes.allSatisfy({ (0...127).contains($0) }), Set(notes).count == notes.count else { return nil }
         return ChordPad(name: names[fundamental % 12] + quality, notes: notes)
