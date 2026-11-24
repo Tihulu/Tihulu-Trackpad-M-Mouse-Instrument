@@ -192,6 +192,7 @@ final class StudioController: ObservableObject {
     private var touchSustainState = MIDIHelperSustainState()
     private var captureMonitor: PerformanceCaptureMonitor?
     private var captureGeneration: UInt64 = 0
+    private var lastRetiredCaptureStatus: String?
     private var captureHotkeyArmed = false
     private var instrumentPreviewRequested = false
     private var helperPreviewRequested = false
@@ -2286,6 +2287,7 @@ final class StudioController: ObservableObject {
         Event tap timeouts: \(snapshot.tapTimeouts)
         Event tap disabled by system/user: \(snapshot.tapDisabledByUserInput)
         Last event tap status: \(snapshot.lastEventTapStatus)
+        Previous monitor status: \(lastRetiredCaptureStatus ?? "None")
         Current capture status: \(captureStatus)
         Touch instrument running: \(yesNo(touchRunning))
         Touch preview running: \(yesNo(touchPreviewRunning))
@@ -2331,69 +2333,70 @@ final class StudioController: ObservableObject {
         if let captureMonitor { return captureMonitor }
         captureGeneration &+= 1
         let generation = captureGeneration
-    let capture = PerformanceCaptureMonitor()
-    capture.onCaptureChanged = { [weak self] _ in
-        Task { @MainActor in
-            guard let self, self.captureGeneration == generation else { return }
-            self.pointerCaptured = self.captureMonitor?.isCaptured ?? false
-            if self.captureArmed || self.touchRunning || self.midiHelperRunning {
-                self.captureStatus = self.pointerCaptured
-                    ? "Cursor captured · press the shortcut again or Esc"
-                    : "Cursor free · event monitor active"
+        let capture = PerformanceCaptureMonitor()
+        capture.onCaptureChanged = { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.captureGeneration == generation else { return }
+                self.pointerCaptured = self.captureMonitor?.isCaptured ?? false
+                if self.captureArmed || self.touchRunning || self.midiHelperRunning {
+                    self.captureStatus = self.pointerCaptured
+                        ? "Cursor captured · press the shortcut again or Esc"
+                        : "Cursor free · event monitor active"
+                }
             }
         }
-    }
-    capture.onPanic = { [weak self] in
-        Task { @MainActor in
-            guard let self, self.captureGeneration == generation else { return }
-            self.panicStop()
+        capture.onPanic = { [weak self] in
+            Task { @MainActor in
+                guard let self, self.captureGeneration == generation else { return }
+                self.panicStop()
+            }
         }
-    }
-    capture.onPhysicalClick = { [weak self] down, pressure in
-        Task { @MainActor in
-            guard let self, self.captureGeneration == generation else { return }
-            self.handlePhysicalClick(down, pressure: pressure)
+        capture.onPhysicalClick = { [weak self] down, pressure in
+            Task { @MainActor in
+                guard let self, self.captureGeneration == generation else { return }
+                self.handlePhysicalClick(down, pressure: pressure)
+            }
         }
-    }
-    capture.onPhysicalPressure = { [weak self] pressure in
-        Task { @MainActor in
-            guard let self, self.captureGeneration == generation else { return }
-            self.handlePhysicalPressure(pressure)
+        capture.onPhysicalPressure = { [weak self] pressure in
+            Task { @MainActor in
+                guard let self, self.captureGeneration == generation else { return }
+                self.handlePhysicalPressure(pressure)
+            }
         }
-    }
-    capture.onMonitorRecovered = { [weak self] in
-        Task { @MainActor in
-            guard let self, self.captureGeneration == generation else { return }
-            self.pointerCaptured = false
-            // A click-up event may have been lost while the tap timed out.
-            // Release any synthetic sustain state instead of sticking CC64.
-            self.handlePhysicalClick(false, pressure: 0)
-            self.captureStatus = "Input monitor recovered after timeout · cursor released · press the capture shortcut to resume"
+        capture.onMonitorRecovered = { [weak self] in
+            Task { @MainActor in
+                guard let self, self.captureGeneration == generation else { return }
+                self.pointerCaptured = self.captureMonitor?.isCaptured ?? false
+                // A click-up event may have been lost while the tap timed out.
+                // Release any synthetic sustain state instead of sticking CC64.
+                self.handlePhysicalClick(false, pressure: 0)
+                self.captureStatus = "Input monitor recovered after timeout · cursor released · press the capture shortcut to resume"
+            }
         }
-    }
-    capture.onMonitorFailed = { [weak self] in
-        Task { @MainActor in
-            guard let self, self.captureGeneration == generation else { return }
-            // macOS can disable a global event tap while the haptic driver
-            // is still healthy. Never escalate that to a device panic.
-            self.retireCaptureMonitor()
-            self.handlePhysicalClick(false, pressure: 0)
-            self.captureArmed = false
-            self.captureHotkeyArmed = false
-            self.clickedSurface = nil
-            self.trackpadClickPressure = nil
-            self.pointerCaptured = false
-            self.captureStatus = "macOS disabled input monitoring · cursor free · enable Global Capture again to retry"
-            // Preserve Voice/Touch/MIDI/Audio playback and the live driver.
+        capture.onMonitorFailed = { [weak self] in
+            Task { @MainActor in
+                guard let self, self.captureGeneration == generation else { return }
+                // macOS can disable a global event tap while the haptic driver
+                // is still healthy. Never escalate that to a device panic.
+                self.retireCaptureMonitor()
+                self.handlePhysicalClick(false, pressure: 0)
+                self.captureArmed = false
+                self.captureHotkeyArmed = false
+                self.clickedSurface = nil
+                self.trackpadClickPressure = nil
+                self.pointerCaptured = false
+                self.captureStatus = "macOS disabled input monitoring · cursor free · enable Global Capture again to retry"
+                // Preserve Voice/Touch/MIDI/Audio playback and the live driver.
+            }
         }
-    }
-    self.captureMonitor = capture
+        self.captureMonitor = capture
         return capture
     }
 
     private func retireCaptureMonitor() {
         captureGeneration &+= 1
         let old = captureMonitor
+        if let old { lastRetiredCaptureStatus = old.diagnosticSnapshot().lastEventTapStatus }
         captureMonitor = nil
         old?.setCaptureHotkeyEnabled(false)
         old?.stop()
@@ -2405,7 +2408,13 @@ final class StudioController: ObservableObject {
         // Sequencers, Audio File, Speaker and Diagnostics, even before
         // a Touch/Helper performance starts. OFF remains the default.
         guard captureHotkeyArmed || touchRunning || midiHelperRunning else { return }
-        let monitor = ensureCaptureMonitor()
+        var monitor = ensureCaptureMonitor()
+        let before = monitor.diagnosticSnapshot()
+        if before.listening && !before.eventTapEnabled {
+            retireCaptureMonitor()
+            handlePhysicalClick(false, pressure: 0)
+            monitor = ensureCaptureMonitor()
+        }
         do {
             try monitor.start(shortcut: captureShortcut, requestPermissions: captureHotkeyArmed)
             monitor.setCaptureHotkeyEnabled(captureHotkeyArmed)
@@ -2414,12 +2423,12 @@ final class StudioController: ObservableObject {
                 : "Cursor free · physical-click monitor active"
         } catch {
             retireCaptureMonitor()
+            handlePhysicalClick(false, pressure: 0)
             captureStatus = "Global capture unavailable · check Accessibility and Input Monitoring permissions"
             if captureHotkeyArmed {
                 lastError = error.localizedDescription
                 captureArmed = false
                 captureHotkeyArmed = false
-                captureMonitor?.setCaptureHotkeyEnabled(false)
             }
             pointerCaptured = false
         }
