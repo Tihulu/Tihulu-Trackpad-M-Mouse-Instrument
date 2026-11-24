@@ -1354,8 +1354,10 @@ private struct NoteSequencerView: View {
     @Binding var loop: Bool
 
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 20) {
-            PageHeader(title: "Note Sequencer", subtitle: "Build a 16-step melody and play it directly through the haptic motor.")
+            PageHeader(title: "Note Sequencer", subtitle: "Build or generate a 16-step melody and play it directly through the haptic motor.")
+            NoteComposerPanel(notes: $notes)
             HStack {
                 Stepper("Selected note: \((try? MusicTheory.noteName(midi: selectedMIDI)) ?? "-")", value: $selectedMIDI, in: 48...95)
                 Slider(value: $velocity, in: 0.1...1) { Text("Velocity") }.frame(width: 180)
@@ -1386,6 +1388,7 @@ private struct NoteSequencerView: View {
             }
             Spacer()
         }.padding(28)
+        }
     }
 
     private func play() {
@@ -1404,8 +1407,10 @@ private struct DrumSequencerView: View {
     private let voices: [DrumVoice] = [.kick, .snare, .closedHat, .openHat, .clap, .tom]
 
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 18) {
-            PageHeader(title: "Drum Sequencer", subtitle: "Sequence haptic kick, snare, hats, clap and tom voices.")
+            PageHeader(title: "Drum Sequencer", subtitle: "Sequence or generate haptic kick, snare, hats, clap and tom voices.")
+            DrumComposerPanel(active: $active)
             HStack { Toggle("Loop", isOn: $loop); Spacer(); Button("Play Pattern") { play() }.buttonStyle(.borderedProminent); Button("Clear") { active.removeAll() } }
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 5) {
@@ -1445,6 +1450,7 @@ private struct DrumSequencerView: View {
             }.padding(.vertical, 4)
             Spacer()
         }.padding(28)
+        }
     }
 
     private func label(_ voice: DrumVoice) -> String {
