@@ -156,6 +156,11 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var outgoingPressure = LegacyChannelPressure()
     // Outgoing state is serialized by the existing Studio caller.
     private var gateDebt = LegacyGateReleaseDebt()
+    public private(set) var keyboardOutputAudit:KeyboardOutputAudit?
+    public func beginKeyboardOutputAudit() { keyboardOutputAudit = .init() }
+    public func endKeyboardOutputAudit() -> KeyboardOutputAudit? {
+        let result = keyboardOutputAudit; keyboardOutputAudit = nil; return result
+    }
     private var controllerDebt = LegacyControllerReleaseDebt()
     private var outgoingFault: OSStatus?
     private var controllerRecoveryRequired = false
@@ -994,6 +999,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             }
             if added { result = MIDIReceived(virtualSource,&packetList) }
         }
+        keyboardOutputAudit?.record(message,succeeded:result == noErr)
         gateDebt.record(message,succeeded:result == noErr)
         let isPersistentGain = persistentGain && status & 0xf0 == 0xb0 && [7,11].contains(data1)
         let cleanupValue = isPersistentGain ? nil : (neutral ?? LegacyControllerReleaseDebt.neutral(for:message))

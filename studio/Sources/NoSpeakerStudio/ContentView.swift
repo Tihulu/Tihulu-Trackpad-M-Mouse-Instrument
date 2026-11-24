@@ -1977,6 +1977,26 @@ private struct MIDIHelperView: View {
                             )
                         }
 
+                        GroupBox("Keyboard accompaniment · output audit") {
+                            VStack(alignment:.leading,spacing:6) {
+                                Text("Test the shared legacy MIDI output. Stop other local instruments, start audit, play the keyboard and pedal, then stop Helper and finish audit. No incoming keyboard note data is recorded.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Button(studio.keyboardAuditRunning ? "Finish output audit" : "Start output audit") {
+                                    if studio.keyboardAuditRunning { studio.finishKeyboardAudit() }
+                                    else { studio.startKeyboardAudit() }
+                                }
+                                if let audit = studio.keyboardAuditResult {
+                                    Text("Attempts: \(audit.attempts) · CC64: \(audit.pedal) · Notes: \(audit.notes)")
+                                    Text("CC7: \(audit.volume) · CC11: \(audit.expression) · Bend: \(audit.pitch) · Pressure: \(audit.pressure)")
+                                    Text("Other: \(audit.other) · Failed: \(audit.failed) · Channels: \(audit.channels.map(String.init).joined(separator:", "))")
+                                    Text(audit.saturated ? "Counter limit reached · partial report" : audit.onlyPedal ? "CC64 only · host submissions accepted" : audit.attempts == 0 ? "No MIDI submissions" : "Non-pedal traffic or delivery failure")
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("Host output only; verify physical keyboard velocity and receiver volume in the DAW MIDI monitor. Other legacy producers share this port.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }.padding(6)
+                        }
+
                         GroupBox("Gesture Mapping") {
                             VStack(alignment: .leading, spacing: 10) {
                                 if pitchBendEnabled {

@@ -325,7 +325,20 @@ final class StudioController: ObservableObject {
     private var touchMultiTouchEnabled = true
     private var touchMIDIChannel = 0
 
-    private var helperAssignments = MIDIHelperAssignments.hybrid
+    @Published private(set) var keyboardAuditRunning = false
+    @Published private(set) var keyboardAuditResult:KeyboardOutputAudit?
+    func startKeyboardAudit() {
+        guard requireEngine(),let midi else { return }
+        midi.beginKeyboardOutputAudit()
+        keyboardAuditResult = nil
+        keyboardAuditRunning = true
+    }
+    func finishKeyboardAudit() {
+        guard keyboardAuditRunning else { return }
+        keyboardAuditResult = midi?.endKeyboardOutputAudit()
+        keyboardAuditRunning = false
+    }
+    private var helperAssignments = MIDIHelperAssignments.sustainOnly
     private var helperSharePedalSurface = false
     private var helperSendToDAW = true
     private var helperTargetChannel = 0

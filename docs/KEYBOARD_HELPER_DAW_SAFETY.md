@@ -9,3 +9,5 @@ Physical acceptance: monitor keyboard Note On velocity and CC7/11 before, during
 Helper pitch bend uses the receiver's existing bend range by default. RPN configuration is a separate advanced opt-in; disabling it does not restore an unknown receiver range. Dedicated physical MIDI monitor acceptance remains necessary.
 
 Bulk continuous-owner release now respects persistent Helper gain just like scoped release. Live mapping changes invalidate the current Helper gesture and require an idle selected-surface frame before new onsets; clicks on excluded surfaces cannot trigger the pedal.
+
+Opt-in output audit counts actual attempted legacy MIDI submissions by message category and channel, including failed submissions. No incoming note values, device identifiers or timestamps are retained. Test with other shared legacy producers stopped; the audit is not receiver confirmation. Finish it explicitly after Helper Stop to include cleanup messages. Fixed 100000-message counter limit.
