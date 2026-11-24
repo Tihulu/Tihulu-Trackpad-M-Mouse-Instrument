@@ -100,6 +100,7 @@ final class StudioController: ObservableObject {
     private var chordHapticToken: UUID?
     private var renderGeneration: UInt64 = 0
     private var engineGeneration: UInt64 = 0
+    private var midiSessionEpoch = LegacyReceiveEpoch()
     var chordOwnsHaptics: Bool { chordArmed && chordBank.effectiveOutput.sendsHaptics }
     @Published private(set) var touchBarOutputArmed = false
     @Published private(set) var touchBarOutputStatus = "Optional Trackpad output off"
@@ -1397,6 +1398,7 @@ final class StudioController: ObservableObject {
         playback?.stop(closeDriver: false)
         surfaceMonitorToken = nil
         touch?.stopPreview()
+        midiSessionEpoch.end()
         midi?.stop()
         // Terminal revocation drains an in-flight submission and blocks any
         // late producer or monitoring request on this exact driver instance.
@@ -1973,14 +1975,17 @@ final class StudioController: ObservableObject {
     }
 
     func startMIDI() {
-        guard allowLivePerformance() else { return }
+        guard !midiRunning, allowLivePerformance() else { return }
         cancelStartupGreeting()
         guard requireEngine(), let midi else { return }
+        midiSessionEpoch.begin()
+        guard let session = midiSessionEpoch.token else { return }
         do {
             let generation = engineGeneration
             try midi.start(masterLevel: masterLevel) { [weak self] message in
                 Task { @MainActor in
-                    guard let self, self.engineGeneration == generation, self.midiRunning else { return }
+                    guard let self, self.engineGeneration == generation, self.midiRunning,
+                          self.midiSessionEpoch.accepts(session) else { return }
                     self.lastMIDIMessage = "Ch \(message.channel + 1) · Note \(message.note) · Velocity \(message.velocity) · \(message.isNoteOn ? "On" : "Off")"
                     let key = "\(message.channel)-\(message.note)"
                     if message.isNoteOn {
@@ -2000,7 +2005,7 @@ final class StudioController: ObservableObject {
             }
             midiRunning = true
             engineStatus = "MIDI bridge active · Haptic MIDI In + Touch MIDI Out"
-        } catch { fail(error) }
+        } catch { midiSessionEpoch.end(); fail(error) }
     }
 
     func stopMIDI() {
@@ -2027,6 +2032,7 @@ final class StudioController: ObservableObject {
         midiHelperRunning = false
         midi?.endAllTouchOutput()
         // The active Helper must already have stopped and released its controls.
+        midiSessionEpoch.end()
         midi?.stop()
         midiRunning = false
         stopCaptureMonitorIfIdle()

@@ -125,6 +125,7 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     private var masterLevel = 0.8
     private var enabled = false
+    private var receiveEpoch = LegacyReceiveEpoch()
     private var callback: (@Sendable (LiveMIDIMessage) -> Void)?
 
     private var activeNotes: [NoteKey: ActiveNote] = [:]
@@ -170,10 +171,13 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         let alreadyActive = enabled && destination != 0 && virtualSource != 0 && inputPort != 0
         self.masterLevel = masterLevel
-        self.callback = onMessage
-        self.inputHapticsEnabled = true
+        if alreadyActive {
+            // Retain the current session and its input-haptics policy.
+            self.callback = onMessage
+            lock.unlock()
+            return
+        }
         lock.unlock()
-        if alreadyActive { return }
 
         // Soft-stop note/controller state without closing the virtual MIDI
         // endpoints. Logic retains the same endpoints across mode switches.
@@ -187,6 +191,9 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
 
         lock.lock()
+        self.callback = onMessage
+        self.inputHapticsEnabled = true
+        receiveEpoch.begin()
         enabled = true
         activeNotes.removeAll()
         sustainByChannel.removeAll()
@@ -247,6 +254,11 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     public func stop() {
+        // Close input first; outgoing note/pedal release still needs enabled.
+        lock.lock()
+        receiveEpoch.end()
+        callback = nil
+        lock.unlock()
         renderFence.revoke()
         releaseAllOutgoingSustain()
         endAllTouchOutput()
@@ -794,14 +806,14 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     private func receive(_ eventList: UnsafePointer<MIDIEventList>) {
         lock.lock()
-        let active = enabled
+        let token = receiveEpoch.token
         lock.unlock()
-        guard active else { return }
+        guard let token else { return }
 
-        LegacyMIDIEventReader.forEachMIDI1(in:eventList) { handleUMP($0) }
+        LegacyMIDIEventReader.forEachMIDI1(in:eventList) { handleUMP($0,token:token) }
     }
 
-    private func handleUMP(_ word: UInt32) {
+    private func handleUMP(_ word: UInt32, token: UInt64) {
         let messageType = Int((word >> 28) & 0xF)
         guard messageType == 0x2 else { return }
 
@@ -813,22 +825,24 @@ public final class MIDIHapticService: @unchecked Sendable {
 
         switch command {
         case 0x80:
-            noteOff(channel: channel, note: data1, velocity: data2)
+            noteOff(channel: channel, note: data1, velocity: data2, token:token)
         case 0x90:
             if data2 == 0 {
-                noteOff(channel: channel, note: data1, velocity: 0)
+                noteOff(channel: channel, note: data1, velocity: 0, token:token)
             } else {
-                noteOn(channel: channel, note: data1, velocity: data2)
+                noteOn(channel: channel, note: data1, velocity: data2, token:token)
             }
         case 0xB0:
-            controlChange(channel: channel, controller: data1, value: data2)
+            controlChange(channel: channel, controller: data1, value: data2, token:token)
         case 0xD0:
             lock.lock()
+            guard receiveEpoch.accepts(token) else { lock.unlock(); return }
             channelPressureByChannel[channel] = data1
             lock.unlock()
         case 0xE0:
             let bend = data1 | (data2 << 7)
             lock.lock()
+            guard receiveEpoch.accepts(token) else { lock.unlock(); return }
             pitchBendByChannel[channel] = bend
             lock.unlock()
         default:
@@ -836,9 +850,10 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
     }
 
-    private func noteOn(channel: Int, note: Int, velocity: Int) {
+    private func noteOn(channel: Int, note: Int, velocity: Int, token: UInt64) {
         let key = NoteKey(channel: channel, note: note)
         lock.lock()
+        guard receiveEpoch.accepts(token) else { lock.unlock(); return }
         if var state = activeNotes[key] {
             state.velocity = max(state.velocity, velocity)
             state.keyDownCount += 1
@@ -851,13 +866,15 @@ public final class MIDIHapticService: @unchecked Sendable {
                 releasedWhileSustained: false
             )
         }
+        let notify = callback
         lock.unlock()
-        callback?(.init(channel: channel, note: note, velocity: velocity, isNoteOn: true))
+        notify?(.init(channel: channel, note: note, velocity: velocity, isNoteOn: true))
     }
 
-    private func noteOff(channel: Int, note: Int, velocity: Int) {
+    private func noteOff(channel: Int, note: Int, velocity: Int, token: UInt64) {
         let key = NoteKey(channel: channel, note: note)
         lock.lock()
+        guard receiveEpoch.accepts(token) else { lock.unlock(); return }
         if var state = activeNotes[key] {
             state.keyDownCount = max(0, state.keyDownCount - 1)
             if state.keyDownCount > 0 {
@@ -869,14 +886,16 @@ public final class MIDIHapticService: @unchecked Sendable {
                 activeNotes.removeValue(forKey: key)
             }
         }
+        let notify = callback
         lock.unlock()
-        callback?(.init(channel: channel, note: note, velocity: velocity, isNoteOn: false))
+        notify?(.init(channel: channel, note: note, velocity: velocity, isNoteOn: false))
     }
 
-    private func controlChange(channel: Int, controller: Int, value: Int) {
+    private func controlChange(channel: Int, controller: Int, value: Int, token: UInt64) {
         let safeValue = max(0, min(127, value))
 
         lock.lock()
+        guard receiveEpoch.accepts(token) else { lock.unlock(); return }
         switch controller {
         case 1:
             // Modulation wheel. Use it as vibrato depth, matching the musical role
