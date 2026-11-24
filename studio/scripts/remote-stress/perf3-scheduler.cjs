@@ -15,14 +15,18 @@ function transform(s,policy){
   // Explicit emergency releases and sensor stop retain original priority.
   // Ordinary XY release is ranked with all other ordinary queued edges, but
   // cannot overtake its own onset (one FIFO).
-  R('if(touchQueue[0]?.kind==="release"){sendTouchEdge();return;}','');
+  if(policy==="releaseAware"){
+    const originalRelease='if(pedalEmergency){pedalEmergency=false;sendPedals({mask:0,levels:[0,0,0,0,0,0]});return;}\n    if(pianoEmergency){pianoEmergency=false;sendPiano(0);return;}\n    if(drumEmergency){drumEmergency=false;sendDrum(0);return;}\n    if(touchQueue[0]?.kind==="release"){sendTouchEdge();return;}\n    if(mode==="releasing"){send("motionRelease");return;}\n    const releasing=streams.find(s=>s.mode==="releasing");\n    if(releasing){send(releasing.kind+"Release");return;}';
+    const rankedRelease='const releases=[];const due=last=>Number.isFinite(last)?last+300:now;\n    if(pedalEmergency)releases.push({due:due(lastPedalSend),run:()=>{pedalEmergency=false;sendPedals({mask:0,levels:[0,0,0,0,0,0]});}});\n    if(pianoEmergency)releases.push({due:due(lastPianoSend),run:()=>{pianoEmergency=false;sendPiano(0);}});\n    if(drumEmergency)releases.push({due:due(lastDrumSend),run:()=>{drumEmergency=false;sendDrum(0);}});\n    if(touchQueue[0]?.kind==="release")releases.push({due:Math.min(due(lastTouchSend),touchQueue[0].at+150),run:sendTouchEdge});\n    if(mode==="releasing")releases.push({due:due(lastTiltSend),run:()=>send("motionRelease")});\n    for(const s of streams)if(s.mode==="releasing")releases.push({due:due(s.last),run:()=>send(s.kind+"Release")});\n    if(releases.length){releases.reduce((a,b)=>a.due<=b.due?a:b).run();return;}';
+    R(originalRelease,rankedRelease);
+  }else R('if(touchQueue[0]?.kind==="release"){sendTouchEdge();return;}','');
   R("if(touchQueue.length)ready.push({last:lastTouchSend,run:sendTouchEdge});","if(touchQueue.length)ready.push({last:lastTouchSend,edge:touchQueue[0].at,run:sendTouchEdge});");
   R("ready.push({last:-Infinity,run:()=>{\n      neutral","ready.push({last:-Infinity,arm:waitingSince,run:()=>{\n      neutral");
   R("ready.push({last:-Infinity,run:()=>{\n        s.sent","ready.push({last:-Infinity,arm:s.waiting,run:()=>{\n        s.sent");
   R('syncControls();if(pedalEmergency||pedalQueue.length||pedalDirty||pianoEmergency||pianoQueue.length||drumEmergency||drumQueue.length||touchQueue.length||mode==="releasing"||streams.some(s=>s.mode==="releasing"))tick();','syncControls();tick();');
   // Same 150 ms age for all discrete transitions. Finite arm timestamps
   // avoid starvation; guarded variant raises near-watchdog refresh priority.
-  const rank=policy==="oldest"
+  const rank=policy!=="guarded"
     ?'x=>[x.edge!==undefined?0:x.arm!==undefined?1:2,x.edge??x.arm??x.last]'
     :'x=>x.edge!==undefined?[0,x.edge+150]:x.arm!==undefined?[now-x.arm>=150?0:1,x.arm+150]:now-x.last>=225?[0,x.last+250]:[2,x.last]';
   R("if(ready.length){ready.reduce((a,b)=>a.last<b.last?a:b).run();return;}",
@@ -71,10 +75,10 @@ async function lifecycle(h,script,execute){
   }
   return results;
 }
-async function run(source,inherited,experiment,execute){
+async function run(source,inherited,experiment,execute,policies=["actual","oldest","guarded","releaseAware"]){
   const e=load(experiment,"{helpers,scenario,profiles,names,combinations}"),h=e.helpers(inherited);
   const original=h.extract(source),rows=[],faults={};
-  for(const policy of ["actual","oldest","guarded"]){
+  for(const policy of policies){
     const script=transform(original,policy);
     for(const [profile,options] of Object.entries(e.profiles))
       for(const [combo,selected] of Object.entries(e.combinations))
@@ -82,7 +86,7 @@ async function run(source,inherited,experiment,execute){
     faults[policy]=await lifecycle(h,script,execute);
   }
   const summary={};
-  for(const policy of ["actual","oldest","guarded"]){
+  for(const policy of policies){
     summary[policy]={};
     for(const profile of Object.keys(e.profiles)){
       const q=rows.filter(x=>x.policy===policy&&x.profile===profile);summary[policy][profile]={passed:q.filter(x=>x.pass).length,total:q.length,seven:q.filter(x=>x.combo==="seven").map(x=>({workload:x.workload,pass:x.pass,maxGap:x.maxGap,missing:x.missing,closed:x.closed?.status??null}))};
