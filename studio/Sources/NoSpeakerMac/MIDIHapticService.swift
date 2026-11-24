@@ -147,11 +147,9 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var touchOutputChannel = 0
     private var touchOutputFretless = false
 
-    // The Helper owns CC64 only while it is active. Do not send repeated
-    // CC64 messages per frame or leave a sustain latch behind on Stop/Panic.
-    private var helperSustainChannel: Int?
-    private var helperSustainOn = false
-    private var touchSustainChannels: Set<Int> = []
+    // Main-actor callers serialize outgoing control changes; the service
+    // lock protects state shared with the incoming MIDI render path.
+    private var sustainOwners = LegacySustainOwners()
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
 
@@ -195,9 +193,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         expressionByChannel.removeAll()
         channelPressureByChannel.removeAll()
         outgoingTouches.removeAll()
-        helperSustainOn = false
-        helperSustainChannel = nil
-        touchSustainChannels.removeAll()
+        sustainOwners = LegacySustainOwners()
         lock.unlock()
         startRenderTimer()
     }
@@ -244,8 +240,7 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     public func stop() {
         renderFence.revoke()
-        releaseHelperSustain()
-        releaseTouchSustain()
+        releaseAllOutgoingSustain()
         endAllTouchOutput()
 
         lock.lock()
@@ -263,9 +258,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         expressionByChannel.removeAll()
         channelPressureByChannel.removeAll()
         outgoingTouches.removeAll()
-        helperSustainOn = false
-        helperSustainChannel = nil
-        touchSustainChannels.removeAll()
+        sustainOwners = LegacySustainOwners()
         lock.unlock()
 
         renderTimer?.cancel()
@@ -428,78 +421,52 @@ public final class MIDIHapticService: @unchecked Sendable {
         endTouchOutput()
     }
 
-    /// Sends CC64 only on state transitions. When the Helper channel changes,
-    /// release sustain on the old channel before holding it on the new one.
+    private func sendSustainTransitions(_ commands: [SensorCommand]) {
+        for command in commands {
+            sendControlChange(controller:64,value:command.value,channel:command.destination.channel)
+        }
+    }
+
+    private func replaceSustain(_ owner: LegacySustainOwners.Owner, channels: Set<Int>) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        let commands = sustainOwners.replace(owner,channels:canSend ? channels : [])
+        lock.unlock()
+        if canSend { sendSustainTransitions(commands) }
+    }
+
     public func setHelperSustain(_ active: Bool, channel: Int) {
-        let target = max(0, min(15, channel))
-
-        lock.lock()
-        let canSend = enabled && virtualSource != 0
-        let previousChannel = helperSustainChannel
-        let wasActive = helperSustainOn
-        let changed = previousChannel != target
-        helperSustainOn = active && canSend
-        helperSustainChannel = active && canSend ? target : nil
-        lock.unlock()
-
-        guard canSend else { return }
-        if wasActive, let old = previousChannel, (!active || changed) {
-            sendControlChange(controller: 64, value: 0, channel: old)
-        }
-        if active && (!wasActive || changed) {
-            sendControlChange(controller: 64, value: 127, channel: target)
-        }
+        replaceSustain(.helper,channels:active ? [max(0,min(15,channel))] : [])
     }
+    public func releaseHelperSustain() { replaceSustain(.helper,channels:[]) }
 
-    public func releaseHelperSustain() {
-        lock.lock()
-        let previousChannel = helperSustainChannel
-        let wasActive = helperSustainOn
-        let canSend = enabled && virtualSource != 0
-        helperSustainOn = false
-        helperSustainChannel = nil
-        lock.unlock()
-
-        if canSend, wasActive, let channel = previousChannel {
-            sendControlChange(controller: 64, value: 0, channel: channel)
-        }
+    public func setTouchBarSustain(_ active: Bool, channel: Int) {
+        replaceSustain(.touchBar,channels:active ? [max(0,min(15,channel))] : [])
     }
+    public func releaseTouchBarSustain() { replaceSustain(.touchBar,channels:[]) }
 
-    /// CC64 output for Touch Instrument, independent from the MIDI Helper latch.
-    /// Retains channels after finger lift so sustained MPE notes can be released.
+    /// Retains previously held MPE channels until this owner releases.
     public func setTouchSustain(_ active: Bool, baseChannel: Int) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
-        let previous = touchSustainChannels
+        let previous = sustainOwners.channels(for:.touch)
         let currentNoteChannels = Set(outgoingTouches.values.map(\.channel))
-        let fallback = max(0, min(15, baseChannel))
+        let fallback = max(0,min(15,baseChannel))
         let targets = active && canSend
-            ? previous.union(currentNoteChannels.isEmpty && previous.isEmpty
-                ? Set([fallback]) : currentNoteChannels)
+            ? previous.union(currentNoteChannels.isEmpty && previous.isEmpty ? [fallback] : currentNoteChannels)
             : Set<Int>()
-        touchSustainChannels = targets
+        let commands = sustainOwners.replace(.touch,channels:targets)
         lock.unlock()
-
-        guard canSend else { return }
-        for channel in previous.subtracting(targets) {
-            sendControlChange(controller: 64, value: 0, channel: channel)
-        }
-        for channel in targets.subtracting(previous) {
-            sendControlChange(controller: 64, value: 127, channel: channel)
-        }
+        if canSend { sendSustainTransitions(commands) }
     }
+    public func releaseTouchSustain() { replaceSustain(.touch,channels:[]) }
 
-    public func releaseTouchSustain() {
+    private func releaseAllOutgoingSustain() {
         lock.lock()
-        let channels = touchSustainChannels
         let canSend = enabled && virtualSource != 0
-        touchSustainChannels.removeAll()
+        let commands = sustainOwners.releaseAll()
         lock.unlock()
-        if canSend {
-            for channel in channels {
-                sendControlChange(controller: 64, value: 0, channel: channel)
-            }
-        }
+        if canSend { sendSustainTransitions(commands) }
     }
 
     public func sendHelperControls(
