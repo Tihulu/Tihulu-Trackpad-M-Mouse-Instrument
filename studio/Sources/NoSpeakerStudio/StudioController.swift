@@ -255,6 +255,7 @@ final class StudioController: ObservableObject {
     @Published private(set) var patchCameraHand: AirHandSample?
     var patchCameraCalibrationAvailable: Bool { patchRunning && patchPhysical && !patchMIDIEnabled && patchCameraHand != nil }
     private var patchNativeToken: UUID?
+    private var patchGamepadPollSources: [SensorSource] = []
     @Published private(set) var patchNativeBar = false
     @Published private(set) var patchLidStatus = "Builder lid OFF"
     @Published private(set) var patchLidDegrees: Double?
@@ -607,6 +608,7 @@ final class StudioController: ObservableObject {
                 patchMailbox = mailbox
                 patchPhysical = true
                 patchNativeToken = UUID()
+                patchGamepadPollSources = sources.intersection(GamepadFrame.sources).sorted { $0.rawValue < $1.rawValue }
                 if needsSurface {
                     touch?.setPatchMailbox(mailbox)
                     refreshSharedSurfaceMonitoring()
@@ -707,7 +709,7 @@ final class StudioController: ObservableObject {
                 // Arm from a real initial snapshot, then process native value
                 // changes without waiting for the 20 ms watchdog.
                 if let token = patchNativeToken {
-                    for source in sources.intersection(GamepadFrame.sources) {
+                    for source in patchGamepadPollSources {
                         receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token)
                     }
                     if patchRunning {
@@ -987,7 +989,7 @@ final class StudioController: ObservableObject {
             guard patchRunning else { return }
             let surface = sample.frame.surface
             let source: SensorSource = surface == .trackpad ? .trackpad : .magicMouse
-            let contact = sample.frame.contacts.filter { $0.isDown }.min { $0.id < $1.id }
+            let contact = sample.frame.contacts.lazy.filter { $0.isDown }.min { $0.id < $1.id }
             var x: Double?
             var y: Double?
             var size: Double?
@@ -1008,8 +1010,7 @@ final class StudioController: ObservableObject {
         guard patchRunning else { return }
         drainBuilderRemote(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
-        let gamepadSources = Set(instrumentPatch.routes.map(\.source)).intersection(GamepadFrame.sources)
-        for source in gamepadSources.sorted(by:{ $0.rawValue < $1.rawValue }) {
+        for source in patchGamepadPollSources {
             guard let token = patchNativeToken else { return }
             receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token)
             guard patchRunning else { return }
@@ -1334,6 +1335,7 @@ final class StudioController: ObservableObject {
         let hadPhysicalInput = patchPhysical
         let hadNativeBar = patchNativeBar
         patchNativeToken = nil
+        patchGamepadPollSources = []
         patchNativeBar = false
         patchRemoteProbeToken = nil
         patchRemoteProbeTask?.cancel()
