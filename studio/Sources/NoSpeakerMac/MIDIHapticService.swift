@@ -636,15 +636,15 @@ public final class MIDIHapticService: @unchecked Sendable {
     public func releaseTouchBarSustain() { replaceSustain(.touchBar,channels:[]) }
 
     /// Retains previously held MPE channels until this owner releases.
-    public func setTouchSustain(_ active: Bool, baseChannel: Int, separateChannels: DAWSurfaceChannels? = nil) {
+    public func setTouchSustain(_ active: Bool, baseChannel: Int, separateChannels: DAWSurfaceChannels? = nil,
+                                allowIdleFallback:Bool = true) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         let previous = sustainOwners.channels(for:.touch)
         let currentNoteChannels = Set(outgoingTouches.values.map(\.channel)).union(physicalChordGates.channels)
-        let fallback = max(0,min(15,baseChannel))
-        let targets = active && canSend
-            ? previous.union(separateChannels?.all ?? (currentNoteChannels.isEmpty && previous.isEmpty ? [fallback] : currentNoteChannels))
-            : Set<Int>()
+        let targets = LegacyTouchSustainTargets.resolve(active:active && canSend,
+            previous:previous,current:separateChannels?.all ?? currentNoteChannels,
+            baseChannel:baseChannel,allowIdleFallback:allowIdleFallback)
         let commands = sustainOwners.replace(.touch,channels:targets)
         lock.unlock()
         if canSend { sendSustainTransitions(commands) }

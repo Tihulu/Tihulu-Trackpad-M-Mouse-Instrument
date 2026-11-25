@@ -3654,10 +3654,10 @@ final class StudioController: ObservableObject {
         liveTouchStates = states
         // Every accepted hardware frame reaches the musical path before UI.
         if touchRunning {
-            // Fixed independent pedals are committed before note edges in
-            // this same snapshot; legacy/MPE ordering remains unchanged.
-            let earlySustain = touchMIDIOutEnabled && touchIndependentDAWSustain
-            if earlySustain { updateTouchSustain(states,freshFrame:true) }
+            // Evaluate the pedal exactly once. Existing voices must see CC64
+            // before same-frame Note Off; do not reserve a fallback MPE
+            // channel before the new voices have been allocated.
+            let pedal = updateTouchSustain(states,freshFrame:true,allowIdleFallback:false)
             if touchMIDIOutEnabled {
                 midi?.sendTouchStates(
                     states,
@@ -3668,7 +3668,11 @@ final class StudioController: ObservableObject {
                     separateChannels: touchSeparateChannels
                 )
             }
-            if !earlySustain { updateTouchSustain(states,freshFrame:true) }
+            // Fixed split channels were already settled. Shared legacy/MPE
+            // routes extend the same admitted pedal to newly allocated notes.
+            if touchMIDIOutEnabled, touchSeparateChannels == nil, let pedal {
+                midi?.setTouchSustain(pedal.isActive,baseChannel:touchMIDIChannel)
+            }
         }
         guard instrumentPreviewRequested, states != touchStates,
               touchPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
@@ -4360,13 +4364,15 @@ final class StudioController: ObservableObject {
         if touchRunning { updateTouchSustain(liveTouchStates) }
     }
 
-    private func updateTouchSustain(_ states: [TouchPerformanceState],freshFrame:Bool = false) {
+    @discardableResult
+    private func updateTouchSustain(_ states: [TouchPerformanceState],freshFrame:Bool = false,
+                                    allowIdleFallback:Bool = true) -> MIDIHelperSustainSnapshot? {
         let selected = states.filter { currentTouchConfiguration.surfaceSelection.accepts($0.surface) }
         let active = selected.filter { $0.isTouching && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
         let selectedClick = touchClickFence.permits(receipt:physicalClickReceipt,
             now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { currentTouchConfiguration.surfaceSelection.accepts($0) } ?? false)
         guard touchSustainRearmGate.permits(touching:selected.contains(where: { $0.isTouching }),
-            clicking:selectedClick,freshFrame:freshFrame) else { return }
+            clicking:selectedClick,freshFrame:freshFrame) else { return nil }
         let snapshot = touchSustainState.update(
             trackpadContactSizes: active
                 .filter { $0.surface == .trackpad }
@@ -4390,9 +4396,10 @@ final class StudioController: ObservableObject {
             if let split = touchSeparateChannels {
                 midi?.setTouchSustainChannels(split.sustainTargets(snapshot,independent:touchIndependentDAWSustain))
             } else {
-                midi?.setTouchSustain(snapshot.isActive,baseChannel:touchMIDIChannel)
+                midi?.setTouchSustain(snapshot.isActive,baseChannel:touchMIDIChannel,allowIdleFallback:allowIdleFallback)
             }
         }
+        return snapshot
     }
 
     func playMIDIFile(_ url: URL) {

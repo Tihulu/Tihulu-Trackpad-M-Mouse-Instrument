@@ -386,3 +386,48 @@ import Testing
     touch.reset()
     #expect(!touch.waiting && helper.waiting)
 }
+ 
+@Test func sharedTouchPedalBeforeReleaseReservesExistingMPEMember() {
+    var owners = LegacySustainOwners()
+    var pool = LegacyMPEChannelPool()
+    let before = LegacyTouchSustainTargets.resolve(active:true,previous:[],current:[1],
+        baseChannel:0,allowIdleFallback:false)
+    let on = owners.replace(.touch,channels:before)
+    #expect(on == [.init(.init(.sustain,channel:1),value:127)])
+    #expect(!pool.retire(channel:1,sustained:owners.active.contains(1),fretless:true))
+    #expect(pool.reserved == [1])
+    #expect(pool.next(occupied:[],sustained:owners.active) == 2)
+    let after = LegacyTouchSustainTargets.resolve(active:true,previous:owners.channels(for:.touch),
+        current:[2],baseChannel:0,allowIdleFallback:true)
+    #expect(owners.replace(.touch,channels:after) == [.init(.init(.sustain,channel:2),value:127)])
+    #expect(owners.replace(.touch,channels:[]) == [
+        .init(.init(.sustain,channel:1),value:0),.init(.init(.sustain,channel:2),value:0)])
+    #expect(pool.pedalChanged(sustained:owners.active) == [1])
+    #expect(pool.reserved.isEmpty)
+}
+
+@Test func sharedTouchPedalDoesNotReserveIdleMemberBeforeAllocation() {
+    var owners = LegacySustainOwners()
+    let pool = LegacyMPEChannelPool()
+    let before = LegacyTouchSustainTargets.resolve(active:true,previous:[],current:[],
+        baseChannel:1,allowIdleFallback:false)
+    #expect(owners.replace(.touch,channels:before).isEmpty)
+    #expect(pool.next(occupied:[],sustained:owners.active) == 1)
+    let after = LegacyTouchSustainTargets.resolve(active:true,previous:[],current:[1],
+        baseChannel:1,allowIdleFallback:true)
+    #expect(after == [1])
+    #expect(LegacyTouchSustainTargets.resolve(active:true,previous:[],current:[],
+        baseChannel:3,allowIdleFallback:true) == [3])
+    #expect(LegacyTouchSustainTargets.resolve(active:false,previous:[1],current:[2],
+        baseChannel:0,allowIdleFallback:true).isEmpty)
+}
+
+@Test func sharedTouchPedalOffKeepsIndependentHelperOwner() {
+    var owners = LegacySustainOwners()
+    _ = owners.replace(.helper,channels:[2])
+    _ = owners.replace(.touch,channels:[1,2])
+    let off = LegacyTouchSustainTargets.resolve(active:false,previous:[1,2],current:[1],
+        baseChannel:0,allowIdleFallback:false)
+    #expect(owners.replace(.touch,channels:off) == [.init(.init(.sustain,channel:1),value:0)])
+    #expect(owners.active == [2])
+}

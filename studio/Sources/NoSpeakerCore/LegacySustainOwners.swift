@@ -23,3 +23,16 @@ public struct LegacySustainOwners: Sendable {
         return before.sorted().map { .init(.init(.sustain,channel:$0),value:0) }
     }
 }
+
+/// Shared legacy Touch pedal targets. Before note edges only already
+/// allocated channels are eligible; after allocation the normal idle
+/// fallback remains available. Existing sustained voices retain ownership.
+public enum LegacyTouchSustainTargets {
+    public static func resolve(active:Bool,previous:Set<Int>,current:Set<Int>,
+                               baseChannel:Int,allowIdleFallback:Bool) -> Set<Int> {
+        guard active else { return [] }
+        let targets = previous.union(current).filter { (0...15).contains($0) }
+        if targets.isEmpty && allowIdleFallback { return [max(0,min(15,baseChannel))] }
+        return targets
+    }
+}
