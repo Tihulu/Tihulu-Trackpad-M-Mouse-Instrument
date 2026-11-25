@@ -20,6 +20,9 @@ struct GamepadMappingPanel: View {
     @State private var noteText = "C4"
     @State private var chord = "C4,E4,G4"
     @State private var confirmCopy = false
+    @State private var copyTarget: SensorSource = .gamepad2
+    @State private var copyBase: InstrumentPatch?
+    @State private var pendingCopy: InstrumentPatch?
     @State private var presetChannel = 0
     @State private var confirmPreset = false
     @State private var presetBase: InstrumentPatch?
@@ -62,7 +65,10 @@ struct GamepadMappingPanel: View {
             return "\(name) · Ch \(d.channel+1)" + (r.pedalMode.map { " · " + $0.rawValue } ?? "")
         }.joined(separator:", ")
     }
-    private var otherSlot: SensorSource { slot == .gamepad1 ? .gamepad2 : .gamepad1 }
+    private var copyTargets: [SensorSource] { GamepadFrame.orderedSources.filter { $0 != slot } }
+    private func repairCopyTarget() {
+        if copyTarget == slot, let first = copyTargets.first { copyTarget = first }
+    }
     private func loadSelection() {
         let routes = selectedRoutes
         complexSelection = false
@@ -100,12 +106,20 @@ struct GamepadMappingPanel: View {
         case .controlChange: action = .cc; number = first.destination.number
         }
     }
-    private func copyMap(replace: Bool) {
+    private func prepareCopy() {
         do {
-            patch = try GamepadMappingEditor.copy(in:patch,from:slot,to:otherSlot,
-                    channel:remapCopyChannel ? copyChannel : nil,replaceExisting:replace)
-            physical = true
-            message = "Controller map copied. Original preserved."
+            let occupied = patch.routes.contains { $0.source == copyTarget }
+            let next = try GamepadMappingEditor.copy(in:patch,from:slot,to:copyTarget,
+                    channel:remapCopyChannel ? copyChannel : nil,replaceExisting:occupied)
+            if occupied {
+                copyBase = patch
+                pendingCopy = next
+                confirmCopy = true
+            } else {
+                patch = next
+                physical = true
+                message = "Controller map copied. Original preserved."
+            }
         } catch { message = "Copy refused: invalid routing or route capacity." }
     }
 
@@ -129,16 +143,20 @@ struct GamepadMappingPanel: View {
         GroupBox("Xbox / Gamepad · custom control map") {
             VStack(alignment:.leading,spacing:10) {
                 Picker("Controller",selection:$slot) {
-                    Text("Controller 1").tag(SensorSource.gamepad1)
-                    Text("Controller 2").tag(SensorSource.gamepad2)
+                    ForEach(GamepadFrame.orderedSources,id:\.self) { source in
+                        Text(GamepadFrame.slotLabel(source)).tag(source)
+                    }
                 }.pickerStyle(.segmented)
                 HStack {
                     Toggle("New MIDI channel for copy",isOn:$remapCopyChannel)
                     if remapCopyChannel { Stepper("Ch \(copyChannel+1)",value:$copyChannel,in:0...15) }
-                    Button(slot == .gamepad1 ? "Copy map to Controller 2" : "Copy map to Controller 1") {
-                        if patch.routes.contains(where:{ $0.source == otherSlot }) { confirmCopy = true }
-                        else { copyMap(replace:false) }
-                    }.disabled(!patch.routes.contains(where:{ $0.source == slot }))
+                    Picker("Copy to",selection:$copyTarget) {
+                        ForEach(copyTargets,id:\.self) { source in
+                            Text(GamepadFrame.slotLabel(source)).tag(source)
+                        }
+                    }
+                    Button("Copy map…") { prepareCopy() }
+                        .disabled(copyTarget == slot || !patch.routes.contains(where:{ $0.source == slot }))
                 }
                 HStack {
                     Stepper("Pedalboard Ch \(presetChannel+1)",value:$presetChannel,in:0...15)
@@ -245,11 +263,18 @@ struct GamepadMappingPanel: View {
             }.padding(8)
         }
         .onAppear { loadSelection() }
-        .onChange(of:slot) { _ in loadSelection() }
+        .onChange(of:slot) { _ in repairCopyTarget(); loadSelection() }
         .onChange(of:patch) { _ in loadSelection() }
         .confirmationDialog("Replace the other controller map?",isPresented:$confirmCopy,titleVisibility:.visible) {
-            Button("Replace destination map",role:.destructive) { copyMap(replace:true) }
-            Button("Cancel",role:.cancel) {}
+            Button("Replace destination map",role:.destructive) {
+                if let base = copyBase, let next = pendingCopy, patch == base {
+                    patch = next
+                    physical = true
+                    message = "Controller map copied. Original preserved."
+                } else { message = "Draft changed. Review and try again." }
+                copyBase = nil; pendingCopy = nil
+            }
+            Button("Cancel",role:.cancel) { copyBase = nil; pendingCopy = nil }
         } message: {
             Text("Only the destination controller's mappings will be replaced. The original and other devices stay unchanged.")
         }
