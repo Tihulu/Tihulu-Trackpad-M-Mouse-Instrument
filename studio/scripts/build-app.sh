@@ -31,8 +31,9 @@ else
     swift test
 fi
 
-echo "==> Release build"
-if ! swift build -c release; then
+echo "==> Release build (Studio product only)"
+# The standalone developer CLI is not part of the app bundle or installer.
+if ! swift build -c release --product NoSpeakerStudio; then
     echo >&2
     echo "NoSpeaker Studio release build failed." >&2
     echo "Developer directory: $(xcode-select -p 2>/dev/null || echo unavailable)" >&2

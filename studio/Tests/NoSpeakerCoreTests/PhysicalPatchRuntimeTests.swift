@@ -37,3 +37,28 @@ import Testing
     let after = runtime.receive(source: .trackpad, x: 0.3, y: 0.3, size: 0.4, hostTime: 3, now: 3)
     #expect(after.isEmpty)
 }
+
+@Test func physicalPatchReceiptAdmissionRejectsFutureNonfiniteAndExpiredSamples() {
+    #expect(PhysicalPatchRuntime.admitsPhysicalReceipt(0,now:0))
+    #expect(PhysicalPatchRuntime.admitsPhysicalReceipt(0,now:0.349))
+    #expect(!PhysicalPatchRuntime.admitsPhysicalReceipt(0,now:0.35))
+    #expect(!PhysicalPatchRuntime.admitsPhysicalReceipt(0.01,now:0))
+    #expect(!PhysicalPatchRuntime.admitsPhysicalReceipt(-0.01,now:0))
+    #expect(!PhysicalPatchRuntime.admitsPhysicalReceipt(.nan,now:0))
+    #expect(!PhysicalPatchRuntime.admitsPhysicalReceipt(0,now:.infinity))
+}
+
+@Test func physicalPatchDelayedSecondFrameCannotAdmitStaleNote() throws {
+    let a=SensorDestination(.note,number:60),b=SensorDestination(.note,number:64)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:a),
+        .init(id:"b",source:.magicMouse,signal:.contact,destination:b)
+    ]))
+    let first=runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:0,now:0.34)
+    #expect(first==[.init(a,value:100)])
+    let late=runtime.receive(source:.magicMouse,x:0.5,y:0.5,size:0.5,hostTime:0,now:0.35)
+    #expect(late.isEmpty && runtime.activeSources==[.trackpad])
+    let released=runtime.stop()
+    #expect(released==[.init(a,value:0)])
+}

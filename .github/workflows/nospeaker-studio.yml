@@ -6,12 +6,26 @@ on:
     paths:
       - 'install-studio.sh'
       - 'studio/**'
+      - 'tools/**'
+      - 'examples/**'
+      - 'AGENTS.md'
+      - 'docs/DEVELOPER_SDK_AI_INDEX.md'
+      - 'docs/ENGINE_CAPABILITIES.json'
+      - 'docs/NATIVE_MIDI_ACCEPTANCE.md'
+      - 'docs/INTEGRATION_CANDIDATE.md'
       - '.github/workflows/nospeaker-studio.yml'
   workflow_dispatch:
   pull_request:
     paths:
       - 'install-studio.sh'
       - 'studio/**'
+      - 'tools/**'
+      - 'examples/**'
+      - 'AGENTS.md'
+      - 'docs/DEVELOPER_SDK_AI_INDEX.md'
+      - 'docs/ENGINE_CAPABILITIES.json'
+      - 'docs/NATIVE_MIDI_ACCEPTANCE.md'
+      - 'docs/INTEGRATION_CANDIDATE.md'
       - '.github/workflows/nospeaker-studio.yml'
 
 permissions:
@@ -26,10 +40,23 @@ jobs:
         working-directory: studio
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+      - name: Record and verify checkout provenance
+        env:
+          EXPECTED_SHA: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$EXPECTED_SHA"
+          echo "TIHULU_CHECKOUT_SHA=$actual" >> "$GITHUB_ENV"
+          echo "Verified checkout: $actual; tree: $(git rev-parse HEAD^{tree})"
       - name: Swift version
         run: swift --version
       - name: Remote browser lifecycle tests
         run: node --test scripts/test-remote-browser.cjs
+      - name: Verify native fixture inventory
+        run: python3 ../tools/test_native_fixture_inventory.py
       - name: Verify
         run: ./scripts/verify.sh
 
@@ -41,6 +68,17 @@ jobs:
         working-directory: studio
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+      - name: Record and verify checkout provenance
+        env:
+          EXPECTED_SHA: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$EXPECTED_SHA"
+          echo "TIHULU_CHECKOUT_SHA=$actual" >> "$GITHUB_ENV"
+          echo "Verified checkout: $actual; tree: $(git rev-parse HEAD^{tree})"
       - name: Xcode and Swift versions
         run: |
           xcodebuild -version
@@ -52,10 +90,86 @@ jobs:
           sh -n scripts/verify-preview-dmg.sh
       - name: Unit tests
         run: swift test
+      - name: Isolated native MIDI observer and playback fixtures
+        env:
+          TIHULU_NATIVE_OBSERVER_FIXTURE: "1"
+        run: |
+          # A separate client keeps the on-demand MIDI server alive during
+          # the gaps between isolated test processes. No ports/endpoints,
+          # messages, daemon restart or retries. Preserve every failure.
+          scratch="$(mktemp -d)"
+          keeper=""
+          cleanup() {
+            if [ -n "$keeper" ]; then
+              kill "$keeper" 2>/dev/null || true
+              wait "$keeper" 2>/dev/null || true
+            fi
+            rm -rf "$scratch"
+          }
+          trap cleanup EXIT
+          swiftc ../tools/fixtures/native_midi_ci_keepalive.swift -o "$scratch/keeper"
+          "$scratch/keeper" >"$scratch/keeper.log" 2>&1 &
+          keeper=$!
+          for attempt in {1..100}; do
+            if ! kill -0 "$keeper" 2>/dev/null; then break; fi
+            if grep -Fxq "CoreMIDI CI keepalive ready" "$scratch/keeper.log"; then break; fi
+            sleep 0.1
+          done
+          cat "$scratch/keeper.log"
+          if ! kill -0 "$keeper" 2>/dev/null || ! grep -Fxq "CoreMIDI CI keepalive ready" "$scratch/keeper.log"; then
+            echo "CoreMIDI keepalive did not start; native acceptance failed."
+            exit 1
+          fi
+          # Keep each fixture in a separate process. Collect every result
+          # even if an early timing test fails; the step still fails.
+          status=0
+          for fixture in \
+            nativeObserverReceivesIsolatedFixtureAndClosesItsPort \
+            nativeObserverRefusesSuccessAfterIdentityLoss \
+            nativeObserverSharedClientSurvivesIndependentPortCleanup \
+            nativePlaybackUsesIsolatedSourceAndClosesIt \
+            nativePlaybackStopBeforeRunEmitsNothing \
+            nativePlaybackReceiverVerifiesNoteGateAndCancellation \
+            nativePlaybackRejectsChangedAndRestoredSourceIdentity \
+            nativePlaybackDetectsIdentityLossDuringInitialRest \
+            nativePlaybackStopBeforeRunCannotMaskLostIdentity \
+            nativePlaybackEmptyLedgerRetryStillChecksIdentity \
+            nativePlaybackCloseRetiresTerminalStateAfterIdentityLoss \
+            nativePlaybackRunAndCloseDisposesOnlyOwnSource \
+            nativePlaybackRunAndClosePreservesIdentityRecoveryOnFailure \
+            nativePlaybackPreparedSessionReceivesNoteGateBeforeDisposal \
+            nativePlaybackOpenQuarantinesUnverifiedSourceWithoutDisposal \
+            nativePlaybackSourceCapacityReleasesOnlyVerifiedClosedSlots
+          do
+            log="$(mktemp)"
+            if swift test --filter "$fixture" >"$log" 2>&1; then
+              # A missing filter or disabled fixture is not acceptance.
+              if ! grep -F "Test $fixture() passed" "$log"; then
+                echo "Fixture did not actually pass: $fixture"
+                status=1
+              fi
+            else
+              status=1
+            fi
+            cat "$log"
+            rm -f "$log"
+            if ! kill -0 "$keeper" 2>/dev/null; then
+              echo "CoreMIDI keepalive exited during $fixture; native acceptance failed."
+              status=1
+            fi
+          done
+          exit "$status"
       - name: Build Studio
         run: swift build
+      - name: Verify standalone engine CLI and repository index
+        run: |
+          python3 ../tools/test_engine_cli.py "$(swift build --show-bin-path)/tihulu-mac-instrument-engine"
+          python3 ../tools/test_engine_catalog.py "$(swift build --show-bin-path)/tihulu-mac-instrument-engine"
+          python3 ../tools/test_native_engine_cli.py "$(swift build --show-bin-path)/tihulu-mac-instrument-native"
+          python3 ../tools/test_repo_index.py
+          swift run --package-path ../examples/EngineConsumer engine-consumer
       - name: Compile experimental group MPE and remote gates (no execution or packaging)
-        if: github.event_name == 'pull_request' && github.head_ref == 'feature/group-gamepad-adapter'
+        if: github.event_name == 'pull_request' && (github.head_ref == 'feature/group-gamepad-adapter' || github.head_ref == 'qa/app-sdk-integration-20261125')
         run: |
           set -euo pipefail
           scratch="$(mktemp -d "$RUNNER_TEMP/group-mpe-build.XXXXXX")"
@@ -66,13 +180,14 @@ jobs:
       - name: Build app bundle in installer mode
         env:
           TIHULU_BUILD_CHANNEL: ${{ github.ref == 'refs/heads/main' && 'stable' || 'preview' }}
-        run: NOSPEAKER_STUDIO_SKIP_TESTS=1 NOSPEAKER_STUDIO_BUILD_SHA="$GITHUB_SHA" ./scripts/build-app.sh
+        run: NOSPEAKER_STUDIO_SKIP_TESTS=1 NOSPEAKER_STUDIO_BUILD_SHA="$TIHULU_CHECKOUT_SHA" ./scripts/build-app.sh
       - name: Validate TIHULU app branding and icon
         run: |
           APP="dist/Tihulu Trackpad & M. Mouse Instrument.app"
           test -s "$APP/Contents/Resources/TihuluInstrument.icns"
           test -s "$APP/Contents/Resources/TihuluTrackpadMouseIcon.svg"
           plutil -lint "$APP/Contents/Info.plist"
+          python3 ../tools/test_app_engine_boundary.py --bundle "$APP"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Contents/Info.plist"
       - name: Upload unsigned development app
         uses: actions/upload-artifact@v4
@@ -105,8 +220,8 @@ jobs:
           cd dist
           shasum -a 256 Tihulu-0.3.0-preview.dmg > PREVIEW-SHA256SUMS
           cd ..
-          ./scripts/verify-preview-dmg.sh dist/Tihulu-0.3.0-preview.dmg dist/PREVIEW-SHA256SUMS "$GITHUB_SHA"
-          printf 'checkout_sha=%s\nhead_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_SHA" "$PREVIEW_HEAD_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > dist/PREVIEW-PROVENANCE.txt
+          ./scripts/verify-preview-dmg.sh dist/Tihulu-0.3.0-preview.dmg dist/PREVIEW-SHA256SUMS "$TIHULU_CHECKOUT_SHA"
+          printf 'checkout_sha=%s\nhead_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$TIHULU_CHECKOUT_SHA" "$PREVIEW_HEAD_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > dist/PREVIEW-PROVENANCE.txt
       - name: Upload preview DMG without publishing a release
         if: github.ref != 'refs/heads/main'
         uses: actions/upload-artifact@v4

@@ -73,6 +73,12 @@ import NoSpeakerCore
             detach(source)
             return nil
         }
+        return Self.snapshot(g)
+    }
+
+    /// The same normalization for bound performance and read-only diagnostics.
+    /// Does not bind a controller or install event handlers.
+    static func snapshot(_ g:GCExtendedGamepad) -> GamepadFrame? {
         let buttons:[GCControllerButtonInput?] = [g.buttonA,g.buttonB,g.buttonX,g.buttonY,g.leftShoulder,g.rightShoulder,
             g.dpad.up,g.dpad.down,g.dpad.left,g.dpad.right,g.leftThumbstickButton,g.rightThumbstickButton]
         return GamepadFrame(buttons:buttons.map{ $0?.isPressed == true ? 1 : 0 },

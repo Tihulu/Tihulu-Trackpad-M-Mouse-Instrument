@@ -6,10 +6,20 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .library(name: "NoSpeakerCore", targets: ["NoSpeakerCore"]),
+        .library(name: "NoSpeakerMac", targets: ["NoSpeakerMac"]),
+        .executable(name: "tihulu-mac-instrument-engine", targets: ["TihuluEngineCLI"]),
+        .executable(name: "tihulu-mac-instrument-native", targets: ["TihuluNativeCLI"]),
         .executable(name: "NoSpeakerStudio", targets: ["NoSpeakerStudio"])
     ],
     targets: [
         .target(name: "NoSpeakerCore"),
+        .executableTarget(name: "TihuluEngineCLI", dependencies: ["NoSpeakerCore"]),
+        .target(name: "NoSpeakerProcessSignals"),
+        .executableTarget(name: "TihuluNativeCLI", dependencies: [
+            "NoSpeakerProcessSignals",
+            "NoSpeakerCore",
+            .target(name: "NoSpeakerMac", condition: .when(platforms: [.macOS]))
+        ]),
         .target(
             name: "NoSpeakerMac",
             dependencies: ["NoSpeakerCore"],

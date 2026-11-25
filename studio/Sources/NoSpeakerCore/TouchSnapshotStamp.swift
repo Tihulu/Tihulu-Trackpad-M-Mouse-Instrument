@@ -75,3 +75,13 @@ public struct PhysicalSurfaceSnapshotCache<Surface:Hashable & Sendable,Contact:S
     public func combined(order:[Surface]) -> [Contact] { order.flatMap { states[$0] ?? [] } }
     public mutating func reset() { states.removeAll(); observations.removeAll() }
 }
+
+/// The shared Touch/Helper inbox cannot authorize onsets from a
+/// future, nonfinite or expired monotonic publication timestamp.
+public enum TouchPublicationAdmission {
+    public static let maximumAge:Double=0.150
+    public static func permits(queuedAt:Double,now:Double)->Bool {
+        queuedAt.isFinite && now.isFinite && queuedAt>=0 && now>=queuedAt &&
+            now-queuedAt<maximumAge
+    }
+}
