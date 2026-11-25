@@ -7,6 +7,7 @@ on:
       - 'install-studio.sh'
       - 'studio/**'
       - 'tools/**'
+      - 'examples/**'
       - 'docs/DEVELOPER_SDK_AI_INDEX.md'
       - 'docs/ENGINE_CAPABILITIES.json'
       - '.github/workflows/nospeaker-studio.yml'
@@ -16,6 +17,7 @@ on:
       - 'install-studio.sh'
       - 'studio/**'
       - 'tools/**'
+      - 'examples/**'
       - 'docs/DEVELOPER_SDK_AI_INDEX.md'
       - 'docs/ENGINE_CAPABILITIES.json'
       - '.github/workflows/nospeaker-studio.yml'
@@ -64,6 +66,7 @@ jobs:
         run: |
           python3 ../tools/test_engine_cli.py "$(swift build --show-bin-path)/tihulu-engine"
           python3 ../tools/test_repo_index.py
+          swift run --package-path ../examples/EngineConsumer engine-consumer
       - name: Install SVG icon renderer
         run: brew install librsvg
       - name: Build app bundle in installer mode
