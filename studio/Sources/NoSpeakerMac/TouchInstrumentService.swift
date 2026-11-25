@@ -285,6 +285,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private let lock = NSLock()
 
     private var configuration = TouchInstrumentConfiguration()
+    // The mapping changes only with configuration, not with contact motion.
+    private var cachedMIDINotes = TouchInstrumentConfiguration().mappedMIDINotes
     private var sampleRevision: UInt64 = 0
     private var renderRevision: UInt64 = 0
     private var frameSequence: UInt64 = 0
@@ -378,11 +380,12 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private func applyConfigurationLocked(_ next: TouchInstrumentConfiguration) -> Bool {
         let changed = configuration != next
         if changed {
+            cachedMIDINotes = next.mappedMIDINotes
             invalidateSamplesLocked()
             renderRevision &+= 1
         }
         if next.requiresHapticReset(comparedTo:configuration) ||
-            !next.hasValidSampleDomain || next.mappedMIDINotes.isEmpty {
+            !next.hasValidSampleDomain || cachedMIDINotes.isEmpty {
             latestStatesBySurface.removeAll()
             liveHapticStates.removeAll()
             sustainedHapticStates.removeAll()
@@ -504,6 +507,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.lock()
         guard monitoring, monitoringToken == token else { lock.unlock(); return }
         let config = configuration
+        let mappedNotes = cachedMIDINotes
         let revision = sampleRevision
         frameSequence &+= 1
         let frameID = frameSequence
@@ -516,7 +520,6 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
         guard config.surfaceSelection.accepts(frame.surface) else { return }
 
-        let mappedNotes = config.mappedMIDINotes
         let instrument = config.instrument(for: frame.surface)
         var states: [TouchPerformanceState] = mappedNotes.isEmpty ? [] : frame.contacts.compactMap { contact -> TouchPerformanceState? in
             guard contact.surface == frame.surface,
