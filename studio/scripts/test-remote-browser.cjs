@@ -1147,3 +1147,22 @@ test("custom alias rejects controls and cannot change outside idle editor",()=>{
   assert.notEqual(a.elements.drum0.textContent,"Injected");
   assert.equal(a.socket.frames.length,0);
 });
+
+test("malformed stored alias selections fail closed and reset clears unsaved text",()=>{
+  for(const bad of [
+    {custom:"d0",customAliases:{d0:"Bad"}},
+    {custom:["d0"],customAliases:{d1:"Wrong control"}},
+    {custom:["d0"],customAliases:{d0:"x".repeat(33)}}
+  ]){
+    const stored=new Map([["tihulu.remote.panel-details.v1",JSON.stringify({version:1,sizes:{},columns:{},...bad})]]);
+    const a=setup("granted",fullManifest,false,true,false,stored);
+    assert.equal(a.elements.customSection.hidden,true);
+    a.elements.navSetup.emit("click");
+    a.elements.customAddChoice.value="d0";a.elements.customAdd.emit("click");
+    a.elements.customAlias.value="Unsaved";
+    a.elements.layoutReset.emit("click");
+    assert.equal(a.elements.customAlias.value,"");
+    assert.equal(a.elements.customSection.hidden,true);
+    assert.equal(a.socket.frames.length,0);
+  }
+});
