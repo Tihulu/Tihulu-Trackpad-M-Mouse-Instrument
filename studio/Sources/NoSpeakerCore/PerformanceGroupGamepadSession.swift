@@ -81,6 +81,35 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
     }
     public var boundSources: Set<SensorSource> { Set(bindings.keys) }
+    public var remoteSlots: Set<SensorSource> { Set(remoteModes.keys) }
+
+    public func matchesRemoteBinding(_ source:SensorSource,token:UUID) -> Bool {
+        !retired && remoteModes[source] != nil && bindings[source]?.token == token
+    }
+
+    /// Logical capabilities only; no group identity, labels or MIDI addresses.
+    public func remoteCapabilities(_ source:SensorSource) -> RemoteCapabilities? {
+        guard let mode = remoteModes[source], let signals = mapped[source] else { return nil }
+        func mask(_ candidates:[SensorSignal]) -> Int {
+            candidates.enumerated().reduce(0) { result,item in
+                signals.contains(item.element) ? result | (1 << item.offset) : result
+            }
+        }
+        return .init(touch:mode == .xy,tilt:false,acceleration:false,rotation:false,airDrums:false,
+                     drums:mode == .drums ? mask(RemoteDrumPads.signals) : 0,
+                     piano:mode == .piano ? mask(RemotePiano.signals) : 0,
+                     pedals:mode == .pedalboard ? mask(RemotePedalboard.signals) : 0)
+    }
+
+    /// Retire multiple remote owners atomically, never a local source or a
+    /// replacement token. Avoid briefly restoring another departing control.
+    public mutating func unbindRemoteBatch(_ tokens:[SensorSource:UUID],
+                                           send:(PerformanceGroupCommand)->Bool) -> [PerformanceGroupDelivery.Report] {
+        let sources = Set(tokens.compactMap { source,token in
+            matchesRemoteBinding(source,token:token) ? source : nil
+        })
+        return reset(sources,send:send)
+    }
     public var activeSessions: Int { delivery.sessionCount }
     public var pendingCleanup: Set<UUID> { delivery.pendingCleanup }
     public var retired: Bool { delivery.retired }
@@ -441,7 +470,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
             return .init(status:.lost,reports:reports)
         }
         binding.remoteLastReceipt = hostTime
-        if frame.kind == .heartbeat {
+        if frame.kind == .heartbeat || frame.kind == .capabilities || frame.kind == .mapping {
             guard binding.lease == nil else {
                 reports += reset([source],send:send)
                 return .init(status:.lost,reports:reports)
