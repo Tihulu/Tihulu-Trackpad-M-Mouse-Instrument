@@ -3747,8 +3747,13 @@ final class StudioController: ObservableObject {
             touchBarSustainOn = false
         }
         captureMonitor?.releasePointer()
-        touchSustainState.reset()
-        touchInstrumentSustainActive = false
+        // A haptic-only Touch session has no owner in this MIDI bridge.
+        // Keep its pedal latch and driver sustain synchronized when MIDI stops.
+        if !touchRunning {
+            touchSustainState.reset()
+            touchSustainRearmGate.reset()
+            touchInstrumentSustainActive = false
+        }
         helperSustainState.reset()
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
@@ -3758,7 +3763,8 @@ final class StudioController: ObservableObject {
         stopCaptureMonitorIfIdle()
         activeMIDINoteMap.removeAll()
         activeMIDINotes = []
-        engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
+        engineStatus = touchRunning ? "Touch Instrument active · MIDI bridge stopped" :
+            (engineReady ? "Force Touch trackpad ready" : engineStatus)
         if midi?.hasUnconfirmedOutgoingCleanup == true {
             lastError = midi?.requiresManualDAWReset == true
                 ? "Reset DAW controllers and quit/relaunch this app."
