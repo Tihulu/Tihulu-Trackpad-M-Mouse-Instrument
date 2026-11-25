@@ -79,6 +79,38 @@ class RepositoryIndexTests(unittest.TestCase):
         self.assertIn("blob", result["results"][0])
         self.assertEqual(result["results"][0]["start"], 1)
 
+    def test_verify_detects_forged_content_and_blob(self):
+        self.build()
+        verified = self.cli("verify", "--repo", self.repo, "--index", self.index)
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+        self.assertTrue(json.loads(verified.stdout)["source_verified"])
+        search = self.cli("search", "--index", self.index, "--repo", self.repo,
+                          "--query", "sustain")
+        self.assertEqual(search.returncode, 0, search.stderr)
+        self.assertTrue(json.loads(search.stdout)["source_verified"])
+        original = json.loads(self.index.read_text())
+        document = json.loads(self.index.read_text())
+        document["chunks"][0]["text"] = document["chunks"][0]["text"].replace("Sustain", "Forged")
+        self.index.write_text(json.dumps(document))
+        failure = self.cli("verify", "--repo", self.repo, "--index", self.index)
+        self.assertEqual(failure.returncode, 2)
+        self.assertIn("text/line mismatch", failure.stderr)
+        original["chunks"][0]["blob"] = "0" * 40
+        self.index.write_text(json.dumps(original))
+        failure = self.cli("search", "--index", self.index, "--repo", self.repo,
+                           "--query", "sustain")
+        self.assertEqual(failure.returncode, 2)
+        self.assertIn("path/blob mismatch", failure.stderr)
+
+    def test_malformed_index_metadata_is_rejected(self):
+        self.build()
+        document = json.loads(self.index.read_text())
+        document["chunks"][0]["start"] = True
+        self.index.write_text(json.dumps(document))
+        failure = self.cli("search", "--index", self.index, "--query", "sustain")
+        self.assertEqual(failure.returncode, 2)
+        self.assertIn("Invalid source row", failure.stderr)
+
     def test_semantic_not_faked_and_query_limits(self):
         self.build()
         semantic = self.cli("search", "--index", self.index, "--query", "sustain",
