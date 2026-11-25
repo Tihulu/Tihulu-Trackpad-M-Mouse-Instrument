@@ -24,7 +24,7 @@ final class StudioController: ObservableObject {
     @Published var lastError: String?
     @Published var isPlaying = false
     @Published var masterLevel = 0.75 {
-        didSet { updateChordHaptics(); updateTouchBarHaptics() }
+        didSet { updateChordHaptics(); updateTouchBarHaptics(); updateGamepadHaptics(force:true) }
     }
     @Published var bpm = 120.0
     @Published private(set) var instrumentPatch = StudioController.readInstrumentPatch()
@@ -93,6 +93,19 @@ final class StudioController: ObservableObject {
         return try take.encoded()
     }
     private let builderGamepads = BuilderGamepadSource()
+    private var gamepadHaptics: LiveNoteHapticOutput?
+    private var gamepadHapticToken: UUID?
+    private var gamepadHapticVoices = GamepadHapticVoices()
+    private var lastGamepadHapticFrame: HapticFrame?
+    @Published private(set) var patchHapticEnabled = false
+
+    private func updateGamepadHaptics(force:Bool = false) {
+        guard let gamepadHaptics else { return }
+        let frame = gamepadHapticVoices.frame()
+        guard force || frame != lastGamepadHapticFrame else { return }
+        lastGamepadHapticFrame = frame
+        gamepadHaptics.update(frame:frame,masterLevel:masterLevel)
+    }
     @Published private(set) var gamepadChoices:[BuilderGamepadSource.Choice] = []
     @Published var gamepadSlot1:UUID?
     @Published var gamepadSlot2:UUID?
@@ -320,7 +333,7 @@ final class StudioController: ObservableObject {
     private var nativePianoTokens: [Int: UUID] = [:]
     private(set) var touchBarGestureEpoch = TouchBarGestureEpoch()
     var touchBarOwnsHaptics: Bool { touchBarOutputArmed }
-    var liveNoteOwnsHaptics: Bool { chordOwnsHaptics || touchBarOwnsHaptics }
+    var liveNoteOwnsHaptics: Bool { chordOwnsHaptics || touchBarOwnsHaptics || gamepadHaptics != nil }
     @Published private(set) var chordProgression = StudioController.readChordProgression()
     @Published private(set) var progressionRunning = false
     @Published private(set) var progressionStep: Int?
@@ -467,8 +480,25 @@ final class StudioController: ObservableObject {
     func startInstrumentPatch(sendMIDI: Bool, physical: Bool = false,
                               remoteTransport: RemoteLoopbackTransport? = nil,
                               remotePage: RemoteLoopbackPageServer? = nil,
-                              synthetic:SensorSource? = nil,tunedAir:Bool = false) {
+                              synthetic:SensorSource? = nil,tunedAir:Bool = false, sendHaptics:Bool = false) {
         guard !patchRunning else { return }
+        if sendHaptics {
+            guard physical, synthetic == nil, remoteTransport == nil, !tunedAir,
+                  GamepadHapticVoices.supports(instrumentPatch) else {
+                patchStatus = "Trackpad output currently requires a native gamepad-only patch."
+                return
+            }
+            guard allowOtherPerformance(), !touchRunning, !midiRunning, !midiHelperRunning,
+                  !isPlaying, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
+                patchStatus = "Stop other haptic sessions and the MIDI bridge before gamepad Trackpad output."
+                return
+            }
+            cancelStartupGreeting()
+            guard requireEngine(), driver != nil else {
+                patchStatus = "Force Touch output unavailable. Choose MIDI only."
+                return
+            }
+        }
         var requestedTuning:AirTunedOutput?
         if tunedAir {
             guard sendMIDI,remoteTransport == nil,synthetic == nil,let scale = chordBank.customScale else {
@@ -566,6 +596,22 @@ final class StudioController: ObservableObject {
                 try patchSimulation.start(instrumentPatch, now: ProcessInfo.processInfo.systemUptime)
                 patchInputs = patchSimulation.inputs
             }
+            if sendHaptics, let driver {
+                let token = UUID()
+                let output = LiveNoteHapticOutput(driver:driver)
+                gamepadHaptics = output
+                gamepadHapticToken = token
+                gamepadHapticVoices = GamepadHapticVoices()
+                lastGamepadHapticFrame = nil
+                try output.start { [weak self] message in
+                    Task { @MainActor in
+                        guard let self, self.gamepadHapticToken == token else { return }
+                        self.stopInstrumentPatch()
+                        self.patchStatus = "Gamepad Trackpad output failed: " + message
+                    }
+                }
+            }
+            patchHapticEnabled = sendHaptics
             patchMIDIEnabled = sendMIDI
             patchTunedAirActive = requestedTuning != nil
             debugCameraRunToken = UUID()
@@ -1143,16 +1189,24 @@ final class StudioController: ObservableObject {
                 patchStatus = "MIDI delivery failed. Check DAW and retry Stop."
                 break
             }
+            if patchHapticEnabled { gamepadHapticVoices.apply(command) }
             if ensembleRecording {
                 if ensembleTake?.append(command,now:ProcessInfo.processInfo.systemUptime) != true { updateEnsembleTakeState() }
             }
         }
         // Deliver synchronously in the original order, publish the bounded
         // monitor only once. A failure still includes the attempted command.
+        if patchHapticEnabled { updateGamepadHaptics() }
         patchMessages = BuilderCommandMonitor.updated(patchMessages, attempted:attempted)
     }
 
     func stopInstrumentPatch() {
+        gamepadHapticToken = nil
+        gamepadHaptics?.stop()
+        gamepadHaptics = nil
+        gamepadHapticVoices = GamepadHapticVoices()
+        lastGamepadHapticFrame = nil
+        patchHapticEnabled = false
         builderGamepads.stop()
         stopEnsembleTake()
         stopEnsembleClock()
@@ -1268,7 +1322,7 @@ final class StudioController: ObservableObject {
             return
         }
         if selected.sendsHaptics {
-            guard (!touchBarOwnsHaptics || sharedNoteOutputEnabled), !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
+            guard gamepadHaptics == nil, (!touchBarOwnsHaptics || sharedNoteOutputEnabled), !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
                   !isPlaying, !sequenceOwnsHaptics, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
                 chordStatus = "Stop other haptic performances and the MIDI bridge first, or choose MIDI only."
                 return
@@ -1715,7 +1769,7 @@ final class StudioController: ObservableObject {
 
     func armTouchBarOutput() {
         guard touchBarProfile.effectiveOutput.sendsHaptics, !touchBarOutputArmed else { return }
-        guard (!chordOwnsHaptics || sharedNoteOutputEnabled), !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
+        guard gamepadHaptics == nil, (!chordOwnsHaptics || sharedNoteOutputEnabled), !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
               !isPlaying, !sequenceOwnsHaptics, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
             touchBarOutputStatus = "Stop other haptic sessions and the MIDI bridge first."
             return
@@ -2044,7 +2098,7 @@ final class StudioController: ObservableObject {
             guard !Task.isCancelled, let self, self.engineReady,
                   self.playback === engine, !self.isPlaying,
                   !self.touchRunning, !self.midiRunning, !self.midiHelperRunning,
-                  !self.systemAudioRunning, let events, !events.isEmpty else { return }
+                  !self.systemAudioRunning, !self.liveNoteOwnsHaptics, let events, !events.isEmpty else { return }
             self.startupGreetingPlaying = true
             let generation = self.renderGeneration
             engine.play(events: events, masterLevel: self.masterLevel) { [weak self] _ in
