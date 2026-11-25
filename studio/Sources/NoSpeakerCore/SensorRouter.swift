@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SensorSource: String, Codable, CaseIterable, Sendable {
-    case trackpad, magicMouse, touchBar, lid, camera, microphone, phone, tablet, external, gamepad1, gamepad2
+    case trackpad, magicMouse, touchBar, lid, camera, microphone, phone, tablet, external, gamepad1, gamepad2, gamepad3, gamepad4
 }
 
 /// Adapters normalize physical units and assign the host's monotonic time.
