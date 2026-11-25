@@ -1232,6 +1232,20 @@ public final class PerformanceGroupMIDIHost {
         return id
     }
 
+    public func remoteGroupConnections(run:UUID) -> Set<UUID> {
+        guard run == remoteRunID else { return [] }
+        return remoteBridge?.connectionIDs ?? []
+    }
+
+    public func remoteGroupReady(run:UUID) -> Bool {
+        run == remoteRunID && remoteBridge?.ready == true
+    }
+
+    public func cancelRemoteGroupInvitation(run:UUID) {
+        guard run == remoteRunID else { return }
+        remoteBridge?.cancelInvitation()
+    }
+
     public func issueRemoteGroupInvitation(run:UUID,secret:Data,source:SensorSource,now:Double) throws {
         guard run == remoteRunID,var bridge = remoteBridge,let state = gamepads else {
             throw RemoteTouchError.unavailable
