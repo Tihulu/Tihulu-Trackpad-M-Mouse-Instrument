@@ -27,6 +27,8 @@ struct InstrumentBuilderView: View {
     @State private var expandedRoutes: Set<String> = []
     @State private var pendingReplacement: InstrumentPatch?
     @State private var confirmReplacement = false
+    @State private var pendingNativePreparation = false
+    @State private var quickStart: MusicianQuickStart = .phoneDrums
 
     private var dirty: Bool { draft != studio.instrumentPatch }
 
@@ -35,11 +37,13 @@ struct InstrumentBuilderView: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Instrument Builder").font(.largeTitle.bold())
                 Text("Create sensor-to-MIDI rules. Save your instrument, test it with simulated controls, or deliberately enable live MIDI. Native Trackpad and compatible external touch-surface input is optional and experimental.")
                     .foregroundStyle(.secondary)
+                quickStartPanel { proxy.scrollTo("builder-test", anchor: .top) }
                 GroupBox("Instrument") {
                     VStack(alignment: .leading, spacing: 8) {
                         TextField("Instrument name", text: $draft.name)
@@ -442,7 +446,7 @@ struct InstrumentBuilderView: View {
                         Text("Use " + (tunedAir ? "TIHULU Air Strings MPE" : "TIHULU Instrument Builder") + " as a dedicated DAW input if MIDI is enabled. Connect a separate instrument/channel. Stop or Panic releases owned controls. Physical sessions continue across pages; simulation ends when leaving. Remote starts only explicitly; LAN requires a successful Mac-only diagnostic and trusted certificate.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
-                }
+                }.id("builder-test")
                 GroupBox("Command monitor") {
                     VStack(alignment: .leading, spacing: 4) {
                         if studio.patchTunedAirActive {
@@ -458,16 +462,22 @@ struct InstrumentBuilderView: View {
                 Text(message).font(.caption).foregroundStyle(.secondary)
             }.padding(24)
         }
+        }
         .sheet(isPresented: $showPatchbay) { VisualPatchbayView(patch: $draft) }
         .sheet(isPresented: $showLayout) { PerformanceLayoutEditor(patch: $draft) }
         .confirmationDialog("Replace unsaved instrument draft?", isPresented: $confirmReplacement, titleVisibility: .visible) {
             Button("Replace draft", role: .destructive) {
                 if !studio.patchRunning, let replacement = pendingReplacement {
                     applyReplacement(replacement)
+                    if pendingNativePreparation { prepareNativeInput() }
                 }
                 pendingReplacement = nil
+                pendingNativePreparation = false
             }
-            Button("Cancel", role: .cancel) { pendingReplacement = nil }
+            Button("Cancel", role: .cancel) {
+                pendingReplacement = nil
+                pendingNativePreparation = false
+            }
         } message: {
             Text("Unsaved routes, labels and settings in the current draft will be replaced. The saved instrument is unchanged until Save or Start.")
         }
@@ -488,6 +498,35 @@ struct InstrumentBuilderView: View {
             if !studio.patchPhysical { studio.stopInstrumentPatch() }
             else { studio.releaseHybridControls() }
             studio.rememberBuilderDraft(draft)
+        }
+    }
+
+    private func quickStartPanel(openSetup: @escaping () -> Void) -> some View {
+        GroupBox("Quick start · choose how to play") {
+            VStack(alignment: .leading, spacing: 8) {
+                if studio.patchRunning {
+                    Text(studio.patchStatus).font(.headline)
+                    Button("Stop / Release All") { studio.stopInstrumentPatch() }
+                } else {
+                    Picker("Play style", selection: $quickStart) {
+                        ForEach(MusicianQuickStart.allCases) { preset in
+                            Text(preset.title).tag(preset)
+                        }
+                    }
+                    Text(quickStart.instructions).foregroundStyle(.secondary)
+                    Button("Prepare instrument") {
+                        guard let patch = quickStart.patch() else {
+                            message = "This template is not available."
+                            return
+                        }
+                        replaceDraft(with: patch, prepareNative: true)
+                    }.buttonStyle(.borderedProminent)
+                    Text("Prepares an editable draft with native input selected and MIDI output off. Pair devices, enable MIDI and start explicitly in Play setup. Advanced routes remain editable below.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !message.isEmpty { Text(message).font(.caption) }
+                }
+                Button("Go to play setup", action: openSetup)
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
         }
     }
 
@@ -579,10 +618,28 @@ struct InstrumentBuilderView: View {
         }
     }
 
-    private func replaceDraft(with replacement: InstrumentPatch) {
-        guard !studio.patchRunning, draft != replacement else { return }
-        if dirty { pendingReplacement = replacement; confirmReplacement = true }
-        else { applyReplacement(replacement) }
+    private func replaceDraft(with replacement: InstrumentPatch, prepareNative: Bool = false) {
+        guard !studio.patchRunning else { return }
+        if draft == replacement {
+            if prepareNative { prepareNativeInput() }
+            return
+        }
+        if dirty {
+            pendingReplacement = replacement
+            pendingNativePreparation = prepareNative
+            confirmReplacement = true
+        } else {
+            applyReplacement(replacement)
+            if prepareNative { prepareNativeInput() }
+        }
+    }
+
+    private func prepareNativeInput() {
+        physical = true
+        syntheticSource = nil
+        sendMIDI = false
+        tunedAir = false
+        message = "Ready for setup. MIDI output is off. Pair devices and start explicitly."
     }
 
     private func applyReplacement(_ replacement: InstrumentPatch) {
