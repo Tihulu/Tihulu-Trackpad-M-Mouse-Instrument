@@ -2,7 +2,11 @@ import Foundation
 
 /// Explicit host slot, not a model name or mutable OS player index.
 public struct GamepadFrame: Sendable {
-    public static let sources:Set<SensorSource> = [.gamepad1,.gamepad2]
+    public static let orderedSources: [SensorSource] = [.gamepad1,.gamepad2,.gamepad3,.gamepad4]
+    public static let sources = Set(orderedSources)
+    public static func slotLabel(_ source:SensorSource) -> String {
+        orderedSources.firstIndex(of:source).map { "Controller "+String($0+1) } ?? source.rawValue
+    }
     public static let buttons:[SensorSignal] = [.padA,.padB,.padX,.padY,.padLB,.padRB,.padUp,.padDown,.padLeft,.padRight,.padLClick,.padRClick]
     public static let triggers:[SensorSignal] = [.padLT,.padRT]
     public static let sticks:[SensorSignal] = [.padLSX,.padLSY,.padRSX,.padRSY]
