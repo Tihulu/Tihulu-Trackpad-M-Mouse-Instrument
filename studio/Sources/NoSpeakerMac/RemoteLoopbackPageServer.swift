@@ -218,6 +218,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <div id="playView" hidden><section id="customSection" hidden data-wide="true" aria-labelledby="customTitle"><h2 id="customTitle">My performance panel</h2>
 <p>Enable the mapped control families separately. Existing workload limits still apply.</p>
 <button id="customDrumEnable" type="button" disabled>Enable drum pads</button><button id="customPedalEnable" type="button" disabled>Enable pedalboard</button>
+<button id="customDrumRelease" type="button" disabled>Release all drum pads</button><button id="customPedalRelease" type="button" disabled>Release all pedals</button>
 <div id="customGrid"></div></section><section id="touchSection" hidden><div id="pad" aria-label="XY touch surface" aria-disabled="true"><span>Touch and move</span><div id="dot" hidden></div></div>
 <p><small>X and Y control the mapped instrument. Lift to release. One contact only.</small></p></section>
 <section id="drumSection" hidden aria-labelledby="drum-title"><h2 id="drum-title">Drum Pads</h2>
@@ -450,6 +451,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       const b=get(id);b.hidden=!visible;b.disabled=!visible||!admitted||releasingAll;
       const title=(enabled?"Disable ":"Enable ")+label;
       if(b.textContent!==title)b.textContent=title;
+    }
+    for(const [id,visible,enabled] of [["customDrumRelease",drums,drumEnabled],["customPedalRelease",pedals,pedalEnabled]]){
+      const b=get(id);b.hidden=!visible;b.disabled=!visible||!admitted||releasingAll||!enabled||currentView!=="play";
     }
   }
   function syncCustomEditor(editable){
@@ -1146,7 +1150,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(![...pedalHoldOwners.values()].includes(i))pedalSet(i,false);
   }
   function pedalMove(i){
-    if(!admitted||!pedalEnabled||!has("pedals",i)||pedalEmergency||!(pedalMask&(1<<i)))return;
+    if(!pedalAdmitted(i)||!(pedalMask&(1<<i)))return;
     const n=Number(pedalSliders[i].value);
     if(!Number.isFinite(n)||n<0||n>100){close("Invalid pedal level.");return;}
     pedalPositions[i]=Math.round(n);pedalDirty=true;syncPedals();tick();
@@ -1417,6 +1421,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   drumEnable.addEventListener("click",toggleDrums);
   get("customDrumEnable").addEventListener("click",()=>{if(customActive.some(id=>id[0]==="d"))toggleDrums();});
   drumRelease.addEventListener("click",releaseDrums);
+  get("customDrumRelease").addEventListener("click",()=>{
+    if(currentView==="play"&&admitted&&!releasingAll&&drumEnabled&&customActive.some(id=>id[0]==="d"))releaseDrums();
+  });
   drumButtons.forEach((b,index)=>{
     b.addEventListener("pointerdown",e=>{
       if(!admitted||!drumEnabled||!has("drums",index)||e.button!==0)return;
@@ -1472,6 +1479,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   pedalEnable.addEventListener("click",togglePedals);
   get("customPedalEnable").addEventListener("click",()=>{if(customActive.some(id=>id[0]==="p"))togglePedals();});
   pedalRelease.addEventListener("click",releasePedals);
+  get("customPedalRelease").addEventListener("click",()=>{
+    if(currentView==="play"&&admitted&&!releasingAll&&pedalEnabled&&customActive.some(id=>id[0]==="p"))releasePedals();
+  });
   pedalToggles.forEach((b,i)=>{
     b.addEventListener("click",()=>pedalToggle(i));
     b.addEventListener("pointerdown",e=>{
