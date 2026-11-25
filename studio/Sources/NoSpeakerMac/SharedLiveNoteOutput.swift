@@ -17,6 +17,7 @@ public final class SharedLiveNoteOutput: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.tihulu.shared-live-notes", qos: .userInitiated)
     private let coordinator: HapticOutputCoordinator
     private let automaticScheduling: Bool
+    private let clock: @Sendable () -> Double
     private var inputs: [HapticMixSource: Input] = [:]
     private var timer: DispatchSourceTimer?
     private var timerGeneration: UInt64 = 0
@@ -29,9 +30,11 @@ public final class SharedLiveNoteOutput: @unchecked Sendable {
 
     // Deterministic sink injection for Mac integration tests; production uses
     // the same render path with a timer and the real driver.
-    init(coordinator: HapticOutputCoordinator, automaticScheduling: Bool) {
+    init(coordinator: HapticOutputCoordinator, automaticScheduling: Bool,
+         clock: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime }) {
         self.coordinator = coordinator
         self.automaticScheduling = automaticScheduling
+        self.clock = clock
     }
 
     public func begin(_ source: HapticMixSource,
@@ -55,7 +58,7 @@ public final class SharedLiveNoteOutput: @unchecked Sendable {
             let sounding = gain > 0 && (frame?.level ?? 0) > 0 ? frame : nil
             if discardPendingAttacks || gain == 0 { input.attacks.removeAll() }
             if attack, let sounding {
-                input.attacks.offer(sounding,now:ProcessInfo.processInfo.systemUptime)
+                input.attacks.offer(sounding,now:clock())
             }
             input.frame = sounding
             input.level = gain
@@ -111,7 +114,7 @@ public final class SharedLiveNoteOutput: @unchecked Sendable {
 
     private func renderLocked() {
         guard !coordinator.isRetired else { return }
-        let now = ProcessInfo.processInfo.systemUptime
+        let now = clock()
         for source in Array(inputs.keys) {
             guard var input = inputs[source] else { continue }
             let frame = input.attacks.take(now:now) ?? input.frame
