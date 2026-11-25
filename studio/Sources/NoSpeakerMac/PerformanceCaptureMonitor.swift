@@ -111,6 +111,56 @@ struct CaptureRecoveryBudget {
     }
 }
 
+public enum CapturePhysicalInput:Equatable,Sendable {
+    case click(Bool,Double)
+    case pressure(Double)
+}
+
+public struct CapturePhysicalInputBatch:Sendable {
+    public let events:[CapturePhysicalInput]
+    public let invalidated:Bool
+}
+
+/// One notification until drained. Edge order is preserved; consecutive
+/// pressure samples replace each other. Overflow drops the entire batch
+/// and disarms physical sustain until a fresh click after the drain.
+struct CapturePhysicalMailbox {
+    static let capacity = 32
+    private var events:[CapturePhysicalInput] = []
+    private var invalidated = false
+    private var pending = false
+    mutating func append(_ event:CapturePhysicalInput) -> Bool {
+        if !invalidated {
+            if case .pressure = event, case .pressure? = events.last {
+                events[events.count-1] = event
+            } else if events.count < Self.capacity {
+                events.append(event)
+            } else {
+                events.removeAll(keepingCapacity:true)
+                invalidated = true
+            }
+        }
+        return notify()
+    }
+    mutating func invalidate() -> Bool {
+        events.removeAll(keepingCapacity:true)
+        invalidated = true
+        return notify()
+    }
+    private mutating func notify() -> Bool {
+        guard !pending else { return false }
+        pending = true
+        return true
+    }
+    mutating func drain() -> CapturePhysicalInputBatch {
+        let batch = CapturePhysicalInputBatch(events:events,invalidated:invalidated)
+        events.removeAll(keepingCapacity:true)
+        invalidated = false
+        pending = false
+        return batch
+    }
+}
+
 public enum PerformanceCaptureError: LocalizedError {
     case permissionDenied
     case tapUnavailable
@@ -166,6 +216,9 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     private var keyEdges = CaptureKeyEdges()
     private var pointerEdges = CapturePointerEdges()
     private var recoveryBudget = CaptureRecoveryBudget()
+    private var physicalMailbox = CapturePhysicalMailbox()
+    private var startClaimed = false
+    private var stopped = false
     private var keyDownEvents: UInt64 = 0
     private var pointerEvents: UInt64 = 0
     private var shortcutMatches: UInt64 = 0
@@ -218,6 +271,13 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     public var onPanic: (@Sendable () -> Void)?
     public var onPhysicalClick: (@Sendable (Bool, Double) -> Void)?
     public var onPhysicalPressure: (@Sendable (Double) -> Void)?
+    /// Optional bounded delivery path. When installed, supersedes the
+    /// individual click/pressure callbacks for this monitor.
+    public var onPhysicalInputAvailable:(@Sendable () -> Void)?
+    public func drainPhysicalInput() -> CapturePhysicalInputBatch {
+        lock.lock(); defer { lock.unlock() }
+        return physicalMailbox.drain()
+    }
     public var onMonitorFailed: (@Sendable () -> Void)?
     public var onMonitorRecovered: (@Sendable () -> Void)?
 
@@ -249,10 +309,15 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     public func start(shortcut: PerformanceCaptureShortcut, requestPermissions: Bool = false) throws {
         setShortcut(shortcut)
         lock.lock()
-        let existingPort = listening ? eventTap : nil
+        let existingPort = eventTap
+        let existingListening = listening
+        if existingPort == nil {
+            guard !startClaimed,!stopped else { lock.unlock(); throw PerformanceCaptureError.tapUnavailable }
+            startClaimed = true
+        }
         lock.unlock()
         if let existingPort {
-            if CGEvent.tapIsEnabled(tap: existingPort) { return }
+            if existingListening && CGEvent.tapIsEnabled(tap: existingPort) { return }
             // Never recycle a disabled instance while old callbacks may be
             // draining. The controller can create a fresh monitor explicitly.
             stop()
@@ -314,6 +379,9 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         // callbacks are dispatched asynchronously by the StudioController.
         let gate = StartGate()
         lock.lock()
+        guard !stopped else {
+            lock.unlock(); CFMachPortInvalidate(port); throw PerformanceCaptureError.tapUnavailable
+        }
         inputGeneration &+= 1
         let generation = inputGeneration
         eventTap = port
@@ -372,7 +440,18 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         }
         lock.unlock()
         gate.ready.signal()
-        if shouldRun { CFRunLoopRun() }
+        if shouldRun {
+            // A Stop between the handshake and the first Run must not
+            // leave a thread parked forever on a retired source.
+            while true {
+                lock.lock()
+                let current = generation == inputGeneration && listening
+                lock.unlock()
+                if !current { break }
+                let result = CFRunLoopRunInMode(CFRunLoopMode.defaultMode,0.25,false)
+                if result == .finished || result == .stopped { break }
+            }
+        }
 
         CGEvent.tapEnable(tap: port, enable: false)
         CFRunLoopRemoveSource(loop, source, CFRunLoopMode.commonModes)
@@ -398,7 +477,8 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         inputGeneration &+= 1
         let port = eventTap
         let loop = inputRunLoop
-        let pendingThread = inputThread != nil
+        stopped = true
+        _ = physicalMailbox.invalidate()
         eventTap = nil
         runLoopSource = nil
         inputRunLoop = nil
@@ -415,7 +495,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         if let loop {
             CFRunLoopStop(loop)
             CFRunLoopWakeUp(loop)
-        } else if !pendingThread, let port {
+        } else if let port {
             CFMachPortInvalidate(port)
         }
         onCaptureChanged?(false)
@@ -458,6 +538,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             // pointer releases so recovery cannot trap a foreground drag.
             keyEdges.reset()
             pointerEdges.reset()
+            let signal = physicalMailbox.invalidate()
             var recovered = false
             if type == .tapDisabledByTimeout {
                 tapTimeouts &+= 1
@@ -479,6 +560,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             }
             lock.unlock()
             onCaptureChanged?(false)
+            if signal { onPhysicalInputAvailable?() }
             if recovered { onMonitorRecovered?() }
             else { onMonitorFailed?() }
             return passthrough
@@ -531,14 +613,24 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         default: edge = .other
         }
         let suppress = pointerEdges.suppress(button:button,edge:edge,captured:captured)
+        let bounded = onPhysicalInputAvailable
+        var signal = false
+        if bounded != nil {
+            if type == .leftMouseDown || type == .leftMouseUp {
+                signal = physicalMailbox.append(.click(type == .leftMouseDown,event.getDoubleValueField(.mouseEventPressure)))
+            } else if type == .leftMouseDragged {
+                signal = physicalMailbox.append(.pressure(event.getDoubleValueField(.mouseEventPressure)))
+            }
+        }
         lock.unlock()
+        if signal { bounded?() }
 
-        if type == .leftMouseDown || type == .leftMouseUp {
+        if bounded == nil && (type == .leftMouseDown || type == .leftMouseUp) {
             onPhysicalClick?(
                 type == .leftMouseDown,
                 event.getDoubleValueField(.mouseEventPressure)
             )
-        } else if type == .leftMouseDragged {
+        } else if bounded == nil && type == .leftMouseDragged {
             onPhysicalPressure?(event.getDoubleValueField(.mouseEventPressure))
         }
 

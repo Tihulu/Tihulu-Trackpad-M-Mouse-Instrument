@@ -4113,25 +4113,30 @@ final class StudioController: ObservableObject {
                 self.panicStop()
             }
         }
-        capture.onPhysicalClick = { [weak self] down, pressure in
+        capture.onPhysicalInputAvailable = { [weak self] in
             Task { @MainActor in
-                guard let self, self.captureGeneration == generation else { return }
-                self.handlePhysicalClick(down, pressure: pressure)
-            }
-        }
-        capture.onPhysicalPressure = { [weak self] pressure in
-            Task { @MainActor in
-                guard let self, self.captureGeneration == generation else { return }
-                self.handlePhysicalPressure(pressure)
+                guard let self,self.captureGeneration == generation,
+                      let monitor = self.captureMonitor else { return }
+                let batch = monitor.drainPhysicalInput()
+                if batch.invalidated {
+                    self.invalidatePhysicalClickState()
+                    return
+                }
+                for event in batch.events {
+                    guard self.captureGeneration == generation else { return }
+                    switch event {
+                    case .click(let down,let pressure): self.handlePhysicalClick(down,pressure:pressure)
+                    case .pressure(let pressure): self.handlePhysicalPressure(pressure)
+                    }
+                }
             }
         }
         capture.onMonitorRecovered = { [weak self] in
             Task { @MainActor in
                 guard let self, self.captureGeneration == generation else { return }
                 self.pointerCaptured = self.captureMonitor?.isCaptured ?? false
-                // A click-up event may have been lost while the tap timed out.
-                // Release any synthetic sustain state instead of sticking CC64.
-                self.invalidatePhysicalClickState()
+                // The ordered physical mailbox invalidates old click edges
+                // on recovery, independently of this UI status notification.
                 self.captureStatus = "Input monitor recovered after timeout · cursor released · press the capture shortcut to resume"
             }
         }
@@ -4174,7 +4179,7 @@ final class StudioController: ObservableObject {
         guard captureHotkeyArmed || touchRunning || midiHelperRunning else { return }
         var monitor = ensureCaptureMonitor()
         let before = monitor.diagnosticSnapshot()
-        if before.listening && !before.eventTapEnabled {
+        if before.eventTapCreated && (!before.listening || !before.eventTapEnabled) {
             retireCaptureMonitor()
             invalidatePhysicalClickState()
             monitor = ensureCaptureMonitor()
