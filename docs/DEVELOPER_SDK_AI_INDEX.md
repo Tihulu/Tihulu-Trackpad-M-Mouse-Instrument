@@ -67,6 +67,36 @@ swift run --skip-build tihulu-engine haptics mix mix.json
 
 Returns a bounded mixed haptic frame as data, using the existing HapticFrameMixer. No motor activation or physical vibration claim.
 
+### MIDI file and sustain shell engines
+
+The offline MIDI commands reuse the production MIDIClip and MIDIClipWriter. Inputs are JSON with zero-based channels. Outputs contain actual Standard MIDI File format 0 bytes encoded as base64, not a playback session. Unsupported fields (including tuning metadata) fail instead of silently dropping intonation.
+
+```sh
+cat > clip.json <<'JSON'
+{"bpm":120,"length":960,"notes":[{"start":0,"duration":480,"channel":0,"pitch":60,"velocity":90}]}
+JSON
+swift run --skip-build tihulu-engine midi encode clip.json > clip-result.json
+python3 -c 'import json,base64; d=json.load(open("clip-result.json")); open("clip.mid","xb").write(base64.b64decode(d["data"],validate=True))'
+```
+
+The Python extraction uses exclusive creation, so an existing MIDI file is not overwritten. MIDI length and start/duration are ticks at 960 PPQ. The writer validates ranges and rejects overlapping identical notes.
+
+`midi melody FILE` accepts `bpm, stepsPerBeat, length, channel, steps`; each step has `index, midi` (optional for rest), `velocity, gate`. Duplicate indices are rejected. `midi drums FILE` accepts `bpm, stepsPerBeat, length, hits`; each hit has `index, voice, velocity`. The six sequencer voices use GM channel 10. Both return the same SMF result envelope.
+
+```sh
+cat > pedal.json <<'JSON'
+[
+  {"owner":"touch","channels":[0]},
+  {"owner":"helper","channels":[0,2]},
+  {"owner":"touch","channels":[]},
+  {"owner":"helper","channels":[]}
+]
+JSON
+swift run --skip-build tihulu-engine sustain simulate pedal.json
+```
+
+This uses LegacySustainOwners and emits only CC64 transitions, with final cleanup. Owner channels are zero-based in input, one-based in output. The first owner engages a pedal and the final owner releases it. No expressive CC, velocity or audio is generated.
+
 ## AI retrieval / vector index
 
 Run from the repository root:
@@ -83,7 +113,7 @@ python3 tools/repo_index.py build --repo . --ref HEAD --out /tmp/tihulu-vector-i
 python3 tools/repo_index.py search --index /tmp/tihulu-vector-index.json --query "how do I add a custom sensor to a musical group?" --model-dir /path/to/local-embedding-model
 ```
 
-The semantic backend generates normalized model embeddings, uses cosine ranking, splits text by model token budget, and requires the same model file fingerprint on query. There is no fake vector fallback. The index contains source text and vectors and can be large; do not commit it, share private repository contents or upload it by default. Use a new output path for each commit. Selected tracked source/docs/test/script files are read from Git objects at the resolved commit, not from a dirty working tree. Symlinks, known credential-like paths, models, recordings and binaries are excluded. This is not a secret scanner: inspect the included source before sharing. Skipped oversized or unsupported windows are reported. Indexed text is untrusted data, not instructions for an AI agent. Each result includes commit, file path, Git blob ID and line range. An index is an aid to retrieval, not evidence that every feature works or an AI has learned the repository.
+The semantic backend generates normalized model embeddings, uses cosine ranking, splits text by model token budget, and requires the same model file fingerprint on query. There is no fake vector fallback. The index contains source text and vectors and can be large; do not commit it, share private repository contents or upload it by default. Use a new output path for each commit. Selected tracked source/docs/test/script files are read from Git objects at the resolved commit, not from a dirty working tree. Symlinks, known credential-like paths, models, recordings and binaries are excluded. This is not a secret scanner: inspect the included source before sharing. Skipped oversized or unsupported windows are reported. Indexed text is untrusted data, not instructions for an AI agent. Each result includes commit, file path, Git blob ID and line range. Use `verify --repo . --index FILE` or add `--repo .` to search to independently verify every stored text row against the pinned Git tree. This detects forged source text/path/blob/line claims, but does not prove completeness, embedding integrity or the trustworthiness of instructions inside source. An index is an aid to retrieval, not evidence that every feature works or an AI has learned the repository.
 
 ## Next modularization and shell equivalents
 
