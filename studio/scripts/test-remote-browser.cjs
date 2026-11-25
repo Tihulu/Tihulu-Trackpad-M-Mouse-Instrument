@@ -13,7 +13,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
@@ -1006,4 +1006,25 @@ test("custom panel focus order follows visual order and moved controls leave ori
   assert.equal(a.elements.playView.children[0],a.elements.customSection);
   a.elements.layoutPanel.value="drumSection";a.elements.layoutPanel.emit("change");
   assert.equal(a.elements.gridControl.children.some(x=>x.value==="2"),false);
+});
+
+test("custom panel family release uses existing owners and ignores inactive families",()=>{
+  const stored=new Map([["tihulu.remote.panel-details.v1",JSON.stringify({version:1,sizes:{},columns:{},custom:["d2","p4"]})]]);
+  const a=setup("granted",fullManifest,false,true,false,stored);
+  a.elements.customDrumRelease.emit("click");a.elements.customPedalRelease.emit("click");
+  assert.equal(a.socket.frames.length,0);
+  a.elements.customDrumEnable.emit("click");a.elements.drum2.emit("pointerdown",drumEvent(2));
+  assert.equal(a.socket.frames.at(-1).mask,4);a.ack();
+  a.elements.customDrumRelease.emit("click");a.step();
+  assert.equal(a.socket.frames.at(-1).kind,"drumPads");
+  assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  a.elements.drum2.emit("pointerup",drumEvent(2));
+  a.elements.customDrumEnable.emit("click");a.elements.customPedalEnable.emit("click");
+  a.elements.pedalToggle4.emit("click");a.step();
+  assert.equal(a.socket.frames.at(-1).mask,16);a.ack();
+  a.elements.customPedalRelease.emit("click");a.step();
+  assert.equal(a.socket.frames.at(-1).kind,"pedalboard");
+  assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  assert.deepEqual(a.socket.frames.filter(f=>f.kind==="drumPads").map(f=>f.mask),[4,0]);
+  assert.deepEqual(a.socket.frames.filter(f=>f.kind==="pedalboard").map(f=>f.mask),[16,0]);
 });
