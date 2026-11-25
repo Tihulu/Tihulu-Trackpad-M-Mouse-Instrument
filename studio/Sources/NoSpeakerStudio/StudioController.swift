@@ -102,12 +102,12 @@ final class StudioController: ObservableObject {
     @Published private(set) var patchGamepadOutputSelection: GamepadOutputSelection?
     private var gamepadOutputPlan: GamepadOutputPlan?
 
-    private func updateGamepadHaptics(force:Bool = false) {
+    private func updateGamepadHaptics(force:Bool = false,attack:Bool = false) {
         guard let gamepadHaptics else { return }
         let frame = gamepadHapticVoices.frame()
-        guard force || frame != lastGamepadHapticFrame else { return }
+        guard force || attack || frame != lastGamepadHapticFrame else { return }
         lastGamepadHapticFrame = frame
-        gamepadHaptics.update(frame:frame,masterLevel:masterLevel)
+        gamepadHaptics.update(frame:frame,masterLevel:masterLevel,attack:attack)
     }
     @Published private(set) var gamepadChoices:[BuilderGamepadSource.Choice] = []
     @Published var gamepadSlot1:UUID?
@@ -1207,6 +1207,7 @@ final class StudioController: ObservableObject {
     private func recordPatchCommands(_ commands: [SensorCommand]) {
         guard !commands.isEmpty else { return }
         var attempted: [SensorCommand] = []
+        var hapticAttack = false
         for command in commands {
             attempted.append(command)
             let plan = airTunedPlan
@@ -1228,6 +1229,7 @@ final class StudioController: ObservableObject {
             }
             if patchHapticEnabled && (gamepadOutputPlan?.sendsHaptics(command.destination) ?? true) {
                 gamepadHapticVoices.apply(command)
+                if command.destination.kind == .note && command.value > 0 { hapticAttack = true }
             }
             if ensembleRecording {
                 if ensembleTake?.append(command,now:ProcessInfo.processInfo.systemUptime) != true { updateEnsembleTakeState() }
@@ -1235,7 +1237,7 @@ final class StudioController: ObservableObject {
         }
         // Deliver synchronously in the original order, publish the bounded
         // monitor only once. A failure still includes the attempted command.
-        if patchHapticEnabled { updateGamepadHaptics() }
+        if patchHapticEnabled { updateGamepadHaptics(attack:hapticAttack) }
         patchMonitorBuffer.append(attempted)
         // Physical playback publishes at watchdog cadence, not per event.
         // Simulation and failure/stop paths still show the last attempted data.
@@ -1496,7 +1498,7 @@ final class StudioController: ObservableObject {
         let commands = chordState.press(slot: slot, pad: pad, channel: plan.channel, velocity: plan.velocity)
         guard deliverChordCommands(commands) else { return false }
         chordActiveSlots = chordState.activeSlots
-        updateChordHaptics()
+        updateChordHaptics(attack:commands.contains { $0.destination.kind == .note && $0.value > 0 })
         return true
     }
 
@@ -1523,7 +1525,7 @@ final class StudioController: ObservableObject {
                                         velocity: chordBank.velocity)
         guard deliverChordCommands(commands) else { return }
         chordActiveSlots = chordState.activeSlots
-        updateChordHaptics()
+        updateChordHaptics(attack:commands.contains { $0.destination.kind == .note && $0.value > 0 })
         if !chordBank.latch {
             let token = UUID()
             chordTimerTokens[slot] = token
@@ -1544,11 +1546,11 @@ final class StudioController: ObservableObject {
         updateChordHaptics()
     }
 
-    private func updateChordHaptics() {
+    private func updateChordHaptics(attack:Bool = false) {
         guard chordOwnsHaptics else { return }
         let frame = NoteHapticRenderer.frame(notes: chordState.activeNotes, velocity: chordBank.velocity,
                                               centsByPitchClass: chordBank.centsByPitchClass)
-        chordHaptics?.update(frame: frame, masterLevel: masterLevel)
+        chordHaptics?.update(frame: frame, masterLevel: masterLevel,attack:attack)
     }
 
     private func deliverChordCommands(_ commands: [SensorCommand]) -> Bool {
@@ -1591,7 +1593,7 @@ final class StudioController: ObservableObject {
         chordTimerTokens.removeAll()
         _ = chordState.releaseAll()
         chordActiveSlots = []
-        chordHaptics?.update(frame: nil, masterLevel: 0)
+        chordHaptics?.update(frame: nil, masterLevel: 0,discardPendingAttacks:true)
         // Retry all possibly transmitted notes, including a failed Note On.
         for key in Array(chordOutstanding) {
             if activeChordMIDIOutput.send(.init(key, value: 0)) { chordOutstanding.remove(key) }
@@ -1721,7 +1723,9 @@ final class StudioController: ObservableObject {
             guard touchBarOutputArmed else { return }
             let commands = touchBarLocalState.key(note, owner: owner, pressed: pressed,
                 channel: touchBarProfile.channel, velocity: touchBarProfile.noteVelocity)
-            if deliverTouchBarCommands(commands) { updateTouchBarHaptics() }
+            if deliverTouchBarCommands(commands) {
+                updateTouchBarHaptics(attack:commands.contains { $0.destination.kind == .note && $0.value > 0 })
+            }
             return
         }
         cancelStartupGreeting()
@@ -1872,10 +1876,10 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func updateTouchBarHaptics() {
+    private func updateTouchBarHaptics(attack:Bool = false) {
         guard touchBarOutputArmed else { return }
         touchBarHaptics?.update(frame: touchBarLocalState.frame(velocity: touchBarProfile.noteVelocity),
-                                masterLevel: masterLevel)
+                                masterLevel: masterLevel,attack:attack)
     }
 
     private func deliverTouchBarCommands(_ commands: [SensorCommand]) -> Bool {
@@ -1902,7 +1906,7 @@ final class StudioController: ObservableObject {
         }
         let channel = touchBarProfile.channel
         _ = touchBarLocalState.reset(channel: channel)
-        touchBarHaptics?.update(frame: nil, masterLevel: 0)
+        touchBarHaptics?.update(frame: nil, masterLevel: 0,discardPendingAttacks:true)
         if touchBarOutputArmed { touchBarSustainOn = false }
         let released = touchBarOutputLedger.releaseAll(send:{ touchBarDedicatedMIDI.send($0) })
         if !released {
