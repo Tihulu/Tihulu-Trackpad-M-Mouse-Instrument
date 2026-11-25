@@ -9,6 +9,7 @@ struct InstrumentBuilderView: View {
     @EnvironmentObject private var studio: StudioController
     @State private var draft = InstrumentPatch()
     @State private var sendMIDI = false
+    @State private var sendHaptics = false
     @State private var physical = false
     @State private var tunedAir = false
     @State private var gamepadPresetSource:SensorSource = .gamepad1
@@ -35,6 +36,9 @@ struct InstrumentBuilderView: View {
     @State private var quickStart: MusicianQuickStart = .phoneDrums
 
     private var dirty: Bool { draft != studio.instrumentPatch }
+    private var gamepadHapticAvailable: Bool {
+        physical && syntheticSource == nil && !tunedAir && GamepadHapticVoices.supports(draft)
+    }
 
     private var visibleRouteIDs: Set<String> {
         Set(BuilderRouteTools.visibleIDs(in:draft,source:routeSource,query:routeSearch))
@@ -321,6 +325,14 @@ struct InstrumentBuilderView: View {
                         }
                         Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)
                             .disabled(studio.patchRunning)
+                        if gamepadHapticAvailable {
+                            Toggle("Play notes on Force Touch Trackpad",isOn:$sendHaptics)
+                                .disabled(studio.patchRunning)
+                            Text(sendHaptics ? (sendMIDI ? "Both · dedicated DAW MIDI + Trackpad" : "Trackpad only · no outgoing MIDI") : (sendMIDI ? "MIDI only" : "Monitor only · no sound output"))
+                                .font(.caption.weight(.semibold))
+                            Text("Both controller slots share this output choice. Trackpad renders up to six folded tones; sustain, pitch bend (±2 semitones), CC7 and CC11 are supported. Other CCs are DAW controls, not local effects. Stop competing haptic sessions first.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         if AirStrumPerformance.usesStrum(draft.routes) || tunedAir {
                             Toggle("Tune Air strings from current Custom Scale (MPE)",isOn:$tunedAir)
                                 .disabled(studio.patchRunning)
@@ -368,7 +380,7 @@ struct InstrumentBuilderView: View {
                                 studio.updateInstrumentPatch(draft)
                                 values = [:]
                                 airRange = AirRangeCapture(signal: airRange.signal)
-                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical,synthetic:physical ? syntheticSource : nil,tunedAir:tunedAir)
+                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical,synthetic:physical ? syntheticSource : nil,tunedAir:tunedAir,sendHaptics:gamepadHapticAvailable && sendHaptics)
                             }.buttonStyle(.borderedProminent)
                                 .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty || (physical && !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(draft,synthetic:$0) } ?? PhysicalPatchRuntime.supports(draft))))
                             Button("Stop / Release All") { studio.stopInstrumentPatch() }
@@ -489,7 +501,10 @@ struct InstrumentBuilderView: View {
         }
         .onAppear {
             draft = studio.resumeBuilderDraft()
-            if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled; syntheticSource = studio.patchHybridSource; tunedAir = studio.patchTunedAirActive }
+            if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled; sendHaptics = studio.patchHapticEnabled; syntheticSource = studio.patchHybridSource; tunedAir = studio.patchTunedAirActive }
+        }
+        .onChange(of:gamepadHapticAvailable) { available in
+            if !available && !studio.patchRunning { sendHaptics = false }
         }
         .task(id:studio.patchHybridRunID) {
             guard let runID = studio.patchHybridRunID else { return }
