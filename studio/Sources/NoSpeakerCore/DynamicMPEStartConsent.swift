@@ -12,13 +12,16 @@ public struct DynamicMPEStartConsent:Equatable,Sendable {
     public let cameraOrientation:AirControlOrientation
     public let cameraMirror:Bool
     public let mouseOrientation:SurfaceOrientation
+    public let hapticGroups:Set<UUID>
 
     public init(profile:PerformanceGroupProfile,tuning:[UUID:PerformanceGroupTuningPlan.Specification],
                 archive:Data,controllers:[SensorSource:UUID],allowLayering:Bool,cameraID:String,
-                cameraOrientation:AirControlOrientation,cameraMirror:Bool,mouseOrientation:SurfaceOrientation) {
+                cameraOrientation:AirControlOrientation,cameraMirror:Bool,mouseOrientation:SurfaceOrientation,
+                hapticGroups:Set<UUID> = []) {
         self.profile = profile; self.tuning = tuning; self.archive = archive
         self.controllers = controllers; self.allowLayering = allowLayering
         self.cameraID = cameraID; self.cameraOrientation = cameraOrientation
         self.cameraMirror = cameraMirror; self.mouseOrientation = mouseOrientation
+        self.hapticGroups = hapticGroups
     }
 }

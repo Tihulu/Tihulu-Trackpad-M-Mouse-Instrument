@@ -13,10 +13,10 @@ import Testing
     func consent(profile:PerformanceGroupProfile = profile,
                  tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [group.id:spec],
                  archive:Data = archive,controller:UUID = controller,layering:Bool = false,
-                 camera:String = "camera",mirror:Bool = false) -> DynamicMPEStartConsent {
+                 camera:String = "camera",mirror:Bool = false,haptics:Set<UUID> = []) -> DynamicMPEStartConsent {
         .init(profile:profile,tuning:tuning,archive:archive,controllers:[.gamepad1:controller],
               allowLayering:layering,cameraID:camera,cameraOrientation:.upright,
-              cameraMirror:mirror,mouseOrientation:.horizontal)
+              cameraMirror:mirror,mouseOrientation:.horizontal,hapticGroups:haptics)
     }
     let baseline = consent()
     #expect(baseline == consent())
@@ -26,6 +26,7 @@ import Testing
     #expect(baseline != consent(camera:"other"))
     #expect(baseline != consent(mirror:true))
     #expect(baseline != consent(tuning:[:]))
+    #expect(baseline != consent(haptics:[group.id]))
     var changed = profile
     changed.groups[0].name = "Other"
     #expect(baseline != consent(profile:changed))

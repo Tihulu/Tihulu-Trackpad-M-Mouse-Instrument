@@ -12,15 +12,19 @@ public struct DynamicMPEActivationPlan: Sendable {
     public init(profile:PerformanceGroupProfile,tuning:[UUID:PerformanceGroupTuningPlan.Specification],
                 confirmed:Bool,allowLayering:Bool,registeredIDs:Set<UUID>,cleanupIDs:Set<UUID>,
                 pendingDisposalCount:Int,allowSurfaces:Bool = false,allowScalars:Bool = false,
-                allowCamera:Bool = false,allowRemote:Bool = false,hapticGroups:Set<UUID> = []) throws {
+                allowCamera:Bool = false,allowRemote:Bool = false,hapticGroups:Set<UUID> = [],
+                allowDynamicHaptics:Bool = false) throws {
         guard confirmed else { throw AdmissionError.confirmationRequired }
         guard cleanupIDs.isEmpty,pendingDisposalCount == 0 else { throw AdmissionError.cleanupRequired }
         guard registeredIDs.isEmpty else { throw AdmissionError.portsMustBeClosed }
-        guard !allowRemote,hapticGroups.isEmpty else { throw AdmissionError.incompatibleMode }
+        guard !allowRemote,hapticGroups.isEmpty || allowDynamicHaptics else { throw AdmissionError.incompatibleMode }
         guard PerformanceGroupGamepadSession.supports(profile,allowSurfaces:allowSurfaces,
             allowScalars:allowScalars,allowCamera:allowCamera),
             allowLayering || profile.layeredInputs.isEmpty else { throw AdmissionError.unsupportedProfile }
         preview = try .init(profile:profile,tuning:tuning)
+        if !hapticGroups.isEmpty {
+            _ = try PerformanceGroupHapticProjection(preparedDynamic:preview,selected:hapticGroups)
+        }
         self.allowLayering = allowLayering
     }
 }

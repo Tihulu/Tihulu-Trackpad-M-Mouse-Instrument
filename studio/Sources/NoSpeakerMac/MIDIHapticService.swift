@@ -1176,6 +1176,14 @@ public final class PerformanceGroupMIDIHost {
         #endif
     }
 
+    public static var dynamicMPEHapticsEnabled:Bool {
+        #if TIHULU_GROUP_DYNAMIC_MPE_HAPTIC_LIVE && TIHULU_GROUP_HAPTIC_LIVE
+        return dynamicMPEEnabled
+        #else
+        return false
+        #endif
+    }
+
     /// Only a caller owning the frozen physical controller bindings may use
     /// this entry point. The caller must provide the existing watchdog cadence.
     /// No automatic activation, device polling or handler installation here.
@@ -1190,20 +1198,25 @@ public final class PerformanceGroupMIDIHost {
         guard !retainedTunedPorts, tuning.isEmpty || registeredIDs.isEmpty else {
             throw HostError.closeRequiredForTuning
         }
+        let dynamicPlan:DynamicMPEActivationPlan?
         if dynamicMPE {
             guard Self.dynamicMPEEnabled else { throw DynamicMPEActivationPlan.AdmissionError.incompatibleMode }
-            _ = try DynamicMPEActivationPlan(profile:profile,tuning:tuning,confirmed:confirmedDynamicMPE,
+            dynamicPlan = try DynamicMPEActivationPlan(profile:profile,tuning:tuning,confirmed:confirmedDynamicMPE,
                 allowLayering:allowLayering,registeredIDs:registeredIDs,cleanupIDs:pendingCleanup,
                 pendingDisposalCount:pendingDisposalCount,allowSurfaces:allowSurfaces,
-                allowScalars:allowScalars,allowCamera:allowCamera,allowRemote:allowRemote,hapticGroups:hapticGroups)
-        } else if confirmedDynamicMPE {
-            throw DynamicMPEActivationPlan.AdmissionError.incompatibleMode
+                allowScalars:allowScalars,allowCamera:allowCamera,allowRemote:allowRemote,hapticGroups:hapticGroups,
+                allowDynamicHaptics:Self.dynamicMPEHapticsEnabled)
+        } else {
+            guard !confirmedDynamicMPE else { throw DynamicMPEActivationPlan.AdmissionError.incompatibleMode }
+            dynamicPlan = nil
         }
         var next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering,
             allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera,tuning:tuning,allowRemote:allowRemote,dynamicMPE:dynamicMPE)
         let projection:PerformanceGroupHapticProjection?
         if hapticGroups.isEmpty { projection = nil }
-        else if tuning.isEmpty {
+        else if let dynamicPlan {
+            projection = try .init(preparedDynamic:dynamicPlan.preview,selected:hapticGroups)
+        } else if tuning.isEmpty {
             projection = try .init(profile:profile,selected:hapticGroups)
         } else {
             guard allowTunedHaptics,!allowRemote else { throw PerformanceGroupHapticProjection.AdmissionError.invalidSelection }

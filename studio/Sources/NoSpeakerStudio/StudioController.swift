@@ -249,7 +249,8 @@ final class StudioController: ObservableObject {
                             dynamicPreview:DynamicMPEPreview? = nil,confirmedDynamic:Bool = false) {
         guard (dynamicPreview != nil) == confirmedDynamic,
               dynamicPreview == nil || (PerformanceGroupMIDIHost.dynamicMPEEnabled && tuning == nil &&
-                remoteTransport == nil && remotePage == nil && hapticGroups.isEmpty && !confirmedTuning && !confirmedLAN) else {
+                remoteTransport == nil && remotePage == nil &&
+                (hapticGroups.isEmpty || PerformanceGroupMIDIHost.dynamicMPEHapticsEnabled) && !confirmedTuning && !confirmedLAN) else {
             groupGamepadStatus = "Dynamic MPE requires a separately enabled, confirmed local start."
             return
         }
@@ -295,7 +296,8 @@ final class StudioController: ObservableObject {
                 let plan = try DynamicMPEActivationPlan(profile:profile,tuning:dynamicPreview.tuning,
                     confirmed:confirmedDynamic,allowLayering:allowLayering,registeredIDs:groupHost.registeredIDs,
                     cleanupIDs:groupHost.pendingCleanup,pendingDisposalCount:groupHost.pendingDisposalCount,
-                    allowSurfaces:true,allowScalars:true,allowCamera:true)
+                    allowSurfaces:true,allowScalars:true,allowCamera:true,hapticGroups:hapticGroups,
+                    allowDynamicHaptics:PerformanceGroupMIDIHost.dynamicMPEHapticsEnabled)
                 specifications = plan.preview.tuning
             } else {
                 let activation = try PerformanceGroupActivationPlan(profile:profile,mode:tuning.map { .tuned($0) } ?? .standard,
@@ -331,7 +333,9 @@ final class StudioController: ObservableObject {
         let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
         if !hapticGroups.isEmpty {
             let projection:PerformanceGroupHapticProjection?
-            if specifications.isEmpty {
+            if let dynamicPreview {
+                projection = try? .init(preparedDynamic:dynamicPreview,selected:hapticGroups)
+            } else if specifications.isEmpty {
                 projection = try? .init(profile:profile,selected:hapticGroups)
             } else {
                 projection = try? .init(profile:profile,selected:hapticGroups,preparedTuning:specifications)

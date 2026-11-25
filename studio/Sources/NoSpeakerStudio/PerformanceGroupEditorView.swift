@@ -297,8 +297,8 @@ struct PerformanceGroupEditorView: View {
 
     private var canStartDynamic:Bool {
         guard PerformanceGroupMIDIHost.dynamicMPEEnabled,canStartGroups,
-              hapticSelection.isEmpty,studio.groupRegisteredIDs.isEmpty,
-              let dynamicPreview,dynamicPreview.profile == saved else { return false }
+              (hapticSelection.isEmpty || (PerformanceGroupMIDIHost.dynamicMPEHapticsEnabled && hapticSelection.isSubset(of:hapticEligibleIDs))),
+              studio.groupRegisteredIDs.isEmpty,let dynamicPreview,dynamicPreview.profile == saved else { return false }
         return storedData != nil && UserDefaults.standard.data(forKey:key) == storedData
     }
 
@@ -317,7 +317,7 @@ struct PerformanceGroupEditorView: View {
         return .init(profile:saved,tuning:tuning,archive:storedData,
             controllers:studio.gamepadBindings,allowLayering:allowLayering,
             cameraID:studio.patchCameraDeviceID,cameraOrientation:studio.patchCameraOrientation,
-            cameraMirror:studio.patchCameraMirrorX,mouseOrientation:studio.magicMouseOrientation)
+            cameraMirror:studio.patchCameraMirrorX,mouseOrientation:studio.magicMouseOrientation,hapticGroups:hapticSelection)
     }
 
     private func requestDynamicStart() {
@@ -448,7 +448,8 @@ struct PerformanceGroupEditorView: View {
         if StudioController.groupHapticStartEnabled {
             GroupBox("Experimental Trackpad note output") {
                 VStack(alignment:.leading,spacing:5) {
-                    Text(StudioController.groupTunedHapticStartEnabled ?
+                    Text(PerformanceGroupMIDIHost.dynamicMPEHapticsEnabled ?
+                         "Mirror selected standard or explicitly confirmed local fixed/dynamic MPE groups. Dynamic MPE uses fixed-bend member pools. Off by default; short attacks are best-effort." : StudioController.groupTunedHapticStartEnabled ?
                          "Mirror selected standard or locally confirmed fixed-member MPE groups. Remote MPE with Trackpad output is not supported. Off by default; short attacks are best-effort." :
                          "Select standard MIDI groups to mirror on the shared actuator. Off by default. Not MPE, drum synthesis, or audio playback; short attacks are best-effort within a four-entry, 40 ms buffer.")
                         .font(.caption)
@@ -537,11 +538,11 @@ struct PerformanceGroupEditorView: View {
                                         return
                                     }
                                     studio.startGroupGamepads(profile:saved,allowLayering:allowLayering,
-                                        dynamicPreview:dynamicPreview,confirmedDynamic:true)
+                                        hapticGroups:consent.hapticGroups,dynamicPreview:dynamicPreview,confirmedDynamic:true)
                                 }
                                 Button("Cancel",role:.cancel) { pendingDynamic = nil }
                             } message: {
-                                Text("This configures dedicated MPE ports. At most 15 simultaneous member channels per port; individual bend pools may fill sooner. Notes refused at capacity are not replayed. Remote and haptic output are excluded. Receiver setup must be verified manually.")
+                                Text("This configures dedicated MPE ports. At most 15 simultaneous member channels per port; individual bend pools may fill sooner. Notes refused at capacity are not replayed. Remote output is excluded. Selected Trackpad groups: " + String(pendingDynamic?.hapticGroups.count ?? 0) + ". Receiver setup must be verified manually.")
                             }
                     }
                     Button("Stop / Release All") { studio.stopGroupGamepads() }
