@@ -346,4 +346,34 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     #expect((180_000_000...350_000_000).contains(rows[1].time-rows[0].time))
     #expect(throws:NativeMIDIMonitor.Failure.self) { _=try NativeMIDIMonitor.resolve(name:player.sourceName) }
 }
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackOpenQuarantinesUnverifiedSourceWithoutDisposal() async throws {
+    let player=try NativeMIDIPlayback(clip:nativePlaybackClip())
+    let changed="TIHULU unverified open fixture "+UUID().uuidString
+    var created=MIDIEndpointRef()
+    var renamed:OSStatus = -1
+    defer {
+        if created != 0 {
+            _=MIDIEndpointDispose(created)
+            MIDIProcessClient.shared.unregisterIsolatedSource(created)
+        }
+    }
+    #expect(throws:NativeMIDIPlayback.Failure.self) {
+        try player.open(onCreated:{ source in
+            created=source
+            renamed=MIDIObjectSetStringProperty(source,kMIDIPropertyName,changed as CFString)
+        })
+    }
+    try #require(created != 0 && renamed==noErr)
+    #expect(try NativeMIDIMonitor.resolve(name:changed)==created)
+    #expect(MIDIProcessClient.shared.isIsolatedSource(created))
+    #expect(player.lifecycle.state=="faulted" && player.lifecycle.sourceOpen)
+    #expect(player.lifecycle.identityRetired && player.lifecycle.recoveryRequired)
+    #expect(player.lifecycle.outstandingNotes==0)
+    #expect(throws:NativeMIDIPlayback.Failure.self) { try player.open() }
+    await #expect(throws:NativeMIDIPlayback.Failure.self) { _=try await player.run() }
+    #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
+    #expect(try NativeMIDIMonitor.resolve(name:changed)==created)
+}
 #endif

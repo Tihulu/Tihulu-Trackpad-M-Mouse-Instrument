@@ -84,6 +84,11 @@ public final class NativeMIDIPlayback {
 
     /// Register a unique virtual source, but send no messages until run().
     public func open() throws {
+        try open(onCreated:{ _ in })
+    }
+
+    // Internal synchronous fixture seam; never exposed through CLI.
+    func open(onCreated:(MIDIEndpointRef)->Void) throws {
         guard !opened,!running,endpoint==0,player.state == .ready else {
             throw Failure.invalidLifecycle
         }
@@ -91,20 +96,30 @@ public final class NativeMIDIPlayback {
         let client=try MIDIProcessClient.shared.acquire()
         var source=MIDIEndpointRef()
         let status=MIDISourceCreate(client,sourceName as CFString,&source)
-        guard status==noErr,source != 0 else {
+        guard source != 0 else {
+            throw Failure.native("source",status==noErr ? -1 : status)
+        }
+        // Track any returned handle before attempting identity inspection.
+        // An unverified handle is quarantined, not disposed or retried
+        // against a potentially replaced endpoint. Exclude it from legacy
+        // automatic input attachment while recovery remains unresolved.
+        endpoint=source
+        opened=true
+        MIDIProcessClient.shared.registerIsolatedSource(source)
+        guard status==noErr else {
+            identityRetired=true
+            player.abort { _ in false }
             throw Failure.native("source",status)
         }
+        onCreated(source)
         var uid:Int32=0
         let identified=MIDIObjectGetIntegerProperty(source,kMIDIPropertyUniqueID,&uid)
         guard identified==noErr,uid != 0,Self.matches(source:source,id:uid,name:sourceName) else {
-            let disposed=MIDIEndpointDispose(source)
-            guard disposed==noErr else { throw Failure.native("unidentified source disposal",disposed) }
+            identityRetired=true
+            player.abort { _ in false }
             throw Failure.sourceIdentityLost
         }
-        endpoint=source
         sourceID=uid
-        opened=true
-        MIDIProcessClient.shared.registerIsolatedSource(source)
     }
 
     /// A concurrent stop request is observed before the next onset, with
@@ -112,7 +127,7 @@ public final class NativeMIDIPlayback {
     public func requestStop() { if player.state == .ready || player.state == .playing { stopRequested=true } }
 
     public func run() async throws -> Report {
-        guard opened,endpoint != 0,!running,player.state == .ready else {
+        guard opened,endpoint != 0,!running,player.state == .ready,!identityRetired else {
             throw Failure.invalidLifecycle
         }
         running=true
