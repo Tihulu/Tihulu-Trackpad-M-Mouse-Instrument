@@ -30,6 +30,37 @@ struct TihuluEngineCLI {
         let exclusive: Bool?
     }
 
+    struct NoteGrid: Decodable {
+        struct Step: Decodable {
+            let index: Int
+            let midi: Int?
+            let velocity: Double
+            let gate: Double
+        }
+        let bpm: Double
+        let stepsPerBeat: Int
+        let length: Int
+        let channel: Int
+        let steps: [Step]
+    }
+
+    struct DrumGrid: Decodable {
+        struct Hit: Decodable {
+            let index: Int
+            let voice: DrumVoice
+            let velocity: Double
+        }
+        let bpm: Double
+        let stepsPerBeat: Int
+        let length: Int
+        let hits: [Hit]
+    }
+
+    struct PedalInput: Decodable {
+        let owner: String
+        let channels: [Int]
+    }
+
     static func main() {
         do {
             let result = try run(Array(CommandLine.arguments.dropFirst()))
@@ -61,7 +92,7 @@ struct TihuluEngineCLI {
                 "schema":1, "hardware":false,
                 "commands":["capabilities","patch example","patch validate FILE","patch routes FILE",
                     "groups example","groups validate FILE","groups ports FILE",
-                    "groups simulate PROFILE FRAMES [--allow-layering]", "scale plan ROOT CENTS", "haptics mix FILE"]
+                    "groups simulate PROFILE FRAMES [--allow-layering]", "scale plan ROOT CENTS", "haptics mix FILE", "midi encode FILE", "midi melody FILE", "midi drums FILE", "sustain simulate FILE"]
             ]
         }
         if args == ["capabilities"] {
@@ -71,7 +102,7 @@ struct TihuluEngineCLI {
                 "maxRoutes":PerformanceGroupProfile.maximumRoutes,
                 "maxSessions":PerformanceGroupRouter.maxSessions,
                 "midiDelivery":"simulation only","mpePorts":"not implemented in CLI",
-                "scalePlanning":true,"hapticMixPreview":true]
+                "scalePlanning":true,"hapticMixPreview":true,"standardMIDIFileExport":true,"sustainSimulation":true]
         }
         if args.count == 4, args[0] == "scale", args[1] == "plan" {
             guard let root = Int(args[2]), (0...115).contains(root),
@@ -114,6 +145,64 @@ struct TihuluEngineCLI {
                 frame = NSNull()
             }
             return ["schema":1,"simulated":true,"hardware":false,"frame":frame]
+        }
+        if args.count == 3, args[0] == "midi" {
+            let data = try read(args[2])
+            let clip: MIDIClip
+            switch args[1] {
+            case "encode":
+                clip = try JSONDecoder().decode(MIDIClip.self,from:data).validated()
+            case "melody":
+                let grid = try JSONDecoder().decode(NoteGrid.self,from:data)
+                guard (0...15).contains(grid.channel), grid.steps.count <= 4096,
+                      grid.steps.allSatisfy({ (0..<max(0,grid.length)).contains($0.index) &&
+                          $0.velocity.isFinite && (0...1).contains($0.velocity) &&
+                          $0.gate.isFinite && (0.05...1).contains($0.gate) &&
+                          ($0.midi.map { (0...127).contains($0) } ?? true) }),
+                      Set(grid.steps.map(\.index)).count == grid.steps.count else {
+                    throw CLIError("Invalid or repeated note grid step")
+                }
+                let sequence = NoteSequence(bpm:grid.bpm,stepsPerBeat:grid.stepsPerBeat,length:grid.length,
+                    steps:grid.steps.map { .init(index:$0.index,midi:$0.midi,velocity:$0.velocity,gate:$0.gate) })
+                clip = try MIDIClip.melody(sequence,channel:grid.channel)
+            case "drums":
+                let grid = try JSONDecoder().decode(DrumGrid.self,from:data)
+                let sequence = DrumSequence(bpm:grid.bpm,stepsPerBeat:grid.stepsPerBeat,length:grid.length,
+                    hits:grid.hits.map { .init(index:$0.index,voice:$0.voice,velocity:$0.velocity) })
+                clip = try MIDIClip.drums(sequence)
+            default: throw CLIError("Unknown MIDI file command")
+            }
+            let midi = try MIDIClipWriter.encode(clip)
+            return ["schema":1,"hardware":false,"encoding":"base64","format":"SMF0",
+                    "nominalPitchesOnly":true,"ppq":MIDIClip.ppq,"notes":clip.notes.count,
+                    "bytes":midi.count,"data":midi.base64EncodedString()]
+        }
+        if args.count == 3, args[0] == "sustain", args[1] == "simulate" {
+            let steps = try JSONDecoder().decode([PedalInput].self,from:read(args[2]))
+            guard steps.count <= 4096 else { throw CLIError("Too many pedal steps") }
+            var owners = LegacySustainOwners()
+            var events: [[String:Any]] = []
+            for (index,step) in steps.enumerated() {
+                let owner: LegacySustainOwners.Owner
+                switch step.owner {
+                case "touch": owner = .touch
+                case "helper": owner = .helper
+                case "touchBar": owner = .touchBar
+                default: throw CLIError("Unknown sustain owner")
+                }
+                let channels = Set(step.channels)
+                guard channels.count == step.channels.count,
+                      channels.allSatisfy({ (0...15).contains($0) }) else {
+                    throw CLIError("Invalid or repeated sustain channel")
+                }
+                events += owners.replace(owner,channels:channels).map {
+                    ["step":index,"channel":$0.destination.channel+1,"cc":64,"value":$0.value]
+                }
+            }
+            events += owners.releaseAll().map {
+                ["step":steps.count,"channel":$0.destination.channel+1,"cc":64,"value":$0.value]
+            }
+            return ["schema":1,"simulated":true,"hardware":false,"events":events]
         }
         if args == ["patch","example"] {
             let data = try InstrumentPatch.starter.archive()
