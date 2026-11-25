@@ -133,7 +133,7 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var supportedLocalProfile: Bool {
-        PerformanceGroupGamepadSession.supports(saved,allowSurfaces:true,allowScalars:true)
+        PerformanceGroupGamepadSession.supports(saved,allowSurfaces:true,allowScalars:true,allowCamera:true)
     }
 
     private var editingLocked: Bool {
@@ -197,7 +197,7 @@ struct PerformanceGroupEditorView: View {
 
     private func localSourceStatus(_ source:SensorSource) -> String {
         switch studio.groupSourceStates[source] {
-        case .waitingForNeutral: return "Waiting for neutral or release; lid may require restart"
+        case .waitingForNeutral: return source == .camera ? "Acquiring two reliable frames" : "Waiting for neutral or release; lid may require restart"
         case .armed: return "Armed; awaiting sample"
         case .leased: return "Input lease present; receiver not verified"
         case nil: return "Not bound"
@@ -216,10 +216,38 @@ struct PerformanceGroupEditorView: View {
         }
     }
 
+    private var unsafeLiveControls: [String] {
+        saved.groups.flatMap { group in
+            group.patch.routes.filter { !PerformanceGroupGamepadSession.permitsLiveControl($0) }.map {
+                group.name + " / CC" + String($0.destination.number)
+            }
+        }
+    }
+
+    private var cameraSetup: some View {
+        VStack(alignment:.leading,spacing:4) {
+            Text("Camera: one reliable hand, continuous effects only. No images retained or sent. Permission and capture are requested only from Start.")
+                .font(.caption)
+            Button("Refresh camera choices") { studio.refreshBuilderCameras() }
+            Picker("Camera",selection:$studio.patchCameraDeviceID) {
+                Text("System default").tag("")
+                ForEach(studio.patchCameraChoices) { choice in
+                    Text(choice.name).tag(choice.id)
+                }
+            }
+            Picker("Orientation",selection:$studio.patchCameraOrientation) {
+                ForEach(AirControlOrientation.allCases) { orientation in
+                    Text(orientation.rawValue).tag(orientation)
+                }
+            }
+            Toggle("Mirror X",isOn:$studio.patchCameraMirrorX)
+        }.disabled(studio.groupGamepadsRunning)
+    }
+
     private var liveControls: some View {
         GroupBox("Experimental group MIDI - local controllers and Helpers") {
             VStack(alignment:.leading,spacing:8) {
-                Text("Standard MIDI only. Xbox, Trackpad and Magic Mouse may share groups. Touch uses one primary contact; lift each surface to arm. Touch Bar ribbon and compatible lid-angle sensor support continuous CC and pitch bend only. No local haptics, pressure, multi-touch, or independent MPE in this preview.")
+                Text("Standard MIDI only. Xbox, Trackpad and Magic Mouse may share groups. Touch uses one primary contact; lift each surface to arm. Touch Bar ribbon, compatible lid-angle sensor and single-hand camera support continuous CC and pitch bend only. No local haptics, pressure, multi-touch, or independent MPE in this preview.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !supportedLocalProfile {
                     Text("Save a supported local group profile to enable Start.").font(.caption)
@@ -230,6 +258,11 @@ struct PerformanceGroupEditorView: View {
                 if localSources.contains(.touchBar) {
                     Text("Use the native Builder ribbon on a Touch Bar. Registration does not verify that the hardware is present. Release the ribbon after a stall before playing again.").font(.caption)
                 }
+                if !unsafeLiveControls.isEmpty {
+                    Text("Live group safety: CC7 and CC11 need an explicit release value. Bank select and parameter selectors are not supported here. Review: " + unsafeLiveControls.joined(separator:", "))
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                if localSources.contains(.camera) { cameraSetup }
                 Button("Refresh controllers") { studio.refreshBuilderGamepads() }
                     .disabled(studio.groupGamepadsRunning)
                 ForEach(gamepadSources,id:\.self) { source in
@@ -277,7 +310,7 @@ struct PerformanceGroupEditorView: View {
     var body: some View {
         DisclosureGroup("Performance Studio - Instrument Groups (experimental)") {
             VStack(alignment:.leading,spacing:10) {
-                Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox, Trackpad, Magic Mouse, Touch Bar ribbon and lid Helper profiles. Other sources still use the existing Builder.")
+                Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox, Trackpad, Magic Mouse, Touch Bar ribbon, lid and single-hand camera Helper profiles. Other sources still use the existing Builder.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Add empty group") { add(patch:.init()) }
