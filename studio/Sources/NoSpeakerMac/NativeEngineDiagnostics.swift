@@ -4,6 +4,7 @@ import CoreMIDI
 import CoreGraphics
 import ApplicationServices
 import GameController
+import NoSpeakerCore
 
 /// Read-only native discovery. No MIDI client, event tap, discovery session
 /// or actuator is created. Inventory is not proof of DAW reception.
@@ -38,6 +39,37 @@ public enum NativeEngineDiagnostics {
         public let maximumLogicalSlots:Int
         public let omittedCount:Int
         public let devices:[Device]
+    }
+
+    public struct GamepadSamples: Encodable, Sendable {
+        public struct Device: Encodable, Sendable {
+            public let ordinal:Int
+            public let status:String
+            public let active:[String:Double]?
+        }
+        public let connectedCount:Int
+        public let omittedCount:Int
+        public let devices:[Device]
+    }
+
+    /// One explicit snapshot, no binding, discovery, handlers, or output.
+    /// Ordinals identify this inventory only. Never reuse them as slot IDs.
+    public static func sampleGamepads() -> GamepadSamples {
+        let connected=GCController.controllers()
+        let devices=connected.prefix(16).enumerated().map { index,controller -> GamepadSamples.Device in
+            guard let profile=controller.extendedGamepad else {
+                return .init(ordinal:index+1,status:"unsupported",active:nil)
+            }
+            guard let frame=BuilderGamepadSource.snapshot(profile) else {
+                return .init(ordinal:index+1,status:"invalid",active:nil)
+            }
+            guard GCController.controllers().contains(where:{ $0 === controller }) else {
+                return .init(ordinal:index+1,status:"disconnected",active:nil)
+            }
+            return .init(ordinal:index+1,status:"sampled",
+                active:Dictionary(uniqueKeysWithValues:frame.active.map { ($0.key.rawValue,$0.value) }))
+        }
+        return .init(connectedCount:connected.count,omittedCount:max(0,connected.count-devices.count),devices:devices)
     }
 
     private static func safeLabel(_ original:String) -> String {
