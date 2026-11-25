@@ -186,14 +186,15 @@ struct GamepadMappingPanel: View {
                 ContinuousResponsePanel(response:$axisResponse,target:target)
                 HStack {
                     Button("Full range") { axisCalibration = .init(); axisResponse = nil }
-                    Button("Return to center") {
+                    Button("Release at midpoint") {
                         axisResponse = axisResponse ?? .init()
                         axisResponse?.release = 0.5
                     }
-                    Button("Positive half") {
-                        axisCalibration = .init(minimum:0.5)
-                        axisResponse = axisResponse ?? .init()
-                        axisResponse?.release = 0
+                    if target.kind == .controlChange {
+                        Button("Positive half · CC") {
+                            axisCalibration = .init(minimum:0.5)
+                            axisResponse = .init(release:0)
+                        }
                     }
                 }
             }
