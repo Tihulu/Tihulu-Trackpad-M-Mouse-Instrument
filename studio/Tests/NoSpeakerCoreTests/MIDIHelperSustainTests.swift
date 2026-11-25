@@ -394,15 +394,19 @@ import Testing
         baseChannel:0,allowIdleFallback:false)
     let on = owners.replace(.touch,channels:before)
     #expect(on == [.init(.init(.sustain,channel:1),value:127)])
-    #expect(!pool.retire(channel:1,sustained:owners.active.contains(1),fretless:true))
+    let transition1 = pool.retire(channel:1,sustained:owners.active.contains(1),fretless:true)
+    #expect(!transition1)
     #expect(pool.reserved == [1])
     #expect(pool.next(occupied:[],sustained:owners.active) == 2)
     let after = LegacyTouchSustainTargets.resolve(active:true,previous:owners.channels(for:.touch),
         current:[2],baseChannel:0,allowIdleFallback:true)
-    #expect(owners.replace(.touch,channels:after) == [.init(.init(.sustain,channel:2),value:127)])
-    #expect(owners.replace(.touch,channels:[]) == [
+    let transition2 = owners.replace(.touch,channels:after)
+    #expect(transition2 == [.init(.init(.sustain,channel:2),value:127)])
+    let transition3 = owners.replace(.touch,channels:[])
+    #expect(transition3 == [
         .init(.init(.sustain,channel:1),value:0),.init(.init(.sustain,channel:2),value:0)])
-    #expect(pool.pedalChanged(sustained:owners.active) == [1])
+    let transition4 = pool.pedalChanged(sustained:owners.active)
+    #expect(transition4 == [1])
     #expect(pool.reserved.isEmpty)
 }
 
@@ -411,7 +415,8 @@ import Testing
     let pool = LegacyMPEChannelPool()
     let before = LegacyTouchSustainTargets.resolve(active:true,previous:[],current:[],
         baseChannel:1,allowIdleFallback:false)
-    #expect(owners.replace(.touch,channels:before).isEmpty)
+    let transition5 = owners.replace(.touch,channels:before)
+    #expect(transition5.isEmpty)
     #expect(pool.next(occupied:[],sustained:owners.active) == 1)
     let after = LegacyTouchSustainTargets.resolve(active:true,previous:[],current:[1],
         baseChannel:1,allowIdleFallback:true)
@@ -428,18 +433,22 @@ import Testing
     _ = owners.replace(.touch,channels:[1,2])
     let off = LegacyTouchSustainTargets.resolve(active:false,previous:[1,2],current:[1],
         baseChannel:0,allowIdleFallback:false)
-    #expect(owners.replace(.touch,channels:off) == [.init(.init(.sustain,channel:1),value:0)])
+    let transition6 = owners.replace(.touch,channels:off)
+    #expect(transition6 == [.init(.init(.sustain,channel:1),value:0)])
     #expect(owners.active == [2])
 }
 
 @Test func sameFrameSustainHandoffIsSilentInBothDirections() {
     var owners = LegacySustainOwners()
     _ = owners.replace(.touch,channels:[2])
-    #expect(owners.replaceFrame([.touch:[],.helper:[2]]).isEmpty)
+    let transition7 = owners.replaceFrame([.touch:[],.helper:[2]])
+    #expect(transition7.isEmpty)
     #expect(owners.channels(for:.touch).isEmpty && owners.channels(for:.helper) == [2])
-    #expect(owners.replaceFrame([.helper:[],.touch:[2]]).isEmpty)
+    let transition8 = owners.replaceFrame([.helper:[],.touch:[2]])
+    #expect(transition8.isEmpty)
     #expect(owners.active == [2])
-    #expect(owners.replaceFrame([.touch:[],.helper:[]]) == [.init(.init(.sustain,channel:2),value:0)])
+    let transition9 = owners.replaceFrame([.touch:[],.helper:[]])
+    #expect(transition9 == [.init(.init(.sustain,channel:2),value:0)])
 }
 
 @Test func frameSustainUpdatesDoNotReleaseOmittedOwners() {
@@ -451,8 +460,10 @@ import Testing
     #expect(delta == [.init(.init(.sustain,channel:5),value:127)])
     #expect(owners.active == [1,2,3,4,5])
     #expect(owners.channels(for:.touchBar) == [1,4])
-    #expect(owners.replaceFrame([:]).isEmpty)
-    #expect(owners.replaceFrame([.touch:[],.helper:[]]) == [
+    let transition10 = owners.replaceFrame([:])
+    #expect(transition10.isEmpty)
+    let transition11 = owners.replaceFrame([.touch:[],.helper:[]])
+    #expect(transition11 == [
         .init(.init(.sustain,channel:2),value:0),
         .init(.init(.sustain,channel:3),value:0),
         .init(.init(.sustain,channel:5),value:0)])
@@ -464,10 +475,13 @@ import Testing
     var pool = LegacyMPEChannelPool()
     _ = owners.replace(.helper,channels:[1])
     _ = pool.retire(channel:1,sustained:true,fretless:true)
-    #expect(owners.replaceFrame([.helper:[],.touch:[1]]).isEmpty)
-    #expect(pool.pedalChanged(sustained:owners.active).isEmpty)
+    let transition12 = owners.replaceFrame([.helper:[],.touch:[1]])
+    #expect(transition12.isEmpty)
+    let transition13 = pool.pedalChanged(sustained:owners.active)
+    #expect(transition13.isEmpty)
     #expect(pool.reserved == [1])
     _ = owners.replaceFrame([.touch:[]])
-    #expect(pool.pedalChanged(sustained:owners.active) == [1])
+    let transition14 = pool.pedalChanged(sustained:owners.active)
+    #expect(transition14 == [1])
     #expect(pool.reserved.isEmpty)
 }
