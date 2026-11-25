@@ -188,6 +188,41 @@
         "voice analyze"
       ],
       "status": "offline normalized mono PCM analysis and haptic frame data; no synthesis, recording or hardware"
+    },
+    {
+      "id": "gamepad-normalization",
+      "api": [
+        "GamepadFrame",
+        "GamepadFrame.Role"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/GamepadFrame.swift",
+        "studio/Sources/TihuluEngineCLI/DeviceCommands.swift"
+      ],
+      "cli": [
+        "gamepad normalize",
+        "gamepad patch"
+      ],
+      "status": "offline full snapshot normalization and four-slot role patch generation; no controller access"
+    },
+    {
+      "id": "camera-helper-replay",
+      "api": [
+        "AirHandsHelper",
+        "AirHandSample",
+        "PatchSimulation"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/AirHandsHelper.swift",
+        "studio/Sources/NoSpeakerCore/AirHandSample.swift",
+        "studio/Sources/NoSpeakerCore/InstrumentPatch.swift",
+        "studio/Sources/TihuluEngineCLI/DeviceCommands.swift"
+      ],
+      "cli": [
+        "camera helper-patch",
+        "camera helper-simulate"
+      ],
+      "status": "offline normalized hand samples and Helper-only patch replay; no camera access"
     }
   ],
   "constraints": {
