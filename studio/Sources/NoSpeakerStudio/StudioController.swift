@@ -322,7 +322,15 @@ final class StudioController: ObservableObject {
     @Published private(set) var sharedNoteOutputEnabled = false
     private var sharedNoteOutput: SharedLiveNoteOutput?
     private var chordHapticToken: UUID?
-    private var renderGeneration: UInt64 = 0
+    private var voiceRenderCancellation: VoiceRenderCancellation?
+    private var renderGeneration: UInt64 = 0 {
+        didSet {
+            if oldValue != renderGeneration {
+                voiceRenderCancellation?.cancel()
+                voiceRenderCancellation = nil
+            }
+        }
+    }
     private var engineGeneration: UInt64 = 0
     private var midiSessionEpoch = LegacyReceiveEpoch()
     var chordOwnsHaptics: Bool { chordArmed && chordBank.effectiveOutput.sendsHaptics }
@@ -2212,10 +2220,15 @@ final class StudioController: ObservableObject {
         let token = beginPlaybackRequest()
         let renderText = text
         let renderVoice = voice
+        let cancellation = VoiceRenderCancellation()
+        voiceRenderCancellation = cancellation
         Task {
+            defer {
+                if voiceRenderCancellation === cancellation { voiceRenderCancellation = nil }
+            }
             do {
                 let events = try await Task.detached(priority: .userInitiated) {
-                    try VoiceHapticService.render(text: renderText, voice: renderVoice)
+                    try VoiceHapticService.render(text:renderText,voice:renderVoice,cancellation:cancellation)
                 }.value
                 guard renderGeneration == token, !liveNoteOwnsHaptics else { return }
                 playRendered(events, token: token)

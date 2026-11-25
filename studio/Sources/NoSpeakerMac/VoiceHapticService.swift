@@ -22,7 +22,7 @@ public enum VoiceHapticError: LocalizedError {
         case .piperNotInstalled: return "Local Piper speech engine not found. Install Piper from its official release or Python environment, then reopen the app."
         case .piperModelMissing: return "The selected Piper model pair is missing or invalid. Choose a trusted .onnx with its matching .onnx.json."
         case .piperTimedOut: return "Piper did not finish in 90 seconds. Check its installation and try a shorter phrase."
-        case .piperTextTooLong: return "Piper supports up to 16 KiB of text per render. Split longer text into shorter phrases."
+        case .piperTextTooLong: return "Voice rendering supports up to 16 KiB of text per render. Split longer text into shorter phrases."
         case .piperModelExists: return "A file with this model name already exists. Existing files were not replaced."
         }
     }
@@ -72,6 +72,7 @@ private final class VoicePCMCollector: @unchecked Sendable {
     let finished = DispatchSemaphore(value: 0)
     private var values: [Float] = []
     private var inputRate: Double = 16_000
+    private var invalid = false
 
     func append(_ buffer: AVAudioBuffer) {
         guard let pcm = buffer as? AVAudioPCMBuffer else { return }
@@ -81,6 +82,11 @@ private final class VoicePCMCollector: @unchecked Sendable {
         }
         let n = Int(pcm.frameLength)
         let rate = pcm.format.sampleRate
+        guard rate.isFinite, (8000...96000).contains(rate), n <= Int(rate)*240 else {
+            lock.lock(); invalid = true; lock.unlock()
+            finished.signal()
+            return
+        }
         var samples: [Float] = []
         if let channels = pcm.floatChannelData {
             samples = Array(UnsafeBufferPointer(start: channels[0], count: n))
@@ -91,8 +97,15 @@ private final class VoicePCMCollector: @unchecked Sendable {
         }
         guard !samples.isEmpty else { return }
         lock.lock()
+        guard !invalid, values.count <= Int(rate)*240-samples.count,
+              values.isEmpty || abs(inputRate-rate) < 1 else {
+            invalid = true
+            lock.unlock()
+            finished.signal()
+            return
+        }
         inputRate = rate
-        values.append(contentsOf: samples)
+        values.append(contentsOf:samples)
         lock.unlock()
     }
 
@@ -100,8 +113,9 @@ private final class VoicePCMCollector: @unchecked Sendable {
         lock.lock()
         let input = values
         let rate = inputRate
+        let valid = !invalid
         lock.unlock()
-        guard rate > 0, rate.isFinite, !input.isEmpty else { return [] }
+        guard valid, rate > 0, rate.isFinite, !input.isEmpty else { return [] }
         if abs(rate - 16_000) < 1 { return input }
         let newCount = Int(Double(input.count) * 16_000 / rate)
         guard newCount > 0 else { return [] }
@@ -191,7 +205,7 @@ public enum VoiceHapticService {
         }
     }
 
-    private static func renderLocalPiper(text: String, filename: String) throws -> [ScheduledHapticEvent] {
+    private static func renderLocalPiper(text: String, filename: String, cancellation: VoiceRenderCancellation) throws -> [ScheduledHapticEvent] {
         let modelURL = piperVoiceDirectory().appendingPathComponent(filename)
         // Never execute an arbitrary path as an audio model. Only local voice
         // files stored directly inside the dedicated application directory.
@@ -221,16 +235,7 @@ public enum VoiceHapticService {
         process.standardInput = input
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        let finished = DispatchSemaphore(value:0)
-        process.terminationHandler = { _ in finished.signal() }
-        try process.run()
-        if finished.wait(timeout:.now()+90) == .timedOut {
-            if process.isRunning { process.terminate() }
-            if finished.wait(timeout:.now()+2) == .timedOut, process.isRunning {
-                _ = Darwin.kill(process.processIdentifier,SIGKILL)
-            }
-            throw VoiceHapticError.piperTimedOut
-        }
+        try VoiceProcessRunner.run(process,cancellation:cancellation)
         guard process.terminationStatus == 0,
               FileManager.default.fileExists(atPath: output.path) else {
             throw VoiceHapticError.voiceRenderFailed
@@ -247,7 +252,10 @@ public enum VoiceHapticService {
         collector.append(buffer)
         let samples = collector.samples16kHz()
         guard !samples.isEmpty else { throw VoiceHapticError.audioReadFailed }
-        return HapticVoiceAnalyzer.hapticEvents(frames: HapticVoiceAnalyzer.analyze(samples))
+        try cancellation.check()
+        let frames = HapticVoiceAnalyzer.analyze(samples)
+        try cancellation.check()
+        return HapticVoiceAnalyzer.hapticEvents(frames:frames)
     }
 
     private static func installedVoiceRecords() -> [(name: String, locale: String)] {
@@ -324,7 +332,7 @@ public enum VoiceHapticService {
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
-    private static func renderAVSpeech(text: String, identifier: String) throws -> [ScheduledHapticEvent] {
+    private static func renderAVSpeech(text: String, identifier: String, cancellation: VoiceRenderCancellation) throws -> [ScheduledHapticEvent] {
         guard let voice = AVSpeechSynthesisVoice(identifier: identifier) else {
             throw VoiceHapticError.voiceRenderFailed
         }
@@ -333,23 +341,35 @@ public enum VoiceHapticService {
         let collector = VoicePCMCollector()
         let synthesizer = AVSpeechSynthesizer()
         synthesizer.write(utterance) { buffer in collector.append(buffer) }
-        guard collector.finished.wait(timeout: .now() + 90) == .success else {
-            synthesizer.stopSpeaking(at: .immediate)
-            throw VoiceHapticError.speechTimedOut
+        let deadline = ProcessInfo.processInfo.systemUptime+90
+        while collector.finished.wait(timeout:.now()+0.05) != .success {
+            if cancellation.isCancelled || ProcessInfo.processInfo.systemUptime >= deadline {
+                synthesizer.stopSpeaking(at:.immediate)
+                try cancellation.check()
+                throw VoiceHapticError.speechTimedOut
+            }
         }
+        try cancellation.check()
         let samples = collector.samples16kHz()
-        guard !samples.isEmpty else { throw VoiceHapticError.audioReadFailed }
-        return HapticVoiceAnalyzer.hapticEvents(
-            frames: HapticVoiceAnalyzer.analyze(samples)
-        )
+        guard !samples.isEmpty else {
+            synthesizer.stopSpeaking(at:.immediate)
+            throw VoiceHapticError.audioReadFailed
+        }
+        try cancellation.check()
+        let frames = HapticVoiceAnalyzer.analyze(samples)
+        try cancellation.check()
+        return HapticVoiceAnalyzer.hapticEvents(frames:frames)
     }
 
-    public static func render(text: String, voice: String? = nil) throws -> [ScheduledHapticEvent] {
+    public static func render(text: String, voice: String? = nil,
+                              cancellation:VoiceRenderCancellation = VoiceRenderCancellation()) throws -> [ScheduledHapticEvent] {
+        try cancellation.check()
+        guard text.utf8.count <= 16*1024 else { throw VoiceHapticError.piperTextTooLong }
         if let voice, voice.hasPrefix("piper:") {
-            return try renderLocalPiper(text: text, filename: String(voice.dropFirst(6)))
+            return try renderLocalPiper(text:text,filename:String(voice.dropFirst(6)),cancellation:cancellation)
         }
         if let voice, voice.hasPrefix("av:") {
-            return try renderAVSpeech(text: text, identifier: String(voice.dropFirst(3)))
+            return try renderAVSpeech(text:text,identifier:String(voice.dropFirst(3)),cancellation:cancellation)
         }
         let sayVoice: String? = voice?.hasPrefix("say:") == true
             ? String(voice!.dropFirst(4)) : voice
@@ -360,19 +380,21 @@ public enum VoiceHapticService {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
         process.arguments = ["-o", url.path, "--file-format=WAVE", "--data-format=LEF32@16000"]
             + (sayVoice.map { ["-v", $0] } ?? []) + [text]
-        try process.run()
-        process.waitUntilExit()
+        try VoiceProcessRunner.run(process,cancellation:cancellation)
         guard process.terminationStatus == 0 else { throw VoiceHapticError.voiceRenderFailed }
 
         let file = try AVAudioFile(forReading: url)
-        guard let buffer = AVAudioPCMBuffer(
+        guard file.length > 0, file.length <= 16_000*240,
+              let buffer = AVAudioPCMBuffer(
             pcmFormat: file.processingFormat,
             frameCapacity: AVAudioFrameCount(file.length)
         ) else { throw VoiceHapticError.audioReadFailed }
         try file.read(into: buffer)
         guard let channel = buffer.floatChannelData?[0] else { throw VoiceHapticError.audioReadFailed }
         let samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+        try cancellation.check()
         let frames = HapticVoiceAnalyzer.analyze(samples)
+        try cancellation.check()
         return HapticVoiceAnalyzer.hapticEvents(frames: frames)
     }
 }
