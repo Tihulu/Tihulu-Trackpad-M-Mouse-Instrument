@@ -1582,10 +1582,10 @@ private struct TouchSurfaceMap: View {
                         Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.white)
                     }
                     .frame(width: diameter, height: diameter)
-                    .shadow(radius: 5)
+                    // Follow the current visual sample directly; avoid
+                    // overlapping animations while playing quickly.
                     .position(x: x, y: y)
-                    .animation(.linear(duration: 0.025), value: x)
-                    .animation(.linear(duration: 0.025), value: y)
+                    .transaction { $0.animation = nil }
                 }
 
                 if states.isEmpty && instrument == .melodic {
