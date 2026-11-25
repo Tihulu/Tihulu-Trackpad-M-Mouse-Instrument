@@ -124,6 +124,46 @@ def model_for(directory):
     return model, identity
 
 
+def semantic_windows(rows, model, skipped):
+    """Respect the selected model's input budget rather than silently truncate."""
+    limit = int(model.max_seq_length) - 16
+    if limit < 32:
+        raise ValueError("Embedding model context is too small")
+    result = []
+    for row in rows:
+        lines = row["text"].split("\n")
+        first = 0
+        pending = []
+        def fits(candidate):
+            text = row["path"] + "\n" + "\n".join(candidate)
+            return len(model.tokenizer.encode(text, add_special_tokens=True, truncation=False)) <= limit
+        def append():
+            if pending:
+                result.append({**row, "start": row["start"] + first,
+                               "end": row["start"] + first + len(pending) - 1,
+                               "text": "\n".join(pending)})
+        for index, line in enumerate(lines):
+            if fits(pending + [line]):
+                if not pending:
+                    first = index
+                pending.append(line)
+                continue
+            append()
+            pending = []
+            if fits([line]):
+                first = index
+                pending = [line]
+            else:
+                skipped.append({"path": row["path"], "line": row["start"] + index,
+                                "reason": "model-context"})
+        append()
+        if len(result) > MAX_CHUNKS:
+            raise ValueError("Semantic chunk budget exceeded")
+    if not result:
+        raise ValueError("No chunks fit model context")
+    return result
+
+
 def normalized(vector):
     values = [float(x) for x in vector]
     if not 1 <= len(values) <= 4096 or not all(math.isfinite(x) for x in values):
@@ -146,6 +186,7 @@ def build(args):
                 "model_sha256": None, "dimension": None, "skipped": skipped}
     if args.model_dir:
         model, identity = model_for(args.model_dir)
+        rows = semantic_windows(rows, model, skipped)
         dimension = None
         for first in range(0, len(rows), 16):
             batch = rows[first:first + 16]
@@ -156,6 +197,8 @@ def build(args):
             for row, vector in zip(batch, vectors):
                 row["embedding"] = normalized(vector)
                 dimension = dimension or len(row["embedding"])
+                if len(rows) * dimension > 8000000:
+                    raise ValueError("Embedding budget exceeded; use a smaller model or source scope")
                 if len(row["embedding"]) != dimension:
                     raise ValueError("Embedding dimension mismatch")
         # Detect a model directory edited during the build.
@@ -197,6 +240,8 @@ def search(args):
         if identity != meta["model_sha256"]:
             raise ValueError("Embedding model differs from index")
         query = normalized(model.encode([args.query], show_progress_bar=False, convert_to_numpy=True)[0])
+        if fingerprint(args.model_dir)[1] != identity:
+            raise ValueError("Model changed during query")
         if len(query) != meta["dimension"]:
             raise ValueError("Query dimension differs from index")
         for row in rows:
