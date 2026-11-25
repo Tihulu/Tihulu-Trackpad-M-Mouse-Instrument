@@ -241,16 +241,18 @@
         "studio/Sources/NoSpeakerMac/NativeEngineDiagnostics.swift",
         "studio/Sources/TihuluNativeCLI/NativeCLI.swift",
         "studio/Sources/NoSpeakerMac/NativeMIDIMonitor.swift",
-        "studio/Sources/NoSpeakerCore/BoundedMIDIObservation.swift"
+        "studio/Sources/NoSpeakerCore/BoundedMIDIObservation.swift",
+        "studio/Sources/NoSpeakerMac/BuilderGamepadSource.swift"
       ],
       "cli": [
         "capabilities",
         "preflight",
         "midi endpoints [--names]",
         "gamepad devices [--names]",
+        "gamepad sample --confirm",
         "midi monitor NAME SECONDS --confirm"
       ],
-      "status": "read-only inventory and explicitly confirmed bounded aggregate MIDI receive observation; no live output or automatic hardware activation"
+      "status": "read-only inventory, explicitly confirmed normalized controller snapshots and bounded aggregate MIDI receive observation; no live output or automatic hardware activation"
     }
   ],
   "constraints": {
