@@ -158,6 +158,8 @@ final class StudioController: ObservableObject {
     @Published private(set) var groupFaultIDs: Set<UUID> = []
     @Published private(set) var groupStoppedIDs: Set<UUID> = []
     private var groupGamepadTokens: [SensorSource:UUID] = [:]
+    private var groupSurfaceMailbox: PatchSurfaceMailbox?
+    private var groupSurfaceOrientation: SurfaceOrientation = .horizontal
     private var groupRunToken: UUID?
     private var groupWatchdog: Task<Void,Never>?
     private var groupHost: PerformanceGroupMIDIHost { .shared }
@@ -184,10 +186,17 @@ final class StudioController: ObservableObject {
         }
         let routes = profile.groups.flatMap { $0.patch.routes }
         let sources = Set(routes.map(\.source))
-        guard profile.isValid, !routes.isEmpty, sources.isSubset(of:GamepadFrame.sources),
+        guard PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true),
               (allowLayering || profile.layeredInputs.isEmpty) else {
-            groupGamepadStatus = "Use a valid saved gamepad-only profile and explicitly approve shared signals."
+            groupGamepadStatus = "Use a valid saved local group profile and explicitly approve shared signals."
             return
+        }
+        let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
+        if needsSurface {
+            guard requireEngine(), touch != nil else {
+                groupGamepadStatus = "Native surface monitoring unavailable on this Mac."
+                return
+            }
         }
         guard releaseBuilderOutput() else {
             groupGamepadStatus = "Builder MIDI cleanup remains pending. Retry Builder Stop."
@@ -198,7 +207,7 @@ final class StudioController: ObservableObject {
             return
         }
         do {
-            try groupHost.startGamepads(profile:profile,allowLayering:allowLayering)
+            try groupHost.startGamepads(profile:profile,allowLayering:allowLayering,allowSurfaces:true)
         } catch {
             builderGamepads.stop()
             refreshGroupOutputState()
@@ -212,7 +221,7 @@ final class StudioController: ObservableObject {
         groupStoppedIDs = []
         refreshGroupOutputState()
         do {
-            for source in GamepadFrame.orderedSources where sources.contains(source) {
+            for source in sources.sorted(by:{ $0.rawValue < $1.rawValue }) {
                 groupGamepadTokens[source] = try groupHost.bindGamepad(source,now:ProcessInfo.processInfo.systemUptime)
             }
         } catch {
@@ -220,7 +229,19 @@ final class StudioController: ObservableObject {
             groupGamepadStatus = "Controller binding failed; group output stopped. Check cleanup status."
             return
         }
-        groupGamepadStatus = "Group ports registered. Release all controller controls before playing."
+        if needsSurface {
+            let mailbox = PatchSurfaceMailbox(excludedSurface:nil)
+            groupSurfaceOrientation = magicMouseOrientation
+            groupSurfaceMailbox = mailbox
+            touch?.setPatchMailbox(mailbox)
+            refreshSharedSurfaceMonitoring()
+            guard touchPreviewRunning else {
+                stopGroupGamepads()
+                groupGamepadStatus = "Surface monitoring could not start; group output stopped."
+                return
+            }
+        }
+        groupGamepadStatus = "Group ports registered. Release controller controls and lift each touch surface before playing."
         for source in GamepadFrame.orderedSources where groupGamepadTokens[source] != nil {
             receiveGroupGamepad(source:source,frame:builderGamepads.read(source),run:token)
         }
@@ -233,6 +254,8 @@ final class StudioController: ObservableObject {
                 do { try await Task.sleep(for:.milliseconds(20)) } catch { return }
                 guard let self, self.groupRunToken == token else { return }
                 self.consumeGroupReports(self.groupHost.expireGamepads(now:ProcessInfo.processInfo.systemUptime))
+                guard self.groupRunToken == token else { return }
+                self.drainGroupSurfaces(run:token)
                 for source in GamepadFrame.orderedSources where self.groupGamepadTokens[source] != nil {
                     guard self.groupRunToken == token else { return }
                     self.receiveGroupGamepad(source:source,frame:self.builderGamepads.read(source),run:token)
@@ -249,6 +272,8 @@ final class StudioController: ObservableObject {
             groupGamepadStatus = "A group MIDI send failed. Affected groups stopped; inspect cleanup status."
         }
         refreshGroupOutputState()
+        if groupGamepadsRunning, !groupRegisteredIDs.isEmpty,
+           groupRegisteredIDs.isSubset(of:groupStoppedIDs) { stopGroupGamepads() }
     }
 
     private func receiveGroupGamepad(source:SensorSource,frame:GamepadFrame?,run:UUID) {
@@ -265,6 +290,45 @@ final class StudioController: ObservableObject {
         }
     }
 
+    private func drainGroupSurfaces(run:UUID) {
+        guard groupRunToken == run, let mailbox = groupSurfaceMailbox else { return }
+        let batch = mailbox.drain()
+        let now = ProcessInfo.processInfo.systemUptime
+        // The original mailbox is bounded and edge-preserving. An overflow or
+        // stale queued contact cannot be replayed as a new performance.
+        if batch.overflow || batch.samples.contains(where:{
+            !$0.time.isFinite || $0.time > now || now-$0.time >= PhysicalPatchRuntime.timeout
+        }) {
+            stopGroupGamepads()
+            groupGamepadStatus = "Surface backlog or stale input. Group output released; restart explicitly."
+            return
+        }
+        for sample in batch.samples {
+            guard groupRunToken == run else { return }
+            let source: SensorSource = sample.frame.surface == .trackpad ? .trackpad : .magicMouse
+            guard let token = groupGamepadTokens[source] else { continue }
+            let contact = sample.frame.contacts.lazy.filter { $0.isDown }.min { $0.id < $1.id }
+            var x: Double?
+            var y: Double?
+            var size: Double?
+            if let contact {
+                guard contact.x.isFinite,contact.y.isFinite,contact.size.isFinite else {
+                    stopGroupGamepads()
+                    groupGamepadStatus = "Invalid surface input. Group output released; restart explicitly."
+                    return
+                }
+                let rawX = min(1,max(0,Double(contact.x)))
+                let rawY = min(1,max(0,Double(contact.y)))
+                let point = source == .magicMouse ? groupSurfaceOrientation.transformed(x:rawX,y:rawY) : (rawX,rawY)
+                x = point.0; y = point.1; size = min(1,max(0,Double(contact.size)))
+            }
+            if let result = groupHost.receiveSurface(source,token:token,x:x,y:y,size:size,
+                                                    hostTime:sample.time,now:ProcessInfo.processInfo.systemUptime) {
+                consumeGroupReports(result.reports)
+            }
+        }
+    }
+
     func stopGroupGamepads() {
         // Invalidate callbacks before stopping the existing adapter.
         guard groupGamepadsRunning else { return }
@@ -273,6 +337,12 @@ final class StudioController: ObservableObject {
         groupWatchdog = nil
         groupGamepadTokens.removeAll()
         builderGamepads.stop()
+        if let mailbox = groupSurfaceMailbox {
+            touch?.setPatchMailbox(nil)
+            mailbox.close()
+            groupSurfaceMailbox = nil
+            refreshSharedSurfaceMonitoring()
+        }
         groupGamepadsRunning = false
         groupStoppedIDs = groupRegisteredIDs
         if let report = groupHost.panic() { consumeGroupReports([report]) }
@@ -2711,7 +2781,7 @@ final class StudioController: ObservableObject {
     private func refreshSharedSurfaceMonitoring() {
         guard let touch else { return }
         let needed = instrumentPreviewRequested || helperPreviewRequested ||
-                     touchRunning || midiHelperRunning ||
+                     touchRunning || midiHelperRunning || groupSurfaceMailbox != nil ||
                      (patchPhysical && instrumentPatch.routes.contains { $0.source != patchHybridSource && ($0.source == .trackpad || $0.source == .magicMouse) })
         if !needed {
             surfaceMonitorToken = nil
