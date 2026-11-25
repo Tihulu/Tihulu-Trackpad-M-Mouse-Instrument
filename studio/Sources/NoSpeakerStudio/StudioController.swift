@@ -509,18 +509,53 @@ final class StudioController: ObservableObject {
         }
     }
 
+    /// Shared native queue overflow has unknown provenance; retire both
+    /// surface owners atomically. A known bad sample retires only its source.
+    /// Other devices and ports keep playing unless all sources are gone.
+    private func retireGroupSurfaces(_ sources:Set<SensorSource>,reason:String,run:UUID) {
+        guard groupRunToken == run else { return }
+        var tokens:[SensorSource:UUID] = [:]
+        for source in sources where source == .trackpad || source == .magicMouse {
+            if let token = groupGamepadTokens.removeValue(forKey:source) { tokens[source] = token }
+        }
+        guard !tokens.isEmpty else { return }
+        consumeGroupReports(groupHost.unbindGroupSources(tokens))
+        guard groupRunToken == run else { return }
+        if groupGamepadTokens[.trackpad] == nil && groupGamepadTokens[.magicMouse] == nil,
+           let mailbox = groupSurfaceMailbox {
+            touch?.setPatchMailbox(nil)
+            mailbox.close()
+            groupSurfaceMailbox = nil
+            refreshSharedSurfaceMonitoring()
+        }
+        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
+        groupGamepadStatus = reason + (groupCleanupIDs.isEmpty ? "" : " MIDI cleanup pending.")
+    }
+
     private func drainGroupSurfaces(run:UUID) {
         guard groupRunToken == run, let mailbox = groupSurfaceMailbox else { return }
         let batch = mailbox.drain()
         let now = ProcessInfo.processInfo.systemUptime
         // The original mailbox is bounded and edge-preserving. An overflow or
         // stale queued contact cannot be replayed as a new performance.
-        if batch.overflow || batch.samples.contains(where:{
-            !$0.time.isFinite || $0.time > now || now-$0.time >= PhysicalPatchRuntime.timeout
-        }) {
-            stopGroupGamepads()
-            groupGamepadStatus = "Surface backlog or stale input. Group output released; restart explicitly."
+        if batch.overflow {
+            retireGroupSurfaces([.trackpad,.magicMouse],reason:"Surface queue overflow. Surface owners released; restart to rebind. Other devices retained.",run:run)
             return
+        }
+        // Validate the entire batch before emitting any attack from a bad
+        // source. A stale/unmapped sample from another device cannot stop it.
+        var bad:Set<SensorSource> = []
+        for sample in batch.samples {
+            let source:SensorSource = sample.frame.surface == .trackpad ? .trackpad : .magicMouse
+            guard groupGamepadTokens[source] != nil else { continue }
+            if !sample.time.isFinite || sample.time < 0 || sample.time > now ||
+               now-sample.time >= PhysicalPatchRuntime.timeout ||
+               sample.frame.contacts.contains(where:{ $0.isDown && (!$0.x.isFinite || !$0.y.isFinite || !$0.size.isFinite) }) {
+                bad.insert(source)
+            }
+        }
+        if !bad.isEmpty {
+            retireGroupSurfaces(bad,reason:"Stale or invalid surface input released. Restart affected surfaces explicitly.",run:run)
         }
         for sample in batch.samples {
             guard groupRunToken == run else { return }
@@ -531,11 +566,6 @@ final class StudioController: ObservableObject {
             var y: Double?
             var size: Double?
             if let contact {
-                guard contact.x.isFinite,contact.y.isFinite,contact.size.isFinite else {
-                    stopGroupGamepads()
-                    groupGamepadStatus = "Invalid surface input. Group output released; restart explicitly."
-                    return
-                }
                 let rawX = min(1,max(0,Double(contact.x)))
                 let rawY = min(1,max(0,Double(contact.y)))
                 let point = source == .magicMouse ? groupSurfaceOrientation.transformed(x:rawX,y:rawY) : (rawX,rawY)

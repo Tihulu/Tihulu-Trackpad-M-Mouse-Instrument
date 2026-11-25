@@ -1343,8 +1343,12 @@ public final class PerformanceGroupMIDIHost {
     }
 
     public func unbindGamepad(_ source: SensorSource, token: UUID) -> [PerformanceGroupDelivery.Report] {
+        unbindGroupSources([source:token])
+    }
+
+    public func unbindGroupSources(_ tokens:[SensorSource:UUID]) -> [PerformanceGroupDelivery.Report] {
         guard var state = gamepads else { return [] }
-        let result = state.unbind(source,token:token,send:send)
+        let result = state.unbindBatch(tokens,send:send)
         gamepads = state
         return result
     }

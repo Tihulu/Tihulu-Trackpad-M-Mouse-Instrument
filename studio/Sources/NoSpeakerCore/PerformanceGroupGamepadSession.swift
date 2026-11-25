@@ -587,9 +587,18 @@ public struct PerformanceGroupGamepadSession: Sendable {
     /// physical device must be explicitly bound, never auto-substituted.
     public mutating func unbind(_ source: SensorSource, token: UUID,
                                 send: (PerformanceGroupCommand) -> Bool) -> [PerformanceGroupDelivery.Report] {
-        guard bindings[source]?.token == token else { return [] }
-        let reports = reset([source],send:send)
-        bindings.removeValue(forKey:source)
+        unbindBatch([source:token],send:send)
+    }
+
+    /// Explicit simultaneous retirement. Match every token before releasing
+    /// any owner so another departing source is never restored temporarily.
+    public mutating func unbindBatch(_ tokens:[SensorSource:UUID],
+                                     send:(PerformanceGroupCommand)->Bool) -> [PerformanceGroupDelivery.Report] {
+        let sources = Set(tokens.compactMap { source,token in
+            bindings[source]?.token == token ? source : nil
+        })
+        let reports = reset(sources,send:send)
+        for source in sources { bindings.removeValue(forKey:source) }
         return reports
     }
 
