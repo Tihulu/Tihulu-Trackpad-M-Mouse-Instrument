@@ -118,6 +118,12 @@ public struct BoundedMIDIPlayback: Sendable {
         if state == .ready || state == .playing { retire(.stopped,send:send) }
     }
 
+    /// External sink/identity failure is terminal, even during silence.
+    /// Keep outstanding debt; never silently return a successful stop.
+    public mutating func abort(send: (SensorCommand) -> Bool) {
+        if state == .ready || state == .playing { retire(.faulted,send:send) }
+    }
+
     public mutating func retryCleanup(send: (SensorCommand) -> Bool) {
         guard state != .ready && state != .playing else { return }
         clean(send:send)
