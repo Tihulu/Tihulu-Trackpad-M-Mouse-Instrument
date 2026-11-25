@@ -146,13 +146,16 @@ private final class TouchBridge: @unchecked Sendable {
     ) {
         os_unfair_lock_lock(&lock)
         let callback = handler
-        let surface = device.flatMap { surfaceByDevice[UInt(bitPattern: $0)] } ?? .trackpad
+        let surface = device.flatMap { surfaceByDevice[UInt(bitPattern: $0)] }
         os_unfair_lock_unlock(&lock)
 
+        // Never attribute an unregistered callback to the Trackpad.
+        guard let surface, let callback else { return }
+        let decision = NativeTouchFramePolicy.decision(knownDevice:true,count:Int(count),hasData:data != nil)
         var contacts: [SurfaceContact] = []
-        if let data, count > 0 {
-            contacts.reserveCapacity(Int(count))
-            for index in 0..<Int(count) {
+        if case let .decode(contactCount) = decision, let data {
+            contacts.reserveCapacity(contactCount)
+            for index in 0..<contactCount {
                 // Canonical 96-byte MTTouch layout used by the existing upstream-derived path.
                 let record = data.advanced(by: index * 96)
                 let pathIndex = Int(record.load(fromByteOffset: 16, as: Int32.self))
@@ -170,7 +173,9 @@ private final class TouchBridge: @unchecked Sendable {
             }
         }
 
-        callback?(.init(
+        // Empty or malformed known-device envelopes release this surface
+        // instead of reading outside the bounded native contact array.
+        callback(.init(
             surface: surface,
             contacts: contacts,
             timestamp: timestamp,
