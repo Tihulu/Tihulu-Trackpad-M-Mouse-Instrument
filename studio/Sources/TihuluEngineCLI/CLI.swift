@@ -73,6 +73,22 @@ struct TihuluEngineCLI {
         let controls: [Control]
     }
 
+    struct TunedInput: Decodable {
+        let clip: MIDIClip
+        let root: Int
+        let degreeCents: String
+    }
+
+    struct GrooveInput: Decodable {
+        let clip: MIDIClip
+        let groove: GrooveSettings
+    }
+
+    struct VoiceInput: Decodable {
+        let sampleRate: Int
+        let samples: [Float]
+    }
+
     static func main() {
         do {
             let result = try run(Array(CommandLine.arguments.dropFirst()))
@@ -110,13 +126,26 @@ struct TihuluEngineCLI {
         }
     }
 
+    @discardableResult
+    static func requireClipEnvelope(_ data: Data, fields: Set<String>) throws -> [String:Any] {
+        guard let object = try JSONSerialization.jsonObject(with:data) as? [String:Any],
+              Set(object.keys) == fields,
+              let clip = object["clip"] as? [String:Any] else {
+            throw CLIError("Unsupported clip envelope")
+        }
+        try requireMIDIShape(JSONSerialization.data(withJSONObject:clip),
+            fields:["bpm","length","notes"],list:"notes",
+            rowFields:["start","duration","channel","pitch","velocity"])
+        return object
+    }
+
     static func run(_ args: [String]) throws -> [String: Any] {
         if args == ["help"] || args == ["--help"] || args.isEmpty {
             return [
                 "schema":1, "hardware":false,
                 "commands":["capabilities","patch example","patch validate FILE","patch routes FILE",
                     "groups example","groups validate FILE","groups ports FILE",
-                    "groups simulate PROFILE FRAMES [--allow-layering]", "scale plan ROOT CENTS", "haptics mix FILE", "midi encode FILE", "midi melody FILE", "midi drums FILE", "sustain simulate FILE", "helper simulate FILE"]
+                    "groups simulate PROFILE FRAMES [--allow-layering]", "scale plan ROOT CENTS", "haptics mix FILE", "midi encode FILE", "midi melody FILE", "midi drums FILE", "sustain simulate FILE", "helper simulate FILE", "midi tuned FILE", "midi groove FILE", "voice analyze FILE"]
             ]
         }
         if args == ["capabilities"] {
@@ -126,7 +155,7 @@ struct TihuluEngineCLI {
                 "maxRoutes":PerformanceGroupProfile.maximumRoutes,
                 "maxSessions":PerformanceGroupRouter.maxSessions,
                 "midiDelivery":"simulation only","mpePorts":"not implemented in CLI",
-                "scalePlanning":true,"hapticMixPreview":true,"standardMIDIFileExport":true,"sustainSimulation":true,"helperOwnershipSimulation":true]
+                "scalePlanning":true,"hapticMixPreview":true,"standardMIDIFileExport":true,"sustainSimulation":true,"helperOwnershipSimulation":true,"tunedMIDIFileExport":true,"grooveExport":true,"voiceAnalysisPreview":true]
         }
         if args.count == 4, args[0] == "scale", args[1] == "plan" {
             guard let root = Int(args[2]), (0...115).contains(root),
@@ -169,6 +198,62 @@ struct TihuluEngineCLI {
                 frame = NSNull()
             }
             return ["schema":1,"simulated":true,"hardware":false,"frame":frame]
+        }
+        if args.count == 3, args[0] == "midi", args[1] == "tuned" {
+            let data = try read(args[2])
+            try requireClipEnvelope(data,fields:["clip","root","degreeCents"])
+            let input = try JSONDecoder().decode(TunedInput.self,from:data)
+            guard let scale = CustomScale.fromDegreeCents(input.degreeCents,name:"CLI tuning"),
+                  !input.clip.notes.contains(where:{ $0.channel == 9 }) else {
+                throw CLIError("Invalid tuning or percussion channel in melodic MPE export")
+            }
+            let tuned = try TunedMIDIClip(input.clip,scale:scale,root:input.root)
+            let midi = tuned.encoded()
+            let members: [[String:Any]] = tuned.members.map {
+                ["channel":$0.channel+1,"bend":$0.bend]
+            }
+            return ["schema":1,"hardware":false,"encoding":"base64","format":"SMF0",
+                    "nominalPitchesOnly":false,"mpeRequired":true,"masterChannel":1,
+                    "bendRange":2,"members":members,"ppq":MIDIClip.ppq,
+                    "notes":tuned.clip.notes.count,"bytes":midi.count,"data":midi.base64EncodedString()]
+        }
+        if args.count == 3, args[0] == "midi", args[1] == "groove" {
+            let data = try read(args[2])
+            let envelope = try requireClipEnvelope(data,fields:["clip","groove"])
+            guard let groove = envelope["groove"] as? [String:Any],
+                  Set(groove.keys) == ["swing","humanize","intensity","accent","probability","seed"] else {
+                throw CLIError("Unsupported groove fields")
+            }
+            let input = try JSONDecoder().decode(GrooveInput.self,from:data)
+            let clip = try input.groove.apply(to:input.clip)
+            let midi = try MIDIClipWriter.encode(clip)
+            let symbolic = try JSONSerialization.jsonObject(with:JSONEncoder().encode(clip))
+            return ["schema":1,"hardware":false,"encoding":"base64","format":"SMF0",
+                    "nominalPitchesOnly":true,"ppq":MIDIClip.ppq,"clip":symbolic,
+                    "notes":clip.notes.count,"bytes":midi.count,"data":midi.base64EncodedString()]
+        }
+        if args.count == 3, args[0] == "voice", args[1] == "analyze" {
+            let data = try read(args[2])
+            guard let object = try JSONSerialization.jsonObject(with:data) as? [String:Any],
+                  Set(object.keys) == ["sampleRate","samples"] else {
+                throw CLIError("Unsupported voice analysis fields")
+            }
+            let input = try JSONDecoder().decode(VoiceInput.self,from:data)
+            guard input.sampleRate == Int(HapticVoiceAnalyzer.sampleRate),
+                  (400...80000).contains(input.samples.count),
+                  input.samples.allSatisfy({ $0.isFinite && (-1...1).contains($0) }) else {
+                throw CLIError("Expected 25 ms to 5 s of normalized mono PCM at 16000 Hz")
+            }
+            let frames = try HapticVoiceAnalyzer.analyze(input.samples,cancellation:.init())
+            guard frames.allSatisfy({ $0.formants.count == 3 && $0.amplitudes.count == 3 &&
+                $0.formants.allSatisfy(\.isFinite) && $0.amplitudes.allSatisfy(\.isFinite) &&
+                $0.level.isFinite && $0.fundamentalHz.isFinite }) else {
+                throw CLIError("Nonfinite voice analysis result")
+            }
+            let events = HapticVoiceAnalyzer.hapticEvents(frames:frames)
+            let result = try JSONSerialization.jsonObject(with:JSONEncoder().encode(events))
+            return ["schema":1,"hardware":false,"analysisOnly":true,"sampleRate":input.sampleRate,
+                    "hopSeconds":HapticVoiceAnalyzer.hopSeconds,"frames":frames.count,"events":result]
         }
         if args.count == 3, args[0] == "midi" {
             let data = try read(args[2])
