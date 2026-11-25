@@ -210,6 +210,30 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
         XCTAssertFalse(mailbox.accepts(batch,now:2.04))
     }
 
+    func testPhysicalMailboxRejectsClockBeforeLatestEdge() {
+        var mailbox = CapturePhysicalMailbox()
+        _ = mailbox.append(.click(true,0.5),now:10)
+        _ = mailbox.append(.click(false,0),now:10.04)
+        let batch = mailbox.drain(now:10.05)
+        XCTAssertFalse(mailbox.accepts(batch,now:10.01))
+        XCTAssertTrue(mailbox.accepts(batch,now:10.05))
+        XCTAssertFalse(mailbox.accepts(batch,now:10.11))
+    }
+
+    func testPhysicalMailboxNewDrainRetiresPreviousBatch() {
+        var mailbox = CapturePhysicalMailbox()
+        _ = mailbox.append(.click(true,0.5),now:11)
+        let first = mailbox.drain(now:11.01)
+        XCTAssertTrue(mailbox.accepts(first,now:11.02))
+        _ = mailbox.append(.click(false,0),now:11.03)
+        let second = mailbox.drain(now:11.04)
+        XCTAssertFalse(mailbox.accepts(first,now:11.05))
+        XCTAssertTrue(mailbox.accepts(second,now:11.05))
+        let empty = mailbox.drain(now:11.06)
+        XCTAssertFalse(mailbox.accepts(second,now:11.07))
+        XCTAssertFalse(mailbox.accepts(empty,now:11.07))
+    }
+
     func testPhysicalMailboxInvalidAndReversedReceiptFailOpen() {
         var mailbox = CapturePhysicalMailbox()
         _ = mailbox.append(.click(true,0.5),now:3)

@@ -204,6 +204,9 @@ struct CapturePhysicalMailbox {
             oldestReceipt.map({ now-$0 >= Self.maximumAge }) == true {
             _ = invalidate()
         }
+        // Each drain retires the previous delivered batch, even without an
+        // overflow or timeout. A delayed consumer cannot replay old edges.
+        epoch &+= 1
         let batch = CapturePhysicalInputBatch(events:events,receipts:receipts,invalidated:invalidated,epoch:epoch,oldestReceipt:oldestReceipt)
         events.removeAll(keepingCapacity:true)
         receipts.removeAll(keepingCapacity:true)
@@ -214,8 +217,10 @@ struct CapturePhysicalMailbox {
     }
     func accepts(_ batch:CapturePhysicalInputBatch,now:Double) -> Bool {
         guard !invalidated,!batch.invalidated,batch.epoch == epoch,now.isFinite,now >= 0,
-              let receipt = batch.oldestReceipt else { return false }
-        return now >= receipt && now-receipt < Self.maximumAge
+              let receipt = batch.oldestReceipt,let latest = batch.receipts.last,
+              batch.events.count == batch.receipts.count else { return false }
+        // Reject clocks before the most recent edge, not just the first.
+        return now >= latest && now >= receipt && now-receipt < Self.maximumAge
     }
 }
 
