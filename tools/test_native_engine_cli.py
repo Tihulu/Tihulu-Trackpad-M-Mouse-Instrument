@@ -1,6 +1,9 @@
 """Black-box native CLI boundary: no live sends or permission requests."""
 import json
 import platform
+import selectors
+import signal
+import time
 import subprocess
 import sys
 
@@ -23,13 +26,42 @@ assert help_doc["schema"] == 1
 assert help_doc["product"] == "tihulu-mac-instrument-native"
 assert help_doc["platformSupported"] == mac
 assert help_doc["liveOutput"] is False and help_doc["permissionRequests"] is False
-assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]", "gamepad sample --confirm", "midi monitor NAME SECONDS --confirm"}
+assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]", "gamepad sample --confirm", "midi monitor NAME SECONDS --confirm", "session probe SECONDS --confirm"}
 for command in [("start",), ("midi", "send"), ("preflight", "--request-permissions"),
                 ("midi", "endpoints", "--names", "--send"), ("--unknown",),
                 ("midi", "monitor", "test", "1"), ("midi", "monitor", "test", "0", "--confirm"),
                 ("midi", "monitor", "test", "11", "--confirm"), ("midi", "monitor", "test", "01", "--confirm"),
                 ("midi", "monitor", "test", "1", "--confirm", "--names"), ("preflight", "--names"), ("gamepad", "devices", "--bind"), ("gamepad", "devices", "--names", "--names"), ("gamepad", "sample"), ("gamepad", "sample", "--confirm", "--names"), ("gamepad", "sample", "--confirm", "--confirm")]:
     invoke(*command, success=False)
+
+for command in [("session", "probe", "1"), ("session", "probe", "0", "--confirm"),
+                ("session", "probe", "11", "--confirm"), ("session", "probe", "01", "--confirm"),
+                ("session", "probe", "1", "--confirm", "--names")]:
+    invoke(*command, success=False)
+probe = invoke("session", "probe", "1", "--confirm")
+assert probe["command"] == "session probe" and probe["liveOutput"] is False
+assert probe["result"] == {"requestedSeconds": 1, "completed": True, "hardware": False}
+
+# Actual process signals on both platforms, after explicit readiness.
+# Never start a physical device or send MIDI in this test.
+for signum in (signal.SIGINT, signal.SIGTERM):
+    with subprocess.Popen([binary, "session", "probe", "10", "--confirm"],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stderr, selectors.EVENT_READ)
+                assert selector.select(timeout=5), "Probe did not become ready"
+                assert process.stderr.readline().strip() == "session probe ready"
+            started = time.monotonic()
+            process.send_signal(signum)
+            stdout, stderr = process.communicate(timeout=5)
+            assert process.returncode == 2 and not stdout, (process.returncode, stdout, stderr)
+            assert "Session cancelled; no success report." in stderr, stderr
+            assert time.monotonic() - started < 5
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
 
 if mac:
     # Unique missing source must fail without attaching any input port.

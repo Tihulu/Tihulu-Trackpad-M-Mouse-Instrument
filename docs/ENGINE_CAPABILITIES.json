@@ -245,7 +245,9 @@
         "studio/Sources/TihuluNativeCLI/NativeCLI.swift",
         "studio/Sources/NoSpeakerMac/NativeMIDIMonitor.swift",
         "studio/Sources/NoSpeakerCore/BoundedMIDIObservation.swift",
-        "studio/Sources/NoSpeakerMac/BuilderGamepadSource.swift"
+        "studio/Sources/NoSpeakerMac/BuilderGamepadSource.swift",
+        "studio/Sources/NoSpeakerProcessSignals/ProcessStop.c",
+        "studio/Sources/NoSpeakerProcessSignals/include/ProcessStop.h"
       ],
       "cli": [
         "capabilities",
@@ -253,9 +255,10 @@
         "midi endpoints [--names]",
         "gamepad devices [--names]",
         "gamepad sample --confirm",
-        "midi monitor NAME SECONDS --confirm"
+        "midi monitor NAME SECONDS --confirm",
+        "session probe SECONDS --confirm"
       ],
-      "status": "read-only inventory, explicitly confirmed normalized controller snapshots and bounded aggregate MIDI receive observation; no live output or automatic hardware activation"
+      "status": "read-only inventory, explicitly confirmed normalized controller snapshots and bounded aggregate MIDI receive observation; no live output or automatic hardware activation; foreground SIGINT/SIGTERM cancellation and portable no-hardware session probe"
     },
     {
       "id": "native-nominal-playback",

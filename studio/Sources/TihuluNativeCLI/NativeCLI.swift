@@ -1,4 +1,5 @@
 import Foundation
+import NoSpeakerProcessSignals
 #if os(macOS)
 import NoSpeakerMac
 import Darwin
@@ -19,7 +20,7 @@ struct TihuluNativeCLI {
         let platformSupported:Bool
         let liveOutput = false
         let permissionRequests = false
-        let commands = ["capabilities","preflight","midi endpoints [--names]","gamepad devices [--names]","gamepad sample --confirm","midi monitor NAME SECONDS --confirm"]
+        let commands = ["capabilities","preflight","midi endpoints [--names]","gamepad devices [--names]","gamepad sample --confirm","midi monitor NAME SECONDS --confirm","session probe SECONDS --confirm"]
     }
     struct Envelope<Payload:Encodable>: Encodable {
         let schema = 1
@@ -34,6 +35,40 @@ struct TihuluNativeCLI {
         FileHandle.standardOutput.write(Data([10]))
     }
 
+    struct SessionProbe:Encodable,Sendable {
+        let requestedSeconds:Int
+        let completed:Bool
+        let hardware = false
+    }
+
+    /// One foreground session per process. Only the C bridge runs inside
+    /// the signal handler; Swift cancellation and cleanup run normally.
+    @MainActor
+    static func withProcessStop<T:Sendable>(_ operation:@escaping @MainActor @Sendable () async throws -> T) async throws -> T {
+        guard tihulu_stop_install()==0 else { throw CLIError("Could not install process stop handlers.") }
+        defer { tihulu_stop_restore() }
+        return try await withThrowingTaskGroup(of:T.self) { group in
+            group.addTask {
+                try Task.checkCancellation()
+                guard tihulu_stop_requested()==0 else { throw CancellationError() }
+                return try await operation()
+            }
+            group.addTask {
+                while true {
+                    try Task.checkCancellation()
+                    if tihulu_stop_requested() != 0 { throw CancellationError() }
+                    try await Task.sleep(nanoseconds:10_000_000)
+                }
+            }
+            // Leaving the group waits for the cancelled operation's cleanup.
+            defer { group.cancelAll() }
+            guard let result=try await group.next(),tihulu_stop_requested()==0 else {
+                throw CancellationError()
+            }
+            return result
+        }
+    }
+
     @MainActor
     static func main() async {
         do {
@@ -46,6 +81,21 @@ struct TihuluNativeCLI {
                 #endif
                 return
             }
+            if args.count>=2 && Array(args.prefix(2)) == ["session","probe"] {
+                guard args.count==4,args[3]=="--confirm",let seconds=Int(args[2]),
+                      String(seconds)==args[2],(1...10).contains(seconds) else {
+                    throw CLIError("Use session probe SECONDS --confirm (1-10 seconds).")
+                }
+                let result=try await withProcessStop {
+                    // Readiness is diagnostic stderr only. JSON is emitted
+                    // after successful completion, never on cancellation.
+                    FileHandle.standardError.write(Data("session probe ready\n".utf8))
+                    try await Task.sleep(nanoseconds:UInt64(seconds)*1_000_000_000)
+                    return SessionProbe(requestedSeconds:seconds,completed:true)
+                }
+                try emit(Envelope(command:"session probe",result:result))
+                return
+            }
             if args.count>=2 && Array(args.prefix(2)) == ["midi","monitor"] {
                 guard args.count==5,args[4]=="--confirm",let seconds=Int(args[3]),
                       String(seconds)==args[3],(1...10).contains(seconds),
@@ -54,7 +104,9 @@ struct TihuluNativeCLI {
                     throw CLIError("Use midi monitor NAME SECONDS --confirm (1-10 seconds).")
                 }
                 #if os(macOS)
-                let result=try await NativeMIDIMonitor.observe(sourceName:args[2],seconds:seconds)
+                let result=try await withProcessStop {
+                    try await NativeMIDIMonitor.observe(sourceName:args[2],seconds:seconds)
+                }
                 try emit(Envelope(command:"midi monitor",result:result))
                 #else
                 throw CLIError("Native inspection requires macOS.")
@@ -86,7 +138,8 @@ struct TihuluNativeCLI {
             throw CLIError("Native inspection requires macOS. Use the offline engine for portable analysis.")
             #endif
         } catch {
-            let description=(error as? LocalizedError)?.errorDescription ?? String(describing:error)
+            let description=error is CancellationError ? "Session cancelled; no success report." :
+                ((error as? LocalizedError)?.errorDescription ?? String(describing:error))
             FileHandle.standardError.write(Data(("tihulu-mac-instrument-native: " + description + "\n").utf8))
             exit(2)
         }
