@@ -246,6 +246,18 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
     }
 }
 
+/// Aggregate counters only; no touch identifiers, coordinates or recordings.
+public struct TouchHapticMetrics: Sendable {
+    public fileprivate(set) var trackpadRawMax = 0
+    public fileprivate(set) var mouseRawMax = 0
+    public fileprivate(set) var trackpadTriggeredMax = 0
+    public fileprivate(set) var mouseTriggeredMax = 0
+    public fileprivate(set) var acceptedDrumStrikes = 0
+    public fileprivate(set) var drainedDrumStrikes = 0
+    public fileprivate(set) var motorSubmissions = 0
+    public fileprivate(set) var motorErrors = 0
+}
+
 public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
     public var id: String { "\(surface.rawValue)-\(contactID)" }
     public var contactID: Int
@@ -321,13 +333,24 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var sustainedHapticStates = HapticSustainVoices<TouchPerformanceState>()
     private var sustainActive = false
     private var drumStrikes = DrumHapticStrikeBuffer()
+    private var hapticMetrics = TouchHapticMetrics()
+
+    public func hapticDiagnosticSnapshot() -> TouchHapticMetrics {
+        lock.lock(); defer { lock.unlock() }
+        return hapticMetrics
+    }
+
+    public func resetHapticDiagnostics() {
+        lock.lock(); defer { lock.unlock() }
+        hapticMetrics = TouchHapticMetrics()
+    }
     // Grid strikes survive sample-publication invalidation, but never a
     // structural layout change or an explicit performance stop.
     private var gridDrumNotes: [TouchSurfaceKind: [Int: Int]] = [:]
     private var chordSlots: [TouchSurfaceKind: [Int: Int]] = [:]
     private var pendingMelodicAttacks = HapticAttackBuffer<[TouchPerformanceState]>()
     // Accessed only on the serial render queue.
-    private var drumPriorityUntil = 0.0
+    private var mixedHapticPlan = TouchHapticRenderPlan()
     private var drumRenderToken: UUID?
     private var drumRenderRevision: UInt64?
     private var renderTimer: DispatchSourceTimer?
@@ -447,6 +470,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private func invalidateSamplesLocked() {
         sampleRevision &+= 1
         pendingMelodicAttacks.removeAll()
+        drumStrikes.discardPending()
         latestStatesBySurface.removeAll()
         lastFrameBySurface.removeAll()
     }
@@ -674,6 +698,15 @@ public final class TouchInstrumentService: @unchecked Sendable {
             return
         }
         let liveConfig = configuration
+        let rawCount = frame.contacts.reduce(0) { $0 + ($1.isDown ? 1 : 0) }
+        let triggeredCount = states.reduce(0) { $0 + ($1.isDown ? 1 : 0) }
+        if frame.surface == .trackpad {
+            hapticMetrics.trackpadRawMax = max(hapticMetrics.trackpadRawMax,rawCount)
+            hapticMetrics.trackpadTriggeredMax = max(hapticMetrics.trackpadTriggeredMax,triggeredCount)
+        } else {
+            hapticMetrics.mouseRawMax = max(hapticMetrics.mouseRawMax,rawCount)
+            hapticMetrics.mouseTriggeredMax = max(hapticMetrics.mouseTriggeredMax,triggeredCount)
+        }
         let previousIDs = Set(liveHapticStates.map(\.id))
         liveHapticStates = combined.filter { $0.isDown }
         if liveConfig.localHapticSound {
@@ -690,11 +723,12 @@ public final class TouchInstrumentService: @unchecked Sendable {
             liveConfig.output(for: $0.surface).sendsHaptics &&
             liveConfig.instrument(for: $0.surface) == .drums
         }
-        drumStrikes.receive(contacts:drums.map(\.id),now:ProcessInfo.processInfo.systemUptime) { id in
+        let accepted = drumStrikes.receive(contacts:drums.map(\.id),now:ProcessInfo.processInfo.systemUptime) { id in
             guard let state = drums.first(where:{ $0.id == id }) else { return nil }
             return HapticPatternRenderer.drumFrame(
                 midiNote:state.quantizedMIDI,velocity:Double(state.velocity)/127)
         }
+        hapticMetrics.acceptedDrumStrikes &+= accepted
         if sustainActive {
             for state in liveHapticStates where liveConfig.output(for: state.surface).sendsHaptics && liveConfig.instrument(for: state.surface) != .drums {
                 sustainedHapticStates.remember(id:state.id,value:state)
@@ -718,12 +752,11 @@ public final class TouchInstrumentService: @unchecked Sendable {
             // one bounded local pulse. Current contact state always wins.
             let now = ProcessInfo.processInfo.systemUptime
             let hits = drumStrikes.drain(now:now)
+            hapticMetrics.drainedDrumStrikes &+= hits.count
             var current = liveHapticStates
-            if hits.isEmpty {
-                var liveIDs = Set(current.map(\.id))
-                for attacks in pendingMelodicAttacks.drain(now:now) {
-                    current += attacks.filter { liveIDs.insert($0.id).inserted }
-                }
+            var liveIDs = Set(current.map(\.id))
+            for attacks in pendingMelodicAttacks.drain(now:now) {
+                current += attacks.filter { liveIDs.insert($0.id).inserted }
             }
             snapshot = (configuration, current, sustainedHapticStates,
                         sustainActive, hits, renderRevision)
@@ -732,30 +765,17 @@ public final class TouchInstrumentService: @unchecked Sendable {
         if drumRenderToken != token || drumRenderRevision != revision {
             drumRenderToken = token
             drumRenderRevision = revision
-            drumPriorityUntil = 0
+            mixedHapticPlan.reset()
         }
 
         let now = ProcessInfo.processInfo.systemUptime
-        if let hit = DrumHapticMixer.mix(hits) {
-            // One physical waveform per tick: do not let the last finger
-            // overwrite the other strikes in the same actuator interval.
-            guard submitFrame(hit, level: config.masterLevel, token: token, revision:revision) else { return }
-            drumPriorityUntil = now + hit.durationMS / 1000
-            return
-        }
-        // The motor is shared; give a one-shot drum its nominal duration
-        // before refreshing a continuous melodic voice.
-        guard now >= drumPriorityUntil else { return }
-
-        let sounding = sustained.sounding(
+         let sounding = sustained.sounding(
             live:current.map { (id:$0.id,value:$0) },
             includeSustained:isSustained
         ) { state in
             config.output(for:state.surface).sendsHaptics &&
             config.instrument(for:state.surface) != .drums
         }
-        guard !sounding.isEmpty else { return }
-
         var tones: [HapticTone] = []
         var chordFrequencies = Set<Double>()
         var level = 0.0
@@ -792,12 +812,11 @@ public final class TouchInstrumentService: @unchecked Sendable {
             level = max(level, Double(state.velocity) / 127)
         }
 
-        guard !tones.isEmpty else { return }
-        submitFrame(.init(
-            tones: tones,
-            durationMS: 28,
-            level: min(1, max(0.15, level) * config.masterLevel)
-        ), level: 1, token: token, revision:revision)
+        let melody: HapticFrame? = tones.isEmpty ? nil : .init(
+            tones: tones,durationMS:28,level:min(1,max(0.15,level)))
+        if let frame = mixedHapticPlan.next(hits:hits,melody:melody,now:now) {
+            submitFrame(frame,level:config.masterLevel,token:token,revision:revision)
+        }
     }
 
     @discardableResult
@@ -811,7 +830,14 @@ public final class TouchInstrumentService: @unchecked Sendable {
             do {
                 try driver.play(frame, masterLevel: level)
                 submitted = true
-            } catch { return }
+                lock.lock()
+                hapticMetrics.motorSubmissions &+= 1
+                lock.unlock()
+            } catch {
+                lock.lock()
+                hapticMetrics.motorErrors &+= 1
+                lock.unlock()
+            }
         }
         return submitted
     }
