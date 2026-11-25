@@ -33,6 +33,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     private let mapped: [SensorSource:Set<SensorSignal>]
     private let smoothed: Set<SensorSource>
     private var bindings: [SensorSource:Binding] = [:]
+    private var cameraTracking = AirTrackingGate()
     private var clock = 0.0
     public enum SourceState: String, Equatable, Sendable {
         case waitingForNeutral, armed, leased
@@ -54,10 +55,26 @@ public struct PerformanceGroupGamepadSession: Sendable {
 
     /// Existing gamepad callers remain gamepad-only by default. Explicit
     /// local mode also accepts primary-contact Trackpad and Magic Mouse.
-    public static func supports(_ profile:PerformanceGroupProfile, allowSurfaces:Bool = false, allowScalars:Bool = false) -> Bool {
+    /// Live groups must not silently send MIDI setup selectors or reset
+    /// receiver gain to the legacy full-scale default. Archive and existing
+    /// Builder behavior remain unchanged.
+    public static func permitsLiveControl(_ route:SensorMapping) -> Bool {
+        guard route.destination.kind == .controlChange else { return true }
+        let number = route.destination.number
+        guard ![0,6,32,38,96,97,98,99,100,101].contains(number) else { return false }
+        return ![7,11].contains(number) || route.response?.release != nil
+    }
+
+    public static func supports(_ profile:PerformanceGroupProfile, allowSurfaces:Bool = false,
+                                allowScalars:Bool = false, allowCamera:Bool = false) -> Bool {
         let routes = profile.groups.flatMap { $0.patch.routes }
         return profile.isValid && !routes.isEmpty && routes.allSatisfy {
+            guard permitsLiveControl($0) else { return false }
             if GamepadFrame.sources.contains($0.source) { return GamepadFrame.permits($0) }
+            if allowCamera, $0.source == .camera {
+                return [.x,.y,.gesture].contains($0.signal) &&
+                    ContinuousResponse.isContinuous($0.destination)
+            }
             if allowScalars, ($0.source == .lid && $0.signal == .angle) || ($0.source == .touchBar && $0.signal == .x) {
                 return $0.destination.kind == .controlChange || $0.destination.kind == .pitchBend
             }
@@ -67,8 +84,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
     }
 
     public init(profile: PerformanceGroupProfile, allowLayering: Bool = false,
-                allowSurfaces: Bool = false, allowScalars: Bool = false) throws {
-        guard Self.supports(profile,allowSurfaces:allowSurfaces,allowScalars:allowScalars) else {
+                allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false) throws {
+        guard Self.supports(profile,allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera) else {
             throw AdmissionError.unsupportedProfile
         }
         let routes = profile.groups.flatMap { $0.patch.routes }
@@ -286,6 +303,71 @@ public struct PerformanceGroupGamepadSession: Sendable {
         return .init(status:.delivered,reports:reports)
     }
 
+    /// Single reliable hand, continuous controls only. Two consecutive
+    /// fresh samples acquire tracking; loss clears camera ownership without
+    /// affecting a different input. No images or camera access in this core.
+    public mutating func receiveCamera(token:UUID, hand:AirHandSample?,
+                                       hostTime:Double, now:Double,
+                                       send:(PerformanceGroupCommand) -> Bool) -> Result {
+        let source = SensorSource.camera
+        guard !retired, bindings[source]?.token == token else {
+            return .init(status:.ignored,reports:[])
+        }
+        guard now.isFinite, now >= clock else {
+            return .init(status:.lost,reports:reset(Set(bindings.keys),send:send))
+        }
+        clock = now
+        var reports = reset(staleSources(now:now),send:send)
+        guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
+        guard hostTime.isFinite, hostTime >= 0, hostTime <= now, now-hostTime < Self.timeout,
+              binding.lastSurfaceReceipt.map({ hostTime > $0 }) ?? true else {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        binding.lastSurfaceReceipt = hostTime
+        bindings[source] = binding
+        guard let hand else {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        guard let accepted = cameraTracking.accept(hand,at:hostTime,now:now) else {
+            // First reliable frame is acquisition, not loss. Do not reset
+            // the tracking gate here or acquisition could never complete.
+            if let lease = binding.lease {
+                reports.append(delivery.disconnect(lease,send:send))
+                binding.reset()
+            }
+            binding.lastSeen = hostTime
+            bindings[source] = binding
+            return .init(status:.waitingForNeutral,reports:reports)
+        }
+        if let lease = binding.lease, !delivery.hasLease(lease) { binding.reset() }
+        binding.armed = true
+        binding.lastSeen = hostTime
+        if binding.lease == nil {
+            do { binding.lease = try delivery.connect(source,now:now) }
+            catch {
+                reports += reset([source],send:send)
+                return .init(status:.admissionRejected,reports:reports)
+            }
+        }
+        let stride = UInt64(SensorSignal.allCases.count+1)
+        guard let lease = binding.lease, binding.sequence < (UInt64.max-stride)/stride else {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        binding.sequence += 1
+        bindings[source] = binding
+        let values: [SensorSignal:Double] = [.x:accepted.x,.y:accepted.y,.gesture:accepted.aperture]
+        reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,
+            values:values.filter { mapped[source]?.contains($0.key) == true },send:send))
+        if !delivery.hasLease(lease) {
+            bindings[source]?.reset()
+            cameraTracking.reset()
+        }
+        return .init(status:.delivered,reports:reports)
+    }
+
     /// Host must call at the existing watchdog cadence. No change to the
     /// physical deadline, and no timeout renewal by unrelated controllers.
     public mutating func expire(now: Double, send: (PerformanceGroupCommand) -> Bool) -> [PerformanceGroupDelivery.Report] {
@@ -310,6 +392,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     }
     public mutating func panic(send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
         bindings.removeAll()
+        cameraTracking.reset()
         return delivery.panic(send:send)
     }
     public mutating func retryCleanup(_ id: UUID, send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
@@ -325,6 +408,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
 
     private mutating func reset(_ sources: Set<SensorSource>,
                                 send: (PerformanceGroupCommand) -> Bool) -> [PerformanceGroupDelivery.Report] {
+        if sources.contains(.camera) { cameraTracking.reset() }
         var leases: Set<UUID> = []
         for source in sources {
             guard var binding = bindings[source] else { continue }
