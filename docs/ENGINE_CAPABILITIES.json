@@ -256,6 +256,19 @@
         "midi monitor NAME SECONDS --confirm"
       ],
       "status": "read-only inventory, explicitly confirmed normalized controller snapshots and bounded aggregate MIDI receive observation; no live output or automatic hardware activation"
+    },
+    {
+      "id": "native-nominal-playback",
+      "api": [
+        "NativeMIDIPlayback",
+        "BoundedMIDIPlayback"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerMac/NativeMIDIPlayback.swift",
+        "studio/Sources/NoSpeakerCore/BoundedMIDIPlayback.swift"
+      ],
+      "cli": [],
+      "status": "experimental explicitly opened one-shot native virtual source library; no native CLI output command, physical destination selection or DAW confirmation"
     }
   ],
   "constraints": {
