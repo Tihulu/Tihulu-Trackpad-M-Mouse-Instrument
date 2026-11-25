@@ -8,8 +8,9 @@ public struct LegacySustainOwners: Sendable {
     public var active: Set<Int> { owners.values.reduce(into:Set<Int>()) { $0.formUnion($1) } }
 
     public mutating func replace(_ owner: Owner, channels: Set<Int>) -> [SensorCommand] {
-        let before = active
         let valid = channels.filter { (0...15).contains($0) }
+        guard self.channels(for:owner) != valid else { return [] }
+        let before = active
         if valid.isEmpty { owners.removeValue(forKey:owner) }
         else { owners[owner] = valid }
         let after = active
