@@ -29,11 +29,15 @@ struct TihuluNativeCLI {
         let command:String
         let result:Payload
     }
-    static func emit<T:Encodable>(_ payload:T) throws {
+    static func encodedReport<T:Encodable>(_ payload:T) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
-        FileHandle.standardOutput.write(try encoder.encode(payload))
-        FileHandle.standardOutput.write(Data([10]))
+        var bytes=try encoder.encode(payload)
+        bytes.append(10)
+        return bytes
+    }
+    static func emit<T:Encodable>(_ payload:T) throws {
+        try FileHandle.standardOutput.write(contentsOf:encodedReport(payload))
     }
 
     struct PlaybackPlan:Encodable {
@@ -84,9 +88,14 @@ struct TihuluNativeCLI {
     /// One foreground session per process. Only the C bridge runs inside
     /// the signal handler; Swift cancellation and cleanup run normally.
     @MainActor
-    static func withProcessStop<T:Sendable>(_ operation:@escaping @MainActor @Sendable () async throws -> T) async throws -> T {
+    static func withProcessStop<T:Encodable & Sendable>(command:String,
+        _ operation:@escaping @MainActor @Sendable () async throws -> T) async throws {
         guard tihulu_stop_install()==0 else { throw CLIError("Could not install process stop handlers.") }
-        defer { tihulu_stop_restore() }
+        var committed=false
+        // After commitment this one-shot CLI exits. Keep the handler in
+        // place until process exit rather than reintroducing a race with
+        // SIGINT/SIGTERM during the final stdout write.
+        defer { if !committed { tihulu_stop_restore() } }
         let outcome:Result<T,any Error> = await withTaskGroup(of:StopEvent<T>.self) { group in
             group.addTask {
                 do {
@@ -115,8 +124,10 @@ struct TihuluNativeCLI {
         let value=try outcome.get()
         // Recheck after both children have exited, not before their cleanup.
         try Task.checkCancellation()
-        guard tihulu_stop_requested()==0 else { throw CancellationError() }
-        return value
+        let report=try encodedReport(Envelope(command:command,result:value))
+        guard tihulu_stop_commit()==1 else { throw CancellationError() }
+        committed=true
+        try FileHandle.standardOutput.write(contentsOf:report)
     }
 
     @MainActor
@@ -146,7 +157,7 @@ struct TihuluNativeCLI {
                       String(seconds)==args[2],(1...10).contains(seconds) else {
                     throw CLIError("Use session probe SECONDS --confirm (1-10 seconds).")
                 }
-                let result=try await withProcessStop {
+                try await withProcessStop(command:"session probe") {
                     // Readiness is diagnostic stderr only. JSON is emitted
                     // after successful completion, never on cancellation.
                     FileHandle.standardError.write(Data("session probe ready\n".utf8))
@@ -154,7 +165,6 @@ struct TihuluNativeCLI {
                     try await Task.sleep(nanoseconds:UInt64(seconds)*1_000_000_000)
                     return SessionProbe(requestedSeconds:seconds,completed:true)
                 }
-                try emit(Envelope(command:"session probe",result:result))
                 return
             }
             if args.count>=2 && Array(args.prefix(2)) == ["midi","monitor"] {
@@ -165,10 +175,9 @@ struct TihuluNativeCLI {
                     throw CLIError("Use midi monitor NAME SECONDS --confirm (1-10 seconds).")
                 }
                 #if os(macOS)
-                let result=try await withProcessStop {
+                try await withProcessStop(command:"midi monitor") {
                     try await NativeMIDIMonitor.observe(sourceName:args[2],seconds:seconds)
                 }
-                try emit(Envelope(command:"midi monitor",result:result))
                 #else
                 throw CLIError("Native inspection requires macOS.")
                 #endif

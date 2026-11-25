@@ -76,7 +76,7 @@ assert probe["result"] == {"requestedSeconds": 1, "completed": True, "hardware":
 
 # Actual process signals on both platforms, after explicit readiness.
 # Never start a physical device or send MIDI in this test.
-for signum in (signal.SIGINT, signal.SIGTERM):
+for signum in (signal.SIGINT, signal.SIGTERM) * 3:
     with subprocess.Popen([binary, "session", "probe", "10", "--confirm"],
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
         try:

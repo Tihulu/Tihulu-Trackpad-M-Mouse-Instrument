@@ -8,13 +8,17 @@
 #if ATOMIC_INT_LOCK_FREE != 2
 #error "Process stop requires an always-lock-free atomic int"
 #endif
+/* 0: running, 1: stop requested, 2: terminal report committed.
+ * The CAS arbitrates the last signal against the success report. */
 static atomic_int requested;
 static struct sigaction old_int, old_term;
 static int installed;
 
 static void stop_handler(int sig) {
     (void)sig;
-    atomic_store_explicit(&requested, 1, memory_order_relaxed);
+    int expected = 0;
+    (void)atomic_compare_exchange_strong_explicit(&requested, &expected, 1,
+                                                 memory_order_relaxed, memory_order_relaxed);
 }
 
 int tihulu_stop_install(void) {
@@ -35,7 +39,14 @@ int tihulu_stop_install(void) {
 }
 
 int tihulu_stop_requested(void) {
-    return atomic_load_explicit(&requested, memory_order_relaxed);
+    return atomic_load_explicit(&requested, memory_order_relaxed) == 1;
+}
+
+int tihulu_stop_commit(void) {
+    int expected = 0;
+    if (!installed) return 0;
+    return atomic_compare_exchange_strong_explicit(&requested, &expected, 2,
+                                                   memory_order_relaxed, memory_order_relaxed);
 }
 
 void tihulu_stop_restore(void) {
