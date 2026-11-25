@@ -66,6 +66,12 @@ jobs:
         env:
           TIHULU_NATIVE_OBSERVER_FIXTURE: "1"
         run: swift test --filter nativeObserverReceivesIsolatedFixtureAndClosesItsPort
+      - name: Isolated native MIDI playback fixtures
+        env:
+          TIHULU_NATIVE_OBSERVER_FIXTURE: "1"
+        run: |
+          swift test --filter nativePlaybackUsesIsolatedSourceAndClosesIt
+          swift test --filter nativePlaybackStopBeforeRunEmitsNothing
       - name: Build Studio
         run: swift build
       - name: Verify standalone engine CLI and repository index
