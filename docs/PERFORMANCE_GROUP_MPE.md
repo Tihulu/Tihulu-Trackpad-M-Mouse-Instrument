@@ -48,3 +48,9 @@ Added two activation regression functions for missing confirmation, stale mappin
 3. Stop with sustained/releasing notes; verify explicit close before retune or standard restart. Reset/reload receiving instruments as required. Failed Note Off or selector cleanup must keep original port and refuse close until retry succeeds.
 4. Test camera permission and controller disconnect, stale/changed profile, stale confirmation, active editor lock and DAW preview accuracy after view departure/reopen. Verify normal Builder and legacy Standard MIDI behavior after clean close.
 5. Verify app identity and stable settings unchanged; report native build and physical test results separately. Dynamic channel allocation, mobile groups, haptics and measured latency remain open.
+
+### Unapplied text and experimental compile verification
+
+The tuning editor now shares a single PerformanceGroupTuningDraft with the parent Start controls. Ordinary group selection, import, export, removing tuning and either Start mode cannot silently discard unapplied text. Apply validates a replacement transactionally; invalid input leaves both the prior configuration and the user's text intact. Explicit discard restores the applied text; reset requires confirmation. Standard Start remains a deliberate separate mode, not an MPE fallback. Two core regression functions cover draft selection, invalid apply, discard and stale mappings.
+
+The candidate PR CI now compiles the experimental TIHULU_GROUP_MPE_LIVE path in a separate temporary scratch directory on macOS. This supersedes the earlier statement that CI never defines the flag: only this compile-only step on the group-gamepad draft branch defines it. The ordinary build, installer, packaging, release and runtime defaults remain unchanged. No experimental binary is executed or uploaded by this step. Native and physical acceptance remain separate; compilation is not authorization to activate MPE.
