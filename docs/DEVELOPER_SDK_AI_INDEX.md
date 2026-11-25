@@ -251,3 +251,5 @@ The native CLI black-box suite also compiles the exact C bridge with warnings-as
 
 ### Prepared native playback session
 `NativeMIDIPlayback(prepared:)` accepts a fresh bounded schedule without parsing or sorting it again. After explicit `open()`, `runAndClose()` joins playback, retries only owned debt once and disposes the original virtual source only after local cleanup is confirmed. The returned closed-session report distinguishes playback state and disposal; a faulted playback is not successful musical completion even if disposal succeeds. A caller must retain the instance for recovery if any stage throws. This library API does not enable a CLI output command or prove receiver silence.
+
+The closed-session report additionally exposes `completed` (finished and not cancelled), independent from `sourceDisposed`. Disposable macOS CI verifies the actual virtual receiver's note-on/off bytes and gate interval for the prepared session; this is not physical DAW confirmation.

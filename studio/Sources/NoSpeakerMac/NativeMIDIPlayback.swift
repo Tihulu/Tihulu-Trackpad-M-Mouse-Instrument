@@ -32,6 +32,7 @@ public final class NativeMIDIPlayback {
     /// The successful close report is distinct from receiver confirmation.
     public struct ClosedSessionReport: Encodable, Sendable {
         public let playback:Report
+        public let completed:Bool
         public let sourceDisposed:Bool
         public let recoveryRequired:Bool
     }
@@ -184,7 +185,8 @@ public final class NativeMIDIPlayback {
             throw Failure.cleanupPending
         }
         try close()
-        return .init(playback:final,sourceDisposed:endpoint==0,recoveryRequired:lifecycle.recoveryRequired)
+        return .init(playback:final,completed:final.state=="finished" && !final.cancelled,
+                     sourceDisposed:endpoint==0,recoveryRequired:lifecycle.recoveryRequired)
     }
 
     /// Retry only outstanding note-offs on the exact original endpoint.

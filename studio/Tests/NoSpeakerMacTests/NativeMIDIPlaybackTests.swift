@@ -288,6 +288,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     let result=try await player.runAndClose()
     #expect(result.playback.state=="stopped" && result.playback.cancelled)
     #expect(result.sourceDisposed && !result.recoveryRequired && result.playback.cleanupConfirmed)
+    #expect(!result.completed)
     #expect(!result.playback.receiverConfirmed && !player.lifecycle.sourceOpen)
     #expect(throws:NativeMIDIMonitor.Failure.self) { _=try NativeMIDIMonitor.resolve(name:player.sourceName) }
     #expect(sibling.lifecycle.sourceOpen && !sibling.lifecycle.recoveryRequired)
@@ -312,5 +313,35 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     #expect(player.lifecycle.state=="faulted")
     try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,player.sourceName as CFString)==noErr)
     #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
+}
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackPreparedSessionReceivesNoteGateBeforeDisposal() async throws {
+    let player=try NativeMIDIPlayback(prepared:BoundedMIDIPlayback(clip:nativePlaybackClip()))
+    try player.open()
+    defer { _=try? player.close() }
+    let source=try NativeMIDIMonitor.resolve(name:player.sourceName)
+    var client=MIDIClientRef(),port=MIDIPortRef()
+    try #require(makePlaybackFixtureClient(&client)==noErr && client != 0)
+    defer { _=MIDIClientDispose(client) }
+    let trace=PlaybackFixtureTrace()
+    try #require(makePlaybackFixturePort(client,&port,trace:trace)==noErr && port != 0)
+    defer { _=MIDIPortDispose(port) }
+    try #require(MIDIPortConnectSource(port,source,nil)==noErr)
+    let result=try await player.runAndClose()
+    #expect(result.completed && result.sourceDisposed && !result.recoveryRequired)
+    #expect(result.playback.state=="finished" && !result.playback.receiverConfirmed)
+    #expect(result.playback.cleanupConfirmed && result.playback.outstandingNotes==0)
+    let deadline=ContinuousClock().now.advanced(by:.milliseconds(250))
+    while trace.snapshot().count<2 && ContinuousClock().now<deadline {
+        try await Task.sleep(nanoseconds:5_000_000)
+    }
+    let rows=trace.snapshot()
+    try #require(rows.count==2)
+    #expect(rows[0].word & 0xF0FFFFFF == 0x20903C5A)
+    #expect(rows[1].word & 0xF0FFFFFF == 0x20803C00)
+    try #require(rows[1].time>=rows[0].time)
+    #expect((180_000_000...350_000_000).contains(rows[1].time-rows[0].time))
+    #expect(throws:NativeMIDIMonitor.Failure.self) { _=try NativeMIDIMonitor.resolve(name:player.sourceName) }
 }
 #endif
