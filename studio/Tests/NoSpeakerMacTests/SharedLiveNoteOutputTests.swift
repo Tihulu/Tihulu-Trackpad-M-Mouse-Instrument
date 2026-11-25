@@ -121,4 +121,54 @@ private final class SharedNoteMockSink: @unchecked Sendable {
     #expect(sink.read().0.last?.tones == other.tones)
     host.retire()
 }
+@Test func sharedThreeLiveNoteSourcesReleaseIndependently() throws {
+    let sink = SharedNoteMockSink()
+    let coordinator = HapticOutputCoordinator(clock:{ 1 },sink:{ try sink.write($0) })
+    let host = SharedLiveNoteOutput(coordinator:coordinator,automaticScheduling:false,clock:{ 1 })
+    let a = try host.begin(.chords) { _ in sink.recordFailure() }
+    let b = try host.begin(.touchBar) { _ in sink.recordFailure() }
+    let g = try host.begin(.gamepad) { _ in sink.recordFailure() }
+    let chord = HapticFrame(tones:[.init(frequencyHz:220),.init(frequencyHz:330)],durationMS:18,level:0.5)
+    let bar = HapticFrame(tones:[.init(frequencyHz:440),.init(frequencyHz:550)],durationMS:18,level:0.5)
+    let pad = HapticFrame(tones:[.init(frequencyHz:660),.init(frequencyHz:770)],durationMS:18,level:0.5)
+    host.update(a,frame:chord,level:1)
+    host.update(b,frame:bar,level:1)
+    host.update(g,frame:pad,level:1)
+    host.renderOnce()
+    #expect(Set(sink.read().0.last?.tones.map(\.frequencyHz) ?? []) == Set([220.0,330.0,440.0,550.0,660.0,770.0]))
+    host.release(g)
+    host.update(g,frame:pad,level:1,attack:true)
+    host.renderOnce()
+    #expect(Set(sink.read().0.last?.tones.map(\.frequencyHz) ?? []) == Set([220.0,330.0,440.0,550.0]))
+    let replacement = try host.begin(.gamepad) { _ in sink.recordFailure() }
+    host.update(replacement,frame:pad,level:1)
+    host.release(g)
+    host.renderOnce()
+    #expect(sink.read().0.last?.tones.count == 6)
+    host.release(a)
+    host.release(b)
+    host.renderOnce()
+    #expect(sink.read().0.last?.tones == pad.tones)
+    host.retire()
+    host.renderOnce()
+    #expect(sink.read().0.count == 4)
+    #expect(sink.read().1 == 0)
+}
+
+@Test func sharedThreeLiveNoteSourcesRetireTogetherOnSinkFailure() throws {
+    let sink = SharedNoteMockSink()
+    let coordinator = HapticOutputCoordinator(clock:{ 1 },sink:{ try sink.write($0) })
+    let host = SharedLiveNoteOutput(coordinator:coordinator,automaticScheduling:false,clock:{ 1 })
+    let frame = HapticFrame(tones:[.init(frequencyHz:220)],durationMS:18,level:0.5)
+    for source in [HapticMixSource.chords,.touchBar,.gamepad] {
+        let lease = try host.begin(source) { _ in sink.recordFailure() }
+        host.update(lease,frame:frame,level:1)
+    }
+    sink.disconnect()
+    host.renderOnce()
+    #expect(coordinator.isRetired)
+    #expect(sink.read().1 == 3)
+    host.renderOnce()
+    #expect(sink.read().1 == 3)
+}
 #endif
