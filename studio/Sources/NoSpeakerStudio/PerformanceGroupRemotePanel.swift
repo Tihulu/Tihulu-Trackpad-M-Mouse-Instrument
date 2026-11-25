@@ -10,7 +10,18 @@ struct PerformanceGroupRemotePanel: View {
     @EnvironmentObject private var studio:StudioController
     let sources:[SensorSource]
     let canStart:Bool
-    let start:(RemoteLoopbackTransport,RemoteLoopbackPageServer,Bool)->Void
+    let tuning:PerformanceGroupTuningConfiguration?
+    let canStartTuned:Bool
+    let start:(RemoteLoopbackTransport,RemoteLoopbackPageServer,Bool,PerformanceGroupTuningConfiguration?)->Void
+    private struct StartSnapshot {
+        let identityID:UUID
+        let endpoint:RemoteEndpoint
+        let lanID:String?
+        let confirmedLAN:Bool
+        let tuning:PerformanceGroupTuningConfiguration
+    }
+    @State private var pendingStart:StartSnapshot?
+    @State private var confirmStart = false
     @State private var identities:[RemoteTLSIdentityChoice] = []
     @State private var identityID:UUID?
     @State private var lan = false
@@ -52,7 +63,22 @@ struct PerformanceGroupRemotePanel: View {
         } catch { message = "Invitation refused: slot is unavailable or already bound." }
     }
 
-    private func begin() {
+    private func requestTunedStart() {
+        guard canStartTuned,let tuning,let identityID,let endpoint else { return }
+        pendingStart = .init(identityID:identityID,endpoint:endpoint,lanID:selectedLAN,
+                             confirmedLAN:confirmedLAN,tuning:tuning)
+        confirmStart = true
+    }
+
+    private func begin(tuned snapshot:StartSnapshot? = nil) {
+        if let snapshot {
+            guard canStartTuned,tuning == snapshot.tuning,identityID == snapshot.identityID,
+                  endpoint == snapshot.endpoint,selectedLAN == snapshot.lanID,
+                  confirmedLAN == snapshot.confirmedLAN else {
+                message = "MPE setup changed; review and confirm again."
+                return
+            }
+        }
         guard canStart,!studio.groupGamepadsRunning,
               let identity = identities.first(where:{ $0.id == identityID }),
               let endpoint else { return }
@@ -66,7 +92,7 @@ struct PerformanceGroupRemotePanel: View {
         do {
             let transport = try identity.makeLoopbackTransport(endpoint:endpoint)
             let page = try identity.makeLoopbackPageServer(endpoint:endpoint,groupNeutralHandshake:true)
-            start(transport,page,confirmedLAN)
+            start(transport,page,confirmedLAN,snapshot?.tuning)
         } catch { message = "TLS setup failed. No trust bypass. " + error.localizedDescription }
     }
 
@@ -103,9 +129,16 @@ struct PerformanceGroupRemotePanel: View {
                         Text("Select identity").tag(UUID?.none)
                         ForEach(identities) { choice in Text(choice.name).tag(Optional(choice.id)) }
                     }
-                    Button(lan ? "Start group MIDI + LAN" : "Start group MIDI + loopback") { begin() }
+                    Button(lan ? "Start standard MIDI + LAN" : "Start standard MIDI + loopback") { begin() }
                         .disabled(!canStart || identityID == nil || endpoint == nil ||
                                   (lan && (!confirmedLAN || !studio.remoteLoopbackVerified)))
+                    if StudioController.groupMPEStartEnabled {
+                        Button(lan ? "Start group MPE + LAN" : "Start group MPE + loopback") { requestTunedStart() }
+                            .disabled(!canStartTuned || identityID == nil || endpoint == nil ||
+                                      (lan && (!confirmedLAN || !studio.remoteLoopbackVerified)))
+                        Text("MPE requires a matching applied tuning configuration and all retained ports closed.")
+                            .font(.caption)
+                    }
                     Text("Do not forward ports or ignore certificate warnings. LAN remains locked until the existing local Builder diagnostic passes.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
@@ -143,7 +176,17 @@ struct PerformanceGroupRemotePanel: View {
         .onAppear { if !sources.contains(source),let first = sources.first { source = first } }
         .onChange(of:studio.groupRemotePeers) { _ in if !invitation.isEmpty { clearInvitation() } }
         .onChange(of:studio.groupRemoteReady) { ready in if !ready { clearInvitation() } }
-        .onDisappear { clearInvitation() }
+        .onDisappear { clearInvitation(); pendingStart = nil; confirmStart = false }
+        .confirmationDialog("Start MPE with mobile controllers?",isPresented:$confirmStart,titleVisibility:.visible) {
+            Button("Confirm MPE + mobile Start") {
+                guard let snapshot = pendingStart else { return }
+                pendingStart = nil
+                begin(tuned:snapshot)
+            }
+            Button("Cancel",role:.cancel) { pendingStart = nil }
+        } message: {
+            Text("This configures separate MPE ports and opens the selected TLS controller listener. Confirm receiver compatibility and the selected network. No standard MIDI fallback.")
+        }
     }
 }
 #endif
