@@ -48,6 +48,18 @@ private func makeObserverFixtureClient(_ client:inout MIDIClientRef)->OSStatus {
     #expect(report.callbackCount>=1)
     #expect(report.packetCount>=1)
     #expect(report.sourceStillPresent && report.cleanupConfirmed)
+    // Cancellation while connected must never return a successful report.
+    let cancelled=Task { @MainActor in
+        try await NativeMIDIMonitor.observe(sourceName:label,seconds:10,onConnected:{
+            withUnsafeCurrentTask { $0?.cancel() }
+        })
+    }
+    do {
+        _ = try await cancelled.value
+        Issue.record("Cancelled native observation unexpectedly succeeded")
+    } catch is CancellationError {
+        // Expected: no successful report from a cancelled session.
+    }
     // A second idle session must not inherit the first session's counts.
     let next=try await NativeMIDIMonitor.observe(sourceName:label,seconds:1)
     #expect(next.callbackCount==0 && next.packetCount==0 && next.cleanupConfirmed)
@@ -56,6 +68,21 @@ private func makeObserverFixtureClient(_ client:inout MIDIClientRef)->OSStatus {
 @Test @MainActor func nativeObserverRejectsInvalidDurationBeforeInventoryAccess() async {
     await #expect(throws:NativeMIDIMonitor.Failure.self) {
         try await NativeMIDIMonitor.observe(sourceName:"",seconds:0)
+    }
+}
+
+@Test @MainActor func nativeObserverCancellationPrecedesInventoryAccess() async {
+    let cancelled=Task { @MainActor in
+        withUnsafeCurrentTask { $0?.cancel() }
+        return try await NativeMIDIMonitor.observe(sourceName:"",seconds:1)
+    }
+    do {
+        _ = try await cancelled.value
+        Issue.record("Cancelled native observation unexpectedly succeeded")
+    } catch is CancellationError {
+        // Expected before source resolution.
+    } catch {
+        Issue.record("Unexpected error: \(error)")
     }
 }
 #endif
