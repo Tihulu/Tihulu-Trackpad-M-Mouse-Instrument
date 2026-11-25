@@ -77,4 +77,27 @@ private final class SharedNoteMockSink: @unchecked Sendable {
     _ = try host.begin(.chords) { _ in }
     host.retire()
 }
+@Test func sharedLiveNoteShortAttackRendersOnceAndReleaseAllCancels() throws {
+    let sink = SharedNoteMockSink()
+    let coordinator = HapticOutputCoordinator(clock:{ 1 },sink:{ try sink.write($0) })
+    let host = SharedLiveNoteOutput(coordinator:coordinator,automaticScheduling:false,clock:{ 1 })
+    let lease = try host.begin(.chords) { _ in sink.recordFailure() }
+    let chord = try #require(NoteHapticRenderer.frame(notes:[60,64,67],velocity:100))
+    host.update(lease,frame:chord,level:0.7,attack:true)
+    host.update(lease,frame:nil,level:0.7)
+    host.renderOnce()
+    #expect(sink.read().0.count == 1)
+    #expect(sink.read().0.last?.tones.count == 3)
+    host.renderOnce()
+    #expect(sink.read().0.count == 1)
+    host.update(lease,frame:chord,level:0.7,attack:true)
+    host.update(lease,frame:nil,level:0,discardPendingAttacks:true)
+    host.renderOnce()
+    #expect(sink.read().0.count == 1)
+    host.update(lease,frame:chord,level:0.7,attack:true)
+    host.release(lease)
+    host.renderOnce()
+    #expect(sink.read().0.count == 1)
+    host.retire()
+}
 #endif
