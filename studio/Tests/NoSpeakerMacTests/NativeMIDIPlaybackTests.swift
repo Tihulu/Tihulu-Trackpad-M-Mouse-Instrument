@@ -175,4 +175,32 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     await #expect(throws:NativeMIDIPlayback.Failure.self) { _=try await player.run() }
     #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
 }
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackDetectsIdentityLossDuringInitialRest() async throws {
+    // Two seconds of initial silence; identity loss must be detected
+    // before the first scheduled onset, not only at the next send.
+    let clip=MIDIClip(bpm:120,length:5760,notes:[.init(start:3840,duration:480,channel:0,pitch:60,velocity:90)])
+    let player=try NativeMIDIPlayback(clip:clip)
+    #expect(!player.lifecycle.sourceOpen && !player.lifecycle.recoveryRequired)
+    try player.open()
+    let source=try NativeMIDIMonitor.resolve(name:player.sourceName)
+    defer {
+        _=MIDIEndpointDispose(source)
+        MIDIProcessClient.shared.unregisterIsolatedSource(source)
+    }
+    let running=Task { @MainActor in try await player.run() }
+    let deadline=ContinuousClock().now.advanced(by:.milliseconds(500))
+    while !player.lifecycle.running && ContinuousClock().now<deadline {
+        try await Task.sleep(nanoseconds:5_000_000)
+    }
+    try #require(player.lifecycle.running)
+    let changed="TIHULU rest fixture "+UUID().uuidString
+    try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,changed as CFString)==noErr)
+    let report=try await running.value
+    #expect(report.state=="faulted" && report.outstandingNotes==0)
+    #expect(player.lifecycle.identityRetired && player.lifecycle.recoveryRequired)
+    #expect(!player.lifecycle.running && player.lifecycle.sourceOpen)
+    #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
+}
 #endif
