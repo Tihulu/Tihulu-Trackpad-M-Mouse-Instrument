@@ -164,6 +164,13 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         return old != self
     }
 
+    /// A valid gain adjustment must not retire queued musical snapshots.
+    /// Invalid gain still fails closed and recovery rebuilds the note cache.
+    func requiresSampleInvalidation(comparedTo previous: Self) -> Bool {
+        requiresHapticReset(comparedTo:previous) ||
+            !hasValidSampleDomain || !previous.hasValidSampleDomain
+    }
+
     public var hasValidSampleDomain: Bool {
         TouchSampleDomain.validConfiguration(root:baseMIDINote,width:zoneWidth,span:pitchSpanSemitones,
                                              threshold:pressThreshold,level:masterLevel)
@@ -438,13 +445,16 @@ public final class TouchInstrumentService: @unchecked Sendable {
     // Caller holds lock. Invalid settings cannot retain old cached notes.
     private func applyConfigurationLocked(_ next: TouchInstrumentConfiguration) -> Bool {
         let changed = configuration != next
+        let invalidate = next.requiresSampleInvalidation(comparedTo:configuration)
         if changed {
-            cachedMIDINotes = next.mappedMIDINotes
-            invalidateSamplesLocked()
+            if invalidate {
+                cachedMIDINotes = next.mappedMIDINotes
+                invalidateSamplesLocked()
+            }
+            // Render gain still changes atomically through the existing fence.
             renderRevision &+= 1
         }
-        if next.requiresHapticReset(comparedTo:configuration) ||
-            !next.hasValidSampleDomain || cachedMIDINotes.isEmpty {
+        if invalidate || cachedMIDINotes.isEmpty {
             latestStatesBySurface.removeAll()
             liveHapticStates.removeAll()
             sustainedHapticStates.removeAll()
