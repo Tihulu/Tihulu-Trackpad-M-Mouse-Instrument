@@ -6,7 +6,23 @@ import NoSpeakerCore
 /// Offline, read-only setup instructions. No MIDI sends, device discovery or DAW automation.
 struct DAWSetupAssistantView: View {
     let projection: DAWSetupProjection
+    struct GroupPort {
+        let name: String
+        let port: String
+        let status: String
+    }
+    let groupPort: GroupPort?
     @State private var daw: DAW = .logic
+
+    init(projection:DAWSetupProjection,groupPort:GroupPort? = nil) {
+        self.projection = projection
+        self.groupPort = groupPort
+    }
+
+    private var displayedPort: String? {
+        guard projection.port != nil else { return nil }
+        return groupPort?.port ?? projection.port
+    }
 
     private enum DAW: String, CaseIterable, Identifiable {
         case logic = "Logic Pro", garage = "GarageBand", live = "Ableton Live", reaper = "REAPER", other = "Other DAW"
@@ -46,7 +62,7 @@ struct DAWSetupAssistantView: View {
         switch projection.status {
         case .invalid: return "Invalid or incomplete output setup. Fix mappings and output choices first."
         case .disabled: return "MIDI output is off. No DAW routes are enabled."
-        case .standard: return "Configured MIDI routes, not a receiver confirmation."
+        case .standard: return groupPort?.status ?? "Configured MIDI routes, not a receiver confirmation."
         case .tunedAir: return "Dedicated MPE port: receive all zone channels, use an MPE-compatible instrument and verify bend range. Logical patch channels are not wire channels."
         }
     }
@@ -54,10 +70,10 @@ struct DAWSetupAssistantView: View {
         let rows = projection.channels.map { row in
             "CH " + String(row.number) + " | Notes: " + row.notes.joined(separator:", ") + " | Controls: " + row.controls.joined(separator:", ")
         }
-        return ([daw.rawValue, statusText, projection.port ?? "—"] + rows + instructions).joined(separator:"\n")
+        return ([daw.rawValue] + (groupPort.map { [$0.name] } ?? []) + [statusText, displayedPort ?? "—"] + rows + instructions).joined(separator:"\n")
     }
     var body: some View {
-        DisclosureGroup("DAW Setup Assistant") {
+        DisclosureGroup(groupPort.map { "DAW Setup: " + $0.name } ?? "DAW Setup Assistant") {
             VStack(alignment:.leading, spacing:8) {
                 HStack {
                     Picker("DAW", selection:$daw) {
@@ -65,7 +81,7 @@ struct DAWSetupAssistantView: View {
                     }
                 }
                 Text(statusText).font(.caption).foregroundStyle(.secondary)
-                if let port = projection.port {
+                if let port = displayedPort {
                     Text("MIDI Input: " + port).font(.headline).textSelection(.enabled)
                     ForEach(projection.channels) { row in
                         VStack(alignment:.leading, spacing:3) {
