@@ -109,7 +109,8 @@ private final class VoicePCMCollector: @unchecked Sendable {
         lock.unlock()
     }
 
-    func samples16kHz() -> [Float] {
+    func samples16kHz(cancellation:VoiceRenderCancellation) throws -> [Float] {
+        try cancellation.check()
         lock.lock()
         let input = values
         let rate = inputRate
@@ -120,13 +121,17 @@ private final class VoicePCMCollector: @unchecked Sendable {
         let newCount = Int(Double(input.count) * 16_000 / rate)
         guard newCount > 0 else { return [] }
         let step = rate / 16_000
-        return (0..<newCount).map { i in
+        var output = [Float]()
+        output.reserveCapacity(newCount)
+        for i in 0..<newCount {
+            if i % 4096 == 0 { try cancellation.check() }
             let pos = Double(i) * step
             let lo = min(input.count - 1, Int(pos))
             let hi = min(input.count - 1, lo + 1)
             let fract = Float(pos - Double(lo))
-            return input[lo] * (1 - fract) + input[hi] * fract
+            output.append(input[lo] * (1 - fract) + input[hi] * fract)
         }
+        return output
     }
 }
 
@@ -250,25 +255,39 @@ public enum VoiceHapticService {
         try audioFile.read(into: buffer)
         let collector = VoicePCMCollector()
         collector.append(buffer)
-        let samples = collector.samples16kHz()
+        let samples = try collector.samples16kHz(cancellation:cancellation)
         guard !samples.isEmpty else { throw VoiceHapticError.audioReadFailed }
         try cancellation.check()
-        let frames = HapticVoiceAnalyzer.analyze(samples)
+        let frames = try HapticVoiceAnalyzer.analyze(samples,cancellation:cancellation)
         try cancellation.check()
         return HapticVoiceAnalyzer.hapticEvents(frames:frames)
     }
 
     private static func installedVoiceRecords() -> [(name: String, locale: String)] {
         let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
-        process.arguments = ["-v", "?"]
-        process.standardOutput = pipe
-        guard (try? process.run()) != nil else { return [] }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let text = String(data: data, encoding: .utf8) ?? ""
+        // File-backed stdout avoids pipe backpressure during bounded waits.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tihulu-voice-list-"+UUID().uuidString,isDirectory:true)
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        } catch { return [] }
+        defer { try? fm.removeItem(at:directory) }
+        let output = directory.appendingPathComponent("voices.txt")
+        guard fm.createFile(atPath:output.path,contents:nil),
+              let handle = try? FileHandle(forWritingTo:output) else { return [] }
+        defer { try? handle.close() }
+        process.executableURL = URL(fileURLWithPath:"/usr/bin/say")
+        process.arguments = ["-v","?"]
+        process.standardOutput = handle
+        process.standardError = FileHandle.nullDevice
+        do { try VoiceProcessRunner.run(process,cancellation:.init(),timeout:10) }
+        catch { return [] }
+        guard process.terminationStatus == 0,
+              let size = (try? fm.attributesOfItem(atPath:output.path))?[.size] as? NSNumber,
+              size.int64Value <= 1024*1024,
+              let data = try? Data(contentsOf:output) else { return [] }
+        let text = String(data:data,encoding:.utf8) ?? ""
 
         return text.split(separator: "\n").compactMap { rawLine in
             let spokenPart = rawLine.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? rawLine
@@ -350,13 +369,13 @@ public enum VoiceHapticService {
             }
         }
         try cancellation.check()
-        let samples = collector.samples16kHz()
+        let samples = try collector.samples16kHz(cancellation:cancellation)
         guard !samples.isEmpty else {
             synthesizer.stopSpeaking(at:.immediate)
             throw VoiceHapticError.audioReadFailed
         }
         try cancellation.check()
-        let frames = HapticVoiceAnalyzer.analyze(samples)
+        let frames = try HapticVoiceAnalyzer.analyze(samples,cancellation:cancellation)
         try cancellation.check()
         return HapticVoiceAnalyzer.hapticEvents(frames:frames)
     }
@@ -373,13 +392,21 @@ public enum VoiceHapticService {
         }
         let sayVoice: String? = voice?.hasPrefix("say:") == true
             ? String(voice!.dropFirst(4)) : voice
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("nospeaker-studio-\(UUID().uuidString).wav")
-        defer { try? FileManager.default.removeItem(at: url) }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tihulu-say-"+UUID().uuidString,isDirectory:true)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,
+            attributes:[.posixPermissions:0o700])
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let url = directory.appendingPathComponent("voice.wav")
+        let textFile = directory.appendingPathComponent("input.txt")
+        try Data(text.utf8).write(to:textFile)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
         process.arguments = ["-o", url.path, "--file-format=WAVE", "--data-format=LEF32@16000"]
-            + (sayVoice.map { ["-v", $0] } ?? []) + [text]
+            + (sayVoice.map { ["-v", $0] } ?? []) + ["-f",textFile.path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         try VoiceProcessRunner.run(process,cancellation:cancellation)
         guard process.terminationStatus == 0 else { throw VoiceHapticError.voiceRenderFailed }
 
@@ -393,7 +420,7 @@ public enum VoiceHapticService {
         guard let channel = buffer.floatChannelData?[0] else { throw VoiceHapticError.audioReadFailed }
         let samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
         try cancellation.check()
-        let frames = HapticVoiceAnalyzer.analyze(samples)
+        let frames = try HapticVoiceAnalyzer.analyze(samples,cancellation:cancellation)
         try cancellation.check()
         return HapticVoiceAnalyzer.hapticEvents(frames: frames)
     }
