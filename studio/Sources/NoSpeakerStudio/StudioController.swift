@@ -244,6 +244,7 @@ final class StudioController: ObservableObject {
     private var patchPadTasks: [PatchSimulation.Input: Task<Void, Never>] = [:]
     private var patchPadTokens: [PatchSimulation.Input: UUID] = [:]
     private var surfaceMonitorToken: UUID?
+    private var surfaceInbox: OrderedTouchInbox<QueuedTouchSnapshot>?
     private var surfaceSnapshotCursor = TouchSnapshotCursor()
     private var touchDispatchMetrics = TouchDispatchMetrics()
     private var touchPreviewCadence = TouchPreviewCadence()
@@ -1966,6 +1967,8 @@ final class StudioController: ObservableObject {
         stopSystemAudio()
         playback?.stop(closeDriver: false)
         surfaceMonitorToken = nil
+        surfaceInbox?.close()
+        surfaceInbox = nil
         clearClickAttribution()
         touch?.stopPreview()
         // Terminal revocation drains an in-flight submission and blocks any
@@ -2338,6 +2341,8 @@ final class StudioController: ObservableObject {
                      (patchPhysical && instrumentPatch.routes.contains { $0.source != patchHybridSource && ($0.source == .trackpad || $0.source == .magicMouse) })
         if !needed {
             surfaceMonitorToken = nil
+            surfaceInbox?.close()
+            surfaceInbox = nil
             clearClickAttribution()
             touch.stopPreview()
             touchPreviewRunning = false
@@ -2365,6 +2370,9 @@ final class StudioController: ObservableObject {
             let generation = engineGeneration
             let token = UUID()
             surfaceMonitorToken = token
+            let inbox = OrderedTouchInbox<QueuedTouchSnapshot>()
+            surfaceInbox?.close()
+            surfaceInbox = inbox
             surfaceSnapshotCursor.reset()
             touchDispatchMetrics = TouchDispatchMetrics()
             touchPreviewCadence.reset()
@@ -2372,33 +2380,84 @@ final class StudioController: ObservableObject {
             liveTouchStates = []
             liveHelperStates = []
             clearClickAttribution()
-            try touch.startStampedPreview(configuration: monitoringConfiguration) { [weak self] states,stamp in
-                let queuedAt = ProcessInfo.processInfo.systemUptime
+            try touch.startQueuedPreview(configuration: monitoringConfiguration, inbox:inbox) { [weak self, weak inbox] in
                 Task { @MainActor in
-                    guard let self, self.engineGeneration == generation,
-                          self.surfaceMonitorToken == token, self.touchPreviewRunning else { return }
-                    let startedAt = ProcessInfo.processInfo.systemUptime
-                    guard let revision = self.touch?.currentSampleRevision,
-                          self.surfaceSnapshotCursor.accept(stamp,currentRevision:revision) else {
-                        self.touchDispatchMetrics.reject()
-                        return
-                    }
-                    defer {
-                        self.touchDispatchMetrics.record(queuedAt:queuedAt,startedAt:startedAt,
-                            endedAt:ProcessInfo.processInfo.systemUptime)
-                    }
-                    self.clickTouchingSurfaces = Set(states.filter(\.isTouching).map(\.surface))
-                    self.clickSnapshotRevision = stamp.revision
-                    self.clickSnapshotReceivedAt = ProcessInfo.processInfo.systemUptime
-                    self.handleSharedSurfaceStates(states)
+                    guard let self, let inbox else { return }
+                    self.drainTouchInbox(inbox,generation:generation,token:token)
                 }
             }
             touchPreviewRunning = true
         } catch {
             surfaceMonitorToken = nil
+            surfaceInbox?.close()
+            surfaceInbox = nil
             clearClickAttribution()
             touchPreviewRunning = false
             fail(error)
+        }
+    }
+
+    private func drainTouchInbox(_ inbox: OrderedTouchInbox<QueuedTouchSnapshot>, generation: UInt64, token: UUID) {
+        guard engineGeneration == generation, surfaceMonitorToken == token,
+              surfaceInbox === inbox, touchPreviewRunning else { return }
+        let batch = inbox.take()
+        if batch.overflow {
+            handleTouchInputBacklog()
+            return
+        }
+        for sample in batch.samples {
+            guard surfaceMonitorToken == token, surfaceInbox === inbox, touchPreviewRunning else { return }
+            let startedAt = ProcessInfo.processInfo.systemUptime
+            guard let revision = touch?.currentSampleRevision,
+                  surfaceSnapshotCursor.accept(sample.stamp,currentRevision:revision) else {
+                touchDispatchMetrics.reject()
+                continue
+            }
+            // Never replay a late musical onset after a blocked main actor.
+            if startedAt - sample.queuedAt >= 0.150 {
+                touchDispatchMetrics.reject()
+                if touchRunning || midiHelperRunning {
+                    handleTouchInputBacklog()
+                    // A partial drain still owns the next scheduling turn.
+                    if batch.more {
+                        Task { @MainActor [weak self, weak inbox] in
+                            guard let self, let inbox else { return }
+                            self.drainTouchInbox(inbox,generation:generation,token:token)
+                        }
+                    }
+                    return
+                }
+                continue
+            }
+            clickTouchingSurfaces = Set(sample.states.filter(\.isTouching).map(\.surface))
+            clickSnapshotRevision = sample.stamp.revision
+            clickSnapshotReceivedAt = sample.queuedAt
+            handleSharedSurfaceStates(sample.states)
+            touchDispatchMetrics.record(queuedAt:sample.queuedAt,startedAt:startedAt,
+                endedAt:ProcessInfo.processInfo.systemUptime)
+        }
+        if batch.more {
+            Task { @MainActor [weak self, weak inbox] in
+                guard let self, let inbox else { return }
+                self.drainTouchInbox(inbox,generation:generation,token:token)
+            }
+        }
+    }
+
+    private func handleTouchInputBacklog() {
+        // A missing release is a fault, not permission to replay stale notes.
+        let wasPlaying = touchRunning || midiHelperRunning
+        touch?.invalidatePendingSamples()
+        clearClickAttribution()
+        if touchRunning { stopTouch() }
+        if midiHelperRunning { stopMIDIHelper() }
+        liveTouchStates = []
+        liveHelperStates = []
+        touchStates = []
+        midiHelperStates = []
+        touchContact = TrackpadContact()
+        if wasPlaying {
+            lastError = "Touch input backlog. Touch Instrument and Helper stopped; restart explicitly."
         }
     }
 
