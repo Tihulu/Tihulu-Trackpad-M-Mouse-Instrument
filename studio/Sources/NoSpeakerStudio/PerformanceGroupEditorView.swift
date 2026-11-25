@@ -8,6 +8,9 @@ struct PerformanceGroupEditorView: View {
     let currentPatch: InstrumentPatch
     @EnvironmentObject private var studio: StudioController
     @State private var allowLayering = false
+    @State private var tuningPreview: PerformanceGroupTuningConfiguration?
+    @State private var pendingTunedStart: PerformanceGroupTuningConfiguration?
+    @State private var confirmTunedStart = false
     @State private var profile = PerformanceGroupProfile()
     @State private var saved = PerformanceGroupProfile()
     @State private var storedData: Data?
@@ -147,22 +150,43 @@ struct PerformanceGroupEditorView: View {
             ids.allSatisfy { id in studio.gamepadChoices.contains { $0.id == id } }
     }
 
-    private func startSavedGroups() {
+    private func startSavedGroups(tuning: PerformanceGroupTuningConfiguration? = nil) {
         // A stale editor must not arm a different profile than the saved one.
         guard let data = storedData,
               UserDefaults.standard.data(forKey:key) == data,
-              profile == saved, supportedLocalProfile, selectedControllersValid else {
+              profile == saved, supportedLocalProfile, selectedControllersValid, canStartGroups else {
             message = "Save or reload the current profile and select distinct controllers first."
             return
         }
-        studio.startGroupGamepads(profile:saved,allowLayering:allowLayering)
+        if let tuning {
+            guard StudioController.groupMPEStartEnabled, tuning == tuningPreview,
+                  studio.groupRegisteredIDs.isEmpty,
+                  (try? tuning.plan(matching:saved)) != nil else {
+                message = "MPE Start rejected. Reconfirm a matching preview with no retained ports."
+                return
+            }
+        }
+        studio.startGroupGamepads(profile:saved,allowLayering:allowLayering,
+            tuning:tuning,confirmedTuning:tuning != nil)
     }
 
     private var canStartGroups: Bool {
         didLoad && !readFailed && profile == saved && supportedLocalProfile &&
-        selectedControllersValid && !studio.groupGamepadsRunning &&
+        selectedControllersValid && !studio.groupGamepadsRunning && studio.groupTunedConfiguration == nil &&
         studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
         (saved.layeredInputs.isEmpty || allowLayering)
+    }
+
+    private var canStartTunedGroups: Bool {
+        guard StudioController.groupMPEStartEnabled, canStartGroups,
+              studio.groupRegisteredIDs.isEmpty, let tuningPreview else { return false }
+        return (try? tuningPreview.plan(matching:saved)) != nil
+    }
+
+    private func requestTunedStart() {
+        guard canStartTunedGroups, let tuningPreview else { return }
+        pendingTunedStart = tuningPreview
+        confirmTunedStart = true
     }
 
     private func registeredStatus(_ id:UUID) -> String {
@@ -247,7 +271,7 @@ struct PerformanceGroupEditorView: View {
     private var liveControls: some View {
         GroupBox("Experimental group MIDI - local controllers and Helpers") {
             VStack(alignment:.leading,spacing:8) {
-                Text("Standard MIDI only. Xbox, Trackpad and Magic Mouse may share groups. Touch uses one primary contact; lift each surface to arm. Touch Bar ribbon, compatible lid-angle sensor and single-hand camera support continuous CC and pitch bend only. No local haptics, pressure, multi-touch, or independent MPE in this preview.")
+                Text("Xbox, Trackpad and Magic Mouse may share groups. Touch uses one primary contact; lift each surface to arm. Touch Bar ribbon, compatible lid-angle sensor and single-hand camera support continuous CC and pitch bend only. No local haptics, pressure or multi-touch. Live independent MPE requires a separately enabled experimental build.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !supportedLocalProfile {
                     Text("Save a supported local group profile to enable Start.").font(.caption)
@@ -280,8 +304,12 @@ struct PerformanceGroupEditorView: View {
                         .disabled(studio.groupGamepadsRunning)
                 }
                 HStack {
-                    Button("Start group MIDI") { startSavedGroups() }
+                    Button("Start standard MIDI") { startSavedGroups() }
                         .disabled(!canStartGroups)
+                    if StudioController.groupMPEStartEnabled {
+                        Button("Start group MPE") { requestTunedStart() }
+                            .disabled(!canStartTunedGroups)
+                    }
                     Button("Stop / Release All") { studio.stopGroupGamepads() }
                         .disabled(!studio.groupGamepadsRunning)
                     Button("Close ports") { studio.closeGroupPorts() }
@@ -296,12 +324,33 @@ struct PerformanceGroupEditorView: View {
                 ForEach(saved.groups.filter { studio.groupRegisteredIDs.contains($0.id) }) { group in
                     registeredGroupRow(group)
                 }
-                if supportedLocalProfile {
+                if let frozen = studio.groupTunedConfiguration {
+                    Text("Retained MPE request. Setup and DAW reception are not certified. Close ports before changing modes.")
+                        .font(.caption).foregroundStyle(.orange)
+                    if let wire = try? PerformanceGroupDAWProjection(profile:saved,configuration:frozen) {
+                        ForEach(wire.groups) { group in
+                            VStack(alignment:.leading,spacing:3) {
+                                Text(group.name + " | " + group.port).textSelection(.enabled)
+                                Text(group.mode == .lowerMPE
+                                     ? "MPE: receive the entire lower zone; master CH1; allocated members " +
+                                       group.members.map { String($0.channel) }.joined(separator:", ")
+                                     : "Standard MIDI channels: " + group.channels.map { String($0) }.joined(separator:", "))
+                            }.font(.caption)
+                        }
+                    } else {
+                        Text("Frozen configuration does not match this editor. No channel advice available.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                } else if supportedLocalProfile {
                     ForEach(saved.groups.filter { !$0.patch.routes.isEmpty }) { group in
                         dawSetup(group)
                     }
                 }
-                Text("In Logic Pro choose this exact MIDI In Port and the mapped channel for each track. Arm the required tracks; confirm notes and pedals in the DAW. Registered does not mean sound is verified.")
+                if !StudioController.groupMPEStartEnabled {
+                    Text("Live MPE is disabled in this build; the tuning editor is offline only.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text("In Logic Pro select the exact port and appropriate channel or entire MPE zone. Arm tracks and manually verify notes and pedals. Registered does not mean sound is verified.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -349,11 +398,21 @@ struct PerformanceGroupEditorView: View {
                 }
                 if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
                 if didLoad && !readFailed {
-                    PerformanceGroupTuningPreviewView(profile:saved,locked:editingLocked || profile != saved)
+                    PerformanceGroupTuningPreviewView(profile:saved,locked:editingLocked || profile != saved,configuration:$tuningPreview)
                 }
                 liveControls
             }.padding(6)
         }.onAppear { load() }
+        .confirmationDialog("Start independent group MPE?",isPresented:$confirmTunedStart,titleVisibility:.visible) {
+            Button("Confirm MPE Start") {
+                guard let snapshot = pendingTunedStart else { return }
+                pendingTunedStart = nil
+                startSavedGroups(tuning:snapshot)
+            }
+            Button("Cancel",role:.cancel) { pendingTunedStart = nil }
+        } message: {
+            Text("This sends MPE setup and pitch-bend configuration to separate ports. Use compatible DAW instruments. Close retained ports before another Start; closing does not reset the DAW receiver.")
+        }
     }
 }
 #endif
