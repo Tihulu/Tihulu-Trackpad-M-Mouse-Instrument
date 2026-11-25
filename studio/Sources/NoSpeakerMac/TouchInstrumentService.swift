@@ -528,9 +528,22 @@ public final class TouchInstrumentService: @unchecked Sendable {
         return (publicationSequence,helperContactCache.touchingSurfaces)
     }
 
+    /// Explicit publication invalidation also retires the corresponding
+    /// motor state. This is not a Helper-only consumer boundary.
     public func invalidatePendingSamples() {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         invalidateSamplesLocked()
+        renderRevision &+= 1
+        liveHapticStates.removeAll()
+        sustainedHapticStates.removeAll()
+        sustainActive = false
+        drumStrikes.reset()
+        gridDrumNotes.removeAll()
+        chordSlots.removeAll()
+        lock.unlock()
+        // Wait for an already admitted motor submission without holding
+        // the state lock. Old render snapshots cannot submit again.
+        renderFence.drain()
     }
 
     private func invalidateSamplesLocked() {
