@@ -435,7 +435,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
         clock = now
         var reports = reset(staleSources(now:now),send:send)
         guard var binding = bindings[source] else { return .init(status:.lost,reports:reports) }
-        guard let frame = binding.remoteFence.accept(bytes,receipt:hostTime,now:now) else {
+        guard binding.remoteLastReceipt.map({ hostTime >= $0 }) ?? false,
+              let frame = binding.remoteFence.accept(bytes,receipt:hostTime,now:now) else {
             reports += reset([source],send:send)
             return .init(status:.lost,reports:reports)
         }
