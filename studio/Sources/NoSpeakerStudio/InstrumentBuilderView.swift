@@ -691,6 +691,29 @@ struct InstrumentBuilderView: View {
 
     private func routeEditor(_ route: Binding<SensorMapping>) -> some View {
         VStack(alignment: .leading, spacing: 7) {
+            if route.wrappedValue.pedalMode != nil {
+                Text("\(route.wrappedValue.source.rawValue) · \(GamepadMappingEditor.label(route.wrappedValue.signal))")
+                    .font(.headline)
+                Picker("Pedal behavior",selection:route.pedalMode) {
+                    Text("Hold").tag(Optional(GamepadPedalMode.hold))
+                    Text("Toggle").tag(Optional(GamepadPedalMode.toggle))
+                }
+                Stepper("Channel \(route.wrappedValue.destination.channel+1)",value:route.destination.channel,in:0...15)
+                if route.wrappedValue.destination.kind == .controlChange {
+                    Stepper("Effect CC \(route.wrappedValue.destination.number)",value:route.destination.number,in:0...119)
+                } else {
+                    Text("Sustain · CC64").font(.caption)
+                }
+                parameter("Press threshold",value:route.threshold,range:0.05...1)
+                parameter("Hysteresis",value:route.hysteresis,range:0...0.5)
+                if !InstrumentPatch.permits(route.wrappedValue) {
+                    Text("Invalid pedal target or threshold. Correct the route before saving or starting.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                Text("Binary effect switches share ownership. Analog calibration and smoothing do not apply. Use the gamepad map to change the physical control or destination type.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Convert to ordinary route") { route.wrappedValue.pedalMode = nil }
+            } else {
             HStack {
                 Picker("Source", selection: route.source) {
                     ForEach(SensorSource.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -739,6 +762,7 @@ struct InstrumentBuilderView: View {
                         Stepper("Note velocity \(route.wrappedValue.velocity)", value: route.velocity, in: 1...127)
                     }
                 }.padding(4)
+            }
             }
         }
     }
