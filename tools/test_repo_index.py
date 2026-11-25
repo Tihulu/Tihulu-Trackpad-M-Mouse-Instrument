@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from repo_index import normalized, semantic_windows
 
 TOOL = Path(__file__).resolve().with_name("repo_index.py")
 
@@ -119,6 +120,39 @@ class RepositoryIndexTests(unittest.TestCase):
         self.assertIn("no embeddings", semantic.stderr)
         result = self.cli("search", "--index", self.index, "--query", "sustain", "--limit", "51")
         self.assertEqual(result.returncode, 2)
+
+
+class SemanticContractTests(unittest.TestCase):
+    # Deterministic tokenizer fixture only. This does not test or pretend
+    # to generate semantic vectors from a pretrained model.
+    class Tokenizer:
+        def encode(self, text, **kwargs):
+            return text.split() + ["start", "end"]
+
+    class Model:
+        max_seq_length = 48
+        tokenizer = None
+
+    def test_semantic_windows_keep_exact_source_lines(self):
+        model = self.Model()
+        model.tokenizer = self.Tokenizer()
+        lines = ["alpha beta gamma"] * 15 + [" ".join(["long"] * 50)] + ["last line"]
+        row = {"path":"studio/Router.swift", "blob":"a"*40, "start":5,
+               "end":5+len(lines)-1, "text":"\n".join(lines)}
+        skipped = []
+        rows = semantic_windows([row], model, skipped)
+        self.assertGreater(len(rows), 1)
+        self.assertEqual(skipped, [{"path":row["path"],"line":20,"reason":"model-context"}])
+        for part in rows:
+            self.assertEqual(part["text"], "\n".join(lines[part["start"]-5:part["end"]-4]))
+            self.assertLessEqual(len(model.tokenizer.encode(part["path"]+"\n"+part["text"])),32)
+        self.assertEqual(rows[-1]["end"],21)
+
+    def test_invalid_embedding_norms_and_finite_values(self):
+        self.assertEqual(normalized([3,4]),[0.6,0.8])
+        for vector in ([], [0,0], [float("nan")], [float("inf")], [1e308,1e308]):
+            with self.assertRaises(ValueError):
+                normalized(vector)
 
 
 if __name__ == "__main__":
