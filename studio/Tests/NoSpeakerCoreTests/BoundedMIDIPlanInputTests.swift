@@ -47,3 +47,17 @@ private func planJSON(_ note:String=noteJSON,bpm:String="120",length:String="192
         #expect(throws:(any Error).self) { _=try BoundedMIDIPlanInput.decode(Data(input.utf8)) }
     }
 }
+
+@Test func boundedPlanAcceptsExactByteAndNoteCapacity() throws {
+    let notes=(0..<256).map { index in
+        "{\"start\":0,\"duration\":480,\"channel\":\(index/128),\"pitch\":\(index%128),\"velocity\":90}"
+    }.joined(separator:",")
+    let input=planJSON(notes,length:"19200")
+    let padded=input+String(repeating:" ",count:BoundedMIDIPlanInput.maximumBytes-input.utf8.count)
+    let (clip,player)=try BoundedMIDIPlanInput.prepare(Data(padded.utf8))
+    #expect(clip.notes.count==256)
+    #expect(player.events.count==512 && player.durationNS==10_000_000_000)
+    #expect(throws:BoundedMIDIPlanInput.Failure.self) {
+        _=try BoundedMIDIPlanInput.prepare(Data((padded+" ").utf8))
+    }
+}

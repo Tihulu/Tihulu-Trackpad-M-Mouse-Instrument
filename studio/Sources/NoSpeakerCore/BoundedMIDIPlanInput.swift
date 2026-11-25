@@ -13,12 +13,16 @@ public enum BoundedMIDIPlanInput {
     public static let maximumBytes=65_536
 
     public static func decode(_ data:Data) throws -> MIDIClip {
+        try prepare(data).clip
+    }
+
+    /// Parse and construct the bounded schedule once. Callers that need
+    /// the schedule must not repeat validation, sorting or indexing.
+    public static func prepare(_ data:Data) throws -> (clip:MIDIClip,playback:BoundedMIDIPlayback) {
         guard !data.isEmpty,data.count<=maximumBytes else { throw Failure.invalid }
         var parser=Parser(bytes:Array(data))
         let clip=try parser.clip()
-        // Include the same capacity and timing fence as playback.
-        _=try BoundedMIDIPlayback(clip:clip)
-        return clip
+        return (clip,try BoundedMIDIPlayback(clip:clip))
     }
 
     private struct Parser {

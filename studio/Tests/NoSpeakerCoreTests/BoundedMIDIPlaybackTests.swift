@@ -193,3 +193,31 @@ private func playbackClip() -> MIDIClip {
     player.retryCleanup{_ in true}
     #expect(player.state == .faulted && player.outstanding.isEmpty)
 }
+
+@Test func boundedPlaybackMaximumPolyphonyReleasesEveryOwnedNoteAndNoOthers() throws {
+    let notes=(0..<256).map {
+        MIDIClip.Note(start:0,duration:480,channel:$0/128,pitch:$0%128,velocity:90)
+    }
+    var player=try BoundedMIDIPlayback(clip:.init(bpm:120,length:19200,notes:notes))
+    _=try player.begin(now:0)
+    var on:[SensorDestination]=[],off:[SensorDestination]=[]
+    player.advance(now:0){ command in
+        on.append(command.destination);return true
+    }
+    #expect(on.count==256 && Set(on).count==256 && player.outstanding==Set(on))
+    player.advance(now:250_000_000){ command in
+        off.append(command.destination);return command.destination.number%2==0
+    }
+    // The first ambiguous off aborts playback and attempts all remaining
+    // owned offs. A subsequent retry must send only the unpaid debt.
+    #expect(player.state == .faulted && !player.outstanding.isEmpty)
+    #expect(Set(off).isSubset(of:Set(on)))
+    let debt=player.outstanding
+    var retried:[SensorDestination]=[]
+    player.retryCleanup { command in
+        retried.append(command.destination);return true
+    }
+    #expect(Set(retried)==debt && retried.count==debt.count)
+    #expect(player.outstanding.isEmpty)
+    player.advance(now:10_000_000_000){ _ in Issue.record("Faulted session emitted another edge");return false }
+}

@@ -48,8 +48,10 @@ struct TihuluNativeCLI {
     /// Portable validation only, with no filesystem reads or hardware
     /// access. JSON is an explicit bounded argument, not a filename.
     static func playbackPlan(_ json:String) throws -> PlaybackPlan {
-        let clip=try BoundedMIDIPlanInput.decode(Data(json.utf8))
-        let player=try BoundedMIDIPlayback(clip:clip)
+        guard json.utf8.count<=BoundedMIDIPlanInput.maximumBytes else {
+            throw BoundedMIDIPlanInput.Failure.invalid
+        }
+        let (clip,player)=try BoundedMIDIPlanInput.prepare(Data(json.utf8))
         var active=0,peak=0
         for event in player.events {
             active += event.command.value>0 ? 1 : -1
