@@ -131,4 +131,23 @@ import NoSpeakerCore
     config.magicMouseInstrument = .guitar
     #expect(!config.requiresPolyphonicFretlessMPE(multiTouch:true))
 }
+@Test func separateDAWSurfaceChannelsRequireTwoPitchedStandardOutputs() {
+    var config = TouchInstrumentConfiguration(surfaceSelection:.both,
+        trackpadOutput:.midiInstrument,magicMouseOutput:.midiInstrument)
+    #expect(config.permitsSeparateDAWSurfaceChannels)
+    config.surfaceSelection = .trackpad
+    #expect(!config.permitsSeparateDAWSurfaceChannels)
+    config.surfaceSelection = .both
+    config.magicMouseOutput = .trackpadHaptic
+    #expect(!config.permitsSeparateDAWSurfaceChannels)
+    config.magicMouseOutput = .midiInstrument
+    config.magicMouseInstrument = .drums
+    #expect(!config.permitsSeparateDAWSurfaceChannels)
+    config.magicMouseInstrument = .melodic
+    config.fretless = true
+    #expect(!config.permitsSeparateDAWSurfaceChannels)
+    config.fretless = false
+    config.magicMouseInstrument = .fretlessStrings
+    #expect(!config.permitsSeparateDAWSurfaceChannels)
+}
 #endif
