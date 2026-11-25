@@ -2,6 +2,7 @@
 import SwiftUI
 import AppKit
 import NoSpeakerCore
+import NoSpeakerMac
 
 /// Configuration editor only. No endpoints are created and no MIDI is sent.
 struct PerformanceGroupEditorView: View {
@@ -151,11 +152,27 @@ struct PerformanceGroupEditorView: View {
             ids.allSatisfy { id in studio.gamepadChoices.contains { $0.id == id } }
     }
 
-    private func startSavedGroups(tuning: PerformanceGroupTuningConfiguration? = nil) {
+    private var remoteSources:[SensorSource] {
+        [.phone,.tablet].filter { source in saved.groups.contains { group in
+            group.patch.routes.contains { $0.source == source }
+        } }
+    }
+
+    private var supportedRemoteProfile:Bool {
+        !remoteSources.isEmpty && PerformanceGroupGamepadSession.supports(saved,allowSurfaces:true,
+            allowScalars:true,allowCamera:true,allowRemote:true)
+    }
+
+    private func startSavedGroups(tuning: PerformanceGroupTuningConfiguration? = nil,
+                                  remoteTransport:RemoteLoopbackTransport? = nil,
+                                  remotePage:RemoteLoopbackPageServer? = nil,
+                                  confirmedLAN:Bool = false) {
         // A stale editor must not arm a different profile than the saved one.
         guard let data = storedData,
               UserDefaults.standard.data(forKey:key) == data,
-              profile == saved, supportedLocalProfile, selectedControllersValid, canStartGroups else {
+              profile == saved, selectedControllersValid,
+              (remoteTransport == nil ? canStartGroups : canStartRemoteGroups),
+              (remoteTransport == nil) == (remotePage == nil) else {
             message = "Save or reload the current profile and select distinct controllers first."
             return
         }
@@ -168,12 +185,21 @@ struct PerformanceGroupEditorView: View {
             }
         }
         studio.startGroupGamepads(profile:saved,allowLayering:allowLayering,
-            tuning:tuning,confirmedTuning:tuning != nil)
+            tuning:tuning,confirmedTuning:tuning != nil,remoteTransport:remoteTransport,
+            remotePage:remotePage,confirmedLAN:confirmedLAN)
     }
 
     private var canStartGroups: Bool {
         didLoad && !readFailed && !tuningDraft.isDirty && profile == saved && supportedLocalProfile &&
         selectedControllersValid && !studio.groupGamepadsRunning && studio.groupTunedConfiguration == nil &&
+        studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
+        (saved.layeredInputs.isEmpty || allowLayering)
+    }
+
+    private var canStartRemoteGroups:Bool {
+        StudioController.groupRemoteStartEnabled && didLoad && !readFailed && !tuningDraft.isDirty &&
+        profile == saved && supportedRemoteProfile && selectedControllersValid &&
+        !studio.groupGamepadsRunning && studio.groupTunedConfiguration == nil &&
         studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
         (saved.layeredInputs.isEmpty || allowLayering)
     }
@@ -274,8 +300,16 @@ struct PerformanceGroupEditorView: View {
             VStack(alignment:.leading,spacing:8) {
                 Text("Xbox, Trackpad and Magic Mouse may share groups. Touch uses one primary contact; lift each surface to arm. Touch Bar ribbon, compatible lid-angle sensor and single-hand camera support continuous CC and pitch bend only. No local haptics, pressure or multi-touch. Live independent MPE requires a separately enabled experimental build.")
                     .font(.caption).foregroundStyle(.secondary)
-                if !supportedLocalProfile {
-                    Text("Save a supported local group profile to enable Start.").font(.caption)
+                if !supportedLocalProfile && !supportedRemoteProfile {
+                    Text("Save a supported group profile to enable Start.").font(.caption)
+                }
+                if !remoteSources.isEmpty && !StudioController.groupRemoteStartEnabled {
+                    Text("Mobile group Start is disabled in this build.").font(.caption).foregroundStyle(.orange)
+                }
+                if supportedRemoteProfile && StudioController.groupRemoteStartEnabled {
+                    PerformanceGroupRemotePanel(sources:remoteSources,canStart:canStartRemoteGroups) { transport,page,confirmed in
+                        startSavedGroups(remoteTransport:transport,remotePage:page,confirmedLAN:confirmed)
+                    }
                 }
                 if localSources.contains(.lid) {
                     Text("Lid input needs a compatible sensor. Start may fail on unsupported Macs; the actual sensor is opened only on Start.").font(.caption)
@@ -342,7 +376,7 @@ struct PerformanceGroupEditorView: View {
                         Text("Frozen configuration does not match this editor. No channel advice available.")
                             .font(.caption).foregroundStyle(.orange)
                     }
-                } else if supportedLocalProfile {
+                } else if supportedLocalProfile || supportedRemoteProfile {
                     ForEach(saved.groups.filter { !$0.patch.routes.isEmpty }) { group in
                         dawSetup(group)
                     }
