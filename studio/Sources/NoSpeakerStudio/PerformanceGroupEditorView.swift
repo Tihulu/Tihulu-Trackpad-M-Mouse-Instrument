@@ -184,6 +184,13 @@ struct PerformanceGroupEditorView: View {
         }
     }
 
+    private func dawSetup(_ group:PerformanceInstrumentGroup) -> some View {
+        let registered = studio.groupRegisteredIDs.contains(group.id)
+        let status = registered ? registeredStatus(group.id) : "Planned group port; not registered. Start the saved profile to create it."
+        return DAWSetupAssistantView(projection:.init(patch:group.patch,sendMIDI:true),
+                                     groupPort:.init(name:group.name,port:group.plannedPortName,status:status))
+    }
+
     private var liveControls: some View {
         GroupBox("Experimental group MIDI - local controllers and touch surfaces") {
             VStack(alignment:.leading,spacing:8) {
@@ -223,6 +230,11 @@ struct PerformanceGroupEditorView: View {
                     .font(.caption)
                 ForEach(saved.groups.filter { studio.groupRegisteredIDs.contains($0.id) }) { group in
                     registeredGroupRow(group)
+                }
+                if supportedLocalProfile {
+                    ForEach(saved.groups.filter { !$0.patch.routes.isEmpty }) { group in
+                        dawSetup(group)
+                    }
                 }
                 Text("In Logic Pro choose this exact MIDI In Port and the mapped channel for each track. Arm the required tracks; confirm notes and pedals in the DAW. Registered does not mean sound is verified.")
                     .font(.caption).foregroundStyle(.secondary)
