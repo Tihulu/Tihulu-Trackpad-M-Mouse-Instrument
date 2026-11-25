@@ -1638,11 +1638,18 @@ private struct NoteSequencerView: View {
                     try makeClip()
                 }
                 if let scale = studio.chordBank.customScale,scale.isMicrotonal {
+                    Button("Play tuned MIDI") {
+                        studio.startTunedNoteSequence(output:output ?? .haptic,loop:loop,makeClip:makeClip)
+                    }.disabled(studio.sequenceRunning || !(output ?? .haptic).sendsMIDI || (output ?? .haptic).sendsHaptics)
                     MIDIClipExportButton(filename:"TIHULU Tuned Notes",title:"Export tuned MPE",makeData:{
                         try TunedMIDIClip(makeClip(),scale:scale,root:studio.chordBank.root).encoded()
                     })
                 }
                 Button("Clear") { notes = Array(repeating: nil, count: 16) }
+            }
+            if studio.chordBank.customScale?.isMicrotonal == true {
+                Text("Play tuned MIDI requires MIDI-only output. Route TIHULU Tuned Sequencer MPE to a dedicated MPE instrument. Normal Play Pattern remains 12-TET; do not merge the two MIDI sources onto the same instrument.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 8), spacing: 8) {
                 ForEach(0..<16, id: \.self) { index in

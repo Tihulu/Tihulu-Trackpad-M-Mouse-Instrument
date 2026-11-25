@@ -39,3 +39,19 @@ import Testing
         try TunedMIDIClip(.init(bpm:120,length:960,notes:Array(notes.prefix(2))),scale:invalid,root:60)
     }
 }
+
+@Test func tunedSequenceSetupUsesSameMembersAndRetainsSelectorDebt() throws {
+    var scale = CustomScale(); scale.centOffsets = [4:-30]
+    let tuned = try TunedMIDIClip(.init(bpm:120,length:960,notes:[
+        .init(start:0,duration:240,channel:0,pitch:64,velocity:90)]),scale:scale,root:60)
+    #expect(tuned.setupCommands.last == .init(.init(.pitchBend,channel:1),value:6963))
+    let schedule = try MIDIClipSchedule(tuned.clip)
+    #expect(schedule.events.map(\.command) == [.init(.init(.note,channel:1,number:64),value:90),.init(.init(.note,channel:1,number:64),value:0)])
+    var selector = MIDISelectorCleanup()
+    let ok = selector.configure(tuned.setupCommands,send:{ $0.destination.number != 6 })
+    #expect(!ok && !selector.isEmpty)
+    var cleanup:[SensorCommand] = []
+    let released = selector.releaseAll(send:{ cleanup.append($0); return true })
+    #expect(released && selector.isEmpty)
+    #expect(cleanup == [.init(.init(.controlChange,channel:15,number:101),value:127),.init(.init(.controlChange,channel:15,number:100),value:127)])
+}

@@ -36,10 +36,11 @@ public struct TunedMIDIClip: Sendable {
         members = allocated
     }
 
-    public func encoded() -> Data {
-        var events:[(Int,[UInt8])] = []
+    /// Identical setup for offline export and the isolated live port.
+    public var setupCommands:[SensorCommand] {
+        var commands:[SensorCommand] = []
         func cc(_ channel:Int,_ number:Int,_ value:Int) {
-            events.append((0,[UInt8(0xb0|channel),UInt8(number),UInt8(value)]))
+            commands.append(.init(.init(.controlChange,channel:channel,number:number),value:value))
         }
         func rpn(_ channel:Int,_ number:Int,_ value:Int,fine:Bool = false) {
             cc(channel,101,0); cc(channel,100,number); cc(channel,6,value)
@@ -52,7 +53,16 @@ public struct TunedMIDIClip: Sendable {
         rpn(0,0,2,fine:true)
         for member in members {
             rpn(member.channel,0,2,fine:true)
-            events.append((0,[UInt8(0xe0|member.channel),UInt8(member.bend & 127),UInt8(member.bend >> 7)]))
+            commands.append(.init(.init(.pitchBend,channel:member.channel),value:member.bend))
+        }
+        return commands
+    }
+
+    public func encoded() -> Data {
+        var events:[(Int,[UInt8])] = setupCommands.map { command in
+            let d = command.destination, v = command.value
+            if d.kind == .pitchBend { return (0,[UInt8(0xe0|d.channel),UInt8(v & 127),UInt8(v >> 7)]) }
+            return (0,[UInt8(0xb0|d.channel),UInt8(d.number),UInt8(v)])
         }
         struct Gate {
             let tick:Int

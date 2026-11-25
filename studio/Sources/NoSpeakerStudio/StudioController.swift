@@ -222,6 +222,31 @@ final class StudioController: ObservableObject {
     @Published private(set) var sequenceRunning = false
     @Published private(set) var sequenceStatus = "Sequencer MIDI idle"
     private let sequenceMIDI = ChordMIDIOutput(name: "TIHULU Sequencer")
+    private let tunedSequenceMIDI = ChordMIDIOutput(name:"TIHULU Tuned Sequencer MPE")
+    private var sequenceUsesTuning = false
+    private var sequenceSelectors = MIDISelectorCleanup()
+    private var activeSequenceMIDI:ChordMIDIOutput { sequenceUsesTuning ? tunedSequenceMIDI : sequenceMIDI }
+    private func releaseSequenceOutput() -> Bool {
+        let port = activeSequenceMIDI
+        let notesReleased = sequenceLedger.releaseAll(send:{ port.send($0) })
+        let selectorsReleased = sequenceSelectors.releaseAll(send:{ port.send($0) })
+        return notesReleased && selectorsReleased
+    }
+
+    func startTunedNoteSequence(output:MusicalOutput,loop:Bool,makeClip:() throws -> MIDIClip) {
+        guard !sequenceRunning,output.sendsMIDI,!output.sendsHaptics else {
+            sequenceStatus = "Choose MIDI-only output for tuned sequencer playback."
+            return
+        }
+        guard let scale = chordBank.customScale,scale.isMicrotonal else {
+            sequenceStatus = "Select a custom scale with nonzero cent offsets first."
+            return
+        }
+        do {
+            let tuned = try TunedMIDIClip(makeClip(),scale:scale,root:chordBank.root)
+            startLiveSequence(output:output,loop:loop,tuned:tuned,makeClip:{ tuned.clip })
+        } catch { sequenceStatus = error.localizedDescription }
+    }
     private var sequenceLedger = MIDIClipNoteLedger()
     private var sequenceTask: Task<Void, Never>?
     private var sequenceToken: UUID?
@@ -2011,10 +2036,10 @@ final class StudioController: ObservableObject {
 
     /// One independent MIDI sequence, with optional exclusive haptic
     /// preview. MIDI-only does not require the Force Touch driver.
-    func startLiveSequence(output: MusicalOutput, loop: Bool, makeClip: () throws -> MIDIClip) {
-        guard output.sendsMIDI, !sequenceRunning else { return }
+    func startLiveSequence(output: MusicalOutput, loop: Bool, tuned:TunedMIDIClip? = nil, makeClip: () throws -> MIDIClip) {
+        guard output.sendsMIDI, !sequenceRunning, tuned == nil || !output.sendsHaptics else { return }
         do {
-            let clip = try makeClip().validated()
+            let clip = try (tuned?.clip ?? makeClip()).validated()
             let schedule = try MIDIClipSchedule(clip)
             let hapticEvents = output.sendsHaptics ? try clip.grooveHapticEvents() : []
             if output.sendsHaptics {
@@ -2026,16 +2051,25 @@ final class StudioController: ObservableObject {
                 cancelStartupGreeting()
                 guard requireEngine(), playback != nil else { return }
             }
-            guard sequenceLedger.releaseAll(send: { sequenceMIDI.send($0) }) else {
+            guard releaseSequenceOutput() else {
                 sequenceStatus = "MIDI release failed. Reset the receiving DAW and retry Stop."
                 return
             }
-            try sequenceMIDI.open()
+            sequenceUsesTuning = tuned != nil
+            let port = activeSequenceMIDI
+            try port.open()
+            if let tuned {
+                guard sequenceSelectors.configure(tuned.setupCommands,send:{ port.send($0) }) else {
+                    stopLiveSequence()
+                    sequenceStatus = "MPE setup failed. Check DAW and retry Stop before playback."
+                    return
+                }
+            }
             let token = UUID()
             sequenceToken = token
             sequenceRunning = true
             sequenceOwnsHaptics = output.sendsHaptics
-            sequenceStatus = "Playing · TIHULU Sequencer · " + output.rawValue
+            sequenceStatus = (sequenceUsesTuning ? "Playing · TIHULU Tuned Sequencer MPE · " : "Playing · TIHULU Sequencer · ") + output.rawValue
             if output.sendsHaptics {
                 renderGeneration &+= 1
                 isPlaying = true
@@ -2064,7 +2098,7 @@ final class StudioController: ObservableObject {
                             guard !Task.isCancelled, let self, self.sequenceToken == token else { return }
                             // Skip notes whose entire gate has expired.
                             if event.isNoteOn && clock.now >= origin.advanced(by: offset(event.endTick)) { continue }
-                            let delivered = self.sequenceLedger.deliver(event.command, send: { self.sequenceMIDI.send($0) })
+                            let delivered = self.sequenceLedger.deliver(event.command, send: { port.send($0) })
                             guard delivered else {
                                 self.stopLiveSequence()
                                 self.lastError = "Sequencer MIDI delivery failed. Check the receiving DAW."
@@ -2098,7 +2132,7 @@ final class StudioController: ObservableObject {
         }
         sequenceOwnsHaptics = false
         sequenceRunning = false
-        let released = sequenceLedger.releaseAll(send: { sequenceMIDI.send($0) })
+        let released = releaseSequenceOutput()
         sequenceStatus = released ? "Sequencer MIDI idle" : "MIDI release failed. Reset the receiving DAW and retry Stop."
     }
 

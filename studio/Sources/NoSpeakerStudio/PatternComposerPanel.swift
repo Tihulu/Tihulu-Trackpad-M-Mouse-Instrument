@@ -38,7 +38,7 @@ struct NoteComposerPanel: View {
                     }.disabled(previous == nil)
                     Spacer()
                 }
-                Text("Local rule-based composition, not a trained AI model. Uses nominal notes from the current chord bank; generated notes remain editable in the 16-step grid. No automatic playback. Tuned MPE export uses the current bank offsets. Live Note Sequencer playback still uses nominal pitches.")
+                Text("Local rule-based composition, not a trained AI model. Uses nominal notes from the current chord bank; generated notes remain editable in the 16-step grid. No automatic playback. Tuned MPE export uses the current bank offsets. Use Play tuned MIDI with MIDI-only output for microtonal playback; normal Play Pattern remains nominal.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(6)
         }
