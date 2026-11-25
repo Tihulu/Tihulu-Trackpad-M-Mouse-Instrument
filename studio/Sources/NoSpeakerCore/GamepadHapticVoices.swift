@@ -13,7 +13,11 @@ public struct GamepadHapticVoices: Sendable {
     /// A prepared lower MPE zone has a frozen ±2-semitone bend per
     /// member. This renderer does not parse or transmit RPN messages.
     init(zone:PerformanceGroupTuningPlan.Zone) {
-        fixedMembers = Dictionary(uniqueKeysWithValues:zone.members.map { ($0.channel,$0.bend) })
+        self.init(members:zone.members)
+    }
+
+    init(members:[TunedMIDIClip.Member]) {
+        fixedMembers = Dictionary(uniqueKeysWithValues:members.map { ($0.channel,$0.bend) })
     }
 
     /// First native haptic slice deliberately admits gamepad-only patches.

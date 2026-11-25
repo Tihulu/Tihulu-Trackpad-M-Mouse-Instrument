@@ -50,6 +50,31 @@ public struct PerformanceGroupHapticProjection: Sendable {
         voices = renderers
     }
 
+    /// Dynamic pools retain fixed bends but may reuse a member for another
+    /// logical note. Observe only accepted wire commands after successful
+    /// preparation. The preview is an immutable plan, not proof of setup.
+    public init(preparedDynamic preview:DynamicMPEPreview,selected:Set<UUID>) throws {
+        guard !selected.isEmpty,selected.isSubset(of:preview.groups.map(\.id)) else {
+            throw AdmissionError.invalidSelection
+        }
+        var mapped:[UUID:Set<SensorDestination>] = [:]
+        var renderers:[UUID:GamepadHapticVoices] = [:]
+        for group in preview.groups where selected.contains(group.id) {
+            var wire:Set<SensorDestination> = []
+            for route in group.routes {
+                for channel in route.possibleChannels {
+                    var target = route.logical
+                    target.channel = channel-1
+                    wire.insert(target)
+                }
+            }
+            mapped[group.id] = wire
+            renderers[group.id] = .init(members:group.plan.members)
+        }
+        targets = mapped
+        voices = renderers
+    }
+
     /// A failed send invalidates only the selected group's projection.
     /// Successful cleanup cannot revive that group. A native host must also
     /// call retire on explicit group Stop and clear on global Stop/Panic.
