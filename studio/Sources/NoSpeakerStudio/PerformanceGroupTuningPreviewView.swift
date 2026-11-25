@@ -11,10 +11,16 @@ struct PerformanceGroupTuningPreviewView: View {
     let locked: Bool
 
     @Binding var configuration: PerformanceGroupTuningConfiguration?
-    @State private var selectedID: UUID?
-    @State private var scaleName = "Custom scale"
-    @State private var degrees = "0, 180, 400, 500, 700, 900, 1100"
-    @State private var rootText = "60"
+    @Binding var draft: PerformanceGroupTuningDraft
+
+    init(profile:PerformanceGroupProfile,locked:Bool,
+         configuration:Binding<PerformanceGroupTuningConfiguration?>,
+         draft:Binding<PerformanceGroupTuningDraft> = .constant(.init())) {
+        self.profile = profile
+        self.locked = locked
+        self._configuration = configuration
+        self._draft = draft
+    }
     @State private var message = ""
     @State private var confirmReset = false
 
@@ -29,36 +35,22 @@ struct PerformanceGroupTuningPreviewView: View {
         try? PerformanceGroupDAWProjection(profile:profile,configuration:configuration)
     }
     private var selectedGroup: PerformanceInstrumentGroup? {
-        eligibleGroups.first { $0.id == selectedID }
+        eligibleGroups.first { $0.id == draft.selectedID }
     }
 
     private func selectGroup(_ id: UUID?) {
-        selectedID = id
-        guard let id else { return }
-        if let spec = configuration?.tuning[id] {
-            scaleName = spec.scale.name
-            degrees = spec.scale.degreeCents.map { String($0) }.joined(separator:", ")
-            rootText = String(spec.root)
-        } else {
-            scaleName = "Custom scale"
-            degrees = "0, 180, 400, 500, 700, 900, 1100"
-            rootText = "60"
+        guard !locked else { return }
+        if !draft.select(id,configuration:configuration) {
+            message = "Apply or discard text edits before selecting another group."
         }
     }
 
     private func apply() {
-        guard !locked, matchesProfile, let group = selectedGroup,
-              let root = Int(rootText.trimmingCharacters(in:.whitespacesAndNewlines)),
-              (0...127).contains(root),
-              let scale = CustomScale.fromDegreeCents(degrees,name:scaleName),
-              scale.isMicrotonal else {
-            message = "Choose a group and a valid microtonal scale/root. No changes made."
-            return
-        }
-        var next = configuration?.tuning ?? [:]
-        next[group.id] = .init(scale:scale,root:root)
+        guard !locked, matchesProfile else { return }
         do {
-            configuration = try .init(profile:profile,tuning:next)
+            let updated = try draft.applying(to:profile,configuration:configuration)
+            configuration = updated
+            draft.load(draft.selectedID,configuration:updated)
             message = "Tuning preview updated. No MIDI sent. Export to keep this configuration."
         } catch {
             message = "Tuning rejected: " + String(describing:error) + ". Previous preview retained."
@@ -66,13 +58,13 @@ struct PerformanceGroupTuningPreviewView: View {
     }
 
     private func removeSelected() {
-        guard !locked, matchesProfile, let id = selectedGroup?.id,
+        guard !locked, !draft.isDirty, matchesProfile, let id = selectedGroup?.id,
               var next = configuration?.tuning, next.removeValue(forKey:id) != nil else { return }
         do {
             let updated: PerformanceGroupTuningConfiguration? = next.isEmpty ? nil :
                 try .init(profile:profile,tuning:next)
             configuration = updated
-            selectGroup(id)
+            draft.load(id,configuration:updated)
             message = "Group changed to standard MIDI in the offline preview only."
         } catch {
             message = "Could not remove tuning: " + String(describing:error)
@@ -80,7 +72,7 @@ struct PerformanceGroupTuningPreviewView: View {
     }
 
     private func exportConfiguration() {
-        guard !locked, matchesProfile, let configuration else { return }
+        guard !locked, !draft.isDirty, matchesProfile, let configuration else { return }
         do {
             // Rebind harmless renames/order changes; never rebind changed mappings.
             let data = try PerformanceGroupTuningConfiguration(profile:profile,tuning:configuration.tuning).archive()
@@ -95,7 +87,7 @@ struct PerformanceGroupTuningPreviewView: View {
     }
 
     private func importConfiguration() {
-        guard !locked else { return }
+        guard !locked, !draft.isDirty else { return }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -116,7 +108,7 @@ struct PerformanceGroupTuningPreviewView: View {
             guard data.count <= limit else { throw WorkspaceArchiveError.tooLarge }
             let loaded = try PerformanceGroupTuningConfiguration.read(data,matching:profile)
             configuration = loaded
-            selectGroup(eligibleGroups.first(where:{ loaded.tuning[$0.id] != nil })?.id)
+            draft.load(eligibleGroups.first(where:{ loaded.tuning[$0.id] != nil })?.id,configuration:loaded)
             message = "Tuning file imported and matched to saved groups. No MIDI sent."
         } catch {
             message = "Import rejected: " + String(describing:error) + ". Previous preview retained."
@@ -162,29 +154,37 @@ struct PerformanceGroupTuningPreviewView: View {
                     Text("Saved group mappings changed. This tuning is stale. Import a matching file or explicitly reset the preview before editing.")
                         .font(.caption).foregroundStyle(.orange)
                 }
-                Picker("Group",selection:Binding<UUID?>(get:{ selectedID },set:{ selectGroup($0) })) {
+                Picker("Group",selection:Binding<UUID?>(get:{ draft.selectedID },set:{ selectGroup($0) })) {
                     Text("Select group").tag(UUID?.none)
                     ForEach(eligibleGroups) { group in
                         Text(group.name).tag(Optional(group.id))
                     }
                 }
-                TextField("Scale name",text:$scaleName)
-                TextField("Scale degrees in cents",text:$degrees)
-                TextField("MIDI root (0–127)",text:$rootText)
+                TextField("Scale name",text:$draft.scaleName)
+                TextField("Scale degrees in cents",text:$draft.degrees)
+                TextField("MIDI root (0–127)",text:$draft.rootText)
+                if draft.isDirty {
+                    Text("Unapplied tuning text. Apply or discard before changing groups, exporting or starting.")
+                        .font(.caption).foregroundStyle(.orange)
+                    Button("Discard text edits") {
+                        draft.load(selectedGroup?.id,configuration:configuration)
+                        message = "Unapplied text discarded; applied tuning unchanged."
+                    }
+                }
                 Text("Use increasing root-relative cents starting at 0; optional 1200 endpoint. Offsets must fit the existing pitch-class model (±49 cents). This is not a complete makam/seyir editor.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Apply MPE preview") { apply() }
                         .disabled(selectedGroup == nil || !matchesProfile)
                     Button("Remove selected tuning") { removeSelected() }
-                        .disabled(selectedID.flatMap { configuration?.tuning[$0] } == nil || !matchesProfile)
+                        .disabled(draft.isDirty || draft.selectedID.flatMap { configuration?.tuning[$0] } == nil || !matchesProfile)
                 }
                 HStack {
-                    Button("Import tuning file") { importConfiguration() }
+                    Button("Import tuning file") { importConfiguration() }.disabled(draft.isDirty)
                     Button("Export tuning file") { exportConfiguration() }
-                        .disabled(configuration == nil || !matchesProfile)
+                        .disabled(draft.isDirty || configuration == nil || !matchesProfile)
                     Button("Reset preview") { confirmReset = true }
-                        .disabled(configuration == nil)
+                        .disabled(configuration == nil && !draft.isDirty)
                 }
                 if let projection {
                     ForEach(projection.groups) { group in groupPreview(group) }
@@ -199,13 +199,13 @@ struct PerformanceGroupTuningPreviewView: View {
             Button("Reset preview",role:.destructive) {
                 guard !locked else { return }
                 configuration = nil
-                selectGroup(nil)
+                draft.load(nil,configuration:nil)
                 message = "Preview reset. Exported files and standard group settings are unchanged."
             }
             Button("Cancel",role:.cancel) {}
         }
         .onChange(of:profile) { _ in
-            if selectedGroup == nil { selectGroup(nil) }
+            if selectedGroup == nil && !draft.isDirty { draft.load(nil,configuration:configuration) }
         }
     }
 }
