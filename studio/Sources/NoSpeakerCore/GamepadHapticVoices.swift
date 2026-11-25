@@ -36,6 +36,18 @@ public struct GamepadHapticVoices: Sendable {
         }
     }
 
+    /// The transient is only the accepted new note, not a snapshot of
+    /// other held notes. Respect current channel gain and bend.
+    public func attackFrame(_ command:SensorCommand) -> HapticFrame? {
+        let d = command.destination
+        guard d.kind == .note,d.isValid,(1...127).contains(command.value) else { return nil }
+        let bend = Double((bends[d.channel] ?? 8192)-8192)/8192*2
+        let gain = Double(volume[d.channel] ?? 127)/127 * Double(expression[d.channel] ?? 127)/127
+        guard gain > 0,let rendered = NoteHapticRenderer.frame(notes:[d.number],velocity:command.value,
+            safety:.init(),semitoneOffset:bend,expression:gain) else { return nil }
+        return .init(tones:rendered.tones,durationMS:18,level:rendered.level)
+    }
+
     public func frame() -> HapticFrame? {
         let policy = HapticSafetyPolicy()
         // Independent MIDI channels retain independent bend/level. The

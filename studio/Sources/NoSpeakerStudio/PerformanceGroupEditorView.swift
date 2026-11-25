@@ -364,7 +364,7 @@ struct PerformanceGroupEditorView: View {
         if StudioController.groupHapticStartEnabled {
             GroupBox("Experimental Trackpad note output") {
                 VStack(alignment:.leading,spacing:5) {
-                    Text("Select standard MIDI groups to mirror on the shared actuator. Off by default. Not MPE, drum synthesis, or audio playback; short notes between host ticks may be missed.")
+                    Text("Select standard MIDI groups to mirror on the shared actuator. Off by default. Not MPE, drum synthesis, or audio playback; short attacks are best-effort within a four-entry, 40 ms buffer.")
                         .font(.caption)
                     ForEach(saved.groups.filter { hapticEligibleIDs.contains($0.id) }) { group in
                         Toggle(group.name,isOn:Binding(

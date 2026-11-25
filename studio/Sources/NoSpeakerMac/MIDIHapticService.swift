@@ -1136,7 +1136,8 @@ public final class PerformanceGroupMIDIHost {
     private var gamepads: PerformanceGroupGamepadSession?
     private var retainedTunedPorts = false
     private var groupHapticProjection:PerformanceGroupHapticProjection?
-    public var groupHapticFrame:HapticFrame? { groupHapticProjection?.frame() }
+    public func groupHapticSnapshot(now:Double) -> GroupHapticSnapshot? { groupHapticProjection?.snapshot(now:now) }
+    public func discardGroupHapticAttacks() { groupHapticProjection?.discardAttacks() }
     public func disableGroupHaptics() { groupHapticProjection = nil }
     private var remoteBridge: PerformanceGroupRemoteBridge?
     private var remoteRunID: UUID?
@@ -1228,7 +1229,7 @@ public final class PerformanceGroupMIDIHost {
         let accepted:Bool
         if let endpoint = ports.handle(for:item.groupID) { accepted = ChordMIDIOutput.send(item.command,endpoint:endpoint) }
         else { accepted = false }
-        groupHapticProjection?.observe(item,accepted:accepted)
+        groupHapticProjection?.observe(item,accepted:accepted,now:ProcessInfo.processInfo.systemUptime)
         return accepted
     }
 
@@ -1282,7 +1283,9 @@ public final class PerformanceGroupMIDIHost {
             result.actions = [.stop]
             return result
         }
+        let peers = bridge.connectionIDs
         let result = bridge.process(events,now:now,session:&state,send:send)
+        if result.fault || !peers.isSubset(of:bridge.connectionIDs) { discardGroupHapticAttacks() }
         gamepads = state
         remoteBridge = bridge.stopped ? nil : bridge
         if bridge.stopped { remoteRunID = nil }
@@ -1291,6 +1294,7 @@ public final class PerformanceGroupMIDIHost {
 
     public func revokeRemoteGroupConnection(run:UUID,connection:UUID) -> PerformanceGroupRemoteBatch {
         guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else { return .init() }
+        discardGroupHapticAttacks()
         let result = bridge.revoke(connection,session:&state,send:send)
         remoteBridge = bridge
         gamepads = state
@@ -1299,6 +1303,7 @@ public final class PerformanceGroupMIDIHost {
 
     public func stopRemoteGroupBridge(run:UUID) -> PerformanceGroupRemoteBatch {
         guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else { return .init() }
+        discardGroupHapticAttacks()
         let result = bridge.stop(session:&state,send:send)
         gamepads = state
         remoteBridge = nil
@@ -1318,6 +1323,7 @@ public final class PerformanceGroupMIDIHost {
         -> PerformanceGroupGamepadSession.Result? {
         guard var state = gamepads else { return nil }
         let result = state.receive(source,token:token,frame:frame,now:now,send:send)
+        if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result
     }
@@ -1327,6 +1333,7 @@ public final class PerformanceGroupMIDIHost {
         guard var state = gamepads else { return nil }
         let result = state.receiveSurface(source,token:token,x:x,y:y,size:size,
                                           hostTime:hostTime,now:now,send:send)
+        if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result
     }
@@ -1335,6 +1342,7 @@ public final class PerformanceGroupMIDIHost {
                               hostTime:Double, now:Double) -> PerformanceGroupGamepadSession.Result? {
         guard var state = gamepads else { return nil }
         let result = state.receiveScalar(source,token:token,value:value,hostTime:hostTime,now:now,send:send)
+        if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result
     }
@@ -1343,13 +1351,16 @@ public final class PerformanceGroupMIDIHost {
         -> PerformanceGroupGamepadSession.Result? {
         guard var state = gamepads else { return nil }
         let result = state.receiveCamera(token:token,hand:hand,hostTime:hostTime,now:now,send:send)
+        if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result
     }
 
     public func expireGamepads(now: Double) -> [PerformanceGroupDelivery.Report] {
         guard var state = gamepads else { return [] }
+        let before = state.sourceStates
         let result = state.expire(now:now,send:send)
+        if before != state.sourceStates { discardGroupHapticAttacks() }
         gamepads = state
         return result
     }
@@ -1360,6 +1371,7 @@ public final class PerformanceGroupMIDIHost {
 
     public func unbindGroupSources(_ tokens:[SensorSource:UUID]) -> [PerformanceGroupDelivery.Report] {
         guard var state = gamepads else { return [] }
+        discardGroupHapticAttacks()
         let result = state.unbindBatch(tokens,send:send)
         gamepads = state
         return result

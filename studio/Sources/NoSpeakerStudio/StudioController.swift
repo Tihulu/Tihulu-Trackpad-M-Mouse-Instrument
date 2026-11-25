@@ -24,7 +24,11 @@ final class StudioController: ObservableObject {
     @Published var lastError: String?
     @Published var isPlaying = false
     @Published var masterLevel = 0.75 {
-        didSet { updateChordHaptics(); updateTouchBarHaptics(); updateGamepadHaptics(force:true) }
+        didSet {
+            updateChordHaptics(); updateTouchBarHaptics(); updateGamepadHaptics(force:true)
+            groupHost.discardGroupHapticAttacks()
+            updateGroupHaptics()
+        }
     }
     @Published var bpm = 120.0
     @Published private(set) var instrumentPatch = StudioController.readInstrumentPatch()
@@ -482,7 +486,8 @@ final class StudioController: ObservableObject {
     }
 
     private func updateGroupHaptics() {
-        groupHaptics?.update(frame:groupHost.groupHapticFrame,masterLevel:masterLevel,discardPendingAttacks:true)
+        guard let output = groupHaptics,let snapshot = groupHost.groupHapticSnapshot(now:ProcessInfo.processInfo.systemUptime) else { return }
+        output.updateGroup(snapshot:snapshot,masterLevel:masterLevel)
     }
 
     func stopGroupHaptics(reason:String = "Group Trackpad output off; MIDI unchanged") {
@@ -504,7 +509,7 @@ final class StudioController: ObservableObject {
         // Publish reconciled edges promptly, not just on the next 20 ms
         // watchdog. The independent latest-frame mailbox never waits for
         // the physical driver. Silent polling does not do extra rendering.
-        if !failures.isEmpty || reports.contains(where:{ $0.accepted > 0 }) {
+        if !reports.isEmpty {
             updateGroupHaptics()
         }
         refreshGroupOutputState()
@@ -784,6 +789,8 @@ final class StudioController: ObservableObject {
         groupGamepadTokens.removeAll()
         groupGamepadsRunning = false
         groupStoppedIDs = groupRegisteredIDs
+        // Block new actuator frames before potentially slow MIDI cleanup.
+        groupHaptics?.invalidateGroupFrames()
         // Release MIDI before potentially slow native monitor teardown.
         if let report = groupHost.panic() { consumeGroupReports([report]) }
         stopGroupHaptics(reason:"Group Trackpad output off")

@@ -78,6 +78,17 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
         }
     }
 
+    public func updateGroup(snapshot:GroupHapticSnapshot,masterLevel:Double) {
+        guard requiresFreshGroupFrames else { return }
+        groupMailboxLock.lock()
+        _ = groupMailbox?.publish(snapshot:snapshot,masterLevel:masterLevel,now:ProcessInfo.processInfo.systemUptime)
+        groupMailboxLock.unlock()
+    }
+
+    /// Close the group mailbox without waiting for the driver. Global Stop
+    /// can then release MIDI before draining the actuator queue.
+    public func invalidateGroupFrames() { closeGroupMailbox() }
+
     public func stop() {
         closeGroupMailbox()
         queue.sync {

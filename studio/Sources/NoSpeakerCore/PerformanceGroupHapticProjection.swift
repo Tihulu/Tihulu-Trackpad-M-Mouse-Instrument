@@ -9,6 +9,8 @@ public struct PerformanceGroupHapticProjection: Sendable {
     private var targets:[UUID:Set<SensorDestination>]
     private var voices:[UUID:GamepadHapticVoices]
     private let safety = HapticSafetyPolicy()
+    private var pendingAttacks:[GroupHapticAttack] = []
+    private var attackEpoch:UInt64 = 0
     public var activeGroups:Set<UUID> { Set(voices.keys) }
 
     public init(profile:PerformanceGroupProfile,selected:Set<UUID>,tuned:Set<UUID> = []) throws {
@@ -26,7 +28,7 @@ public struct PerformanceGroupHapticProjection: Sendable {
     /// A failed send invalidates only the selected group's projection.
     /// Successful cleanup cannot revive that group. A native host must also
     /// call retire on explicit group Stop and clear on global Stop/Panic.
-    public mutating func observe(_ item:PerformanceGroupCommand,accepted:Bool) {
+    public mutating func observe(_ item:PerformanceGroupCommand,accepted:Bool,now:Double? = nil) {
         guard voices[item.groupID] != nil else { return }
         let command = item.command
         let d = command.destination
@@ -37,14 +39,38 @@ public struct PerformanceGroupHapticProjection: Sendable {
             return
         }
         voices[item.groupID]?.apply(command)
+        if d.kind == .pitchBend || (d.kind == .sustain && command.value == 0) ||
+            (d.kind == .controlChange && [7,11].contains(d.number)) {
+            discardAttacks()
+        }
+        if d.kind == .note,command.value > 0,let now,now.isFinite,now >= 0,
+           let frame = voices[item.groupID]?.attackFrame(command) {
+            pendingAttacks.removeAll { !$0.isFresh(now:now) }
+            if pendingAttacks.count >= HapticAttackBuffer<HapticFrame>.capacity { pendingAttacks.removeFirst() }
+            pendingAttacks.append(.init(frame:frame,time:now))
+        }
+    }
+
+    /// Conservative: invalidate all unrendered transients across a fault or
+    /// changed expression. Held voices on unrelated ports remain intact.
+    public mutating func discardAttacks() {
+        pendingAttacks.removeAll(keepingCapacity:true)
+        attackEpoch &+= 1
+    }
+
+    public mutating func snapshot(now:Double) -> GroupHapticSnapshot {
+        let attacks = pendingAttacks.filter { $0.isFresh(now:now) }
+        pendingAttacks.removeAll(keepingCapacity:true)
+        return .init(held:frame(),attacks:attacks,epoch:attackEpoch)
     }
 
     public mutating func retire(_ group:UUID) {
-        voices.removeValue(forKey:group)
+        if voices.removeValue(forKey:group) != nil { discardAttacks() }
         targets.removeValue(forKey:group)
     }
 
     public mutating func stop() {
+        discardAttacks()
         voices.removeAll()
         targets.removeAll()
     }
