@@ -141,6 +141,23 @@ The tuned export uses the existing TunedMIDIClip writer. It requires a single me
 
 `voice analyze FILE` accepts `{"sampleRate":16000,"samples":[...]}` with 400 to 80000 normalized mono PCM samples in [-1,1]. It runs the existing HapticVoiceAnalyzer and returns scheduled haptic frames as data. This is analysis only, not TTS, speech recognition, microphone capture, physical vibration or audio playback. The five-second input cap is a conservative CLI development bound. No network or automatic model downloads.
 
+### Gamepad and camera replay
+
+```sh
+swift run --skip-build tihulu-mac-instrument-engine gamepad patch 2 lead 4 > controller.json
+swift run --skip-build tihulu-mac-instrument-engine camera helper-patch pedalPair 3 > camera.json
+```
+
+Gamepad patch accepts slots 1-4, roles drums/lead/helper and MIDI channels 1-16. Camera Helper presets accept expressive, guitarEffects or pedalPair and channels 1-16. Both commands produce existing Studio patch archives without changing saved application settings.
+
+`gamepad normalize FILE` takes a complete JSON snapshot of 12 buttons (0 or 1), two triggers ([0,1]), and four stick axes ([-1,1]). The response includes normalized active values, the complement of inactive signals, and the canonical input order for all axes. Inactive signals describe an ordinary snapshot lift, not forced toggle cleanup. The production GamepadFrame dead zones and validation are reused.
+
+`camera helper-simulate PATCH FRAMES` accepts a Helper-only camera patch and an array of synthetic samples. Each row has time and now in seconds, and optional left/right objects with x, y, aperture in [0,1]. Missing hands are tracking loss; stale samples follow production tracking gates. Replay exercises neutral acquisition, pinch/toggle and release ownership without opening the camera. Final cleanup is returned as data. Combined camera instruments, raw images and physical tracking are not implemented by this command.
+
+### App identity boundary
+
+The SDK product is independent of the existing NoSpeakerStudio app. The installer launcher remains `tihulu-trackpad-instrument`; app bundle identifiers, MIDI port names and saved settings are not renamed. Installer release builds explicitly select NoSpeakerStudio, not the CLI product. CI checks SwiftPM dependency boundaries and validates the built app executable and bundle ID. No developer binary is copied into the application bundle.
+
 ## AI retrieval / vector index
 
 Run from the repository root:
