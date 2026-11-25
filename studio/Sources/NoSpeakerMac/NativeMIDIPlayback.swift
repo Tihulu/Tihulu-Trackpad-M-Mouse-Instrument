@@ -33,6 +33,7 @@ public final class NativeMIDIPlayback {
         public let sourceOpen:Bool
         public let running:Bool
         public let identityRetired:Bool
+        public let disposalFailed:Bool
         public let outstandingNotes:Int
         public let recoveryRequired:Bool
     }
@@ -40,14 +41,15 @@ public final class NativeMIDIPlayback {
     /// Local ledger state, not proof that the remote receiver is silent.
     public var lifecycle:Lifecycle {
         .init(state:player.state.rawValue,sourceOpen:endpoint != 0,running:running,
-              identityRetired:identityRetired,outstandingNotes:player.outstanding.count,
-              recoveryRequired:identityRetired || (player.state != .playing && !player.outstanding.isEmpty))
+              identityRetired:identityRetired,disposalFailed:disposalFailed,outstandingNotes:player.outstanding.count,
+              recoveryRequired:identityRetired || disposalFailed || (player.state != .playing && !player.outstanding.isEmpty))
     }
 
     public let sourceName = "TIHULU SDK Playback "+UUID().uuidString
     private var endpoint=MIDIEndpointRef()
     private var sourceID:Int32=0
     private var identityRetired=false
+    private var disposalFailed=false
     private var wasCancelled=false
     private var player:BoundedMIDIPlayback
     private var opened=false
@@ -158,7 +160,11 @@ public final class NativeMIDIPlayback {
         }
         if player.state == .ready { player.stop { _ in false } }
         let status=MIDIEndpointDispose(source)
-        guard status==noErr else { throw Failure.native("source disposal",status) }
+        guard status==noErr else {
+            disposalFailed=true
+            throw Failure.native("source disposal",status)
+        }
+        disposalFailed=false
         MIDIProcessClient.shared.unregisterIsolatedSource(source)
         endpoint=0
     }
