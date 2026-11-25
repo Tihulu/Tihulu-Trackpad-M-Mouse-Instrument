@@ -27,5 +27,14 @@ public struct HapticAttackBuffer<Payload: Sendable>: Sendable {
         guard !entries.isEmpty else { return nil }
         return entries.removeFirst().value
     }
+    /// Group attacks that arrived before the same render tick. Useful when
+    /// the existing renderer mixes current contacts or MIDI notes.
+    public mutating func drain(now: Double) -> [Payload] {
+        guard now.isFinite, now >= 0 else { removeAll(); return [] }
+        prune(now:now)
+        let values = entries.map(\.value)
+        removeAll()
+        return values
+    }
     public mutating func removeAll() { entries.removeAll(keepingCapacity:true) }
 }
