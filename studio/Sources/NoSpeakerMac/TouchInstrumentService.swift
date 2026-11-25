@@ -715,9 +715,9 @@ public final class TouchInstrumentService: @unchecked Sendable {
             var current = liveHapticStates
             if pendingDrumHits.isEmpty {
                 let now = ProcessInfo.processInfo.systemUptime
-                if let attacks = pendingMelodicAttacks.take(now:now) {
-                    let liveIDs = Set(current.map(\.id))
-                    current += attacks.filter { !liveIDs.contains($0.id) }
+                var liveIDs = Set(current.map(\.id))
+                for attacks in pendingMelodicAttacks.drain(now:now) {
+                    current += attacks.filter { liveIDs.insert($0.id).inserted }
                 }
             }
             snapshot = (configuration, current, sustainedHapticStates,
