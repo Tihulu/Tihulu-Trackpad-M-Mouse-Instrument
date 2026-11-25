@@ -32,7 +32,7 @@ struct PerformanceGroupEditorView: View {
     }
 
     private func save() {
-        guard didLoad, !readFailed else { return }
+        guard didLoad, !readFailed, !editingLocked else { return }
         let current = UserDefaults.standard.object(forKey:key)
         guard (current == nil && storedData == nil) ||
               (current is Data && (current as? Data) == storedData) else {
@@ -111,7 +111,7 @@ struct PerformanceGroupEditorView: View {
                 Button("Replace draft mappings from Builder") { replaceMappings(group.id) }
                     .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
             }
-        }.disabled(readFailed || studio.groupGamepadsRunning)
+        }.disabled(readFailed || editingLocked)
     }
 
     private func groupActions(_ group: PerformanceInstrumentGroup) -> some View {
@@ -132,10 +132,13 @@ struct PerformanceGroupEditorView: View {
         return GamepadFrame.orderedSources.filter { sources.contains($0) }
     }
 
-    private var gamepadOnly: Bool {
-        let routes = saved.groups.flatMap { $0.patch.routes }
-        return saved.isValid && !routes.isEmpty &&
-            routes.allSatisfy { GamepadFrame.sources.contains($0.source) && GamepadFrame.permits($0) }
+    private var supportedLocalProfile: Bool {
+        PerformanceGroupGamepadSession.supports(saved,allowSurfaces:true)
+    }
+
+    private var editingLocked: Bool {
+        studio.groupGamepadsRunning || !studio.groupRegisteredIDs.isEmpty ||
+        !studio.groupCleanupIDs.isEmpty || studio.groupDisposalCount != 0
     }
 
     private var selectedControllersValid: Bool {
@@ -148,7 +151,7 @@ struct PerformanceGroupEditorView: View {
         // A stale editor must not arm a different profile than the saved one.
         guard let data = storedData,
               UserDefaults.standard.data(forKey:key) == data,
-              profile == saved, gamepadOnly, selectedControllersValid else {
+              profile == saved, supportedLocalProfile, selectedControllersValid else {
             message = "Save or reload the current profile and select distinct controllers first."
             return
         }
@@ -156,7 +159,7 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var canStartGroups: Bool {
-        didLoad && !readFailed && profile == saved && gamepadOnly &&
+        didLoad && !readFailed && profile == saved && supportedLocalProfile &&
         selectedControllersValid && !studio.groupGamepadsRunning &&
         studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
         (saved.layeredInputs.isEmpty || allowLayering)
@@ -182,12 +185,12 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var liveControls: some View {
-        GroupBox("Experimental group MIDI - Xbox only") {
+        GroupBox("Experimental group MIDI - local controllers and touch surfaces") {
             VStack(alignment:.leading,spacing:8) {
-                Text("Standard MIDI only. Each nonempty saved group uses a separate virtual source. No Trackpad sound or mixed sensor profiles in this preview.")
+                Text("Standard MIDI only. Xbox, Trackpad and Magic Mouse may share groups. Touch uses one primary contact; lift each surface to arm. No local haptics, pressure, multi-touch, or independent MPE in this preview.")
                     .font(.caption).foregroundStyle(.secondary)
-                if !gamepadOnly {
-                    Text("Save a gamepad-only group profile to enable Start.").font(.caption)
+                if !supportedLocalProfile {
+                    Text("Save a supported local group profile to enable Start.").font(.caption)
                 }
                 Button("Refresh controllers") { studio.refreshBuilderGamepads() }
                     .disabled(studio.groupGamepadsRunning)
@@ -202,7 +205,7 @@ struct PerformanceGroupEditorView: View {
                     }.disabled(studio.groupGamepadsRunning)
                 }
                 if !saved.layeredInputs.isEmpty {
-                    Toggle("Allow the same controller signal to play multiple groups",isOn:$allowLayering)
+                    Toggle("Allow the same input signal to control multiple groups",isOn:$allowLayering)
                         .disabled(studio.groupGamepadsRunning)
                 }
                 HStack {
@@ -230,31 +233,36 @@ struct PerformanceGroupEditorView: View {
     var body: some View {
         DisclosureGroup("Performance Studio - Instrument Groups (experimental)") {
             VStack(alignment:.leading,spacing:10) {
-                Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox-only profiles. Other sources still use the existing Builder.")
+                Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox, Trackpad and Magic Mouse profiles. Other sources still use the existing Builder.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Add empty group") { add(patch:.init()) }
                     Button("Add from Builder draft") { add(patch:currentPatch) }
                         .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
-                }.disabled(studio.groupGamepadsRunning || !didLoad || readFailed || !profile.isValid || profile.groups.count >= PerformanceGroupProfile.maximumGroups)
+                }.disabled(editingLocked || !didLoad || readFailed || !profile.isValid || profile.groups.count >= PerformanceGroupProfile.maximumGroups)
                 ForEach(profile.groups) { group in groupCard(group) }
                 if !profile.layeredInputs.isEmpty {
-                    Text("Shared inputs (future layered output requires explicit consent): " +
+                    Text("Shared inputs (layered output requires explicit consent): " +
                          profile.layeredInputs.map(\.id).joined(separator:", "))
                         .font(.caption).foregroundStyle(.orange)
                 }
                 if !profile.isValid {
                     Text("Fix invalid names or mapping capacity before saving.").font(.caption).foregroundStyle(.orange)
                 }
+                if editingLocked && !studio.groupGamepadsRunning {
+                    Text("Close retained ports and resolve cleanup before editing groups.").font(.caption).foregroundStyle(.secondary)
+                }
                 Text(capacitySummary)
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Save groups") { save() }
-                        .disabled(studio.groupGamepadsRunning || !didLoad || readFailed || !profile.isValid || profile == saved)
+                        .disabled(editingLocked || !didLoad || readFailed || !profile.isValid || profile == saved)
                     Button("Revert unsaved changes") { profile = saved; message = "Draft reverted." }
-                        .disabled(studio.groupGamepadsRunning || readFailed || profile == saved)
+                        .disabled(editingLocked || readFailed || profile == saved)
                     Button("Copy planned port list") {
-                        let lines = profile.groups.map { $0.name + " | planned only: " + $0.plannedPortName }
+                        let lines = profile.groups.map { group in
+                            group.name + (studio.groupRegisteredIDs.contains(group.id) ? " | registered: " : " | planned: ") + group.plannedPortName
+                        }
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(lines.joined(separator:"\n"),forType:.string)
                     }.disabled(!profile.isValid || profile.groups.isEmpty || readFailed)
