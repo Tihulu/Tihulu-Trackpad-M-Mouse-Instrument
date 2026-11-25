@@ -10,12 +10,14 @@ private func remoteGroup(_ source:SensorSource,_ signal:SensorSignal,_ target:Se
     .init(name:source.rawValue,patch:.init(routes:[.init(id:"remote",source:source,signal:signal,destination:target)]))
 }
 
-@Test func groupRemoteOptInRejectsMixedModesAndUnsafeGain() throws {
+@Test func groupRemoteOptInBoundsMixedModesAndRejectsUnsafeGain() throws {
     var a = remoteGroup(.phone,.contact,.init(.note,number:60))
     let profile = PerformanceGroupProfile(groups:[a])
     #expect(!PerformanceGroupGamepadSession.supports(profile))
     #expect(PerformanceGroupGamepadSession.supports(profile,allowRemote:true))
     a.patch.routes.append(.init(id:"drum",source:.phone,signal:.drumPad1,destination:.init(.note,number:36)))
+    #expect(PerformanceGroupGamepadSession.supports(.init(groups:[a]),allowRemote:true))
+    a.patch.routes.append(.init(id:"piano",source:.phone,signal:.pianoKey0,destination:.init(.note,number:64)))
     #expect(!PerformanceGroupGamepadSession.supports(.init(groups:[a]),allowRemote:true))
     let gain = remoteGroup(.tablet,.pedalVolume,.init(.controlChange,number:7))
     #expect(!PerformanceGroupGamepadSession.supports(.init(groups:[gain]),allowRemote:true))
@@ -111,4 +113,67 @@ private func remoteGroup(_ source:SensorSource,_ signal:SensorSignal,_ target:Se
         try PerformanceGroupActivationPlan(profile:mixed,mode:.standard,allowLayering:false,
             confirmedTuning:false,registeredIDs:[],cleanupIDs:[phone.id],pendingDisposalCount:0,allowRemote:true)
     }
+}
+
+
+@Test func groupRemoteTwoFamiliesArmTogetherAndReleaseIndependently() throws {
+    let group = PerformanceInstrumentGroup(name:"XY and drums",patch:.init(routes:[
+        .init(id:"touch",source:.phone,signal:.contact,destination:.init(.note,number:60)),
+        .init(id:"drum",source:.phone,signal:.drumPad1,destination:.init(.note,channel:9,number:36))
+    ]))
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowRemote:true)
+    let token = try session.bind(.phone,now:0)
+    let capabilities = try #require(session.remoteCapabilities(.phone))
+    #expect(capabilities.touch && capabilities.drums == 1 && capabilities.piano == 0)
+    var events:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { events.append($0); return true }
+    let first = session.receiveRemote(.phone,token:token,bytes:wire("release",1,1),hostTime:0.01,now:0.01,send:sink)
+    #expect(first.status == .waitingForNeutral)
+    let held = session.receiveRemote(.phone,token:token,bytes:wire("drumPads",4,2,",\"mask\":1"),hostTime:0.02,now:0.02,send:sink)
+    #expect(held.status == .waitingForNeutral && events.isEmpty)
+    let ready = session.receiveRemote(.phone,token:token,bytes:wire("drumPads",4,3,",\"mask\":0"),hostTime:0.03,now:0.03,send:sink)
+    #expect(ready.status == .ready)
+    _ = session.receiveRemote(.phone,token:token,bytes:wire("touch",1,4,",\"x\":0.5,\"y\":0.5"),hostTime:0.04,now:0.04,send:sink)
+    _ = session.receiveRemote(.phone,token:token,bytes:wire("drumPads",4,5,",\"mask\":1"),hostTime:0.05,now:0.05,send:sink)
+    #expect(events.map(\.command.destination.number) == [60,36])
+    #expect(events.allSatisfy { $0.command.value > 0 })
+    events.removeAll()
+    _ = session.receiveRemote(.phone,token:token,bytes:wire("release",1,6),hostTime:0.06,now:0.06,send:sink)
+    #expect(events.count == 1 && events.first?.command.destination.number == 60 && events.first?.command.value == 0)
+    #expect(session.activeSessions == 1)
+    events.removeAll()
+    _ = session.receiveRemote(.phone,token:token,bytes:wire("drumPads",4,7,",\"mask\":0"),hostTime:0.07,now:0.07,send:sink)
+    #expect(events.count == 1 && events.first?.command.destination.number == 36 && events.first?.command.value == 0)
+    #expect(session.activeSessions == 0 && session.sourceStates[.phone] == .armed)
+}
+
+@Test func groupRemoteTwoFamiliesCannotRenewEachOthersDeadline() throws {
+    let group = PerformanceInstrumentGroup(name:"XY and pedals",patch:.init(routes:[
+        .init(id:"touch",source:.phone,signal:.contact,destination:.init(.note,number:60)),
+        .init(id:"pedal",source:.phone,signal:.pedalSustain,destination:.init(.sustain))
+    ]))
+    let local = remoteGroup(.gamepad1,.padA,.init(.note,number:64))
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[group,local]),allowRemote:true)
+    let phone = try session.bind(.phone,now:0)
+    let controller = try session.bind(.gamepad1,now:0)
+    let neutral = try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+    var buttons = Array(repeating:0.0,count:12); buttons[0] = 1
+    let down = try #require(GamepadFrame(buttons:buttons,triggers:[0,0],sticks:[0,0,0,0]))
+    var events:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { events.append($0); return true }
+    _ = session.receiveRemote(.phone,token:phone,bytes:wire("release",1,1),hostTime:0.01,now:0.01,send:sink)
+    _ = session.receiveRemote(.phone,token:phone,bytes:wire("pedalboard",6,2,",\"mask\":0,\"levels\":[0,0,0,0,0,0]"),hostTime:0.02,now:0.02,send:sink)
+    _ = session.receive(.gamepad1,token:controller,frame:neutral,now:0.02,send:sink)
+    _ = session.receiveRemote(.phone,token:phone,bytes:wire("touch",1,3,",\"x\":0.5,\"y\":0.5"),hostTime:0.03,now:0.03,send:sink)
+    _ = session.receiveRemote(.phone,token:phone,bytes:wire("pedalboard",6,4,",\"mask\":8,\"levels\":[0,0,0,1,0,0]"),hostTime:0.04,now:0.04,send:sink)
+    _ = session.receive(.gamepad1,token:controller,frame:down,now:0.05,send:sink)
+    _ = session.receiveRemote(.phone,token:phone,bytes:wire("pedalboard",6,5,",\"mask\":8,\"levels\":[0,0,0,1,0,0]"),hostTime:0.25,now:0.25,send:sink)
+    _ = session.receive(.gamepad1,token:controller,frame:down,now:0.25,send:sink)
+    events.removeAll()
+    _ = session.expire(now:0.39,send:sink)
+    #expect(events.count == 2 && events.allSatisfy { $0.groupID == group.id && $0.command.value == 0 })
+    #expect(session.boundSources == [.gamepad1])
+    #expect(session.activeSessions == 1)
+    let stale = session.receiveRemote(.phone,token:phone,bytes:wire("release",1,6),hostTime:0.40,now:0.40,send:sink)
+    #expect(stale.status == .ignored)
 }
