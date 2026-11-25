@@ -1794,13 +1794,21 @@ final class StudioController: ObservableObject {
                                                  oldestSample:oldest)
         }
         let now = ProcessInfo.processInfo.systemUptime
-        if batch.overflow || batch.samples.contains(where: { now - $0.time >= PhysicalPatchRuntime.timeout }) {
+        if batch.overflow || batch.samples.contains(where: { !PhysicalPatchRuntime.admitsPhysicalReceipt($0.time,now:now) }) {
             stopInstrumentPatch()
             patchStatus = "Native input backlog or stale frames. Output released; restart explicitly."
             return
         }
         for sample in batch.samples {
             guard patchRunning else { return }
+            // Earlier synchronous MIDI sends may consume most of the
+            // receipt budget. Revalidate before every physical frame.
+            let admissionNow=ProcessInfo.processInfo.systemUptime
+            guard PhysicalPatchRuntime.admitsPhysicalReceipt(sample.time,now:admissionNow) else {
+                stopInstrumentPatch()
+                patchStatus = "Native input expired during processing. Output released; restart explicitly."
+                return
+            }
             let surface = sample.frame.surface
             let source: SensorSource = surface == .trackpad ? .trackpad : .magicMouse
             let contact = sample.frame.contacts.lazy.filter { $0.isDown }.min { $0.id < $1.id }
@@ -1816,11 +1824,11 @@ final class StudioController: ObservableObject {
                 size = min(1,max(0,Double(contact.size)))
             }
             let commands = patchPhysicalRuntime.receive(source: source, x: x, y: y, size: size,
-                                                        hostTime: sample.time, now: now)
+                                                        hostTime: sample.time, now: admissionNow)
             recordPatchCommands(commands)
         }
         guard patchRunning else { return }
-        drainBuilderCamera(now: now)
+        drainBuilderCamera(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
         drainBuilderRemote(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
