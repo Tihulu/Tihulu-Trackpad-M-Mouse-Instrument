@@ -170,6 +170,9 @@ final class StudioController: ObservableObject {
     private var groupSurfaceOrientation: SurfaceOrientation = .horizontal
     private var groupRunToken: UUID?
     private var groupWatchdog: Task<Void,Never>?
+    private var groupTimingAccumulator = PerformanceGroupTimingDiagnostics()
+    private var groupTimingLastPublished = 0.0
+    @Published private(set) var groupTiming = PerformanceGroupTimingDiagnostics()
     private var groupHost: PerformanceGroupMIDIHost { .shared }
     private var groupRemoteTransport: RemoteLoopbackTransport?
     private var groupRemotePage: RemoteLoopbackPageServer?
@@ -307,6 +310,9 @@ final class StudioController: ObservableObject {
         }
         let token = UUID()
         groupRunToken = token
+        groupTimingAccumulator = .init()
+        groupTiming = .init()
+        groupTimingLastPublished = ProcessInfo.processInfo.systemUptime
         groupGamepadsRunning = true
         groupFaultIDs = []
         groupStoppedIDs = []
@@ -398,6 +404,7 @@ final class StudioController: ObservableObject {
             while !Task.isCancelled {
                 do { try await Task.sleep(for:.milliseconds(20)) } catch { return }
                 guard let self, self.groupRunToken == token else { return }
+                let cycleStarted = ProcessInfo.processInfo.systemUptime
                 // Drain known remote disconnects together with expiry before
                 // any local samples can reconcile shared continuous targets.
                 if self.groupRemoteRunID != nil { self.drainGroupRemote(run:token) }
@@ -410,6 +417,13 @@ final class StudioController: ObservableObject {
                 for source in GamepadFrame.orderedSources where self.groupGamepadTokens[source] != nil {
                     guard self.groupRunToken == token else { return }
                     self.receiveGroupGamepad(source:source,frame:self.builderGamepads.read(source),run:token)
+                }
+                guard self.groupRunToken == token else { return }
+                let end = ProcessInfo.processInfo.systemUptime
+                self.groupTimingAccumulator.record(start:cycleStarted,end:end)
+                if end-self.groupTimingLastPublished >= 1 {
+                    self.groupTimingLastPublished = end
+                    self.groupTiming = self.groupTimingAccumulator
                 }
             }
         }
@@ -670,6 +684,7 @@ final class StudioController: ObservableObject {
         groupRunToken = nil
         groupWatchdog?.cancel()
         groupWatchdog = nil
+        groupTiming = groupTimingAccumulator
         groupGamepadTokens.removeAll()
         groupGamepadsRunning = false
         groupStoppedIDs = groupRegisteredIDs

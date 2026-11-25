@@ -409,6 +409,17 @@ struct PerformanceGroupEditorView: View {
                         .disabled(studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0)
                 }
                 Text(studio.groupGamepadStatus).font(.caption)
+                if studio.groupTiming.cycles > 0 {
+                    DisclosureGroup("Host timing diagnostics") {
+                        let timing = studio.groupTiming
+                        Text("Completed cycles: \(timing.cycles) · invalid samples: \(timing.invalidSamples)")
+                        Text(String(format:"Peak cycle gap %.1f ms · peak processing %.1f ms",timing.peakGapMS,timing.peakWorkMS))
+                        Text("Gaps ≥100 ms: \(timing.gapsAtLeast100MS) · ≥350 ms: \(timing.gapsAtLeast350MS)")
+                            .foregroundStyle(timing.gapsAtLeast350MS > 0 ? Color.orange : Color.secondary)
+                        Text("Host timing only, not audio latency or confirmed DAW reception. Interrupted final cycles may be absent.")
+                            .foregroundStyle(.secondary)
+                    }.font(.caption)
+                }
                 inputReadiness
                 Text("\(studio.groupRegisteredIDs.count) registered ports; \(studio.groupCleanupIDs.count) pending MIDI cleanups; \(studio.groupDisposalCount) pending port disposals.")
                     .font(.caption)
