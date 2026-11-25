@@ -394,3 +394,55 @@ private func groupTunedSnapshot(_ down:Bool = false) throws -> GamepadFrame {
         allowLayering:true,confirmedTuning:false,registeredIDs:[],cleanupIDs:[],pendingDisposalCount:0)
     #expect(accepted.allowLayering)
 }
+
+
+@Test func groupTuningDraftDoesNotLoseUnappliedTextOnGroupChange() throws {
+    let a = tunedGroup(.gamepad1)
+    let b = tunedGroup(.gamepad2)
+    let profile = PerformanceGroupProfile(groups:[a,b])
+    let configuration = try PerformanceGroupTuningConfiguration(profile:profile,tuning:[a.id:groupTuning(-20)])
+    var draft = PerformanceGroupTuningDraft()
+    #expect(draft.select(a.id,configuration:configuration))
+    #expect(!draft.isDirty)
+    draft.degrees = "0, 210, 400, 500, 700, 900, 1100"
+    #expect(draft.isDirty)
+    #expect(!draft.select(b.id,configuration:configuration))
+    #expect(draft.selectedID == a.id)
+    #expect(draft.degrees.contains("210"))
+    let updated = try draft.applying(to:profile,configuration:configuration)
+    #expect(updated.tuning[a.id]?.scale.centOffsets[2] == 10)
+    #expect(configuration.tuning[a.id]?.scale.centOffsets[2] == -20)
+    #expect(draft.isDirty)
+    draft.load(a.id,configuration:updated)
+    #expect(!draft.isDirty)
+    #expect(draft.select(b.id,configuration:updated))
+    #expect(!draft.isDirty && draft.selectedID == b.id)
+}
+
+@Test func groupTuningDraftInvalidApplyRetainsPreviousConfigurationAndText() throws {
+    let a = tunedGroup(.gamepad1)
+    let profile = PerformanceGroupProfile(groups:[a])
+    let configuration = try PerformanceGroupTuningConfiguration(profile:profile,tuning:[a.id:groupTuning(-20)])
+    var draft = PerformanceGroupTuningDraft()
+    draft.load(a.id,configuration:configuration)
+    draft.rootText = "128"
+    #expect(throws:PerformanceGroupTuningDraft.DraftError.invalidScaleOrRoot) {
+        try draft.applying(to:profile,configuration:configuration)
+    }
+    #expect(draft.isDirty && draft.rootText == "128")
+    #expect(configuration.tuning[a.id]?.root == 60)
+    draft.load(a.id,configuration:configuration)
+    #expect(!draft.isDirty && draft.rootText == "60")
+    var changed = profile
+    changed.groups[0].patch.routes[0].destination.number = 67
+    draft.scaleName = "Changed"
+    #expect(throws:PerformanceGroupTuningConfiguration.ConfigurationError.staleProfile) {
+        try draft.applying(to:changed,configuration:configuration)
+    }
+    #expect(draft.isDirty)
+    draft.load(nil,configuration:nil)
+    #expect(!draft.isDirty && draft.selectedID == nil)
+    #expect(throws:PerformanceGroupTuningDraft.DraftError.missingGroup) {
+        try draft.applying(to:profile,configuration:nil)
+    }
+}
