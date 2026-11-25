@@ -30,14 +30,20 @@ public struct PerformanceCaptureShortcut: Codable, Hashable, Sendable {
         displayName: "⌃⌥M"
     )
 
+    public static func acceptsKeyCode(_ code:Int64)->Bool {
+        // Escape is reserved; modifier-only keys produce flagsChanged, not
+        // the keyDown/keyUp events observed by this filtering tap.
+        (0...255).contains(code) && ![53,54,55,56,57,58,59,60,61,62,63].contains(code)
+    }
+
     public var isValid: Bool {
-        keyCode != 53 && (0...255).contains(keyCode) && modifiers & ~Self.allowedModifiers == 0 &&
+        Self.acceptsKeyCode(keyCode) && modifiers & ~Self.allowedModifiers == 0 &&
         !displayName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && displayName.utf8.count <= 128 &&
         !displayName.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
     }
 
     public func matches(_ event: CGEvent) -> Bool {
-        event.getIntegerValueField(.keyboardEventKeycode) == keyCode &&
+        isValid && event.getIntegerValueField(.keyboardEventKeycode) == keyCode &&
         (event.flags.rawValue & Self.allowedModifiers) == modifiers
     }
 }
@@ -203,11 +209,14 @@ struct CapturePhysicalMailbox {
 }
 
 public enum PerformanceCaptureError: LocalizedError {
+    case invalidShortcut
     case permissionDenied
     case tapUnavailable
 
     public var errorDescription: String? {
         switch self {
+        case .invalidShortcut:
+            return "Choose a non-modifier key or key combination. Escape is reserved for Panic Stop."
         case .permissionDenied:
             return "Global capture requires Accessibility access for Tihulu Trackpad & M. Mouse Instrument. Enable it in System Settings → Privacy & Security → Accessibility, then restart the app."
         case .tapUnavailable:
@@ -359,6 +368,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     }
 
     public func start(shortcut: PerformanceCaptureShortcut, requestPermissions: Bool = false) throws {
+        guard shortcut.isValid else { throw PerformanceCaptureError.invalidShortcut }
         setShortcut(shortcut)
         lock.lock()
         let existingPort = eventTap
