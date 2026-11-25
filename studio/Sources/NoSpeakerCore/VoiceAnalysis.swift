@@ -88,6 +88,16 @@ public enum HapticVoiceAnalyzer {
     }
 
     public static func analyze(_ input: [Float]) -> [HapticVoiceFrame] {
+        // With no cancellation token the implementation cannot throw.
+        (try? analyzeImpl(input,cancellation:nil)) ?? []
+    }
+
+    public static func analyze(_ input: [Float], cancellation: VoiceRenderCancellation) throws -> [HapticVoiceFrame] {
+        try analyzeImpl(input,cancellation:cancellation)
+    }
+
+    private static func analyzeImpl(_ input: [Float], cancellation: VoiceRenderCancellation?) throws -> [HapticVoiceFrame] {
+        try cancellation?.check()
         let windowSize = Int(0.025 * sampleRate)
         let hopSize = Int(hopSeconds * sampleRate)
         let order = 18
@@ -99,9 +109,15 @@ public enum HapticVoiceAnalyzer {
         var rmsValues: [Double] = []
         var previous = HapticVoiceFrame()
         var offset = 0
+        let frameCount = (input.count-windowSize)/hopSize+1
+        frames.reserveCapacity(frameCount)
+        rmsValues.reserveCapacity(frameCount)
+        var segment = [Double](repeating:0,count:windowSize)
+        var preEmphasized = [Double](repeating:0,count:windowSize)
 
         while offset + windowSize <= input.count {
-            let segment = (0..<windowSize).map { Double(input[offset + $0]) }
+            try cancellation?.check()
+            for index in 0..<windowSize { segment[index] = Double(input[offset+index]) }
             rmsValues.append(sqrt(segment.reduce(0) { $0 + $1 * $1 } / Double(windowSize)))
             var frame = previous
 
@@ -127,7 +143,6 @@ public enum HapticVoiceAnalyzer {
             frame.voiced = bestCorrelation > 0.35 && Double(zeroCrossings) / Double(windowSize) < 0.22
             if frame.voiced, bestLag > 0 { frame.fundamentalHz = sampleRate / Double(bestLag) }
 
-            var preEmphasized = [Double](repeating: 0, count: windowSize)
             for index in 0..<windowSize {
                 preEmphasized[index] = (segment[index] - 0.97 * (index > 0 ? segment[index - 1] : 0)) * hamming[index]
             }
@@ -166,6 +181,7 @@ public enum HapticVoiceAnalyzer {
 
         let peak = rmsValues.max() ?? 1
         for index in frames.indices {
+            if index % 64 == 0 { try cancellation?.check() }
             let relative = rmsValues[index] / max(peak, 1e-9)
             frames[index].level = relative < 0.02 ? 0 : min(1, pow(relative, 0.45))
             if frames[index].level == 0 { frames[index].voiced = false }
@@ -174,6 +190,7 @@ public enum HapticVoiceAnalyzer {
         func median(_ values: [Double]) -> Double { values.sorted()[values.count / 2] }
         let raw = frames
         for index in frames.indices {
+            if index % 64 == 0 { try cancellation?.check() }
             let lower = max(0, index - 2)
             let upper = min(frames.count - 1, index + 2)
             for formantIndex in 0..<3 {
@@ -181,6 +198,7 @@ public enum HapticVoiceAnalyzer {
             }
             frames[index].fundamentalHz = min(250, max(70, median((lower...upper).map { raw[$0].fundamentalHz })))
         }
+        try cancellation?.check()
         return frames
     }
 
