@@ -256,3 +256,5 @@ Every native driver waveform now passes a bounded final admission policy: finite
 ### Remote local presentation editor
 
 Setup now supports ordering the six existing capability-gated panels, per-panel tablet width and three bounded playing-surface sizes. The editor checks current Setup view, admission and zero pending/active workload on every action. It cannot activate a control or transmit a mapping. Optional browser storage is bounded and validated against a fixed versioned panel schema; only presentation data persists. Three browser regressions exercise persistence/reset, active ownership exclusion, and invalid/unmapped layouts. Physical phone/tablet usability remains HOLD.
+
+The local layout follow-up reorders actual DOM nodes only during idle edit/initialization (keyboard focus order follows visual order). Editor work is skipped in the Play view and duplicate Setup updates are avoided. Existing virtual stress browser DOM support was extended; a fourth lifecycle regression checks storage failure and unchanged host drum admission/release. This remains a fixed-panel editor rather than arbitrary drag/resize.

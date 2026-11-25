@@ -256,7 +256,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }catch{}
     return defaultLayout();
   }
-  let layout=loadLayout(),layoutMessage="",layoutOptionsKey="";
+  let layout=loadLayout(),layoutMessage="",layoutOptionsKey="",layoutSyncKey="";
   function availablePanels(){
     if(!caps)return [];
     const available=[caps.touch,Boolean(caps.drums),Boolean(caps.piano),Boolean(caps.pedals),caps.tilt,caps.acceleration||caps.rotation];
@@ -264,15 +264,23 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function canEditLayout(){return admitted&&caps&&currentView==="setup"&&!navigationBusy();}
   function applyLayout(){
+    const play=get("playView");
+    // Keep visual and keyboard/screen-reader navigation order consistent.
+    // Only called at initialization or an admitted idle editor action.
     for(const [index,id] of layout.order.entries()){
       const element=get(id);
       element.style.order=String(index);
       element.setAttribute("data-wide",String(layout.wide.includes(id)));
+      play.appendChild(element);
     }
-    get("playView").setAttribute("data-size",layout.size);
+    play.setAttribute("data-size",layout.size);
   }
   function syncLayout(){
-    get("layoutSection").hidden=!caps;
+    const visible=Boolean(caps)&&currentView==="setup";
+    get("layoutSection").hidden=!visible;
+    // The play/ACK hot path must not rebuild editor options or write
+    // layout attributes on every performance sample.
+    if(!visible){layoutSyncKey="";return;}
     const panel=get("layoutPanel"),available=availablePanels(),key=available.join(",");
     if(key!==layoutOptionsKey){
       const previous=panel.value;
@@ -285,6 +293,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       layoutOptionsKey=key;
     }
     const editable=Boolean(canEditLayout()),selected=panel.value,index=available.indexOf(selected);
+    const stateKey=JSON.stringify([editable,key,selected,layout.wide,layout.size,layoutMessage]);
+    if(stateKey===layoutSyncKey)return;
+    layoutSyncKey=stateKey;
     panel.disabled=!editable||available.length===0;
     get("layoutUp").disabled=!editable||index<=0;
     get("layoutDown").disabled=!editable||index<0||index===available.length-1;

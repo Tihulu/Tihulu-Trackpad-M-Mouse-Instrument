@@ -10,7 +10,8 @@ const fullManifest={kind:"capabilities",version:7,touch:true,tilt:true,accelerat
 function setup(permission="granted",manifest=fullManifest,experimental=true,autoMapping=true,groupNeutral=false,stored=new Map()){
   let time=1000, ticker, socket, nextTimer=0;const timers=new Map();
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",attributes:{},children:[],
-    setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
+    setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
+    appendChild(child){this.children=this.children.filter(x=>x!==child);this.children.push(child);return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
   const elements=Object.fromEntries(["layoutSection","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
@@ -719,6 +720,7 @@ test("layout presentation edits save and restore without sending MIDI",()=>{
   a.elements.layoutSave.emit("click");
   assert.equal(a.socket.frames.length,0);
   assert.equal(a.elements.pianoSection.style.order,"1");
+  assert.equal(a.elements.playView.children[1],a.elements.pianoSection);
   assert.equal(a.elements.pianoSection.attributes["data-wide"],"false");
   assert.equal(a.elements.playView.attributes["data-size"],"large");
   const data=JSON.parse(stored.get("tihulu.remote.presentation.v1"));
@@ -752,4 +754,25 @@ test("malformed stored layout fails closed and unmapped panels cannot be edited"
   a.elements.layoutPanel.value="pianoSection";a.elements.layoutWide.emit("click");
   assert.equal(a.elements.pianoSection.attributes["data-wide"],"true");
   assert.equal(a.socket.frames.length,0);
+});
+
+
+test("layout preferences never change host admission and storage failure remains local",()=>{
+  const stored=new Map();
+  stored.set=()=>{throw Error("Storage unavailable")};
+  const a=setup("granted",fullManifest,false,true,false,stored);
+  a.elements.navSetup.emit("click");
+  a.elements.layoutSize.value="compact";a.elements.layoutSize.emit("change");
+  a.elements.layoutSave.emit("click");
+  assert.match(a.elements.layoutStatus.textContent,/Storage unavailable/);
+  assert.equal(a.elements.playView.attributes["data-size"],"compact");
+  a.elements.navPlay.emit("click");
+  assert.equal(a.elements.layoutSection.hidden,true);
+  a.elements.drum0.emit("pointerdown",drumEvent(1));
+  assert.equal(a.socket.frames.length,0);
+  a.elements.drumEnable.emit("click");
+  a.elements.drum0.emit("pointerdown",drumEvent(1));
+  assert.equal(a.socket.frames.at(-1).mask,1);
+  a.ack();a.elements.drum0.emit("pointerup",drumEvent(1));a.step();a.ack();
+  assert.equal(a.socket.frames.at(-1).mask,0);
 });
