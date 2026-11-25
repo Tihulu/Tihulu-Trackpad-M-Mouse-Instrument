@@ -112,3 +112,30 @@ private func playbackClip() -> MIDIClip {
     #expect(commands.map(\.value)==[90,0])
     #expect(player.outstanding.isEmpty)
 }
+
+@Test func boundedPlaybackCancellationDoesNotAdmitUnattemptedSecondNote() throws {
+    var player=try BoundedMIDIPlayback(clip:playbackClip())
+    _=try player.begin(now:0)
+    var cancelled=false
+    var commands:[SensorCommand]=[]
+    player.advance(now:0,refreshNow:{0},shouldStop:{cancelled}) { command in
+        commands.append(command)
+        if command.value>0 { cancelled=true }
+        return true
+    }
+    #expect(player.state == .stopped)
+    #expect(commands.map(\.value)==[90,0])
+    #expect(commands[0].destination==commands[1].destination)
+    #expect(player.outstanding.isEmpty)
+    player.advance(now:100_000_000){ commands.append($0);return true }
+    #expect(commands.count==2)
+}
+
+@Test func boundedPlaybackCancellationBeforeFirstEdgeSendsNothing() throws {
+    var player=try BoundedMIDIPlayback(clip:playbackClip())
+    _=try player.begin(now:0)
+    var commands:[SensorCommand]=[]
+    player.advance(now:0,refreshNow:{0},shouldStop:{true}) { commands.append($0);return true }
+    #expect(player.state == .stopped)
+    #expect(commands.isEmpty && player.outstanding.isEmpty)
+}
