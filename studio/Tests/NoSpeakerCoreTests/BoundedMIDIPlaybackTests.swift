@@ -416,3 +416,37 @@ private func playbackClip() -> MIDIClip {
     #expect(player.fault == .expiredOnset && player.maximumObservedLatenessNS==1_000_000)
     #expect(sent.isEmpty && player.outstanding.isEmpty)
 }
+
+@Test func boundedPlaybackSlowLastOffCannotReportFinishedOrResendConfirmedOff() throws {
+    let clip=MIDIClip(bpm:120,length:480,notes:[.init(start:0,duration:480,channel:0,pitch:60,velocity:90)])
+    var player=try BoundedMIDIPlayback(clip:clip)
+    _=try player.begin(now:0)
+    var sent:[SensorCommand]=[]
+    player.advance(now:0){sent.append($0);return true}
+    player.advance(now:250_000_000,refreshNow:{300_000_001}){sent.append($0);return true}
+    #expect(player.state == .faulted && player.fault == .lateSendCompletion)
+    #expect(player.maximumObservedLatenessNS==50_000_001)
+    #expect(sent.map(\.value)==[90,0] && player.outstanding.isEmpty)
+    player.retryCleanup{sent.append($0);return true}
+    #expect(sent.count==2)
+}
+
+@Test func boundedPlaybackSlowOnsetNeverAdmitsNextChordMember() throws {
+    var player=try BoundedMIDIPlayback(clip:playbackClip())
+    _=try player.begin(now:0)
+    var sent:[SensorCommand]=[]
+    player.advance(now:0,refreshNow:{50_000_001}){sent.append($0);return true}
+    #expect(player.state == .faulted && player.fault == .lateSendCompletion)
+    #expect(sent.map(\.value)==[90,0] && player.outstanding.isEmpty)
+    #expect(sent.first?.destination==sent.last?.destination)
+}
+
+@Test func boundedPlaybackShortGateConsumedBySendRetiresOwnedNoteImmediately() throws {
+    let clip=MIDIClip(bpm:120,length:960,notes:[.init(start:0,duration:1,channel:0,pitch:60,velocity:90)])
+    var player=try BoundedMIDIPlayback(clip:clip)
+    _=try player.begin(now:0)
+    var sent:[SensorCommand]=[]
+    player.advance(now:0,refreshNow:{1_000_000}){sent.append($0);return true}
+    #expect(player.state == .faulted && player.fault == .expiredOnset)
+    #expect(sent.map(\.value)==[90,0] && player.outstanding.isEmpty)
+}

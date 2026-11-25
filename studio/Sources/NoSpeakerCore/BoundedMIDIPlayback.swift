@@ -12,7 +12,7 @@ public struct BoundedMIDIPlayback: Sendable {
         case ready, playing, finished, stopped, faulted
     }
     public enum Fault: String, Sendable {
-        case clockOverflow, clockRegression, lateEvent, expiredOnset, sendFailed, outstandingAtEnd, externalFailure
+        case clockOverflow, clockRegression, lateEvent, expiredOnset, sendFailed, lateSendCompletion, outstandingAtEnd, externalFailure
     }
     public private(set) var fault:Fault?
     public private(set) var maximumObservedLatenessNS:UInt64=0
@@ -154,6 +154,22 @@ public struct BoundedMIDIPlayback: Sendable {
             if cmd.value == 0 { outstanding.remove(cmd.destination) }
             next += 1
             current=refreshNow()
+            // Even the last native send can stall. Do not silently mark a
+            // clip finished merely because there is no later event to
+            // discover the overrun. Confirmed offs have already retired
+            // their debt; a slow onset still owns a cleanup off.
+            guard current>=last else {
+                retire(.faulted,fault:.clockRegression,send:send); return
+            }
+            let completedElapsed=current-start
+            let completedLateness=completedElapsed-event.offsetNS
+            maximumObservedLatenessNS=max(maximumObservedLatenessNS,completedLateness)
+            if completedLateness>Self.maximumLatenessNS {
+                retire(.faulted,fault:.lateSendCompletion,send:send); return
+            }
+            if cmd.value>0,let end=onsetEnds[next-1],completedElapsed>=end {
+                retire(.faulted,fault:.expiredOnset,send:send); return
+            }
         }
     }
 
