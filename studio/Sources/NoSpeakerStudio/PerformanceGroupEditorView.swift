@@ -9,6 +9,7 @@ struct PerformanceGroupEditorView: View {
     @EnvironmentObject private var studio: StudioController
     @State private var allowLayering = false
     @State private var tuningPreview: PerformanceGroupTuningConfiguration?
+    @State private var tuningDraft = PerformanceGroupTuningDraft()
     @State private var pendingTunedStart: PerformanceGroupTuningConfiguration?
     @State private var confirmTunedStart = false
     @State private var profile = PerformanceGroupProfile()
@@ -171,7 +172,7 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var canStartGroups: Bool {
-        didLoad && !readFailed && profile == saved && supportedLocalProfile &&
+        didLoad && !readFailed && !tuningDraft.isDirty && profile == saved && supportedLocalProfile &&
         selectedControllersValid && !studio.groupGamepadsRunning && studio.groupTunedConfiguration == nil &&
         studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
         (saved.layeredInputs.isEmpty || allowLayering)
@@ -346,6 +347,14 @@ struct PerformanceGroupEditorView: View {
                         dawSetup(group)
                     }
                 }
+                if tuningDraft.isDirty {
+                    Text("Apply or discard unapplied tuning text before starting either MIDI mode.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                if tuningPreview != nil && studio.groupTunedConfiguration == nil {
+                    Text("Standard MIDI Start deliberately ignores the offline MPE configuration. Use the separately enabled MPE Start for tuned playback.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if !StudioController.groupMPEStartEnabled {
                     Text("Live MPE is disabled in this build; the tuning editor is offline only.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -398,7 +407,7 @@ struct PerformanceGroupEditorView: View {
                 }
                 if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
                 if didLoad && !readFailed {
-                    PerformanceGroupTuningPreviewView(profile:saved,locked:editingLocked || profile != saved,configuration:$tuningPreview)
+                    PerformanceGroupTuningPreviewView(profile:saved,locked:editingLocked || profile != saved,configuration:$tuningPreview,draft:$tuningDraft)
                 }
                 liveControls
             }.padding(6)
