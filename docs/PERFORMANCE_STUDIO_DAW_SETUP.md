@@ -2,7 +2,7 @@
 
 ## Delivered first slice (Builder only)
 Base: #160 exact 40974f87a4a1101f3e3b9d18d10524c04b5a7b6d, completed CI 45585652552 success.
-Replaces the old logical-only routing disclosure with a read-only assistant. Derives configured MIDI rows from the patch and the same split-output policy as Builder; excludes haptic-only slots; invalid/empty/off choices expose no port. Uses frozen active output flags while running. Tuned Air uses a dedicated port, hides logical channels and requires host validation. This is configuration guidance, not proof of endpoint registration, receiver acceptance or audio. No sends, timers, drivers, external app launches on opening, automation or changes to playback. Explicit Copy and official-guide links only. EN/TR/DE guidance text; full interface localization remains open.
+Replaces the old logical-only routing disclosure with a read-only assistant. Derives configured MIDI rows from the patch and the same split-output policy as Builder; excludes haptic-only slots; invalid/empty/off choices expose no port. Uses frozen active output flags while running. Tuned Air uses a dedicated port, hides logical channels and requires host validation. This is configuration guidance, not proof of endpoint registration, receiver acceptance or audio. No sends, timers, drivers, external app launches on opening, automation or changes to playback. Explicit Copy and official-guide links only. English guidance in this slice. TR/DE guidance remains required, but must use a reviewed localization resource strategy compatible with the existing English source gate.
 
 Logic, GarageBand, Ableton Live, REAPER, generic DAW profiles. GarageBand: advise a single intended sound or sequential recording; do not claim independent filtering or MPE support. Manual test one note, sustain and effect; feedback/loopback acceptance is not automatic. Existing code paths unchanged except read-only UI projection.
 
@@ -20,4 +20,4 @@ Logic, GarageBand, Ableton Live, REAPER, generic DAW profiles. GarageBand: advis
 - Ableton: https://www.ableton.com/en/manual/routing-and-i-o/
 - REAPER: https://www.reaper.fm/userguide.php
 
-Five core regression tests authored; full CI and physical acceptance pending at creation. No claim of complete Performance Studio or independent group ports. User approved the assistant; implementation deliberately starts with existing Builder and no automated MIDI testing.
+Five projection regression tests authored; all passed in the 459-test Linux run 45588262542. The workflow failed the existing English source gate because translated Swift literals were added. Those literals were removed rather than weakening or bypassing the gate; localization is still open. Follow-up CI and physical acceptance pending. No claim of complete Performance Studio or independent group ports. User approved the assistant; implementation deliberately starts with existing Builder and no automated MIDI testing.
