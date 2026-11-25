@@ -393,9 +393,7 @@ final class StudioController: ObservableObject {
         groupGamepadStatus = tuning == nil
             ? "Standard group ports registered. Release controller controls and lift each touch surface before playing."
             : "MPE setup sent; receiver not verified. Release controller controls and lift each touch surface before playing."
-        for source in GamepadFrame.orderedSources where groupGamepadTokens[source] != nil {
-            receiveGroupGamepad(source:source,frame:builderGamepads.read(source),run:token)
-        }
+        pollGroupGamepads(run:token)
         guard groupRunToken == token else { return }
         builderGamepads.beginEvents { [weak self] source,frame in
             self?.receiveGroupGamepad(source:source,frame:frame,run:token)
@@ -414,10 +412,7 @@ final class StudioController: ObservableObject {
                 self.drainGroupSurfaces(run:token)
                 guard self.groupRunToken == token else { return }
                 self.drainGroupCamera(run:token)
-                for source in GamepadFrame.orderedSources where self.groupGamepadTokens[source] != nil {
-                    guard self.groupRunToken == token else { return }
-                    self.receiveGroupGamepad(source:source,frame:self.builderGamepads.read(source),run:token)
-                }
+                self.pollGroupGamepads(run:token)
                 guard self.groupRunToken == token else { return }
                 let end = ProcessInfo.processInfo.systemUptime
                 self.groupTimingAccumulator.record(start:cycleStarted,end:end)
@@ -439,6 +434,31 @@ final class StudioController: ObservableObject {
         refreshGroupOutputState()
         if groupGamepadsRunning, !groupRegisteredIDs.isEmpty,
            groupRegisteredIDs.isSubset(of:groupStoppedIDs) { stopGroupGamepads() }
+    }
+
+    /// Sample the complete set of mapped Xbox slots before sending MIDI.
+    /// Known simultaneous losses must reconcile once, before surviving
+    /// snapshots. Event callbacks still provide immediate individual edges.
+    private func pollGroupGamepads(run:UUID) {
+        guard groupRunToken == run else { return }
+        var snapshots:[(SensorSource,GamepadFrame)] = []
+        var departing:[SensorSource:UUID] = [:]
+        for source in GamepadFrame.orderedSources {
+            guard let token = groupGamepadTokens[source] else { continue }
+            if let frame = builderGamepads.read(source) { snapshots.append((source,frame)) }
+            else { departing[source] = token }
+        }
+        if !departing.isEmpty {
+            for source in departing.keys { groupGamepadTokens.removeValue(forKey:source) }
+            consumeGroupReports(groupHost.unbindGroupSources(departing))
+            guard groupRunToken == run else { return }
+            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads(); return }
+            groupGamepadStatus = "Controller input lost. Affected slots released; restart to rebind."
+        }
+        for (source,frame) in snapshots {
+            guard groupRunToken == run else { return }
+            receiveGroupGamepad(source:source,frame:frame,run:run)
+        }
     }
 
     private func receiveGroupGamepad(source:SensorSource,frame:GamepadFrame?,run:UUID) {
