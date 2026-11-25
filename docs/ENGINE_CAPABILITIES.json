@@ -248,7 +248,8 @@
         "studio/Sources/NoSpeakerMac/BuilderGamepadSource.swift",
         "studio/Sources/NoSpeakerProcessSignals/ProcessStop.c",
         "studio/Sources/NoSpeakerProcessSignals/include/ProcessStop.h",
-        "studio/Sources/NoSpeakerCore/BoundedMIDIPlayback.swift"
+        "studio/Sources/NoSpeakerCore/BoundedMIDIPlayback.swift",
+        "studio/Sources/NoSpeakerCore/BoundedMIDIPlanInput.swift"
       ],
       "cli": [
         "capabilities",

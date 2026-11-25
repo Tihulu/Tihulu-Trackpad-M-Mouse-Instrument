@@ -54,6 +54,14 @@ for bad in [dict(clip, length=19201), dict(clip, notes=[]), dict(clip, notes=cli
 for bad in ("", "{", "x"*65537, "/tmp/clip.json"):
     invoke("midi", "plan", bad, success=False)
 invoke("midi", "plan", json.dumps(clip), "--confirm", success=False)
+wire = json.dumps(clip)
+for bad in [wire.replace('"bpm": 120', '"bpm": 120, "bpm": 121'),
+            wire.replace('"pitch": 60', '"pitch": 60, "pitch": 61', 1),
+            wire.replace('"pitch": 60', '"pitch": 60.0', 1),
+            wire.replace('"pitch": 60', '"pitch": true', 1),
+            wire.replace('"pitch": 60', r'"p\u0069tch": 60', 1),
+            wire + " {}"]:
+    invoke("midi", "plan", bad, success=False)
 probe = invoke("session", "probe", "1", "--confirm")
 assert probe["command"] == "session probe" and probe["liveOutput"] is False
 assert probe["result"] == {"requestedSeconds": 1, "completed": True, "hardware": False}
