@@ -80,7 +80,7 @@ struct TihuluEngineCLI {
             FileHandle.standardOutput.write(data)
             FileHandle.standardOutput.write(Data([10]))
         } catch {
-            FileHandle.standardError.write(Data(("tihulu-engine: " + String(describing:error) + "\n").utf8))
+            FileHandle.standardError.write(Data(("tihulu-mac-instrument-engine: " + String(describing:error) + "\n").utf8))
             exit(2)
         }
     }
