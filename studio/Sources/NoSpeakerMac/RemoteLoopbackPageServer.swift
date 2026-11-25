@@ -165,6 +165,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #layoutDragList{display:grid;gap:4px;max-width:460px}
 #layoutDragList button{margin:0;text-align:left;touch-action:none;user-select:none}
 #customGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+#customGrid[data-columns="1"]{grid-template-columns:minmax(0,1fr)}
+#customGrid[data-columns="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:360px){#customGrid[data-columns="3"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #customGrid>button{margin:0;min-height:76px;touch-action:none;user-select:none;overflow-wrap:anywhere}
 #customGrid section{border:1px solid #777;border-radius:10px;padding:8px;min-width:0}
 #customGrid section button{width:100%;margin:4px 0;overflow-wrap:anywhere}
@@ -197,6 +200,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <label for="panelColumns">Selected grid columns</label><select id="panelColumns"><option value="auto">Automatic</option><option value="2">2 columns</option><option value="3">3 columns</option><option value="4">4 columns</option></select>
 <fieldset id="customEditor"><legend>Custom performance panel</legend>
 <p>Combine up to eight mapped pads and pedal controls. Controls move from their original panels; Mac mappings do not change.</p>
+<label for="customColumns">Custom panel columns</label><select id="customColumns"><option value="1">1 column</option><option value="2">2 columns</option><option value="3">3 columns</option></select>
 <label for="customAddChoice">Available control</label><select id="customAddChoice"></select><button id="customAdd" type="button">Add to custom panel</button>
 <label for="customChoice">Custom panel control</label><select id="customChoice"></select><button id="customUp" type="button">Move earlier</button><button id="customDown" type="button">Move later</button><button id="customRemove" type="button">Return to original panel</button></fieldset>
 <fieldset id="gridOrderEditor" hidden><legend>Individual mapped controls</legend>
@@ -307,15 +311,16 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const gridPanels=["drumSection","pedalSection"];
   const indices=n=>Array.from({length:n},(_,i)=>i);
   const customIDs=[...indices(8).map(i=>"d"+i),...indices(6).map(i=>"p"+i)];
-  const defaultDetails=()=>({version:1,sizes:{},columns:{},holds:[],drumOrder:indices(8),pedalOrder:indices(6),custom:[],sliderDefaults:[100,100,0],vertical:[]});
+  const defaultDetails=()=>({version:1,sizes:{},columns:{},holds:[],drumOrder:indices(8),pedalOrder:indices(6),custom:[],customColumns:"2",sliderDefaults:[100,100,0],vertical:[]});
   function validOrder(order,n){
     return Array.isArray(order)&&order.length===n&&new Set(order).size===n&&order.every(i=>Number.isInteger(i)&&i>=0&&i<n);
   }
   function validDetails(d){
     const record=v=>v&&typeof v==="object"&&!Array.isArray(v);
-    return record(d)&&Object.keys(d).every(k=>["columns","sizes","version","holds","drumOrder","pedalOrder","custom","sliderDefaults","vertical"].includes(k))&&d.version===1&&
+    return record(d)&&Object.keys(d).every(k=>["columns","sizes","version","holds","drumOrder","pedalOrder","custom","customColumns","sliderDefaults","vertical"].includes(k))&&d.version===1&&
       (d.sliderDefaults===undefined||(Array.isArray(d.sliderDefaults)&&d.sliderDefaults.length===3&&d.sliderDefaults.every(v=>Number.isInteger(v)&&v>=0&&v<=100)))&&
       (d.vertical===undefined||(Array.isArray(d.vertical)&&d.vertical.length<=3&&new Set(d.vertical).size===d.vertical.length&&d.vertical.every(i=>[0,1,2].includes(i))))&&
+      (d.customColumns===undefined||["1","2","3"].includes(d.customColumns))&&
       (d.custom===undefined||(Array.isArray(d.custom)&&d.custom.length<=8&&new Set(d.custom).size===d.custom.length&&d.custom.every(id=>customIDs.includes(id))))&&
       (d.drumOrder===undefined||validOrder(d.drumOrder,8))&&(d.pedalOrder===undefined||validOrder(d.pedalOrder,6))&&
       (d.holds===undefined||(Array.isArray(d.holds)&&d.holds.length<=3&&new Set(d.holds).size===d.holds.length&&d.holds.every(i=>[3,4,5].includes(i))))&&
@@ -360,6 +365,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("pedalGrid").setAttribute("data-columns",details.columns.pedalSection??"auto");
     for(const i of details.drumOrder)get("drumGrid").appendChild(get("drum"+i));
     for(const i of details.pedalOrder)get("pedalGrid").appendChild(get("pedalCell"+i));
+    get("customGrid").setAttribute("data-columns",details.customColumns);
     for(const id of customActive)get("customGrid").appendChild(customNode(id));
     get("customSection").style.order=customActive.length?"-1":"6";
     if(!customActive.length)play.appendChild(get("customSection"));
@@ -457,6 +463,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }
   }
   function syncCustomEditor(editable){
+    const columns=get("customColumns");columns.disabled=!editable;columns.value=details.customColumns;
     const available=customIDs.filter(id=>customMapped(id)&&!details.custom.includes(id));
     const chosen=details.custom;
     const chosenLabel=id=>customMapped(id)?customLabel(id):((id[0]==="d"?"Pad ":"Pedal ")+(Number(id[1])+1)+" (not mapped)");
@@ -478,6 +485,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("customRemove").disabled=!editable||index<0;
     get("customUp").disabled=!editable||index<=0;
     get("customDown").disabled=!editable||index<0||index===chosen.length-1;
+  }
+  function changeCustomColumns(){
+    const control=get("customColumns"),value=control.value;
+    if(!canEditLayout()||!["1","2","3"].includes(value)){control.value=details.customColumns;return;}
+    details.customColumns=value;clearLayoutDrag();layoutMessage="Custom panel changed. Save to retain it.";applyLayout();syncLayout();
   }
   function changeCustom(action){
     if(!canEditLayout())return;
@@ -1513,6 +1525,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("layoutSize").addEventListener("change",changeLayoutSize);
   get("panelSize").addEventListener("change",()=>changePanelDetail("sizes"));
   get("panelColumns").addEventListener("change",()=>changePanelDetail("columns"));
+  get("customColumns").addEventListener("change",changeCustomColumns);
   get("gridControl").addEventListener("change",()=>syncGridEditor(Boolean(canEditLayout())));
   for(const [id,action] of [["customAdd","add"],["customRemove","remove"],["customUp","up"],["customDown","down"]])get(id).addEventListener("click",()=>changeCustom(action));
   for(const id of ["customAddChoice","customChoice"])get(id).addEventListener("change",()=>syncCustomEditor(Boolean(canEditLayout())));
