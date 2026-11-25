@@ -8,6 +8,12 @@ A native SwiftUI haptic music workstation with live surface maps, multi-touch MI
 
 > Based on [os6/nospeaker](https://github.com/os6/nospeaker) by **Cody Collier** under the MIT license. We retain the original attribution and upstream source. TIHULU additions are downstream work, not an endorsement by the upstream author.
 
+## Developer SDK and AI retrieval (experimental)
+
+Fork individual engine components without launching the Studio UI. The developer candidate includes standalone SwiftPM library products, a hardware-free JSON shell interface, and a commit-pinned local repository index with optional real embeddings from a trusted local model.
+
+See [Developer SDK & AI index](docs/DEVELOPER_SDK_AI_INDEX.md) and the [machine-readable capability map](docs/ENGINE_CAPABILITIES.json). These interfaces are experimental; native hardware, live CLI and full group MPE remain separate acceptance gates.
+
 ## Install
 
 **Download a macOS DMG** from [Releases](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/releases/latest) and drag **Tihulu Trackpad & M. Mouse Instrument.app** into Applications.
