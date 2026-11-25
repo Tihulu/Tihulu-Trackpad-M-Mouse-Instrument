@@ -10,7 +10,8 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
     private let shared: SharedLiveNoteOutput?
     private let sourceKind: HapticMixSource
     private let requiresFreshGroupFrames:Bool
-    private var freshness = GroupHapticFreshness()
+    private let groupMailboxLock = NSLock()
+    private var groupMailbox:GroupHapticMailbox?
     private enum StartError:Error { case incompatibleSharedOutput }
     private var lease: HapticMixLease?
     private let queue = DispatchQueue(label: "com.tihulu.live-note-haptics", qos: .userInitiated)
@@ -33,8 +34,9 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
             guard timer == nil, lease == nil else { return }
             if requiresFreshGroupFrames {
                 guard shared == nil else { throw StartError.incompatibleSharedOutput }
-                freshness = .init()
-                _ = freshness.refresh(now:ProcessInfo.processInfo.systemUptime)
+                groupMailboxLock.lock()
+                groupMailbox = .init(now:ProcessInfo.processInfo.systemUptime)
+                groupMailboxLock.unlock()
             }
             if let shared {
                 lease = try shared.begin(sourceKind, onFailure: onFailure)
@@ -51,6 +53,15 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
 
     public func update(frame: HapticFrame?, masterLevel: Double,
                        attack: Bool = false, discardPendingAttacks: Bool = false) {
+        if requiresFreshGroupFrames {
+            // Do not wait for the actuator queue or execute driver calls
+            // under this lock. The consumer checks freshness itself.
+            let now = ProcessInfo.processInfo.systemUptime
+            groupMailboxLock.lock()
+            _ = groupMailbox?.publish(frame:frame,masterLevel:masterLevel,now:now)
+            groupMailboxLock.unlock()
+            return
+        }
         queue.sync {
             if let shared, let lease {
                 shared.update(lease, frame: frame, level: masterLevel,
@@ -58,9 +69,6 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
                 return
             }
             guard timer != nil else { return }
-            if requiresFreshGroupFrames && !freshness.refresh(now:ProcessInfo.processInfo.systemUptime) {
-                failFreshness(); return
-            }
             self.masterLevel = masterLevel.isFinite ? min(1, max(0, masterLevel)) : 0
             if discardPendingAttacks || self.masterLevel == 0 { attacks.removeAll() }
             self.frame = frame
@@ -71,6 +79,7 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
     }
 
     public func stop() {
+        closeGroupMailbox()
         queue.sync {
             if let shared, let lease { shared.release(lease) }
             lease = nil
@@ -78,7 +87,15 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
         }
     }
 
+    private func closeGroupMailbox() {
+        guard requiresFreshGroupFrames else { return }
+        groupMailboxLock.lock()
+        groupMailbox?.close()
+        groupMailboxLock.unlock()
+    }
+
     private func clear() {
+        closeGroupMailbox()
         frame = nil
         attacks.removeAll()
         timer?.cancel()
@@ -93,8 +110,20 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
     }
 
     private func tick() {
-        if requiresFreshGroupFrames && !freshness.check(now:ProcessInfo.processInfo.systemUptime) {
-            failFreshness(); return
+        if requiresFreshGroupFrames {
+            groupMailboxLock.lock()
+            let sample = groupMailbox?.read(now:ProcessInfo.processInfo.systemUptime)
+            let retired = groupMailbox?.retired ?? true
+            groupMailboxLock.unlock()
+            if retired { failFreshness(); return }
+            guard let sample,let frame = sample.frame,sample.masterLevel > 0 else { return }
+            do { try driver.play(frame,masterLevel:sample.masterLevel) }
+            catch {
+                let handler = failure
+                clear()
+                handler?(error.localizedDescription)
+            }
+            return
         }
         guard masterLevel > 0,
               let frame = LiveHapticFrameSelection.select(held:frame,
