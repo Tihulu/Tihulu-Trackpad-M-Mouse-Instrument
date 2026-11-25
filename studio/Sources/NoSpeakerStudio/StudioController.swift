@@ -156,6 +156,7 @@ final class StudioController: ObservableObject {
     @Published private(set) var groupCleanupIDs: Set<UUID> = []
     @Published private(set) var groupDisposalCount = 0
     @Published private(set) var groupFaultIDs: Set<UUID> = []
+    @Published private(set) var groupStoppedIDs: Set<UUID> = []
     private var groupGamepadTokens: [SensorSource:UUID] = [:]
     private var groupRunToken: UUID?
     private var groupWatchdog: Task<Void,Never>?
@@ -208,6 +209,7 @@ final class StudioController: ObservableObject {
         groupRunToken = token
         groupGamepadsRunning = true
         groupFaultIDs = []
+        groupStoppedIDs = []
         refreshGroupOutputState()
         do {
             for source in GamepadFrame.orderedSources where sources.contains(source) {
@@ -243,6 +245,7 @@ final class StudioController: ObservableObject {
         let failures = reports.reduce(into:Set<UUID>()) { $0.formUnion($1.failedGroups) }
         if !failures.isEmpty {
             groupFaultIDs.formUnion(failures)
+            groupStoppedIDs.formUnion(failures)
             groupGamepadStatus = "A group MIDI send failed. Affected groups stopped; inspect cleanup status."
         }
         refreshGroupOutputState()
@@ -271,6 +274,7 @@ final class StudioController: ObservableObject {
         groupGamepadTokens.removeAll()
         builderGamepads.stop()
         groupGamepadsRunning = false
+        groupStoppedIDs = groupRegisteredIDs
         if let report = groupHost.panic() { consumeGroupReports([report]) }
         groupGamepadStatus = groupCleanupIDs.isEmpty
             ? "Group MIDI stopped. Registered ports retained for restart."
@@ -278,8 +282,12 @@ final class StudioController: ObservableObject {
     }
 
     func stopPerformanceGroup(_ id:UUID) {
-        guard groupGamepadsRunning else { return }
-        if let report = groupHost.stopGroup(id) { consumeGroupReports([report]) }
+        guard groupGamepadsRunning, groupRegisteredIDs.contains(id), !groupStoppedIDs.contains(id) else { return }
+        if let report = groupHost.stopGroup(id) {
+            groupStoppedIDs.insert(id)
+            consumeGroupReports([report])
+            if groupRegisteredIDs.isSubset(of:groupStoppedIDs) { stopGroupGamepads() }
+        }
     }
 
     func retryGroupCleanup() {
@@ -1608,6 +1616,7 @@ final class StudioController: ObservableObject {
     }
 
     func armChordPads() {
+        guard !groupGamepadsRunning else { chordStatus = "Stop group MIDI first."; return }
         guard !chordArmed else { return }
         releaseChordPads()
         guard chordOutstanding.isEmpty, chordMPESelectors.isEmpty else {
@@ -2069,6 +2078,7 @@ final class StudioController: ObservableObject {
     }
 
     func armTouchBarOutput() {
+        guard !groupGamepadsRunning else { touchBarOutputStatus = "Stop group MIDI first."; return }
         guard touchBarProfile.effectiveOutput.sendsHaptics, !touchBarOutputArmed else { return }
         guard (gamepadHaptics == nil && !chordOwnsHaptics) || sharedNoteOutputEnabled,
               !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
@@ -2303,7 +2313,7 @@ final class StudioController: ObservableObject {
         captureArmed = false
         captureHotkeyArmed = false
         stopGroupGamepads()
-        retryGroupCleanup()
+        if !groupCleanupIDs.isEmpty || groupDisposalCount != 0 { retryGroupCleanup() }
         stopInstrumentPatch()
         stopLiveSequence()
         engineGeneration &+= 1
@@ -2481,6 +2491,7 @@ final class StudioController: ObservableObject {
     /// One independent MIDI sequence, with optional exclusive haptic
     /// preview. MIDI-only does not require the Force Touch driver.
     func startLiveSequence(output: MusicalOutput, loop: Bool, tuned:TunedMIDIClip? = nil, makeClip: () throws -> MIDIClip) {
+        guard !groupGamepadsRunning else { sequenceStatus = "Stop group MIDI first."; return }
         guard output.sendsMIDI, !sequenceRunning, tuned == nil || !output.sendsHaptics else { return }
         do {
             let clip = try (tuned?.clip ?? makeClip()).validated()
@@ -3744,6 +3755,7 @@ final class StudioController: ObservableObject {
     }
 
     func startSystemAudio() {
+        guard !groupGamepadsRunning else { lastError = "Stop group MIDI first."; return }
         cancelStartupGreeting()
         guard !speakerBusy else { return }
         guard !liveNoteOwnsHaptics, !sequenceOwnsHaptics else {
