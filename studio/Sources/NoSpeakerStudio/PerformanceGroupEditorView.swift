@@ -14,6 +14,7 @@ struct PerformanceGroupEditorView: View {
     @State private var pendingTunedStart: PerformanceGroupTuningConfiguration?
     @State private var confirmTunedStart = false
     @State private var profile = PerformanceGroupProfile()
+    @State private var mobileDraft:PerformanceGroupMobileDraft?
     @State private var saved = PerformanceGroupProfile()
     @State private var storedData: Data?
     @State private var didLoad = false
@@ -114,6 +115,7 @@ struct PerformanceGroupEditorView: View {
                 }
                 groupActions(group)
                 remoteRetargetMenu(group)
+                mobileEditMenu(group)
                 Button("Replace draft mappings from Builder") { replaceMappings(group.id) }
                     .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
             }
@@ -143,6 +145,27 @@ struct PerformanceGroupEditorView: View {
                 }
             }.disabled(free.isEmpty || editingLocked)
         }
+    }
+
+    private func mobileEditMenu(_ group:PerformanceInstrumentGroup) -> some View {
+        Menu("Edit mobile mappings") {
+            ForEach(SensorSource.groupRemoteSources,id:\.self) { source in
+                Button(source.rawValue) {
+                    guard !editingLocked,!readFailed else { return }
+                    do { mobileDraft = try .init(profile:profile,groupID:group.id,source:source) }
+                    catch { message = "Cannot edit mobile mappings until the group profile is valid." }
+                }
+            }
+        }.disabled(!profile.isValid || editingLocked || readFailed || !didLoad)
+    }
+
+    private func applyMobileDraft(_ draft:PerformanceGroupMobileDraft) -> Bool {
+        guard !editingLocked,!readFailed,didLoad else { return false }
+        do {
+            profile = try draft.applying(to:profile)
+            message = "Mobile mappings applied to unsaved draft. Save and review any stale tuning before Start."
+            return true
+        } catch { message = "Mobile draft rejected: " + String(describing:error); return false }
     }
 
     private func groupActions(_ group: PerformanceInstrumentGroup) -> some View {
@@ -490,6 +513,9 @@ struct PerformanceGroupEditorView: View {
                 liveControls
             }.padding(6)
         }.onAppear { load() }
+        .sheet(item:$mobileDraft) { draft in
+            PerformanceGroupMobileDraftView(draft:draft,apply:applyMobileDraft)
+        }
         .confirmationDialog("Start independent group MPE?",isPresented:$confirmTunedStart,titleVisibility:.visible) {
             Button("Confirm MPE Start") {
                 guard let snapshot = pendingTunedStart else { return }
