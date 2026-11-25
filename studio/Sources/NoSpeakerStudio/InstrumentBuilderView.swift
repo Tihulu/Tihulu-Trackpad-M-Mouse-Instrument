@@ -10,6 +10,11 @@ struct InstrumentBuilderView: View {
     @State private var draft = InstrumentPatch()
     @State private var sendMIDI = false
     @State private var physical = false
+    @State private var tunedAir = false
+    @State private var gamepadPresetSource:SensorSource = .gamepad1
+    @State private var gamepadPresetRole:GamepadFrame.Role = .lead
+    @State private var gamepadPresetChannel = 3
+    @State private var syntheticSource: SensorSource?
     @State private var values: [PatchSimulation.Input: Double] = [:]
     @State private var message = ""
     @State private var showPatchbay = false
@@ -55,8 +60,106 @@ struct InstrumentBuilderView: View {
                         }
                     }.padding(8).disabled(studio.patchRunning)
                 }
+                GroupBox("Game controllers · Xbox / extended gamepad") {
+                    VStack(alignment:.leading,spacing:8) {
+                        HStack {
+                            Picker("Slot",selection:$gamepadPresetSource) {
+                                Text("Controller 1").tag(SensorSource.gamepad1)
+                                Text("Controller 2").tag(SensorSource.gamepad2)
+                            }
+                            Picker("Role",selection:$gamepadPresetRole) {
+                                ForEach(GamepadFrame.Role.allCases) { Text($0.rawValue.capitalized).tag($0) }
+                            }
+                            Stepper("MIDI ch \(gamepadPresetChannel+1)",value:$gamepadPresetChannel,in:0...15)
+                            Button("Add mappings") {
+                                var next = draft
+                                next.routes += gamepadPresetRole.routes(source:gamepadPresetSource,channel:gamepadPresetChannel)
+                                if next.isValid { draft = next; physical = true; message = "Choose the controller in Test instrument, release all controls, then Start." }
+                                else { message = "Cannot add preset: duplicate mappings or route capacity." }
+                            }
+                        }
+                        Text("Customize buttons, triggers and sticks in Routes. Helper has no notes or gain controls by default; use RT sustain, LT wah, left X bend and right Y modulation.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8)
+                }.disabled(studio.patchRunning)
+                GroupBox("Orchestra & Jam · ensemble templates") {
+                    VStack(alignment:.leading,spacing:8) {
+                        ForEach(EnsemblePreset.allCases) { preset in
+                            HStack {
+                                VStack(alignment:.leading,spacing:2) {
+                                    Text(preset.title).font(.headline)
+                                    Text(preset.instructions).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Load template") {
+                                    guard let next = preset.patch() else { message = "Invalid ensemble template."; return }
+                                    replaceDraft(with:next)
+                                }
+                            }
+                        }
+                        Button("Load multi-device Party Jam") {
+                            guard let next = PartyJamPreset.patch() else { message = "Invalid party template."; return }
+                            replaceDraft(with:next)
+                        }
+                        Text("Phone drums + XY ch 10; tablet piano ch 2; Controller 1 lead ch 4; Controller 2 piano helper ch 2; Trackpad bass, Mouse pedal, lid and ribbon ch 3; camera modulation ch 4. Optional hardware may remain idle, but mapped controller slots must be explicitly bound. Multiple phones of the same role share mappings.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("Templates configure host-side routes only. Choose Native inputs, then start Remote TLS explicitly for mobile players. Assign separate DAW tracks to the indicated MIDI channels; no automatic playback or network listener.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8)
+                }.disabled(studio.patchRunning)
                 ExpressivePresetPanel(patch: $draft).disabled(studio.patchRunning)
+                AirHandsHelperPanel(patch: $draft, physical: $physical).disabled(studio.patchRunning)
                 AirInstrumentPresetPanel(patch: $draft).disabled(studio.patchRunning)
+                GroupBox("Dual Hand · camera chords") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Show a closed chord hand to arm, then 1–5 fingers to select C, Dm, Em, F or G. Open and pinch the helper hand to play; open it to release. Edit the individual note routes below.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Add dual-hand chord routes") {
+                            var next = draft
+                            next.routes += AirDualHandPerformance.routes()
+                            if next.isValid {
+                                draft = next
+                                physical = true
+                                message = "Dual Hand added. Enable MIDI output, grant camera permission and start explicitly."
+                            } else { message = "Cannot add dual-hand routes: check route capacity." }
+                        }.disabled(draft.routes.count + 15 > SensorRouter.maxMappings ||
+                                    draft.routes.contains { $0.source == .camera && !AirHandsHelper.allSignals.contains($0.signal) })
+                        HStack {
+                            Button("Add Air Guitar · 6 strings") {
+                                var next = draft
+                                next.routes += AirStrumPerformance.routes(bank:AirStrumPerformance.guitarBank)
+                                if next.isValid { draft = next; physical = true; message = "Select chord, pinch helper, then sweep X across strings." }
+                            }.disabled(draft.routes.count + 30 > SensorRouter.maxMappings || draft.routes.contains { $0.source == .camera && !AirHandsHelper.allSignals.contains($0.signal) })
+                            Button("Replace with 3-course Air") {
+                                replaceDraft(with:.init(name:"Air three-course strings",routes:AirStrumPerformance.routes(bank:AirStrumPerformance.threeCourseBank)))
+                            }
+                            Button("Add 3-course Air · experimental") {
+                                var next = draft
+                                next.routes += AirStrumPerformance.routes(bank:AirStrumPerformance.threeCourseBank)
+                                if next.isValid { draft = next; physical = true; message = "Three-course equal-tempered preset; not makam tuning." }
+                            }.disabled(draft.routes.count + 15 > SensorRouter.maxMappings || draft.routes.contains { $0.source == .camera && !AirHandsHelper.allSignals.contains($0.signal) })
+                        }
+                        if AirStrumPerformance.usesStrum(draft.routes) {
+                            Text("Pinch arms the stroke; sweep X to cross virtual strings. Opening the pinch releases all string pulses. Edit each string note in Routes.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Button("Add helper effects · Bend / Expression / Wah") {
+                            var next = draft
+                            next.routes += AirDualHandPerformance.helperRoutes()
+                            if next.isValid {
+                                draft = next
+                                message = "Helper effects added. X = bend, Y = expression, aperture = CC74. Assign these in your DAW."
+                            } else { message = "Cannot add helper effects: check route capacity, duplicate IDs and release settings." }
+                        }.disabled(draft.routes.count + 3 > SensorRouter.maxMappings ||
+                                    !AirDualHandPerformance.usesDualCamera(draft.routes) ||
+                                    AirDualHandPerformance.hasHelperRoutes(draft.routes))
+                        Text("Optional helper axes remain active after opening the pinch while a valid chord is selected. Tracking loss releases all camera-owned controls. Customize targets, ranges and smoothing in Routes.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Swap physical chord and helper hands", isOn: $studio.patchCameraSwapRoles)
+                        Text("Experimental live camera mode; connect a DAW to the dedicated Builder MIDI output. Simulation routes remain available.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8).disabled(studio.patchRunning)
+                }
                 GroupBox("Air Drums · motion percussion") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
@@ -170,9 +273,53 @@ struct InstrumentBuilderView: View {
                             Text("Simulation").tag(false)
                             Text("Native inputs (experimental)").tag(true)
                         }.pickerStyle(.segmented).disabled(studio.patchRunning)
+                        if physical {
+                            Picker("Synthetic source (Hybrid)",selection:$syntheticSource) {
+                                Text("None · native only").tag(nil as SensorSource?)
+                                ForEach([SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external,.camera],id:\.self) { source in
+                                    if draft.routes.contains(where: { $0.source == source }) {
+                                        Text(source.rawValue + " · on-screen").tag(Optional(source))
+                                    }
+                                }
+                            }.disabled(studio.patchRunning)
+                            .onChange(of:syntheticSource) { _ in if !studio.patchRunning { sendMIDI = false } }
+                            if syntheticSource != nil {
+                                Text("Only the selected source is simulated. Other sources are native. Leaving this page releases simulated controls; a stalled UI lease expires in 350 ms. For paired phone/tablet routes, start through the Remote TLS panel.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        if physical && draft.routes.contains(where:{GamepadFrame.sources.contains($0.source)}) {
+                            GroupBox("Bind paired gamepads") {
+                                VStack(alignment:.leading,spacing:6) {
+                                    Button("Refresh connected controllers") { studio.refreshBuilderGamepads() }
+                                    if draft.routes.contains(where:{$0.source == .gamepad1}) {
+                                        Picker("Controller 1",selection:$studio.gamepadSlot1) {
+                                            Text("Select controller").tag(nil as UUID?)
+                                            ForEach(studio.gamepadChoices) { Text($0.name).tag(Optional($0.id)) }
+                                        }
+                                    }
+                                    if draft.routes.contains(where:{$0.source == .gamepad2}) {
+                                        Picker("Controller 2",selection:$studio.gamepadSlot2) {
+                                            Text("Select controller").tag(nil as UUID?)
+                                            ForEach(studio.gamepadChoices) { Text($0.name).tag(Optional($0.id)) }
+                                        }
+                                    }
+                                    Text("Pair in macOS Bluetooth settings first. Release all buttons, triggers and sticks to arm. Disconnect releases only that slot; restart to bind a replacement. Polling prototype: very short taps can be missed.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }.padding(6).disabled(studio.patchRunning)
+                            }
+                        }
                         Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)
                             .disabled(studio.patchRunning)
-                        if physical && draft.routes.contains(where: { $0.source == .camera }) {
+                        if AirStrumPerformance.usesStrum(draft.routes) || tunedAir {
+                            Toggle("Tune Air strings from current Custom Scale (MPE)",isOn:$tunedAir)
+                                .disabled(studio.patchRunning)
+                            if tunedAir {
+                                Text("Dedicated TIHULU Air Strings MPE port. Camera strings and supported master effects, one logical MIDI channel, up to 15 distinct notes. Explicit MIDI output required. No Hybrid/Remote. Armed recording preserves MPE setup and effects. The current bank root and offsets are frozen at Start.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        if physical && syntheticSource != .camera && draft.routes.contains(where: { $0.source == .camera }) {
                             DisclosureGroup("Camera setup") {
                                 VStack(alignment: .leading, spacing: 5) {
                                     HStack {
@@ -196,9 +343,13 @@ struct InstrumentBuilderView: View {
                             }
                         }
                         if physical && draft.routes.contains(where: { $0.source == .phone || $0.source == .tablet }) {
-                            RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI)
+                            if tunedAir {
+                                Text("Turn off tuned Air explicitly before starting Remote, or use a string-only patch.").font(.caption).foregroundStyle(.orange)
+                            } else {
+                                RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI, syntheticSource:syntheticSource)
+                            }
                         }
-                        if physical && !PhysicalPatchRuntime.supports(draft) {
+                        if physical && !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(draft,synthetic:$0) } ?? PhysicalPatchRuntime.supports(draft)) {
                             Text("Normal native mode supports local surfaces, lid, ribbon and camera. For valid phone/tablet touch, piano, drum pads, pedalboard and motion routes, use the Remote panel above. Other unsupported signals remain simulation-only.")
                                 .font(.caption).foregroundStyle(.orange)
                         }
@@ -207,14 +358,30 @@ struct InstrumentBuilderView: View {
                                 studio.updateInstrumentPatch(draft)
                                 values = [:]
                                 airRange = AirRangeCapture(signal: airRange.signal)
-                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical)
+                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical,synthetic:physical ? syntheticSource : nil,tunedAir:tunedAir)
                             }.buttonStyle(.borderedProminent)
-                                .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty || (physical && !PhysicalPatchRuntime.supports(draft)))
+                                .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty || (physical && !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(draft,synthetic:$0) } ?? PhysicalPatchRuntime.supports(draft))))
                             Button("Stop / Release All") { studio.stopInstrumentPatch() }
                             Spacer()
                             Text(studio.patchStatus).font(.caption)
                         }
-                        if studio.patchRunning && !studio.patchPhysical {
+                        EnsembleTakePanel()
+                        if studio.patchRunning { EnsembleClockPanel() }
+                        else if studio.ensembleClockStatus.contains("Stop delivery failed") {
+                            HStack {
+                                Text(studio.ensembleClockStatus).font(.caption).foregroundStyle(.orange)
+                                Button("Retry clock Stop") { studio.stopEnsembleClock() }
+                            }
+                        }
+                        if studio.patchRunning && (!studio.patchPhysical || studio.patchHybridSource != nil) {
+                            if studio.patchAirDebugAvailable { AirDualDebugPanel() }
+                            if studio.patchHelperDebugAvailable { AirHandsHelperDebugPanel() }
+                            if studio.patchHybridSource != nil && studio.patchHybridSource != .camera {
+                                Button("Release all synthetic controls") {
+                                    studio.releaseHybridControls()
+                                    values = [:]
+                                }
+                            }
                             PerformanceControlsView(patch: studio.instrumentPatch, values: $values)
                         }
                         if studio.patchRunning && studio.patchNativeBar, let token = studio.builderBarToken {
@@ -235,7 +402,22 @@ struct InstrumentBuilderView: View {
                         if physical && draft.routes.contains(where: { $0.source == .camera }) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(studio.patchCameraStatus).font(.headline)
-                                Text("Show one hand: X/Y are index fingertip position, gesture is thumb/index aperture relative to palm length, contact is reliable hand presence. Camera permission is required. No image recording or network.")
+                                if studio.patchAirRecordAvailable {
+                                    Text("Selected slot: " + (studio.patchAirLiveSelected.map { String($0) } ?? "—") + " · Sounding: " + (studio.patchAirLiveSounding.map { String($0) } ?? "—"))
+                                        .font(.caption.monospacedDigit())
+                                    HStack {
+                                        Button("Record diagnostic trace") { studio.startAirTrace() }.disabled(studio.patchAirRecording)
+                                        Button("Stop recording") { studio.stopAirTrace() }.disabled(!studio.patchAirRecording)
+                                        Text("\(studio.patchAirTraceCount) frames").font(.caption.monospacedDigit())
+                                    }
+                                    Text("Opt-in, in-memory derived hand coordinates only. Up to 30 seconds / 600 frames. Replay in Simulation mode after stopping live input.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Text(AirDualHandPerformance.usesDualCamera(draft.routes) ?
+                                     (AirStrumPerformance.usesStrum(draft.routes) ?
+                                      "Dual hand strings: close chord hand to arm, select 1–5 fingers, pinch helper and sweep X. Open pinch to release all strings." :
+                                      "Dual hand: close chord hand to arm, select 1–5 fingers, pinch helper to play. Open pinch to release notes. Optional helper axes remain active with a valid selection.") :
+                                     "Show one hand: X/Y are index fingertip position, gesture is thumb/index aperture relative to palm length, contact is reliable hand presence. Camera permission is required. No image recording or network.")
                                     .font(.caption).foregroundStyle(.secondary)
                                 if let hand = studio.patchCameraHand {
                                     HStack {
@@ -257,12 +439,16 @@ struct InstrumentBuilderView: View {
                             Text("Primary contact per surface; contact size is not measured pressure. The private macOS driver groups compatible external touch surfaces under Magic Mouse; device identity is not verified here. The shared monitor supports independent Touch Instrument and MIDI Helper sessions; route the dedicated MIDI source separately in the DAW. Lift or loss of input releases owned controls. No automatic pointer capture.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Text("Use TIHULU Instrument Builder as a dedicated DAW input if MIDI is enabled. Connect a separate instrument/channel. Stop or Panic releases owned controls. Physical sessions continue across pages; simulation ends when leaving. Remote starts only explicitly; LAN requires a successful Mac-only diagnostic and trusted certificate.")
+                        Text("Use " + (tunedAir ? "TIHULU Air Strings MPE" : "TIHULU Instrument Builder") + " as a dedicated DAW input if MIDI is enabled. Connect a separate instrument/channel. Stop or Panic releases owned controls. Physical sessions continue across pages; simulation ends when leaving. Remote starts only explicitly; LAN requires a successful Mac-only diagnostic and trusted certificate.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }
                 GroupBox("Command monitor") {
                     VStack(alignment: .leading, spacing: 4) {
+                        if studio.patchTunedAirActive {
+                            Text("Logical router commands (before MPE channel translation). Verify wire channels and pitch bends in your DAW MIDI monitor.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         ForEach(Array(studio.patchMessages.enumerated()), id: \.offset) { item in
                             Text(item.element).font(.system(.caption, design: .monospaced))
                         }
@@ -287,10 +473,20 @@ struct InstrumentBuilderView: View {
         }
         .onAppear {
             draft = studio.resumeBuilderDraft()
-            if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled }
+            if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled; syntheticSource = studio.patchHybridSource; tunedAir = studio.patchTunedAirActive }
+        }
+        .task(id:studio.patchHybridRunID) {
+            guard let runID = studio.patchHybridRunID else { return }
+            while !Task.isCancelled && studio.patchRunning && studio.patchHybridRunID == runID {
+                do { try await Task.sleep(for:.milliseconds(100)) } catch { return }
+                guard !Task.isCancelled else { return }
+                studio.refreshHybridControls(runID:runID)
+            }
         }
         .onDisappear {
+            studio.stopEnsembleClock()
             if !studio.patchPhysical { studio.stopInstrumentPatch() }
+            else { studio.releaseHybridControls() }
             studio.rememberBuilderDraft(draft)
         }
     }
@@ -391,6 +587,7 @@ struct InstrumentBuilderView: View {
 
     private func applyReplacement(_ replacement: InstrumentPatch) {
         draft = replacement
+        tunedAir = false
         expandedRoutes.removeAll()
         routeSource = nil
         routeSearch = ""

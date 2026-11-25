@@ -31,7 +31,7 @@ final class TouchBarProfileTests: XCTestCase {
     }
     func testTiltNeutralMatchesControllerAndCalibration() throws {
         let targets: [(TiltMIDITarget, TouchBarZone, Double)] = [
-            (.filter, .filter, 0), (.vibrato, .vibrato, 0),
+            (.filter, .filter, 0), (.wah, .wah, 0), (.vibrato, .vibrato, 0),
             (.expression, .expression, 1), (.pitchBend, .pitchBend, 0.5)
         ]
         for (target, zone, value) in targets {
@@ -43,5 +43,33 @@ final class TouchBarProfileTests: XCTestCase {
                 XCTAssertEqual(try XCTUnwrap(profile.normalizedTilt(neutral.angle)), value, accuracy: 0.000001)
             }
         }
+    }
+}
+
+extension TouchBarProfileTests {
+    func testWahZoneAndTiltRoundTripWithoutChangingDefaults() throws {
+        XCTAssertFalse(TouchBarProfile().zones.contains(.wah))
+        let profile = TouchBarProfile(zones: [.keys, .wah, .wah], tiltTarget: .wah)
+        let restored = try JSONDecoder().decode(TouchBarProfile.self, from: JSONEncoder().encode(profile))
+        XCTAssertEqual(restored.normalized().zones, [.keys, .wah])
+        XCTAssertEqual(restored.neutralTilt?.value, 0)
+    }
+}
+
+extension TouchBarProfileTests {
+    func testRibbonNeutralAndInitialPositions() {
+        XCTAssertEqual(TouchBarZone.pitchBend.releasePosition,0.5)
+        XCTAssertEqual(TouchBarZone.fretless.releasePosition,0.5)
+        XCTAssertNil(TouchBarZone.expression.releasePosition)
+        XCTAssertNil(TouchBarZone.wah.releasePosition)
+        XCTAssertEqual(TouchBarZone.expression.initialPosition,1)
+        XCTAssertEqual(TouchBarZone.pitchBend.initialPosition,0.5)
+        XCTAssertEqual(TouchBarZone.wah.initialPosition,0)
+    }
+    func testNonFiniteTiltSettingsNormalizeToFiniteRange() {
+        let profile = TouchBarProfile(tiltTarget:.pitchBend,tiltMinDegrees:.nan,tiltMaxDegrees:.infinity)
+        XCTAssertEqual(profile.normalized().tiltMinDegrees,90)
+        XCTAssertEqual(profile.normalized().tiltMaxDegrees,120)
+        XCTAssertEqual(profile.normalizedTilt(105),0.5)
     }
 }

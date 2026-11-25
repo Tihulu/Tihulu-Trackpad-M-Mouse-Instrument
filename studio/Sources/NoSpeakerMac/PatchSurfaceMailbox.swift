@@ -13,12 +13,13 @@ public final class PatchSurfaceMailbox: @unchecked Sendable {
     private var samples: [Sample] = []
     private var overflow = false
     private var closed = false
-    public init() {}
+    private let excludedSurface: TouchSurfaceKind?
+    public init(excludedSurface:TouchSurfaceKind? = nil) { self.excludedSurface = excludedSurface }
 
     public func submit(_ frame: SurfaceTouchFrame) {
         lock.lock()
         defer { lock.unlock() }
-        guard !closed, !overflow else { return }
+        guard !closed, !overflow, frame.surface != excludedSurface else { return }
         guard samples.count < 64, frame.contacts.count <= 32 else {
             overflow = true
             samples.removeAll()

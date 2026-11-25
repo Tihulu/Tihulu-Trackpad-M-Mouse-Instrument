@@ -34,6 +34,8 @@ private struct TouchDraft: Codable {
     var trackpadOutput: SurfaceOutputRoute = .trackpadHaptic
     var magicMouseOutput: SurfaceOutputRoute = .midiInstrument
     var drumLayout: DrumPadLayout = .standard12
+    var stringLayout: StringSurfaceLayout? = nil
+    var mouseStringLayout: StringSurfaceLayout? = nil
     var sustainEnabled: Bool = false
     var sustainTrackpadEnabled: Bool = true
     var sustainTrackpadGesture: TrackpadSustainGesture = .contactThreshold
@@ -41,6 +43,7 @@ private struct TouchDraft: Codable {
     var sustainTrackpadSensor: TrackpadSustainSensor = .contactSize
     var sustainMouseEnabled: Bool = false
     var sustainMouseGesture: MagicMouseSustainGesture = .touchHold
+    var sustainMouseTapThreshold: Double? = nil
 }
 
 private struct HelperDraft: Codable {
@@ -51,16 +54,19 @@ private struct HelperDraft: Codable {
     var pitchBendRange: Int = 12
     var vibratoCC: Int = 1
     var expressionCC: Int = 11
-    var vibratoEnabled: Bool = true
-    var pitchBendEnabled: Bool = true
-    var expressionEnabled: Bool = true
-    var sustainEnabled: Bool = false
+    var vibratoEnabled: Bool = false
+    var pitchBendEnabled: Bool = false
+    var expressionEnabled: Bool = false
+    var sustainEnabled: Bool = true
     var trackpadSustainEnabled: Bool = true
     var trackpadSustainThreshold: Double = 0.55
     var trackpadSustainSensor: TrackpadSustainSensor = .contactSize
     var trackpadSustainGesture: TrackpadSustainGesture = .contactThreshold
     var magicMouseSustainEnabled: Bool = false
     var magicMouseSustainGesture: MagicMouseSustainGesture = .touchHold
+    var magicMouseTapThreshold: Double? = nil
+    var sharePedalSurface: Bool? = nil
+    var configureReceiverBendRange:Bool? = nil
 }
 
 private struct NoteDraft: Codable {
@@ -97,12 +103,16 @@ private struct WorkspaceSettings: Codable {
         (0.1...1).contains(touch.pressThreshold) &&
         (1...127).contains(touch.fixedVelocity) &&
         (1...16).contains(touch.midiChannel) &&
+        (touch.stringLayout?.isValid ?? true) &&
+        (touch.mouseStringLayout?.isValid ?? true) &&
         (0.1...1).contains(touch.sustainTrackpadThreshold) &&
+        (0...1).contains(touch.sustainMouseTapThreshold ?? 0) &&
         (1...16).contains(helper.targetChannel) &&
         [2, 5, 12, 24].contains(helper.pitchBendRange) &&
         (0...127).contains(helper.vibratoCC) &&
         (0...127).contains(helper.expressionCC) &&
         (0.1...1).contains(helper.trackpadSustainThreshold) &&
+        (0...1).contains(helper.magicMouseTapThreshold ?? 0) &&
         notes.notes.count == 16 &&
         notes.notes.allSatisfy { $0.map { (0...127).contains($0) } ?? true } &&
         (48...95).contains(notes.selectedMIDI) &&
@@ -210,8 +220,8 @@ struct ContentView: View {
                     case .mapping: InstrumentBuilderView()
                     case .chords: ChordPadPanel(compact: false)
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
-                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture)
-                    case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture)
+                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, stringLayout: $touchDraft.stringLayout, mouseStringLayout: $touchDraft.mouseStringLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
+                    case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture, magicMouseTapThreshold: $helperDraft.magicMouseTapThreshold, sharePedalSurface:$helperDraft.sharePedalSurface,configureReceiverBendRange:$helperDraft.configureReceiverBendRange)
                     case .touchBar: TouchBarModeView()
                     case .notes: NoteSequencerView(notes: $noteDraft.notes, selectedMIDI: $noteDraft.selectedMIDI, velocity: $noteDraft.velocity, loop: $noteDraft.loop, groove: $noteDraft.groove, output: $noteDraft.output)
                     case .drums: DrumSequencerView(active: $drumDraft.active, loop: $drumDraft.loop, groove: $drumDraft.groove, output: $drumDraft.output)
@@ -242,6 +252,9 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) { pendingWorkspace = nil }
         } message: { _ in
             Text("This changes the instrument and helper drafts, not your sequencer patterns. It will not start a session.")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            studio.attachNativeTouchBarToWindow()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             studio.releaseChordPads()
@@ -282,7 +295,7 @@ struct ContentView: View {
             helper.surfaceSelection = .trackpad
         case .drums:
             instrument.trackpadInstrument = .drums
-            instrument.drumLayout = .extended16
+            instrument.drumLayout = .grid16
         }
         touchDraft = instrument
         helperDraft = helper
@@ -425,6 +438,8 @@ struct ContentView: View {
                   set: { studio.configurePerformanceCapture(armed: $0, shortcut: studio.captureShortcut) }
               )).toggleStyle(.switch)
               PerformanceShortcutRecorder()
+              Button(studio.pointerCaptured ? "Release" : "Capture Now") { studio.togglePointerCaptureNow() }
+                  .disabled(!studio.captureArmed && !studio.pointerCaptured)
               Picker("Mouse Axis", selection: Binding(
                   get: { studio.magicMouseOrientation },
                   set: { studio.setMagicMouseOrientation($0) }
@@ -749,6 +764,8 @@ private struct TouchInstrumentView: View {
     @Binding var trackpadOutput: SurfaceOutputRoute
     @Binding var magicMouseOutput: SurfaceOutputRoute
     @Binding var drumLayout: DrumPadLayout
+    @Binding var stringLayout: StringSurfaceLayout?
+    @Binding var mouseStringLayout: StringSurfaceLayout?
     @Binding var sustainEnabled: Bool
     @Binding var sustainTrackpadEnabled: Bool
     @Binding var sustainTrackpadGesture: TrackpadSustainGesture
@@ -756,6 +773,7 @@ private struct TouchInstrumentView: View {
     @Binding var sustainTrackpadSensor: TrackpadSustainSensor
     @Binding var sustainMouseEnabled: Bool
     @Binding var sustainMouseGesture: MagicMouseSustainGesture
+    @Binding var sustainMouseTapThreshold: Double?
 
     private var effectivePitchSpan: Double { 24.0 / zoneWidth }
 
@@ -764,6 +782,17 @@ private struct TouchInstrumentView: View {
     private var hasMelodic: Bool {
         (surfaceSelection.accepts(.trackpad) && trackpadInstrument == .melodic) ||
         (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument == .melodic)
+    }
+
+    private var hasGuitar: Bool {
+        (surfaceSelection.accepts(.trackpad) && trackpadInstrument.isStringSurface) ||
+        (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument.isStringSurface)
+    }
+    private var effectiveStringLayout: StringSurfaceLayout { stringLayout ?? .init() }
+
+    private var hasChords: Bool {
+        (surfaceSelection.accepts(.trackpad) && trackpadInstrument == .chords) ||
+        (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument == .chords)
     }
 
     private var hasDrums: Bool {
@@ -795,7 +824,10 @@ private struct TouchInstrumentView: View {
             trackpadOutput: trackpadOutput,
             magicMouseOutput: magicMouseOutput,
             drumLayout: drumLayout,
-            customScale: studio.touchCustomScale
+            customScale: studio.touchCustomScale,
+            physicalChordBank: hasChords ? studio.chordBank : nil,
+            stringLayout: effectiveStringLayout,
+            mouseStringLayout: mouseStringLayout
         )
     }
 
@@ -804,7 +836,7 @@ private struct TouchInstrumentView: View {
             VStack(alignment: .leading, spacing: 16) {
                 PageHeader(
                     title: "Touch Instrument",
-                    subtitle: "Play GM drums or melodic notes with the trackpad and Magic Mouse. Route each surface to trackpad haptics, a DAW MIDI instrument, or both."
+                    subtitle: "Play physical chord pads, GM drums or melodic notes with the trackpad and Magic Mouse. Route each surface to trackpad haptics, a DAW MIDI instrument, or both."
                 )
 
                 HStack(spacing: 14) {
@@ -845,7 +877,8 @@ private struct TouchInstrumentView: View {
                                     magicMouseEnabled: sustainEnabled && sustainMouseEnabled,
                                     magicMouseGesture: sustainMouseGesture,
                                     trackpadGesture: sustainTrackpadGesture,
-                                    trackpadSensor: sustainTrackpadSensor
+                                    trackpadSensor: sustainTrackpadSensor,
+                                    magicMouseTapThreshold: sustainMouseTapThreshold ?? 0
                                 )
                             )
                         }
@@ -866,7 +899,7 @@ private struct TouchInstrumentView: View {
                                 ForEach(SurfaceOutputRoute.allCases) { Text($0.rawValue).tag($0) }
                             }
                             .frame(width: 200)
-                            Text(trackpadInstrument == .drums ? "GM · MIDI Ch 10" : "Melodic instrument")
+                            Text(trackpadInstrument == .drums ? "GM · MIDI Ch 10" : (trackpadInstrument == .chords ? "Chord Bank · 8 pads" : trackpadInstrument.rawValue))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -885,7 +918,7 @@ private struct TouchInstrumentView: View {
                                 ForEach(SurfaceOutputRoute.allCases) { Text($0.rawValue).tag($0) }
                             }
                             .frame(width: 200)
-                            Text(magicMouseInstrument == .drums ? "GM · MIDI Ch 10" : "Melodic instrument")
+                            Text(magicMouseInstrument == .drums ? "GM · MIDI Ch 10" : (magicMouseInstrument == .chords ? "Chord Bank · 8 pads" : magicMouseInstrument.rawValue))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -960,7 +993,7 @@ private struct TouchInstrumentView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             } else if let custom = studio.touchCustomScale {
                                 Text("Copied from the chord bank; follows the Touch root and note width. Re-copy after editing the bank. " +
-                                     (custom.isMicrotonal ? "Haptic notes use cent offsets. MIDI uses nominal notes only if approximation was allowed." : "Equal-tempered custom degrees."))
+                                     (custom.isMicrotonal ? "Haptic notes use cent offsets. MPE preserves tuning; Standard MIDI requires explicit approximation." : "Equal-tempered custom degrees."))
                                     .font(.caption).foregroundStyle(.secondary)
                             } else {
                                 Text("Optional: reuse any built-in or custom chord-bank scale for fretted notes.")
@@ -1036,11 +1069,45 @@ private struct TouchInstrumentView: View {
                     }
                 }
 
+                if hasGuitar {
+                    if surfaceSelection.accepts(.trackpad) && trackpadInstrument.isStringSurface {
+                        GroupBox("Trackpad · Strings") {
+                            StringLayoutEditor(layout:Binding(
+                                get:{ effectiveStringLayout },
+                                set:{ stringLayout = $0 }
+                            ))
+                        }.disabled(studio.touchRunning)
+                    }
+                    if surfaceSelection.accepts(.magicMouse) && magicMouseInstrument.isStringSurface {
+                        GroupBox("Magic Mouse · Strings") {
+                            VStack(alignment:.leading,spacing:8) {
+                                Toggle("Independent mouse tuning and span",isOn:Binding(
+                                    get:{ mouseStringLayout != nil },
+                                    set:{ mouseStringLayout = $0 ? effectiveStringLayout : nil }
+                                ))
+                                StringLayoutEditor(layout:Binding(
+                                    get:{ mouseStringLayout ?? effectiveStringLayout },
+                                    set:{ mouseStringLayout = $0 }
+                                )).disabled(mouseStringLayout == nil)
+                                if mouseStringLayout == nil {
+                                    Text("Using the shared/Trackpad string layout. Enable independent tuning to edit the mouse separately.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.padding(6)
+                        }.disabled(studio.touchRunning)
+                    }
+                }
+                if hasChords {
+                    GroupBox("Physical Chord Pads") {
+                        Text("Eight held-contact pads from the Chord Pads page. Edit the bank while Touch Instrument is stopped. Physical pads use the Touch output and velocity, not the bank’s timed gate or latch. MIDI requires Standard mode; microtonal MIDI needs explicit approximation.")
+                            .font(.caption).foregroundStyle(.secondary).padding(6)
+                    }
+                }
                 if configuration.hasMIDIOutput {
                     GroupBox("Logic Pro / DAW MIDI Out") {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 14) {
-                                if hasMelodic {
+                                if hasMelodic || hasChords || hasGuitar {
                                     Picker("Melodic MIDI Mode", selection: $midiMode) {
                                         ForEach(TouchMIDIMode.allCases) { Text($0.rawValue).tag($0) }
                                     }
@@ -1101,7 +1168,9 @@ private struct TouchInstrumentView: View {
                                 trackpadThreshold: $sustainTrackpadThreshold,
                                 trackpadSensor: $sustainTrackpadSensor,
                                 magicMouseEnabled: $sustainMouseEnabled,
-                                magicMouseGesture: $sustainMouseGesture
+                                magicMouseGesture: $sustainMouseGesture,
+                                magicMouseTapThreshold: $sustainMouseTapThreshold,
+                                mouseContactSize: studio.touchStates.filter { $0.surface == .magicMouse && $0.isTouching }.map(\.pressure).max()
                             )
                             .disabled(studio.touchRunning)
                         }
@@ -1158,6 +1227,7 @@ private struct TouchInstrumentView: View {
         .onChange(of: root) { _ in syncConfiguration() }
         .onChange(of: scale) { _ in syncConfiguration() }
         .onChange(of: studio.touchCustomScale) { _ in syncConfiguration() }
+        .onChange(of: studio.chordBank) { _ in if hasChords && !studio.touchRunning { syncConfiguration() } }
         .onChange(of: fretless) { _ in syncConfiguration() }
         .onChange(of: zoneWidth) { _ in syncConfiguration() }
         .onChange(of: pitchSpan) { _ in syncConfiguration() }
@@ -1173,6 +1243,8 @@ private struct TouchInstrumentView: View {
         .onChange(of: trackpadOutput) { _ in syncConfiguration() }
         .onChange(of: magicMouseOutput) { _ in syncConfiguration() }
         .onChange(of: drumLayout) { _ in syncConfiguration() }
+        .onChange(of: stringLayout) { _ in syncConfiguration() }
+        .onChange(of: mouseStringLayout) { _ in syncConfiguration() }
         .onChange(of: studio.masterLevel) { _ in syncConfiguration() }
     }
 
@@ -1186,7 +1258,7 @@ private struct TouchInstrumentView: View {
             HStack {
                 Text(surface.rawValue)
                     .font(.headline)
-                Text(instrument == .drums ? "GM Drum Pads" : "Melodic Note Map")
+                Text(instrument == .drums ? "GM Drum Pads" : (instrument == .chords ? "Physical Chord Pads" : instrument.rawValue))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -1196,7 +1268,9 @@ private struct TouchInstrumentView: View {
 
             TouchSurfaceMap(
                 notes: mappedMIDINotes,
-                drumPads: drumLayout.pads,
+                drumLayout: drumLayout,
+                chordBank: studio.chordBank,
+                stringLayout: configuration.strings(for:surface),
                 instrument: instrument,
                 rootMIDI: root,
                 fretless: fretless,
@@ -1206,6 +1280,12 @@ private struct TouchInstrumentView: View {
                 surfaceSelection: surface == .trackpad ? .trackpad : .magicMouse
             )
             .frame(height: surfaceSelection == .both ? 240 : 340)
+            if instrument == .drums {
+                Text(drumLayout.isGrid
+                     ? "Physical X/Y pads · lift and touch to strike another pad."
+                     : "Legacy horizontal strip · lift and touch to retrigger haptics.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -1214,9 +1294,104 @@ private struct TouchInstrumentView: View {
     }
 }
 
+private struct StringLayoutEditor: View {
+    @Binding var layout: StringSurfaceLayout
+    @State private var fretText = ""
+    @State private var fretError = ""
+    var body: some View {
+                        VStack(alignment:.leading,spacing:8) {
+                            Picker("Tuning",selection:Binding(
+                                get:{ layout.tuning },
+                                set:{ var next = layout; next.tuning = $0; next.customOpenNotes = nil; layout = next }
+                            )) {
+                                ForEach(StringTuning.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            Stepper("Pitch span: \(layout.frets) semitones",value:Binding(
+                                get:{ layout.frets },
+                                set:{ var next = layout; next.frets = $0; if next.isValid { layout = next } }
+                            ),in:4...24)
+                            Picker("Fret division",selection:Binding(
+                                get:{ layout.effectiveDivision },
+                                set:{ var next = layout; next.fretDivision = $0 == .edo12 ? nil : $0; next.customFretCents = nil; layout = next; fretError = "" }
+                            )) {
+                                ForEach(StringFretDivision.allCases) { Text($0.title).tag($0) }
+                            }
+                            HStack {
+                                TextField("Custom fret cents, e.g. 0, 200, 350, 500, 700, 1200",text:$fretText)
+                                Button("Apply") {
+                                    guard let cents = StringSurfaceLayout.parseFretCents(fretText) else {
+                                        fretError = "Enter 2–107 increasing integer cent values, starting at 0."
+                                        return
+                                    }
+                                    var next = layout
+                                    next.customFretCents = cents
+                                    guard next.isValid else {
+                                        fretError = "Custom frets must fit inside the selected pitch span."
+                                        return
+                                    }
+                                    layout = next
+                                    fretError = ""
+                                }
+                                Button("Reset to EDO") {
+                                    var next = layout
+                                    next.customFretCents = nil
+                                    layout = next
+                                    fretError = ""
+                                }.disabled(layout.customFretCents == nil)
+                            }
+                            if let cents = layout.customFretCents {
+                                Text("Custom frets: " + cents.map(String.init).joined(separator:", "))
+                                    .font(.caption).textSelection(.enabled)
+                            }
+                            if !fretError.isEmpty { Text(fretError).font(.caption).foregroundStyle(.orange) }
+                            Text("\(layout.columns) discrete positions including open string. 24-EDO gives quarter tones; 53-EDO gives equal commas, not a complete makam. Custom fret cents override the EDO choice. Microtonal MIDI requires MPE. Fretless mode ignores fret divisions.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Toggle("Custom open-string tuning",isOn:Binding(
+                                get:{ layout.customOpenNotes != nil },
+                                set:{ enabled in
+                                    var next = layout
+                                    next.customOpenNotes = enabled ? next.tuning.openNotes : nil
+                                    layout = next
+                                }
+                            ))
+                            if let notes = layout.customOpenNotes {
+                                Stepper("Strings: \(notes.count)",value:Binding(
+                                    get:{ notes.count },
+                                    set:{ count in
+                                        guard (3...8).contains(count) else { return }
+                                        var next = layout
+                                        var pitches = Array(notes.prefix(count))
+                                        while pitches.count < count { pitches.append(max(0,(pitches.last ?? 40)-5)) }
+                                        next.customOpenNotes = pitches
+                                        if next.isValid { layout = next }
+                                    }
+                                ),in:3...8)
+                                ForEach(notes.indices,id:\.self) { row in
+                                    Stepper("String \(row+1): \((try? MusicTheory.noteName(midi:notes[row])) ?? String(notes[row])) · MIDI \(notes[row])",
+                                        value:Binding(
+                                            get:{ notes[row] },
+                                            set:{ pitch in
+                                                var next = layout
+                                                guard var pitches = next.customOpenNotes, pitches.indices.contains(row) else { return }
+                                                pitches[row] = pitch
+                                                next.customOpenNotes = pitches
+                                                if next.isValid { layout = next }
+                                            }
+                                        ),in:0...(127-layout.frets))
+                                }
+                            }
+                            Text("X selects pitch, Y selects string. Fretted mode steps between notes; fretless mode slides continuously over the same semitone span and requires MPE for MIDI. Strum gestures are a follow-up. The haptic motor has a narrower frequency range than MIDI.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }.padding(6)
+    }
+}
+
 private struct TouchSurfaceMap: View {
     let notes: [Int]
-    let drumPads: [DrumPad]
+    let drumLayout: DrumPadLayout
+    private var drumPads: [DrumPad] { drumLayout.pads }
+    let chordBank: ChordBank
+    let stringLayout: StringSurfaceLayout
     let instrument: SurfaceInstrumentMode
     let rootMIDI: Int
     let fretless: Bool
@@ -1234,29 +1409,110 @@ private struct TouchSurfaceMap: View {
                 RoundedRectangle(cornerRadius: 18)
                     .fill(.quaternary.opacity(active ? 0.58 : 0.42))
 
-                if instrument == .drums {
+                if instrument == .guitar && stringLayout.isValid && stringLayout.isMicrotonal {
+                    // Dense microtonal layout: one grid path, not hundreds
+                    // of individual labels and repeated contact scans.
+                    let w = proxy.size.width / CGFloat(stringLayout.columns)
+                    let h = proxy.size.height / CGFloat(stringLayout.rows)
+                    Path { path in
+                        for i in 0...stringLayout.columns {
+                            let x = CGFloat(i)*w
+                            path.move(to:CGPoint(x:x,y:0))
+                            path.addLine(to:CGPoint(x:x,y:proxy.size.height))
+                        }
+                        for i in 0..<stringLayout.rows {
+                            let y = (CGFloat(i)+0.5)*h
+                            path.move(to:CGPoint(x:0,y:y))
+                            path.addLine(to:CGPoint(x:proxy.size.width,y:y))
+                        }
+                    }.stroke(Color.secondary.opacity(0.32),lineWidth:0.6)
+                    ForEach(states.filter(\.isDown)) { state in
+                        if let cell = stringLayout.cell(x:state.x,y:state.y) {
+                            Rectangle().fill(Color.accentColor.opacity(0.45))
+                                .frame(width:max(1,w),height:h)
+                                .position(x:(CGFloat(cell.fret)+0.5)*w,y:(CGFloat(cell.string)+0.5)*h)
+                        }
+                    }
+                } else if instrument == .fretlessStrings && stringLayout.isValid {
+                    let height = proxy.size.height / CGFloat(stringLayout.rows)
+                    ForEach(0..<stringLayout.rows,id:\.self) { row in
+                        let openNote = stringLayout.openNotes[row]
+                        ZStack(alignment:.leading) {
+                            Rectangle().fill(states.contains { $0.isDown && stringLayout.continuousCell(x:$0.x,y:$0.y)?.string == row }
+                                ? Color.accentColor.opacity(0.20) : Color.secondary.opacity(0.04))
+                            Rectangle().fill(Color.secondary.opacity(0.6)).frame(height:1)
+                            Text((try? MusicTheory.noteName(midi:openNote)) ?? String(openNote))
+                                .font(.caption2).padding(4).background(.background)
+                        }.frame(width:proxy.size.width,height:height)
+                        .position(x:proxy.size.width/2,y:(CGFloat(row)+0.5)*height)
+                    }
+                } else if instrument == .guitar && stringLayout.isValid {
+                    let width = proxy.size.width / CGFloat(stringLayout.columns)
+                    let height = proxy.size.height / CGFloat(stringLayout.rows)
+                    ForEach(0..<stringLayout.rows,id:\.self) { row in
+                        let openNote = stringLayout.openNotes[row]
+                        ForEach(0..<stringLayout.columns,id:\.self) { fret in
+                            let hit = states.contains {
+                                $0.isDown && stringLayout.cell(x:$0.x,y:$0.y)?.string == row &&
+                                (instrument == .fretlessStrings || stringLayout.cell(x:$0.x,y:$0.y)?.fret == fret)
+                            }
+                            ZStack {
+                                Rectangle().fill(hit ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(fret == 0 ? 0.18 : 0.04))
+                                Rectangle().strokeBorder(Color.secondary.opacity(instrument == .fretlessStrings ? 0.035 : 0.18))
+                                Rectangle().fill(Color.secondary.opacity(0.6)).frame(height:1)
+                                if fret == 0 {
+                                    Text((try? MusicTheory.noteName(midi:openNote)) ?? String(openNote)).font(.caption2)
+                                        .padding(2).background(.background)
+                                } else if row == 0 {
+                                    Text(String(fret)).font(.system(size:9,design:.monospaced))
+                                        .padding(2).background(.background)
+                                }
+                            }.frame(width:width,height:height)
+                            .position(x:(CGFloat(fret)+0.5)*width,y:(CGFloat(row)+0.5)*height)
+                        }
+                    }
+                } else if instrument == .chords {
+                    let width = proxy.size.width / 4
+                    let height = proxy.size.height / 2
+                    ForEach(0..<ChordBank.padCount,id:\.self) { slot in
+                        let pad = chordBank.pad(at:slot)
+                        let pressed = states.contains { $0.isDown && $0.chordSlot == slot }
+                        ZStack {
+                            RoundedRectangle(cornerRadius:8)
+                                .fill(pressed ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.08))
+                            RoundedRectangle(cornerRadius:8).strokeBorder(Color.secondary.opacity(0.24))
+                            VStack(spacing:4) {
+                                Text(pad?.name ?? "Unavailable").font(.headline)
+                                Text(pad?.noteNames ?? "").font(.caption2).lineLimit(2)
+                            }.padding(3)
+                        }
+                        .frame(width:max(1,width-4),height:max(1,height-4))
+                        .position(x:(CGFloat(slot % 4)+0.5)*width,y:(CGFloat(slot / 4)+0.5)*height)
+                    }
+                } else if instrument == .drums {
+                    let cellWidth = proxy.size.width / CGFloat(drumLayout.columns)
+                    let cellHeight = proxy.size.height / CGFloat(drumLayout.rows)
                     ForEach(drumPads.indices, id: \.self) { index in
                         let pad = drumPads[index]
-                        let x = segmentWidth * (CGFloat(index) + 0.5)
-                        if index > 0 {
-                            Rectangle()
-                                .fill(.secondary.opacity(0.24))
-                                .frame(width: 1, height: proxy.size.height - 18)
-                                .position(x: segmentWidth * CGFloat(index),
-                                          y: proxy.size.height / 2)
+                        let column = index % drumLayout.columns
+                        let row = index / drumLayout.columns
+                        let pressed = states.contains { $0.isDown && $0.quantizedMIDI == pad.midiNote }
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(pressed ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.08))
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.secondary.opacity(0.24))
+                            VStack(spacing: 4) {
+                                Text(pad.name).font(.system(size: 12, weight: .semibold))
+                                    .lineLimit(2).minimumScaleFactor(0.6)
+                                Text("GM \(pad.midiNote)").font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(3)
                         }
-
-                        VStack(spacing: 4) {
-                            Text(pad.name)
-                                .font(.system(size: 10, weight: .semibold))
-                                .lineLimit(2)
-                                .minimumScaleFactor(0.65)
-                            Text("GM \(pad.midiNote)")
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(width: max(24, segmentWidth - 3))
-                        .position(x: x, y: 35)
+                        .frame(width: max(1, cellWidth - 4), height: max(1, cellHeight - 4))
+                        .position(x: (CGFloat(column) + 0.5) * cellWidth,
+                                  y: (CGFloat(row) + 0.5) * cellHeight)
                     }
                 } else if fretless {
                     ForEach(notes.indices, id: \.self) { index in
@@ -1321,7 +1577,7 @@ private struct TouchSurfaceMap: View {
                     .animation(.linear(duration: 0.025), value: y)
                 }
 
-                if states.isEmpty {
+                if states.isEmpty && instrument == .melodic {
                     VStack(spacing: 8) {
                         Image(systemName: surfaceSelection == .magicMouse
                               ? "computermouse" : "hand.point.up.left")
@@ -1333,14 +1589,8 @@ private struct TouchSurfaceMap: View {
                     .position(x: proxy.size.width / 2, y: proxy.size.height * 0.65)
                 }
 
-                HStack {
-                    if instrument == .drums {
-                        Text("Kick / Snare")
-                        Spacer()
-                        Text("X = GM drum pad · lift and touch to retrigger")
-                        Spacer()
-                        Text("Cymbals")
-                    } else {
+                if instrument == .melodic {
+                    HStack {
                         Label("Lower pitch", systemImage: "arrow.left")
                         Spacer()
                         Text(fretless
@@ -1349,12 +1599,12 @@ private struct TouchSurfaceMap: View {
                         Spacer()
                         Label("Higher pitch", systemImage: "arrow.right")
                     }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+                    .frame(width: proxy.size.width)
+                    .position(x: proxy.size.width / 2, y: proxy.size.height - 18)
                 }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .padding(10)
-                .frame(width: proxy.size.width)
-                .position(x: proxy.size.width / 2, y: proxy.size.height - 18)
             }
             .overlay(RoundedRectangle(cornerRadius: 18)
                 .stroke(.secondary.opacity(0.24), lineWidth: 1))
@@ -1384,10 +1634,22 @@ private struct NoteSequencerView: View {
                 Toggle("Loop", isOn: $loop).toggleStyle(.switch)
                 Spacer()
                 Button("Play Pattern") { play() }.buttonStyle(.borderedProminent).disabled(studio.sequenceRunning)
-                MIDIClipExportButton(filename: "TIHULU Notes") {
+                MIDIClipExportButton(filename: "TIHULU Notes",title:studio.chordBank.customScale?.isMicrotonal == true ? "Export MIDI (12-TET)" : "Export MIDI") {
                     try makeClip()
                 }
+                if let scale = studio.chordBank.customScale,scale.isMicrotonal {
+                    Button("Play tuned MIDI") {
+                        studio.startTunedNoteSequence(output:output ?? .haptic,loop:loop,makeClip:makeClip)
+                    }.disabled(studio.sequenceRunning || !(output ?? .haptic).sendsMIDI || (output ?? .haptic).sendsHaptics)
+                    MIDIClipExportButton(filename:"TIHULU Tuned Notes",title:"Export tuned MPE",makeData:{
+                        try TunedMIDIClip(makeClip(),scale:scale,root:studio.chordBank.root).encoded()
+                    })
+                }
                 Button("Clear") { notes = Array(repeating: nil, count: 16) }
+            }
+            if studio.chordBank.customScale?.isMicrotonal == true {
+                Text("Play tuned MIDI requires MIDI-only output. Route TIHULU Tuned Sequencer MPE to a dedicated MPE instrument. Normal Play Pattern remains 12-TET; do not merge the two MIDI sources onto the same instrument.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 8), spacing: 8) {
                 ForEach(0..<16, id: \.self) { index in
@@ -1546,7 +1808,9 @@ private struct MIDIHelperView: View {
     @Binding var trackpadSustainGesture: TrackpadSustainGesture
     @Binding var magicMouseSustainEnabled: Bool
     @Binding var magicMouseSustainGesture: MagicMouseSustainGesture
-
+    @Binding var magicMouseTapThreshold: Double?
+    @Binding var sharePedalSurface:Bool?
+    @Binding var configureReceiverBendRange:Bool?
 
     private var assignments: MIDIHelperAssignments {
         .init(vibrato: vibratoEnabled, pitchBend: pitchBendEnabled, expression: expressionEnabled)
@@ -1586,6 +1850,16 @@ private struct MIDIHelperView: View {
                         Toggle("Expression", isOn: $expressionEnabled)
                         Toggle("Sustain CC64", isOn: $sustainEnabled)
                         Spacer()
+                        Button("Keyboard Sustain Only") {
+                            vibratoEnabled = false
+                            pitchBendEnabled = false
+                            expressionEnabled = false
+                            sustainEnabled = true
+                            trackpadSustainEnabled = surfaceSelection != .magicMouse
+                            magicMouseSustainEnabled = surfaceSelection != .trackpad
+                            sharePedalSurface = false
+                            configureReceiverBendRange = false
+                        }
                         Button("Hybrid Preset") {
                             vibratoEnabled = true
                             pitchBendEnabled = true
@@ -1639,13 +1913,42 @@ private struct MIDIHelperView: View {
                                 Toggle("Send Helper to DAW (MIDI Out)", isOn: $sendToDAW)
                                 Toggle("Local Trackpad Sound for Incoming MIDI", isOn: $localSound)
                                 Stepper("Target Channel \(targetChannel)", value: $targetChannel, in: 1...16)
+                                if let target = studio.activeTouchControlChannel {
+                                    Button("Use active Touch MIDI channel \(target + 1)") { targetChannel = target + 1 }
+                                        .disabled(studio.midiHelperRunning)
+                                } else if studio.touchRunning {
+                                    Text("No standard melodic MIDI target. MPE, drums and haptic-only output require different routing.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Button("Wah preset · Y → CC4") {
+                                    vibratoEnabled = true
+                                    vibratoCC = 4
+                                    pitchBendEnabled = false
+                                    expressionEnabled = false
+                                    if let target = studio.activeTouchControlChannel { targetChannel = target + 1 }
+                                }.disabled(studio.midiHelperRunning)
+                                Text("CC4 requires DAW MIDI Learn. For shared fretted pitch bend disable conflicting controls; frets, fretless pitch and MPE ownership are not replaced by this preset.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Toggle("Configure DAW bend range (RPN · advanced)",isOn:Binding(get:{configureReceiverBendRange ?? false},set:{configureReceiverBendRange = $0}))
+                                    .disabled(!pitchBendEnabled)
+                                if configureReceiverBendRange == true && pitchBendEnabled {
                                 Picker("Pitch Bend Range", selection: $pitchBendRange) {
                                     Text("±2 semitones").tag(2)
                                     Text("±5 semitones").tag(5)
                                     Text("±12 semitones").tag(12)
                                     Text("±24 semitones").tag(24)
                                 }
-                                Picker("Vibrato CC", selection: $vibratoCC) {
+                                    Text("RPN changes the receiving MIDI channel's bend sensitivity, including the physical keyboard. Configure only if intended.")
+                                        .font(.caption).foregroundStyle(.orange)
+                                } else {
+                                    Text("Pitch bend uses the receiving DAW's existing range. No RPN is sent by the Helper.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                if assignments.hasEffects && (vibratoEnabled && [7,11].contains(vibratoCC) || expressionEnabled && [7,11].contains(expressionCC)) {
+                                    Text("Gain control affects all notes on the selected DAW channel. Use sustain-only to preserve keyboard dynamics.")
+                                        .font(.caption).foregroundStyle(.orange)
+                                }
+                                Picker("Y / Vertical CC", selection: $vibratoCC) {
                                     if !HelperCCPolicy.permits(vibratoCC) {
                                         Text("CC \(vibratoCC) · Reserved").tag(vibratoCC)
                                     }
@@ -1667,6 +1970,10 @@ private struct MIDIHelperView: View {
                         }
 
                         if sustainEnabled {
+                            Toggle("Also use pedal surfaces for expressive controls (advanced)",isOn:Binding(get:{sharePedalSurface ?? false},set:{sharePedalSurface = $0}))
+                                .disabled(!assignments.hasEffects)
+                            Text("Pedal surfaces send only CC64 by default. Explicit gain controls (CC7/11) hold their last value on lift, disable and Stop; reset levels in the DAW if needed.")
+                                .font(.caption).foregroundStyle(.secondary)
                             SustainSettingsPanel(
                                 surfaceSelection: surfaceSelection,
                                 playing: studio.midiHelperRunning,
@@ -1676,8 +1983,30 @@ private struct MIDIHelperView: View {
                                 trackpadThreshold: $trackpadSustainThreshold,
                                 trackpadSensor: $trackpadSustainSensor,
                                 magicMouseEnabled: $magicMouseSustainEnabled,
-                                magicMouseGesture: $magicMouseSustainGesture
+                                magicMouseGesture: $magicMouseSustainGesture,
+                                magicMouseTapThreshold: $magicMouseTapThreshold,
+                                mouseContactSize: studio.midiHelperStates.filter { $0.surface == .magicMouse && $0.isTouching }.map(\.pressure).max()
                             )
+                        }
+
+                        GroupBox("Keyboard accompaniment · output audit") {
+                            VStack(alignment:.leading,spacing:6) {
+                                Text("Test the shared legacy MIDI output. Stop other local instruments, start audit, play the keyboard and pedal, then stop Helper and finish audit. No incoming keyboard note data is recorded.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Button(studio.keyboardAuditRunning ? "Finish output audit" : "Start output audit") {
+                                    if studio.keyboardAuditRunning { studio.finishKeyboardAudit() }
+                                    else { studio.startKeyboardAudit() }
+                                }
+                                if let audit = studio.keyboardAuditResult {
+                                    Text("Attempts: \(audit.attempts) · CC64: \(audit.pedal) · Notes: \(audit.notes)")
+                                    Text("CC7: \(audit.volume) · CC11: \(audit.expression) · Bend: \(audit.pitch) · Pressure: \(audit.pressure)")
+                                    Text("Other: \(audit.other) · Failed: \(audit.failed) · Channels: \(audit.channels.map(String.init).joined(separator:", "))")
+                                    Text(audit.saturated ? "Counter limit reached · partial report" : audit.onlyPedal ? "CC64 only · host submissions accepted" : audit.attempts == 0 ? "No MIDI submissions" : "Non-pedal traffic or delivery failure")
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("Host output only; verify physical keyboard velocity and receiver volume in the DAW MIDI monitor. Other legacy producers share this port.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }.padding(6)
                         }
 
                         GroupBox("Gesture Mapping") {
@@ -1686,10 +2015,10 @@ private struct MIDIHelperView: View {
                                     Label("X / Horizontal → Pitch Bend", systemImage: "arrow.left.and.right")
                                 }
                                 if vibratoEnabled {
-                                    Label("Y / Vertical → Vibrato / Modulation", systemImage: "arrow.up.and.down")
+                                    Label("Y / Vertical → CC \(vibratoCC)" + (vibratoCC == 4 ? " · Wah" : ""), systemImage: "arrow.up.and.down")
                                 }
                                 if expressionEnabled {
-                                    Label("Contact Size → CC11 Expression", systemImage: "circle.dotted")
+                                    Label("Contact Size → CC \(expressionCC) Expression", systemImage: "circle.dotted")
                                 }
                                 if sustainEnabled {
                                     Label("Gesture / Contact / Click → CC64 Sustain", systemImage: "hand.tap")
@@ -1738,6 +2067,9 @@ private struct MIDIHelperView: View {
         .onChange(of: trackpadSustainGesture) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainEnabled) { _ in syncIfRunning() }
         .onChange(of: magicMouseSustainGesture) { _ in syncIfRunning() }
+        .onChange(of: magicMouseTapThreshold) { _ in syncIfRunning() }
+        .onChange(of: sharePedalSurface) { _ in syncIfRunning() }
+        .onChange(of: configureReceiverBendRange) { _ in syncIfRunning() }
     }
 
     private func startHelper() {
@@ -1755,7 +2087,10 @@ private struct MIDIHelperView: View {
             magicMouseSustainEnabled: sustainEnabled && magicMouseSustainEnabled,
             magicMouseSustainGesture: magicMouseSustainGesture,
             trackpadSustainGesture: trackpadSustainGesture,
-            trackpadSustainSensor: trackpadSustainSensor
+            trackpadSustainSensor: trackpadSustainSensor,
+            magicMouseTapThreshold: magicMouseTapThreshold ?? 0,
+            sharePedalSurface:sharePedalSurface ?? false,
+            configureReceiverBendRange:configureReceiverBendRange ?? false
         )
     }
 
@@ -1775,6 +2110,8 @@ private struct SustainSettingsPanel: View {
     @Binding var trackpadSensor: TrackpadSustainSensor
     @Binding var magicMouseEnabled: Bool
     @Binding var magicMouseGesture: MagicMouseSustainGesture
+    @Binding var magicMouseTapThreshold: Double?
+    let mouseContactSize: Double?
 
     var body: some View {
         GroupBox("Sustain Pedal / MIDI CC64") {
@@ -1821,6 +2158,27 @@ private struct SustainSettingsPanel: View {
                         }
                     }
                     .disabled(!surfaceSelection.accepts(.magicMouse))
+                    if magicMouseGesture == .tapToggle {
+                        HStack {
+                            Text("Tap contact threshold").font(.caption)
+                            Slider(value: Binding(
+                                get: { magicMouseTapThreshold ?? 0 },
+                                set: { magicMouseTapThreshold = $0 }
+                            ), in: 0...1, step: 0.05)
+                            Text("\(Int((magicMouseTapThreshold ?? 0) * 100))%")
+                                .font(.caption.monospacedDigit())
+                        }
+                        .disabled(playing || !surfaceSelection.accepts(.magicMouse))
+                        if let size = mouseContactSize, size.isFinite, (0...1).contains(size) {
+                            ProgressView(value: size) {
+                                Text("Live contact size: \(Int(size * 100))%").font(.caption)
+                            }
+                        } else {
+                            Text("Live contact size: no contact").font(.caption)
+                        }
+                        Text("0% accepts any new contact. Higher thresholds require a larger first contact; lifting is required before another toggle. Contact size is not pressure.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
 
                 HStack {
@@ -1864,6 +2222,7 @@ private struct PerformanceShortcutRecorder: View {
         studio.configurePerformanceCapture(armed: false, shortcut: studio.captureShortcut)
         recording = true
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.isARepeat { return nil }
             if event.keyCode == 53 {
                 // Esc remains reserved for the emergency kill switch.
                 stopRecording()
@@ -1927,6 +2286,8 @@ private struct CaptureSettingsPanel: View {
                         ) }
                     ))
                     PerformanceShortcutRecorder()
+                    Button(studio.pointerCaptured ? "Release" : "Capture Now") { studio.togglePointerCaptureNow() }
+                        .disabled(!studio.captureArmed && !studio.pointerCaptured)
                     Spacer()
                     Label(studio.pointerCaptured ? "Captured" : "Pointer Free",
                           systemImage: studio.pointerCaptured ? "lock.fill" : "lock.open")
@@ -2219,7 +2580,33 @@ private struct TouchBarModeView: View {
                     subtitle: "Customize a native Touch Bar performance surface or use the same MIDI controls on screen while Trackpad and Magic Mouse sessions continue."
                 )
 
+                GroupBox("Native Touch Bar · Connection") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button("Show / Reconnect Native Touch Bar") { studio.reconnectNativeTouchBar() }
+                            .buttonStyle(.borderedProminent)
+                        Text("AppKit item requests: \(studio.nativeTouchBarItemRequests) · Native control callbacks: \(studio.nativeTouchBarInputCount)")
+                            .font(.caption.monospacedDigit())
+                        Text("Bring this Studio window to the front. In macOS Keyboard settings choose App Controls where supported. Reconnect releases existing Touch Bar notes and controls; it does not arm output. Callback counts are not proof of physical hardware.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8)
+                }
                 TouchBarOutputSettings()
+                GroupBox("Shared MIDI target") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let target = studio.activeTouchControlChannel {
+                            Button("Use active Touch MIDI channel \(target + 1)") {
+                                setProfile { profile in
+                                    profile.channel = target
+                                    profile.musicalOutput = .midi
+                                }
+                            }.disabled(studio.touchBarOutputArmed)
+                        } else {
+                            Text("Start a standard melodic Touch MIDI instrument to copy its actual channel.")
+                        }
+                        Text("Uses the existing shared MIDI source. Route it to the same DAW instrument. Wah CC4 requires MIDI Learn; haptic-only Wah and independent MPE bend mixing are not implemented. Channel is copied, not followed automatically.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8)
+                }
                 GroupBox("Touch Bar layout · Customize simultaneous zones") {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Choose the zones to display in your preferred order. Native Touch Bar controls appear on supported MacBook Pro models; the on-screen strip works everywhere.")
@@ -2308,7 +2695,7 @@ private struct TouchBarModeView: View {
                                         }
                                     }
                                 }
-                            case .fretless, .pitchBend, .vibrato, .expression, .filter:
+                            case .fretless, .pitchBend, .vibrato, .expression, .filter, .wah:
                                 TouchBarSliderPad(zone: zone)
                             }
                         }
@@ -2319,12 +2706,14 @@ private struct TouchBarModeView: View {
 
                 GroupBox("Screen hinge as an instrument · Calibration simulator") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Map screen opening to filter, expression, vibrato or pitch bend. Live hardware detection is experimental, manual-only and may be unsupported on Touch Bar MacBooks; use the simulator if no compatible sensor is available.")
+                        Text("Map screen opening to wah (CC4), filter, expression, vibrato or pitch bend. Live hardware detection is experimental, manual-only and may be unsupported on Touch Bar MacBooks; use the simulator if no compatible sensor is available.")
                             .font(.callout).foregroundStyle(.secondary)
                         Toggle("Enable Live Hinge Angle Sensor (Experimental)", isOn: Binding(
                             get: { studio.liveHingeEnabled },
                             set: { studio.enableLiveHinge($0) }
                         ))
+                        Button("Probe Lid Sensor (Read Only)") { studio.probeLidSensor() }
+                        Text(studio.hingeProbeStatus).font(.caption.monospacedDigit()).textSelection(.enabled)
                         Text(studio.hingeSensorStatus)
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
@@ -2398,8 +2787,13 @@ private struct TouchBarHoldSustainPad: View {
 private struct TouchBarSliderPad: View {
     @EnvironmentObject private var studio: StudioController
     let zone: TouchBarZone
-    @State private var value = 0.5
+    @State private var value: Double
     @State private var gesture: UInt64?
+
+    init(zone:TouchBarZone) {
+        self.zone = zone
+        _value = State(initialValue:zone.initialPosition)
+    }
 
     var body: some View {
         HStack {

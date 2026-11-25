@@ -17,6 +17,13 @@ public struct LegacyControllerReleaseDebt: Sendable {
         }
     }
 
+    /// Intentional persistent gain has no known external baseline. Never
+    /// fabricate a maximum-volume cleanup for it. Failed sends need manual recovery.
+    public mutating func forgetPersistentGain(_ message:Message) {
+        guard message.status & 0xf0 == 0xb0,[7,11].contains(message.data1) else { return }
+        targets.removeValue(forKey:.init(status:message.status,number:message.data1))
+    }
+
     public mutating func beginRange(channel: Int) { if (0...15).contains(channel) { incompleteRangeChannels.insert(channel) } }
     public mutating func completeRange(channel: Int) { incompleteRangeChannels.remove(channel) }
 

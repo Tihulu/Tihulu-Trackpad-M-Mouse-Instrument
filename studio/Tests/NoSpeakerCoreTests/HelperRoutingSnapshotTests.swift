@@ -32,3 +32,18 @@ import Testing
     #expect(!HelperCCPolicy.permits(vibrato:true,expression:false,vibratoCC:64,expressionCC:11))
     #expect(HelperCCPolicy.permits(vibrato:true,expression:true,vibratoCC:1,expressionCC:11))
 }
+
+@Test func helperEffectsEditsDoNotReleaseKeyboardPedal() {
+    let old = HelperRoutingSnapshot(sendToDAW:true,channel:0,bendRange:12,vibratoCC:1,expressionCC:11)
+    let next = HelperRoutingSnapshot(sendToDAW:true,channel:0,bendRange:2,vibratoCC:74,expressionCC:11)
+    let edit = HelperMappingTransition(old:old,next:next,oldAssignments:.hybrid,nextAssignments:.hybrid,
+        pedalSettingsChanged:false,surfaceChanged:false,sharingChanged:false)
+    #expect(!edit.pedalChanged && edit.effectsChanged)
+    let disabled = HelperMappingTransition(old:old,next:next,oldAssignments:.sustainOnly,nextAssignments:.sustainOnly,
+        pedalSettingsChanged:false,surfaceChanged:false,sharingChanged:false)
+    #expect(!disabled.pedalChanged && !disabled.effectsChanged)
+    let channel = HelperRoutingSnapshot(sendToDAW:true,channel:2,bendRange:12,vibratoCC:1,expressionCC:11)
+    let reroute = HelperMappingTransition(old:old,next:channel,oldAssignments:.hybrid,nextAssignments:.hybrid,
+        pedalSettingsChanged:false,surfaceChanged:false,sharingChanged:false)
+    #expect(reroute.pedalChanged && reroute.effectsChanged)
+}

@@ -44,6 +44,12 @@ struct ChordProgressionPanel: View {
                                          title: studio.chordBank.customScale?.isMicrotonal == true ? "Export MIDI (12-TET)" : "Export MIDI") {
                         try MIDIClip.progression(studio.chordProgression, bank: studio.chordBank, bpm: studio.bpm)
                     }.disabled(studio.progressionRunning)
+                    if let scale = studio.chordBank.customScale,scale.isMicrotonal {
+                        MIDIClipExportButton(filename:"TIHULU Tuned Chords",title:"Export tuned MPE",makeData:{
+                            let clip = try MIDIClip.progression(studio.chordProgression,bank:studio.chordBank,bpm:studio.bpm)
+                            return try TunedMIDIClip(clip,scale:scale,root:studio.chordBank.root).encoded()
+                        }).disabled(studio.progressionRunning)
+                    }
                     Text(studio.progressionRunning ? (studio.progressionSingleSlot == nil ? "Playing" : "Pad arpeggio") : "Stopped")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -58,7 +64,7 @@ struct ChordProgressionPanel: View {
                         stepCell(index)
                     }
                 }.disabled(studio.progressionRunning)
-                Text("MIDI export writes one cycle of nominal notes, not microtonal MPE bends. Import the file into your DAW and choose an instrument.").font(.caption).foregroundStyle(.secondary)
+                Text("Export tuned MPE preserves custom cent offsets in a dedicated lower-zone instrument. Keep MIDI channels, RPN and pitch bends on import. The 12-TET export explicitly omits tuning. A DAW may filter these events; verify with its MIDI monitor.").font(.caption).foregroundStyle(.secondary)
                 Text("Uses the current bank, including custom chords and its selected output. Arm first. Tempo is captured when Play starts. A manual pad press takes over; Release All, Panic, disarm or loss of app focus stops the progression. Changing pages does not stop it.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(8)

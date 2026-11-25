@@ -17,9 +17,14 @@ final class MacBookHingeAngleSource {
     private var timer: Timer?
     private(set) var status = "Not detected"
     var onAngle: ((Double) -> Void)?
+    var onLoss: ((String) -> Void)?
+    private var lastValidSample: TimeInterval = 0
+    private var readDiagnostic = "No report read"
+    private var pollGeneration: UInt64 = 0
 
     func start() -> Bool {
         stop()
+        readDiagnostic = "No report read"
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, noOptions)
         let filter: [String: Any] = [
             kIOHIDVendorIDKey as String: 0x05AC,
@@ -28,25 +33,33 @@ final class MacBookHingeAngleSource {
             "Usage": 0x008A
         ]
         IOHIDManagerSetDeviceMatching(manager, filter as CFDictionary)
-        guard IOHIDManagerOpen(manager, noOptions) == kIOReturnSuccess else {
-            status = "Cannot open HID manager · manual simulator available"
+        let openResult = IOHIDManagerOpen(manager, noOptions)
+        guard openResult == kIOReturnSuccess else {
+            status = "Cannot open HID manager (\(openResult)) · manual simulator available"
             return false
         }
 
         let devices = (IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>) ?? []
         for candidate in devices {
-            guard IOHIDDeviceOpen(candidate, noOptions) == kIOReturnSuccess else {
+            let result = IOHIDDeviceOpen(candidate, noOptions)
+            guard result == kIOReturnSuccess else {
+                readDiagnostic = "Device open failed (\(result))"
                 continue
             }
             if let firstAngle = readAngle(from: candidate) {
                 self.manager = manager
                 self.device = candidate
-                status = "Sensor found · live"
-                onAngle?(firstAngle)
+                status = "Sensor found · " + readDiagnostic
+                lastValidSample = ProcessInfo.processInfo.systemUptime
+                let generation = pollGeneration
                 timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                    Task { @MainActor in self?.poll() }
+                    Task { @MainActor in
+                        guard let self, self.pollGeneration == generation else { return }
+                        self.poll()
+                    }
                 }
-                return true
+                onAngle?(firstAngle)
+                return device != nil
             }
             IOHIDDeviceClose(candidate, noOptions)
         }
@@ -54,7 +67,7 @@ final class MacBookHingeAngleSource {
         IOHIDManagerClose(manager, noOptions)
         status = devices.isEmpty
             ? "No compatible lid-angle HID sensor exposed · use simulator"
-            : "Lid-angle HID device found but unsupported report · use simulator"
+            : "Lid-angle HID device found but unsupported report · " + readDiagnostic
         return false
     }
 
@@ -64,20 +77,34 @@ final class MacBookHingeAngleSource {
         let result = IOHIDDeviceGetReport(
             candidate, kIOHIDReportTypeFeature, 1, &report, &length
         )
-        guard result == kIOReturnSuccess, length >= 3 else { return nil }
+        readDiagnostic = "Feature report 1: result \(result), length \(length)"
+        guard result == kIOReturnSuccess, length >= 3, length <= report.count else { return nil }
         let value = Double(UInt16(report[2]) << 8 | UInt16(report[1]))
         // Reject physically implausible values so unsupported sensor reports
         // can never trigger extreme pitch/CC transitions.
-        return value.isFinite && (5...175).contains(value) ? value : nil
+        guard value.isFinite, (5...175).contains(value) else {
+            readDiagnostic += " · angle candidate \(Int(value)) outside supported range"
+            return nil
+        }
+        readDiagnostic += " · plausible angle"
+        return value
     }
 
     private func poll() {
         guard let device else { return }
-        guard let angle = readAngle(from: device) else { return }
-        onAngle?(angle)
+        if let angle = readAngle(from: device) {
+            lastValidSample = ProcessInfo.processInfo.systemUptime
+            onAngle?(angle)
+        } else if ProcessInfo.processInfo.systemUptime - lastValidSample >= 0.35 {
+            let reason = "Lid signal lost · " + readDiagnostic
+            stop()
+            status = reason
+            onLoss?(reason)
+        }
     }
 
     func stop() {
+        pollGeneration &+= 1
         timer?.invalidate()
         timer = nil
         if let device { IOHIDDeviceClose(device, noOptions) }

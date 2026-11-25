@@ -33,6 +33,31 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
         XCTAssertFalse(PerformanceCaptureShortcut.defaultShortcut.matches(event))
     }
 
+    func testCapturedShortcutPairsUpDespiteChangedModifiers() {
+        var edges = CaptureKeyEdges()
+        XCTAssertEqual(edges.handle(key:46,down:true,repeatKey:false,matches:true,armed:true,captured:false),.toggle)
+        XCTAssertEqual(edges.handle(key:46,down:true,repeatKey:true,matches:false,armed:true,captured:true),.swallow)
+        XCTAssertEqual(edges.handle(key:46,down:false,repeatKey:false,matches:false,armed:false,captured:false),.swallow)
+        XCTAssertEqual(edges.handle(key:46,down:false,repeatKey:false,matches:true,armed:true,captured:false),.pass)
+    }
+
+    func testExternalRepeatAndEscapePairing() {
+        var edges = CaptureKeyEdges()
+        XCTAssertEqual(edges.handle(key:46,down:true,repeatKey:true,matches:true,armed:true,captured:false),.pass)
+        XCTAssertEqual(edges.handle(key:53,down:true,repeatKey:false,matches:false,armed:true,captured:true),.panic)
+        XCTAssertEqual(edges.handle(key:53,down:true,repeatKey:true,matches:false,armed:true,captured:false),.swallow)
+        XCTAssertEqual(edges.handle(key:53,down:false,repeatKey:false,matches:false,armed:true,captured:false),.swallow)
+        XCTAssertEqual(edges.handle(key:53,down:true,repeatKey:false,matches:false,armed:true,captured:false),.pass)
+    }
+
+    func testDirectCaptureRequiresActiveTap() {
+        let monitor = PerformanceCaptureMonitor()
+        monitor.setCaptureHotkeyEnabled(true)
+        XCTAssertFalse(monitor.setPointerCaptured(true))
+        XCTAssertFalse(monitor.isCaptured)
+        XCTAssertTrue(monitor.setPointerCaptured(false))
+    }
+
     func testEscapeCannotBeRecordedAsCaptureShortcut() {
         XCTAssertFalse(PerformanceCaptureShortcut(
             keyCode: 53, modifiers: 0, displayName: "Esc"

@@ -24,3 +24,19 @@ import Testing
     #expect(offScale == (try MusicTheory.frequency(midi: 63)))
     #expect(scale.tunedFrequency(midi: -1, root: 62) == nil)
 }
+
+@Test func customMelodicMPEPitchUsesIndependentRootRelativeBend() throws {
+    var scale = CustomScale()
+    scale.centOffsets = [4:-30,7:25]
+    let low = try #require(scale.mpePitch(midi:66,root:62))
+    let high = try #require(scale.mpePitch(midi:69,root:62))
+    #expect(low.anchor == 66)
+    #expect(low.bend == 6963)
+    #expect(high.bend == 9216)
+    #expect(low.bendRange == 2)
+    #expect(scale.mpePitch(midi:78,root:62)?.bend == low.bend)
+    #expect(scale.mpePitch(midi:62,root:62)?.bend == 8192)
+    #expect(scale.mpePitch(midi:128,root:62) == nil)
+    scale.centOffsets = [4:50]
+    #expect(scale.mpePitch(midi:66,root:62) == nil)
+}

@@ -22,6 +22,12 @@ public struct AirHandSample: Equatable, Sendable {
     private init(x: Double, y: Double, aperture: Double) {
         self.x = x; self.y = y; self.aperture = aperture
     }
+    /// Explicit synthetic/replay input, never a measured physical sample.
+    public static func debugSample(x: Double, y: Double, aperture: Double) -> Self? {
+        guard [x,y,aperture].allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { return nil }
+        return .init(x: x, y: y, aperture: aperture)
+    }
+
     public init?(thumb: AirHandPoint, index: AirHandPoint, wrist: AirHandPoint, middleBase: AirHandPoint) {
         guard [thumb,index,wrist,middleBase].allSatisfy(\.isReliable) else { return nil }
         let palm = wrist.distance(to: middleBase)

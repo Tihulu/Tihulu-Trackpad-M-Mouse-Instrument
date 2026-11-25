@@ -66,3 +66,26 @@ import Testing
     #expect(s.release(.touch,channel:1) == [.init(mod,value:0)])
     #expect(s.values(for:.touch).keys.contains(next))
 }
+
+@Test func helperGainReleaseNeverSendsMaximumAndDoesNotKeepOwnership() {
+    for cc in [7,11] {
+        let target = SensorDestination(.controlChange,channel:0,number:cc)
+        var owners = LegacyContinuousOwners()
+        let v = HelperPerformancePolicy.gainValue(37,cc:cc)
+        #expect(owners.set(.helper,target:target,value:v) == [.init(target,value:37,preserveOnRelease:true)])
+        #expect(owners.release(.helper).isEmpty)
+        #expect(owners.values(for:.helper).isEmpty)
+        _ = owners.set(.helper,target:target,value:v)
+        #expect(owners.releaseAll().isEmpty)
+        _ = owners.set(.touchBar,target:target,value:.init(55,neutral:127))
+        _ = owners.set(.helper,target:target,value:v)
+        #expect(owners.release(.helper) == [.init(target,value:55)])
+    }
+}
+@Test func sustainOnlyHasNoExpressiveAssignments() {
+    #expect(!MIDIHelperAssignments.sustainOnly.hasEffects)
+    #expect(MIDIHelperAssignments.hybrid.hasEffects)
+    let settings = MIDIHelperSustainSettings(trackpadEnabled:true,magicMouseEnabled:true)
+    #expect(!HelperPerformancePolicy.permitsEffects(isTrackpad:true,settings:settings,sharePedalSurface:false))
+    #expect(!HelperPerformancePolicy.permitsEffects(isTrackpad:false,settings:settings,sharePedalSurface:false))
+}

@@ -4,8 +4,10 @@
 public struct HelperRoutingSnapshot: Equatable, Sendable {
     public let sendToDAW: Bool
     public let channel, bendRange, vibratoCC, expressionCC: Int
-    public init(sendToDAW: Bool, channel: Int, bendRange: Int, vibratoCC: Int, expressionCC: Int) {
+    public let configureReceiverBendRange:Bool
+    public init(sendToDAW: Bool, channel: Int, bendRange: Int, vibratoCC: Int, expressionCC: Int,configureReceiverBendRange:Bool = false) {
         self.sendToDAW = sendToDAW
+        self.configureReceiverBendRange = configureReceiverBendRange
         self.channel = max(0,min(15,channel))
         self.bendRange = max(1,min(24,bendRange))
         self.vibratoCC = max(0,min(127,vibratoCC))
@@ -28,5 +30,24 @@ public enum HelperCCPolicy {
     public static func permits(vibrato: Bool, expression: Bool, vibratoCC: Int, expressionCC: Int) -> Bool {
         (!vibrato || permits(vibratoCC)) && (!expression || permits(expressionCC)) &&
             !(vibrato && expression && vibratoCC == expressionCC)
+    }
+}
+
+    
+/// Pedal ownership is independent of expressive mapping edits. An actual
+/// pedal route change still releases the old channel before rearming.
+public struct HelperMappingTransition: Equatable, Sendable {
+    public let pedalChanged:Bool
+    public let effectsChanged:Bool
+    public init(old:HelperRoutingSnapshot,next:HelperRoutingSnapshot,
+                oldAssignments:MIDIHelperAssignments,nextAssignments:MIDIHelperAssignments,
+                pedalSettingsChanged:Bool,surfaceChanged:Bool,sharingChanged:Bool) {
+        let destinationChanged = old.sendToDAW != next.sendToDAW || old.channel != next.channel
+        pedalChanged = destinationChanged || pedalSettingsChanged || surfaceChanged
+        let bendChanged = (oldAssignments.pitchBend || nextAssignments.pitchBend) &&
+            (old.bendRange != next.bendRange || old.configureReceiverBendRange != next.configureReceiverBendRange)
+        let ccChanged = ((oldAssignments.vibrato || nextAssignments.vibrato) && old.vibratoCC != next.vibratoCC) ||
+            ((oldAssignments.expression || nextAssignments.expression) && old.expressionCC != next.expressionCC)
+        effectsChanged = pedalChanged || sharingChanged || oldAssignments != nextAssignments || bendChanged || ccChanged
     }
 }

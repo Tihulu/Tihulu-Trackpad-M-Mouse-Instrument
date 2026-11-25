@@ -1,13 +1,22 @@
 import Foundation
 
 public enum SensorSource: String, Codable, CaseIterable, Sendable {
-    case trackpad, magicMouse, touchBar, lid, camera, microphone, phone, tablet, external
+    case trackpad, magicMouse, touchBar, lid, camera, microphone, phone, tablet, external, gamepad1, gamepad2
 }
 
 /// Adapters normalize physical units and assign the host's monotonic time.
 /// No adapter or device is started by constructing a router.
 public enum SensorSignal: String, Codable, CaseIterable, Sendable {
     case x, y, contact, contactSize, pressure, angle, speed, gesture, expression
+    case airChord1, airChord2, airChord3, airChord4, airChord5
+    case airLeftX, airLeftY, airLeftAperture, airLeftPinch, airLeftSpeed
+    case airRightX, airRightY, airRightAperture, airRightPinch, airRightSpeed
+    case airLeftToggle, airRightToggle
+    case airString1_1, airString1_2, airString1_3, airString1_4, airString1_5, airString1_6, airString1_7, airString1_8
+    case airString2_1, airString2_2, airString2_3, airString2_4, airString2_5, airString2_6, airString2_7, airString2_8
+    case airString3_1, airString3_2, airString3_3, airString3_4, airString3_5, airString3_6, airString3_7, airString3_8
+    case airString4_1, airString4_2, airString4_3, airString4_4, airString4_5, airString4_6, airString4_7, airString4_8
+    case airString5_1, airString5_2, airString5_3, airString5_4, airString5_5, airString5_6, airString5_7, airString5_8
     case tiltYaw, tiltPitch, tiltRoll, accelerationMagnitude, rotationMagnitude, airStrike
     case drumPad1, drumPad2, drumPad3, drumPad4, drumPad5, drumPad6, drumPad7, drumPad8
     case pianoKey0, pianoKey1, pianoKey2, pianoKey3, pianoKey4, pianoKey5, pianoKey6, pianoKey7, pianoKey8
@@ -15,6 +24,8 @@ public enum SensorSignal: String, Codable, CaseIterable, Sendable {
     case pianoKey18, pianoKey19, pianoKey20, pianoKey21, pianoKey22, pianoKey23, pianoKey24
     case pianoSustain
     case pedalExpression, pedalVolume, pedalWah, pedalSustain, pedalSwitch1, pedalSwitch2
+    case padA, padB, padX, padY, padLB, padRB, padLT, padRT
+    case padUp, padDown, padLeft, padRight, padLSX, padLSY, padRSX, padRSY, padLClick, padRClick
 }
 
 public struct SensorCalibration: Codable, Equatable, Sendable {
@@ -191,6 +202,7 @@ public struct SensorRouter: Sendable {
     private var contributions: [Owner: Contribution] = [:]
     private var emitted: [SensorDestination: Int] = [:]
     private var releaseValues: [SensorDestination: Int] = [:]
+    private var sharedSwitches: Set<SensorDestination> = []
 
     public init() {}
     public var sessionCount: Int { sessions.count }
@@ -201,11 +213,13 @@ public struct SensorRouter: Sendable {
         guard sessions.isEmpty else { throw SensorRouterError.activeSessions }
         guard proposed.count <= Self.maxMappings, proposed.allSatisfy(\.isValid),
               Set(proposed.map(\.id)).count == proposed.count,
-              let releases = ContinuousResponse.releaseValues(for: proposed) else {
+              let releases = ContinuousResponse.releaseValues(for: proposed),
+              let switches = AirHandsHelper.sharedSwitchTargets(proposed) else {
             throw SensorRouterError.invalidMappings
         }
         mappings = proposed
         releaseValues = releases
+        sharedSwitches = switches
     }
 
     public mutating func connect(_ source: SensorSource, now: Double) throws -> UUID {
@@ -224,12 +238,17 @@ public struct SensorRouter: Sendable {
     }
 
     public mutating func ingest(_ event: SensorEvent, now: Double) -> [SensorCommand] {
+        guard accept(event,now:now) else { return [] }
+        return reconcile()
+    }
+
+    private mutating func accept(_ event:SensorEvent,now:Double) -> Bool {
         guard var session = sessions[event.session], now.isFinite, now >= session.lastSeen,
               event.timestamp.isFinite, event.timestamp >= 0,
               event.timestamp <= now + 0.02, now - event.timestamp <= 1,
               session.timestamp.map({ event.timestamp >= $0 }) ?? true,
               session.sequence.map({ event.sequence > $0 }) ?? true,
-              event.value.isFinite, (0...1).contains(event.value) else { return [] }
+              event.value.isFinite, (0...1).contains(event.value) else { return false }
         session.sequence = event.sequence
         session.timestamp = event.timestamp
         session.lastSeen = now
@@ -240,11 +259,11 @@ public struct SensorRouter: Sendable {
             let owner = Owner(session: event.session, mapping: mapping.id)
             let value: Int
             var filtered = normalized
-            if mapping.signal == .airStrike && mapping.destination.kind == .note {
+            if (mapping.signal == .airStrike || AirStrumPerformance.isStringSignal(mapping.signal)) && mapping.destination.kind == .note {
                 // Host onset detector supplies strength; route velocity caps output.
                 // No synthetic zero is used for release; remove ownership instead.
                 value = event.value > 0 ? max(1, Int((normalized * Double(mapping.velocity)).rounded())) : 0
-            } else if mapping.destination.isGate {
+            } else if mapping.destination.isGate || sharedSwitches.contains(mapping.destination) {
                 let wasOn = (contributions[owner]?.value ?? 0) > 0
                 let active = normalized >= (wasOn ? mapping.threshold - mapping.hysteresis : mapping.threshold)
                 value = active ? (mapping.destination.kind == .note ? mapping.velocity : 127) : 0
@@ -260,6 +279,23 @@ public struct SensorRouter: Sendable {
                                                 priority: mapping.priority, value: value,
                                                 filtered: filtered, timestamp: event.timestamp)
         }
+        return true
+    }
+
+    /// One camera frame reconciles after all releases and fresh values, so a
+    /// pedal transferred between hands does not generate an intermediate off.
+    mutating func ingestFrame(session id:UUID,releasing signals:Set<SensorSignal>,events:[SensorEvent],now:Double) -> [SensorCommand] {
+        guard let session = sessions[id], now.isFinite, now >= session.lastSeen,
+              events.allSatisfy({ $0.session == id && $0.timestamp == now && $0.value.isFinite && (0...1).contains($0.value) }) else { return [] }
+        var prior = session.sequence
+        for event in events {
+            guard prior.map({ event.sequence > $0 }) ?? true else { return [] }
+            prior = event.sequence
+        }
+        guard session.timestamp.map({ now >= $0 }) ?? true else { return [] }
+        let ids = Set(mappings.filter { $0.source == session.source && signals.contains($0.signal) }.map(\.id))
+        contributions = contributions.filter { $0.key.session != id || !ids.contains($0.key.mapping) }
+        for event in events { _ = accept(event,now:now) }
         return reconcile()
     }
 
@@ -267,8 +303,12 @@ public struct SensorRouter: Sendable {
     /// Remove its contribution instead of feeding a synthetic zero (which
     /// could retrigger an inverted gate or bypass a custom release position).
     public mutating func releaseSignal(session id: UUID, signal: SensorSignal) -> [SensorCommand] {
+        releaseSignals(session:id,signals:[signal])
+    }
+
+    public mutating func releaseSignals(session id: UUID, signals: Set<SensorSignal>) -> [SensorCommand] {
         guard let session = sessions[id] else { return [] }
-        let ids = Set(mappings.filter { $0.source == session.source && $0.signal == signal }.map(\.id))
+        let ids = Set(mappings.filter { $0.source == session.source && signals.contains($0.signal) }.map(\.id))
         contributions = contributions.filter { $0.key.session != id || !ids.contains($0.key.mapping) }
         return reconcile()
     }
@@ -306,7 +346,7 @@ public struct SensorRouter: Sendable {
         let grouped = Dictionary(grouping: contributions.values, by: \.destination)
         var next: [SensorDestination: Int] = [:]
         for (target, owners) in grouped {
-            if target.isGate {
+            if target.isGate || sharedSwitches.contains(target) {
                 let level = owners.map(\.value).max() ?? 0
                 if level > 0 { next[target] = level }
             } else {
@@ -325,7 +365,7 @@ public struct SensorRouter: Sendable {
             let neutral = releaseValues[target] ?? target.neutral
             let before = emitted[target] ?? neutral
             let after = next[target] ?? neutral
-            if target.isGate {
+            if target.isGate || sharedSwitches.contains(target) {
                 // Shared notes never retrigger when another owner joins.
                 if (before > 0) != (after > 0) { result.append(.init(target, value: after)) }
             } else if before != after || (emitted[target] == nil && next[target] != nil) {

@@ -7,14 +7,24 @@ import NoSpeakerCore
 struct MIDIClipExportButton: View {
     let filename: String
     var title = "Export MIDI"
-    let makeClip: () throws -> MIDIClip
+    var makeClip: (() throws -> MIDIClip)?
+    var makeData: (() throws -> Data)?
+    init(filename:String,title:String = "Export MIDI",makeClip:@escaping () throws -> MIDIClip) {
+        self.filename = filename; self.title = title; self.makeClip = makeClip
+    }
+    init(filename:String,title:String,makeData:@escaping () throws -> Data) {
+        self.filename = filename; self.title = title; self.makeData = makeData
+    }
     @State private var message = ""
     @State private var showError = false
 
     var body: some View {
         Button(title) {
             do {
-                let data = try MIDIClipWriter.encode(makeClip())
+                let data:Data
+                if let makeData { data = try makeData() }
+                else if let makeClip { data = try MIDIClipWriter.encode(makeClip()) }
+                else { throw MIDIClipError.invalidClip }
                 let panel = NSSavePanel()
                 panel.nameFieldStringValue = filename + ".mid"
                 if let type = UTType(filenameExtension: "mid") { panel.allowedContentTypes = [type] }

@@ -98,9 +98,12 @@ public final class MIDIHapticService: @unchecked Sendable {
         let note: Int
     }
 
-    private struct TouchKey: Hashable {
+    private struct TouchKey: Hashable, Comparable {
         let surface: TouchSurfaceKind
         let id: Int
+        static func < (lhs: Self, rhs: Self) -> Bool {
+            lhs.surface == rhs.surface ? lhs.id < rhs.id : lhs.surface.rawValue < rhs.surface.rawValue
+        }
     }
 
     private struct OutgoingTouch {
@@ -136,10 +139,11 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var inputHapticsEnabled = true
 
     private enum OutgoingNoteOwner: Hashable {
-        case touch(TouchKey), legacyTouch, performance(NoteKey)
+        case touch(TouchKey), physicalChord(TouchKey, SensorDestination), legacyTouch, performance(NoteKey)
     }
     private var noteOwners = LegacyNoteOwners<OutgoingNoteOwner>()
     private var outgoingTouches: [TouchKey: OutgoingTouch] = [:]
+    private var physicalChordGates = PhysicalChordGates<TouchKey>()
     private var touchOutputNote: Int?
     private var touchOutputChannel = 0
     private var touchOutputFretless = false
@@ -152,6 +156,11 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var outgoingPressure = LegacyChannelPressure()
     // Outgoing state is serialized by the existing Studio caller.
     private var gateDebt = LegacyGateReleaseDebt()
+    public private(set) var keyboardOutputAudit:KeyboardOutputAudit?
+    public func beginKeyboardOutputAudit() { keyboardOutputAudit = .init() }
+    public func endKeyboardOutputAudit() -> KeyboardOutputAudit? {
+        let result = keyboardOutputAudit; keyboardOutputAudit = nil; return result
+    }
     private var controllerDebt = LegacyControllerReleaseDebt()
     private var outgoingFault: OSStatus?
     private var controllerRecoveryRequired = false
@@ -218,6 +227,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         expressionByChannel.removeAll()
         channelPressureByChannel.removeAll()
         outgoingTouches.removeAll()
+        physicalChordGates = PhysicalChordGates<TouchKey>()
         sustainOwners = LegacySustainOwners()
         lock.unlock()
         startRenderTimer()
@@ -305,6 +315,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         expressionByChannel.removeAll()
         channelPressureByChannel.removeAll()
         outgoingTouches.removeAll()
+        physicalChordGates = PhysicalChordGates<TouchKey>()
         sustainOwners = LegacySustainOwners()
         lock.unlock()
 
@@ -363,13 +374,16 @@ public final class MIDIHapticService: @unchecked Sendable {
             configuration.instrument(for: $0) == .drums &&
             configuration.output(for: $0).sendsMIDI
         }
-        let selectedBase = max(0, min(15, baseChannel))
-        let safeMelodicChannel = anyDrums && selectedBase == GMDrumPads.midiChannel
-            ? 0 : selectedBase
+        let safeMelodicChannel = SurfaceMIDIChannel.melodic(base: baseChannel, hasMIDIDrums: anyDrums)
 
+        let stringRouteAllowed = configuration.permitsStringMIDI(isMPE:midiMode == .mpe)
+        let melodicRouteAllowed = configuration.permitsMelodicMIDI(isMPE:midiMode == .mpe)
         var desired = states.filter {
             $0.isDown && $0.continuousMIDI.isFinite && $0.vibrato.isFinite &&
-            configuration.surfaceSelection.accepts($0.surface) && configuration.output(for: $0.surface).sendsMIDI
+            configuration.surfaceSelection.accepts($0.surface) && configuration.output(for: $0.surface).sendsMIDI &&
+            (!configuration.instrument(for:$0.surface).isStringSurface || stringRouteAllowed) &&
+            (configuration.instrument(for:$0.surface) != .melodic || melodicRouteAllowed) &&
+            (configuration.instrument(for:$0.surface) != .fretlessStrings || configuration.strings(for:$0.surface).continuousCell(x:$0.x,y:$0.y) != nil)
         }
         if !multiTouchEnabled {
             desired = Array(desired.prefix(1))
@@ -380,13 +394,29 @@ public final class MIDIHapticService: @unchecked Sendable {
             // melodic finger; they are routed to separate channels.
             var keptMelodic = false
             desired = desired.filter { state in
-                if configuration.instrument(for: state.surface) == .drums { return true }
+                if configuration.instrument(for: state.surface) != .melodic { return true }
                 if keptMelodic { return false }
                 keptMelodic = true
                 return true
             }
         }
 
+        // Chords are standard MIDI, not disguised MPE notes. Invalid routes
+        // release existing physical chord ownership without touching other sources.
+        var chordTargets: [TouchKey:Set<SensorDestination>] = [:]
+        var chordVelocities: [TouchKey:Int] = [:]
+        if configuration.permitsPhysicalChordMIDI(isMPE:midiMode == .mpe),
+           let bank = configuration.physicalChordBank {
+            for state in desired where configuration.instrument(for:state.surface) == .chords {
+                guard let slot = state.chordSlot, let pad = bank.pad(at:slot) else { continue }
+                let key = TouchKey(surface:state.surface,id:state.contactID)
+                chordTargets[key] = Set(pad.notes.map { .init(.note,channel:safeMelodicChannel,number:$0) })
+                chordVelocities[key] = max(1,min(127,state.velocity))
+            }
+        }
+        desired.removeAll { configuration.instrument(for:$0.surface) == .chords }
+        sendOwnedNotes(physicalChordGates.reconcile(chordTargets,velocity:chordVelocities,
+            ledger:&noteOwners,owner:{ .physicalChord($0,$1) }))
         let desiredKeys = Set(desired.map { TouchKey(surface: $0.surface, id: $0.contactID) })
         let releasedKeys = outgoingTouches.keys.filter { !desiredKeys.contains($0) }
         for key in releasedKeys {
@@ -401,17 +431,32 @@ public final class MIDIHapticService: @unchecked Sendable {
             let key = TouchKey(surface: state.surface, id: state.contactID)
             let drums = configuration.instrument(for: state.surface) == .drums
             guard processed.insert(key).inserted else { continue }
-            let isFretlessMelody = !drums && configuration.fretless
+            let instrument = configuration.instrument(for:state.surface)
+            let isGuitar = instrument.isStringSurface
+            let layout = configuration.strings(for:state.surface)
+            let stringCell = instrument == .fretlessStrings
+                ? layout.continuousCell(x:state.x,y:state.y)
+                : (instrument == .guitar ? layout.microtonalCell(x:state.x,y:state.y) : nil)
+            if instrument == .guitar && layout.isMicrotonal && stringCell == nil {
+                if let old = outgoingTouches.removeValue(forKey:key) { releaseOutgoingTouch(key,outgoing:old) }
+                continue
+            }
+            let tunedMelody = instrument == .melodic ? configuration.melodicMPEPitch(midi:state.quantizedMIDI,isMPE:midiMode == .mpe) : nil
+            if instrument == .melodic && !configuration.fretless && midiMode == .mpe && configuration.customScale?.isMicrotonal == true && tunedMelody == nil {
+                if let old = outgoingTouches.removeValue(forKey:key) { releaseOutgoingTouch(key,outgoing:old) }
+                continue
+            }
+            let isFretlessMelody = stringCell != nil || tunedMelody != nil || (instrument == .melodic && configuration.fretless)
             let isMPE = midiMode == .mpe && !drums
             let standardChannel = drums ? GMDrumPads.midiChannel : safeMelodicChannel
-            let anchor = max(0,min(127,configuration.baseMIDINote +
+            let anchor = stringCell?.anchor ?? tunedMelody?.anchor ?? max(0,min(127,configuration.baseMIDINote +
                 Int((configuration.pitchSpanSemitones / 2.0).rounded())))
             let targetNote = isFretlessMelody ? anchor : max(0,min(127,state.quantizedMIDI))
             if let existing = outgoingTouches[key],
-               LegacyTouchTransition.requiresNewVoice(oldNote:existing.note,oldFretless:existing.fretless,
+               (((stringCell != nil || tunedMelody != nil) && existing.note != anchor) || LegacyTouchTransition.requiresNewVoice(oldNote:existing.note,oldFretless:existing.fretless,
                    oldMPE:existing.mpe,oldChannel:existing.channel,newNote:targetNote,newFretless:isFretlessMelody,
                    newMPE:isMPE,standardChannel:standardChannel,
-                   sustained:outgoingSustainChannels().contains(existing.channel)) {
+                   sustained:outgoingSustainChannels().contains(existing.channel))) {
                 outgoingTouches.removeValue(forKey:key)
                 releaseOutgoingTouch(key,outgoing:existing)
             }
@@ -437,7 +482,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             if !drums {
                 let vibrato = max(0,min(127,Int((min(1,max(0,state.vibrato))*127).rounded())))
                 let modulation = SensorDestination(.controlChange,channel:channel,number:1)
-                frameControls[modulation] = .init(vibrato,neutral:0)
+                if !isGuitar { frameControls[modulation] = .init(vibrato,neutral:0) }
                 if configuration.pressureToExpression {
                     let expression = SensorDestination(.controlChange,channel:channel,number:11)
                     frameControls[expression] = .init(max(0,min(127,state.expression)),neutral:127)
@@ -456,11 +501,11 @@ public final class MIDIHapticService: @unchecked Sendable {
                 }
             }
             if isFretlessMelody {
-                let bendRange = max(1, min(24, Int(ceil(configuration.pitchSpanSemitones / 2.0))))
+                let bendRange = stringCell?.bendRange ?? tunedMelody?.bendRange ?? max(1, min(24, Int(ceil(configuration.pitchSpanSemitones / 2.0))))
 
                 let delta = max(-Double(bendRange),
                     min(Double(bendRange), state.continuousMIDI - Double(anchor)))
-                let bend = Int((8192.0 + (delta / Double(bendRange)) * 8191.0).rounded())
+                let bend = stringCell?.bend ?? tunedMelody?.bend ?? Int((8192.0 + (delta / Double(bendRange)) * 8191.0).rounded())
                 let target = SensorDestination(.pitchBend,channel:channel)
                 let value = LegacyContinuousOwners.Value(max(0,min(16383,bend)),neutral:8192,bendRange:bendRange)
                 frameControls[target] = value
@@ -522,6 +567,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     public func endAllTouchOutput() {
+        sendOwnedNotes(physicalChordGates.reconcile([:],velocity:[:],ledger:&noteOwners,owner:{ .physicalChord($0,$1) }))
         for (key, outgoing) in outgoingTouches {
             releaseOutgoingTouch(key,outgoing:outgoing)
         }
@@ -569,7 +615,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         let previous = sustainOwners.channels(for:.touch)
-        let currentNoteChannels = Set(outgoingTouches.values.map(\.channel))
+        let currentNoteChannels = Set(outgoingTouches.values.map(\.channel)).union(physicalChordGates.channels)
         let fallback = max(0,min(15,baseChannel))
         let targets = active && canSend
             ? previous.union(currentNoteChannels.isEmpty && previous.isEmpty ? [fallback] : currentNoteChannels)
@@ -596,7 +642,7 @@ public final class MIDIHapticService: @unchecked Sendable {
                 if let range = update.bendRange { sendPitchBendRange(semitones:range,channel:target.channel) }
                 sendPitchBend(update.value,channel:target.channel)
             case .controlChange:
-                sendMIDI1(status:0xb0|target.channel,data1:target.number,data2:update.value,neutral:update.neutral)
+                sendMIDI1(status:0xb0|target.channel,data1:target.number,data2:update.value,neutral:update.neutral,persistentGain:update.preserveOnRelease)
             default: break
             }
         }
@@ -604,27 +650,23 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     public func sendHelperControls(
         x: Double, y: Double, contactSize: Double, assignments: MIDIHelperAssignments,
-        channel: Int, pitchBendRange: Int, vibratoCC: Int, expressionCC: Int
+        channel: Int, pitchBendRange: Int, vibratoCC: Int, expressionCC: Int,
+        configureReceiverBendRange:Bool = false
     ) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         lock.unlock()
-        guard canSend, x.isFinite, y.isFinite, contactSize.isFinite,
-              HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
-                                     vibratoCC:vibratoCC,expressionCC:expressionCC) else { return }
-        let ch = max(0,min(15,channel))
-        var values: [SensorDestination:LegacyContinuousOwners.Value] = [:]
-        if assignments.pitchBend {
-            let bend = Int((8192 + (min(1,max(0,x))-0.5)*2*8191).rounded())
-            values[.init(.pitchBend,channel:ch)] = .init(bend,neutral:8192,bendRange:max(1,min(24,pitchBendRange)))
-        }
-        if assignments.vibrato {
-            values[.init(.controlChange,channel:ch,number:vibratoCC)] = .init(Int((min(1,max(0,y))*127).rounded()),neutral:0)
-        }
-        if assignments.expression {
-            values[.init(.controlChange,channel:ch,number:expressionCC)] = .init(Int((min(1,max(0,contactSize))*127).rounded()),neutral:127)
-        }
+        guard canSend,let values = HelperPerformancePolicy.controls(x:x,y:y,size:contactSize,
+            assignments:assignments,channel:channel,bendRange:pitchBendRange,
+            vibratoCC:vibratoCC,expressionCC:expressionCC,
+            configureReceiverBendRange:configureReceiverBendRange) else { return }
         sendContinuousUpdates(continuousOwners.replace(.helper,values:values))
+    }
+
+    /// Ordinary lift retires the helper owner. Persistent gain stays at its
+    /// last intentional value unless another active internal owner takes over.
+    public func idleHelperControls() {
+        sendContinuousUpdates(continuousOwners.release(.helper))
     }
 
     public func resetHelperControls(
@@ -942,7 +984,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
 
     @discardableResult
-    private func sendMIDI1(status: Int, data1: Int, data2: Int, neutral: Int? = nil, rangePart: Bool = false) -> Bool {
+    private func sendMIDI1(status: Int, data1: Int, data2: Int, neutral: Int? = nil, rangePart: Bool = false,persistentGain:Bool = false) -> Bool {
         guard permitsOutgoingSend else { return false }
         let message = LegacyGateReleaseDebt.Message(status,data1,data2)
         var result: OSStatus = -1
@@ -957,8 +999,11 @@ public final class MIDIHapticService: @unchecked Sendable {
             }
             if added { result = MIDIReceived(virtualSource,&packetList) }
         }
+        keyboardOutputAudit?.record(message,succeeded:result == noErr)
         gateDebt.record(message,succeeded:result == noErr)
-        let cleanupValue = neutral ?? LegacyControllerReleaseDebt.neutral(for:message)
+        let isPersistentGain = persistentGain && status & 0xf0 == 0xb0 && [7,11].contains(data1)
+        let cleanupValue = isPersistentGain ? nil : (neutral ?? LegacyControllerReleaseDebt.neutral(for:message))
+        if isPersistentGain { controllerDebt.forgetPersistentGain(message) }
         if let cleanupValue {
             controllerDebt.record(message,neutral:cleanupValue,succeeded:result == noErr)
         }
@@ -1019,6 +1064,15 @@ public final class ChordMIDIOutput {
                                      0, buffer.count, first) != nil
         }
         return added && MIDIReceived(endpoint, &list) == noErr
+    }
+    /// Only the three typed realtime transport messages are permitted.
+    public func sendRealtime(_ message:EnsembleClock.Message) -> Bool {
+        guard endpoint != 0 else { return false }
+        var list = MIDIPacketList()
+        let packet = MIDIPacketListInit(&list)
+        var byte = message.rawValue
+        let added = MIDIPacketListAdd(&list,MemoryLayout<MIDIPacketList>.size,packet,0,1,&byte) != nil
+        return added && MIDIReceived(endpoint,&list) == noErr
     }
     // Keep the endpoint stable until process exit, as with the retained client.
 }

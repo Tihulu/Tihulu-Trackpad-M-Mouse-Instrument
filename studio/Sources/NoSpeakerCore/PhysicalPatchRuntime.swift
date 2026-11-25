@@ -6,9 +6,23 @@ public struct PhysicalPatchRuntime: Sendable {
     public static let supportedSignals: Set<SensorSignal> = [.x, .y, .contact, .contactSize]
     public static let timeout = 0.35
     private var router = SensorRouter()
+    private var airDual = AirDualHandPerformance()
+    private var airDualEnabled = false
+    private var airHelperEnabled = false
+    private var airActiveSlot: Int?
+    private var airStrum: AirStrumPerformance?
+    private var cameraHands = AirHandsHelper()
+    private var cameraHandsEnabled = false
     private var supported: Set<SensorSource> = []
+    private var hybridSource: SensorSource?
+    public private(set) var hybridInputs: [PatchSimulation.Input] = []
+    private var hybridSession: UUID?
+    private var hybridReceipt: Double?
     private var sessions: [SensorSource: UUID] = [:]
     private var seen: [SensorSource: Double] = [:]
+    private var gamepadArmed:Set<SensorSource> = []
+    public var reservedGamepadSessions:Int { supported.intersection(GamepadFrame.sources).count }
+    public var remoteSessionLimit:Int { Self.maximumRemoteSessions-reservedGamepadSessions }
     private var sequence: UInt64 = 0
     private var motionSources: Set<SensorSource> = []
     private var touchSources: Set<SensorSource> = []
@@ -42,6 +56,11 @@ public struct PhysicalPatchRuntime: Sendable {
 
     public init() {}
     public var activeSources: Set<SensorSource> { Set(sessions.keys) }
+    public var airSelectedSlot: Int? { airDual.trackingReady ? airDual.selectedSlot : nil }
+    public var airSoundingSlot: Int? {
+        if let airStrum, !airStrum.hasActivePulses { return nil }
+        return airDual.soundingSlot
+    }
     // Internal test observation of real router allocation, not a wire metric.
     var activeRouterSessionCount: Int { router.sessionCount }
 
@@ -49,9 +68,10 @@ public struct PhysicalPatchRuntime: Sendable {
         patch.isValid && !patch.routes.isEmpty && patch.routes.allSatisfy {
             switch $0.source {
             case .trackpad, .magicMouse: return supportedSignals.contains($0.signal)
+            case .gamepad1,.gamepad2: return GamepadFrame.permits($0)
             case .lid: return $0.signal == .angle
             case .touchBar: return $0.signal == .x
-            case .camera: return [.x,.y,.gesture,.contact].contains($0.signal)
+            case .camera: return [.x,.y,.gesture,.contact].contains($0.signal) || AirDualHandPerformance.signals.contains($0.signal) || AirStrumPerformance.isStringSignal($0.signal) || AirHandsHelper.allSignals.contains($0.signal)
             case .phone, .tablet:
                 guard allowRemote else { return false }
                 if [.x,.y,.contact].contains($0.signal) { return true }
@@ -66,17 +86,49 @@ public struct PhysicalPatchRuntime: Sendable {
         }
     }
 
-    public mutating func configure(_ patch: InstrumentPatch, allowRemote: Bool = false) throws {
-        guard sessions.isEmpty, remotePeers.isEmpty, Self.supports(patch, allowRemote: allowRemote) else { throw SensorRouterError.invalidMappings }
+    /// One explicitly substituted source. Never simulate a live camera or a
+    /// paired network stream, and never enlarge the local reservation.
+    public static func supportsHybrid(_ patch:InstrumentPatch, synthetic:SensorSource, allowRemote:Bool = false) -> Bool {
+        let sources = Set(patch.routes.map(\.source))
+        let remote = sources.intersection([.phone,.tablet])
+        guard patch.isValid,[SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external,.camera].contains(synthetic),
+              sources.subtracting(remote).subtracting(GamepadFrame.sources).count <= reservedLocalSessions,
+              allowRemote == !remote.isEmpty else { return false }
+        let syntheticRoutes = patch.routes.filter { $0.source == synthetic }
+        let simple:Set<SensorSignal> = [.x,.y,.contact,.contactSize,.pressure,.angle,.speed,.gesture,.expression]
+        guard !syntheticRoutes.isEmpty else { return false }
+        if synthetic == .camera {
+            guard AirDualHandPerformance.usesDualCamera(patch.routes) || AirHandsHelper.uses(patch.routes),
+                  supports(.init(routes:syntheticRoutes)) else { return false }
+        } else if !syntheticRoutes.allSatisfy({ simple.contains($0.signal) }) { return false }
+        let native = InstrumentPatch(name:patch.name,routes:patch.routes.filter { $0.source != synthetic })
+        return supports(native,allowRemote:allowRemote)
+    }
+
+    public mutating func configure(_ patch: InstrumentPatch, allowRemote: Bool = false,
+                                   synthetic:SensorSource? = nil) throws {
+        guard sessions.isEmpty, remotePeers.isEmpty, hybridSession == nil,
+              synthetic.map({ Self.supportsHybrid(patch,synthetic:$0,allowRemote:allowRemote) }) ?? Self.supports(patch, allowRemote:allowRemote)
+              else { throw SensorRouterError.invalidMappings }
         var projections: [SensorSource:RemoteMappingProjection] = [:]
         if allowRemote {
             for source in [SensorSource.phone,.tablet] where patch.routes.contains(where: { $0.source == source }) {
-                projections[source] = try RemoteMappingProjection(patch:patch,source:source)
+                projections[source] = try RemoteMappingProjection(patch:patch,source:source,synthetic:synthetic)
             }
         }
         try router.configure(patch.routes)
+        airDual = AirDualHandPerformance()
+        cameraHands.reset()
+        cameraHandsEnabled = AirHandsHelper.uses(patch.routes)
+        airActiveSlot = nil
+        airDualEnabled = AirDualHandPerformance.usesDualCamera(patch.routes)
+        airStrum = AirStrumPerformance(routes:patch.routes)
+        airHelperEnabled = airDualEnabled && AirDualHandPerformance.hasHelperRoutes(patch.routes)
         mappingProjections = projections
-        supported = Set(patch.routes.map(\.source))
+        hybridSource = synthetic
+        hybridInputs = Array(Set(patch.routes.filter { $0.source == synthetic && synthetic != .camera }.map { PatchSimulation.Input(source:$0.source,signal:$0.signal) })).sorted { $0.id < $1.id }
+        hybridReceipt = nil
+        supported = Set(patch.routes.map(\.source)).subtracting(synthetic.map { [$0] } ?? [])
         touchSources = Set(patch.routes.filter { [.x,.y,.contact].contains($0.signal) }.map(\.source))
         motionSources = Set(patch.routes.filter { [.tiltYaw,.tiltPitch,.tiltRoll].contains($0.signal) }.map(\.source))
         drumMasks = [:]
@@ -96,7 +148,47 @@ public struct PhysicalPatchRuntime: Sendable {
         remoteEnabled = allowRemote
         pairing.clear()
         seen = [:]
+        gamepadArmed = []
         sequence = 0
+    }
+
+    /// UI-originated synthetic values share the physical router and ledger,
+    /// never the hardware adapter. A stale lease requires a fresh user action.
+    public mutating func sendHybrid(_ input:PatchSimulation.Input,value:Double,now:Double) -> [SensorCommand] {
+        guard input.source == hybridSource,hybridInputs.contains(input),now.isFinite,now >= 0,
+              value.isFinite,(0...1).contains(value) else { return [] }
+        if let last = hybridReceipt, now < last { return releaseHybridSource() }
+        var commands = expireHybrid(now:now)
+        if hybridSession == nil { hybridSession = try? router.connect(input.source,now:now) }
+        guard let id = hybridSession else { return commands }
+        hybridReceipt = now
+        sequence &+= 1
+        commands += router.ingest(.init(session:id,signal:input.signal,value:value,sequence:sequence,timestamp:now),now:now)
+        return commands
+    }
+    public mutating func releaseHybrid(_ input:PatchSimulation.Input) -> [SensorCommand] {
+        guard hybridInputs.contains(input),let id = hybridSession else { return [] }
+        return router.releaseSignal(session:id,signal:input.signal)
+    }
+    public mutating func releaseHybridSource() -> [SensorCommand] {
+        if hybridSource == .camera { return releaseCamera() }
+        guard let id = hybridSession else { return [] }
+        hybridSession = nil; hybridReceipt = nil
+        return router.disconnect(id)
+    }
+    /// Heartbeats only renew existing ownership; never recreate notes.
+    public mutating func refreshHybrid(now:Double) -> [SensorCommand] {
+        let commands = expireHybrid(now:now)
+        if let id = hybridSession {
+            hybridReceipt = now
+            router.heartbeat(id,now:now)
+        }
+        return commands
+    }
+    private mutating func expireHybrid(now:Double) -> [SensorCommand] {
+        guard let last = hybridReceipt else { return [] }
+        guard now.isFinite,now >= last,now-last < Self.timeout else { return releaseHybridSource() }
+        return []
     }
 
     /// hostTime is local receipt time, not the undocumented driver timestamp.
@@ -130,6 +222,39 @@ public struct PhysicalPatchRuntime: Sendable {
         return (degrees - 5) / 170
     }
 
+    /// The adapter supplies a full snapshot of a previously bound controller.
+    /// Neutral frame required before first play or after loss/stall.
+    public mutating func receiveGamepad(source:SensorSource,frame:GamepadFrame?,now:Double) -> [SensorCommand] {
+        guard GamepadFrame.sources.contains(source),supported.contains(source) else { return [] }
+        guard let frame,now.isFinite,now >= 0 else { return releaseGamepad(source) }
+        if let last = seen[source],now < last || now-last >= Self.timeout {
+            return releaseGamepad(source)
+        }
+        seen[source] = now
+        if !gamepadArmed.contains(source) {
+            if frame.active.isEmpty { gamepadArmed.insert(source) }
+            return []
+        }
+        if sessions[source] == nil {
+            guard !frame.active.isEmpty else { return [] }
+            sessions[source] = try? router.connect(source,now:now)
+        }
+        guard let session = sessions[source] else { return [] }
+        var events:[SensorEvent] = []
+        for signal in GamepadFrame.signals {
+            guard let value = frame.active[signal] else { continue }
+            sequence &+= 1
+            events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:now))
+        }
+        router.heartbeat(session,now:now)
+        return router.ingestFrame(session:session,releasing:Set(GamepadFrame.signals).subtracting(frame.active.keys),events:events,now:now)
+    }
+    public mutating func releaseGamepad(_ source:SensorSource) -> [SensorCommand] {
+        guard GamepadFrame.sources.contains(source) else { return [] }
+        gamepadArmed.remove(source); seen.removeValue(forKey:source)
+        return disconnect(source)
+    }
+
     /// Scalar adapters share the same router and ownership as touch surfaces.
     /// Nil is a release/lost sample, not a synthetic input of zero.
     public mutating func receiveScalar(source: SensorSource, value: Double?,
@@ -150,7 +275,7 @@ public struct PhysicalPatchRuntime: Sendable {
     /// rejects multiple/low-confidence hands; nil releases this source.
     public mutating func receiveHand(_ hand: AirHandSample?, hostTime: Double, now: Double) -> [SensorCommand] {
         let source = SensorSource.camera
-        guard supported.contains(source), hostTime.isFinite, now.isFinite,
+        guard !airDualEnabled, !cameraHandsEnabled, supported.contains(source), hostTime.isFinite, now.isFinite,
               hostTime >= 0, hostTime <= now, now - hostTime < Self.timeout,
               hostTime >= (seen[source] ?? 0) else { return [] }
         seen[source] = hostTime
@@ -164,6 +289,94 @@ public struct PhysicalPatchRuntime: Sendable {
                                           sequence: sequence, timestamp: hostTime), now: hostTime)
         }
         return result
+    }
+
+    public mutating func receiveHelperHands(left:AirHandSample?,right:AirHandSample?,
+                                            hostTime:Double,now:Double,synthetic:Bool = false) -> [SensorCommand] {
+        guard synthetic == (hybridSource == .camera), cameraHandsEnabled, !airDualEnabled else { return [] }
+        guard hostTime.isFinite, now.isFinite, hostTime >= 0, now >= hostTime,
+              now-hostTime < 0.25, hostTime > (seen[.camera] ?? -1) else { return releaseCamera() }
+        if let last = seen[.camera], hostTime-last >= 0.25 {
+            let release = releaseCamera()
+            seen[.camera] = hostTime
+            return release
+        }
+        seen[.camera] = hostTime
+        if left == nil && right == nil { return releaseCamera() }
+        if sessions[.camera] == nil { sessions[.camera] = try? router.connect(.camera,now:hostTime) }
+        guard let session = sessions[.camera] else { cameraHands.reset(); return [] }
+        return cameraHands.receive(left:left,right:right,time:hostTime,now:now,
+                                   session:session,router:&router,sequence:&sequence)
+    }
+
+    /// Dual-hand frames use the same session, router and output ledger as
+    /// single-hand camera input. No additional reserved session is consumed.
+    /// Single timestamp and single reserved session for both camera roles.
+    public mutating func receiveCombinedHands(count:Int?,confidence:Double,left:AirHandSample?,
+                                              right:AirHandSample?,swapRoles:Bool,
+                                              hostTime:Double,now:Double,synthetic:Bool = false) -> [SensorCommand] {
+        guard synthetic == (hybridSource == .camera), airDualEnabled, cameraHandsEnabled else { return [] }
+        guard hostTime.isFinite,now.isFinite,hostTime >= 0,now >= hostTime,now-hostTime < 0.25,
+              seen[.camera].map({ hostTime > $0 }) ?? true else { return releaseCamera() }
+        if let last = seen[.camera], hostTime-last >= 0.25 {
+            let commands = releaseCamera()
+            seen[.camera] = hostTime
+            return commands
+        }
+        seen[.camera] = hostTime
+        guard left != nil || right != nil else { return releaseCamera() }
+        if sessions[.camera] == nil { sessions[.camera] = try? router.connect(.camera,now:hostTime) }
+        guard let session = sessions[.camera] else { return releaseCamera() }
+        let helper = swapRoles ? left : right
+        let chord = swapRoles ? right : left
+        let slot = airDual.receive(count:chord == nil ? nil : count,confidence:confidence,
+                                   helper:helper,time:hostTime,now:now)
+        var commands = cameraHands.receive(left:left,right:right,time:hostTime,now:now,
+                                           session:session,router:&router,sequence:&sequence)
+        guard let helper, slot != nil || (airHelperEnabled && airDual.trackingReady) else {
+            commands += AirHandsHelper.releaseInstrument(session:session,router:&router)
+            airStrum?.reset()
+            airActiveSlot = nil
+            return commands
+        }
+        commands += AirDualHandPerformance.route(slot:airStrum == nil ? slot : nil,
+                                                 previous:airStrum == nil ? airActiveSlot : nil,
+                                                 helper:helper,session:session,time:hostTime,router:&router,sequence:&sequence)
+        if airStrum != nil {
+            commands += airStrum!.update(slot:slot,position:helper.x,time:hostTime,now:now,
+                                         session:session,router:&router,sequence:&sequence)
+        }
+        airActiveSlot = slot
+        return commands
+    }
+
+    public mutating func receiveDualHand(count: Int?, confidence: Double,
+                                         helper: AirHandSample?, hostTime: Double,
+                                         now: Double,synthetic:Bool = false) -> [SensorCommand] {
+        guard synthetic == (hybridSource == .camera), airDualEnabled, !cameraHandsEnabled else { return [] }
+        guard hostTime.isFinite, now.isFinite, hostTime >= 0, hostTime <= now,
+              now - hostTime < 0.25, hostTime > (seen[.camera] ?? -1)
+        else { return releaseCamera() }
+        let slot = airDual.receive(count: count, confidence: confidence, helper: helper,
+                                   time: hostTime, now: now)
+        // Selected hands may drive continuous controls without sounding a chord.
+        guard let helper, slot != nil || (airHelperEnabled && airDual.trackingReady) else {
+            seen[.camera] = hostTime
+            airActiveSlot = nil
+            airStrum?.reset()
+            return disconnect(.camera)
+        }
+        seen[.camera] = hostTime
+        if sessions[.camera] == nil { sessions[.camera] = try? router.connect(.camera, now: hostTime) }
+        guard let session = sessions[.camera] else { airDual.reset(); airActiveSlot = nil; return [] }
+        var commands = AirDualHandPerformance.route(slot: airStrum == nil ? slot : nil, previous: airStrum == nil ? airActiveSlot : nil, helper: helper,
+                                                    session: session, time: hostTime, router: &router,
+                                                    sequence: &sequence)
+        if airStrum != nil {
+            commands += airStrum!.update(slot:slot,position:helper.x,time:hostTime,now:now,session:session,router:&router,sequence:&sequence)
+        }
+        airActiveSlot = slot
+        return commands
     }
 
     /// Host-only API: a future transport must bind returned IDs to connections.
@@ -185,7 +398,7 @@ public struct PhysicalPatchRuntime: Sendable {
         // Reserve the full advertised source capability before admitting a peer.
         // Reservations persist until peer removal, not merely stream release.
         guard cost > 0 else { throw RemoteTouchError.unavailable }
-        guard reservedRemoteSessions + cost <= Self.maximumRemoteSessions else { throw RemoteTouchError.capacity }
+        guard reservedRemoteSessions + cost <= remoteSessionLimit else { throw RemoteTouchError.capacity }
         let id = UUID()
         remotePeers[id] = RemoteTouchPeer(source: source, now: now, mappingDetails: invitation.mappingDetails, mappingLabels: invitation.mappingLabels)
         return id
@@ -464,15 +677,26 @@ public struct PhysicalPatchRuntime: Sendable {
 
     public mutating func expire(now: Double) -> [SensorCommand] {
         guard now.isFinite else { return [] }
-        let stale = sessions.keys.filter { now - (seen[$0] ?? 0) >= Self.timeout }
-            .sorted { $0.rawValue < $1.rawValue }
+        let dualExpired = (airDualEnabled || cameraHandsEnabled) && (seen[.camera].map { now - $0 >= 0.25 } ?? false)
+        if dualExpired { airDual.reset(); airActiveSlot = nil; airStrum?.reset(); cameraHands.reset() }
+        // Remove all expired owners atomically, including camera and remote.
+        let stale = sessions.keys.filter {
+            ($0 == .camera && dualExpired) || now - (seen[$0] ?? 0) >= Self.timeout
+        }.sorted { $0.rawValue < $1.rawValue }
         var removed: Set<UUID> = []
         for source in stale {
+            if GamepadFrame.sources.contains(source) { gamepadArmed.remove(source); seen.removeValue(forKey:source) }
             if let id = sessions.removeValue(forKey:source) { removed.insert(id) }
         }
         let expiredPeers = remotePeers.filter { $0.value.expired(now:now) }.map(\.key)
         for id in expiredPeers { removed.formUnion(removeRemoteSessions(id)) }
+        if let id = hybridSession,let last = hybridReceipt, now < last || now-last >= Self.timeout {
+            removed.insert(id); hybridSession = nil; hybridReceipt = nil
+        }
         var commands = router.disconnect(sessions:removed)
+        if let camera = sessions[.camera], airStrum != nil {
+            commands += airStrum!.expire(now:now,session:camera,router:&router)
+        }
         for id in remotePeers.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
             guard var peer = remotePeers[id], var stream = peer.inertial[.accelerationMagnitude],
                   let deadline = stream.strikeReleaseAt, now >= deadline, let session = stream.session else { continue }
@@ -484,14 +708,27 @@ public struct PhysicalPatchRuntime: Sendable {
         return commands
     }
 
+    /// Camera failure must not revoke unrelated physical or remote owners.
+    public mutating func releaseCamera() -> [SensorCommand] {
+        cameraHands.reset()
+        airStrum?.reset()
+        airDual.reset()
+        airActiveSlot = nil
+        return disconnect(.camera)
+    }
+
     private mutating func disconnect(_ source: SensorSource) -> [SensorCommand] {
         guard let id = sessions.removeValue(forKey: source) else { return [] }
         return router.disconnect(id)
     }
 
     public mutating func stop() -> [SensorCommand] {
+        cameraHands.reset(); cameraHandsEnabled = false
+        airDual = AirDualHandPerformance(); airDualEnabled = false; airHelperEnabled = false; airActiveSlot = nil; airStrum = nil
         sessions = [:]
+        hybridSource = nil; hybridInputs = []; hybridSession = nil; hybridReceipt = nil
         seen = [:]
+        gamepadArmed = []
         supported = []
         motionSources = []
         touchSources = []

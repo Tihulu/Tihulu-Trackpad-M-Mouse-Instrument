@@ -1,0 +1,19 @@
+# Tuned MIDI export
+
+Chord Progression and Note Sequencer expose a separate tuned MPE export when the current custom bank scale contains nonzero cent offsets. The existing nominal export is explicitly labeled 12-TET. Export is file-only and never changes a live MIDI endpoint.
+
+Single-instrument SMF format 0, 960 PPQ, fixed tempo, lower-zone RPN and ±2 semitone pitch bend setup before note events. Every overlapping note has a separate member; each member retains one bend for the whole file to avoid changing release-tail tuning. Up to 15 members; clips needing more fixed-bend members fail rather than approximate. Channels are remapped, not preserved as multiple independent instruments. Trailing rests and velocity preserved. No sustain automation, dense 24/53-EDO string export or full makam/seyir engine in this checkpoint.
+
+Import into a dedicated MPE instrument with channel, RPN and pitch events preserved; DAW import behavior varies. Verify actual pitch, simultaneous notes, release tails and Note Off ordering with a physical MIDI monitor and tuner. The file parser test checks note timing/velocity; byte tests check tuning messages.
+
+Live Note Sequencer now also exposes explicit Play tuned MIDI for MIDI-only destination. It uses the same fixed-member plan and RPN setup on a dedicated TIHULU Tuned Sequencer MPE source, not the ordinary sequencer port. Existing monotonic note schedule and attempted-note ledger remain in force. Unresolved release or selector cleanup blocks new transport; Stop retries on the original endpoint. Bends remain fixed across a loop; start of a new tuned take may reconfigure that dedicated receiver, so allow old release tails to finish. Combined haptic+MPE playback and hardware acceptance remain pending.
+
+## Air three-course strings
+An explicit tuned Air mode routes camera string patches with supported master effects to TIHULU Air Strings MPE. The existing camera/strum engine produces logical notes; the frozen plan translates them to fixed, distinct member channels using current bank cent offsets. Cleanup uses the same mapping and original endpoint even after a fault. Reject mixed sources, unsupported helper controls, multiple logical channels and more than 15 distinct pitches rather than discard tuning. Simulation is supported with explicit MIDI opt-in; native camera acceptance remains pending. Three-course voicings are experimental, not a complete bağlama fret/makam model.
+
+A selected tuned mode cannot be silently bypassed by starting the Remote panel or removing all string routes. Explicitly switch modes or load a replacement. Regression coverage includes identical live/debug strum commands and expiry releases translated through the frozen MPE plan.
+
+## Tuned Air master effects and recording
+Supported camera effects are mapped to lower-zone master channel 1, not the fixed-bend member channels. The master bend uses ±2 semitones and returns to center; named sustain and selected musical CCs are permitted. Arbitrary CCs, configuration controls and other sources remain rejected. Opt-in Ensemble recording retains the frozen plan and exports one ordered SMF track (format 0) with RPN/bends before notes, master effects, and scoped closure. Ordinary ensemble recording remains format 1. This is a dedicated MPE receiver; DAW support for zone-wide controls must be checked physically.
+
+Setup is precomputed once per Air plan. The take reserves its event budget before capture, including setup and closure. The on-screen command monitor is logical routing, not a wire-level MPE monitor; the separate DAW port is explicitly identified.

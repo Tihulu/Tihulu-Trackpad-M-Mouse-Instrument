@@ -10,8 +10,17 @@ public enum TouchBarZone: String, CaseIterable, Codable, Identifiable, Sendable 
     case expression = "Expression"
     case sustain = "Sustain"
     case filter = "Filter Cutoff"
+    case wah = "Wah (CC4)"
 
     public var id: String { rawValue }
+
+    /// Bend and fretless ribbons are momentary; other CCs are latched.
+    public var releasePosition: Double? {
+        switch self { case .pitchBend,.fretless: 0.5; default: nil }
+    }
+    public var initialPosition: Double {
+        switch self { case .pitchBend,.fretless: 0.5; case .expression: 1; default: 0 }
+    }
 }
 
 public enum TouchBarSustainMode: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -23,6 +32,7 @@ public enum TouchBarSustainMode: String, CaseIterable, Codable, Identifiable, Se
 public enum TiltMIDITarget: String, CaseIterable, Codable, Identifiable, Sendable {
     case disabled = "Disabled"
     case filter = "CC74 Filter"
+    case wah = "CC4 Wah"
     case expression = "CC11 Expression"
     case vibrato = "CC1 Vibrato"
     case pitchBend = "Pitch Bend"
@@ -70,8 +80,8 @@ public struct TouchBarProfile: Codable, Equatable, Sendable {
         copy.channel = max(0, min(15, channel))
         copy.baseNote = max(0, min(115, baseNote))
         copy.noteVelocity = max(1, min(127, noteVelocity))
-        copy.tiltMinDegrees = min(170, max(5, tiltMinDegrees))
-        copy.tiltMaxDegrees = min(175, max(copy.tiltMinDegrees + 5, tiltMaxDegrees))
+        copy.tiltMinDegrees = tiltMinDegrees.isFinite ? min(170,max(5,tiltMinDegrees)) : 90
+        copy.tiltMaxDegrees = min(175,max(copy.tiltMinDegrees+5,tiltMaxDegrees.isFinite ? tiltMaxDegrees : 120))
         return copy
     }
 
@@ -83,6 +93,7 @@ public struct TouchBarProfile: Codable, Equatable, Sendable {
         switch tiltTarget {
         case .disabled: return nil
         case .filter: zone = .filter; value = 0
+        case .wah: zone = .wah; value = 0
         case .vibrato: zone = .vibrato; value = 0
         case .expression: zone = .expression; value = 1
         case .pitchBend: zone = .pitchBend; value = 0.5

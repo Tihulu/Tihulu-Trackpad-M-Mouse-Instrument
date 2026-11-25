@@ -33,8 +33,9 @@ import Testing
     #expect(throws: ExpressivePresetError.unsupportedInput) {
         try ExpressivePreset.xyFilter.appending(to: .init(), source: .lid, signal: .angle, channel: 0)
     }
-    let phone = try ExpressivePreset.whammy.appending(to: .init(), source: .phone, signal: .angle, channel: 0)
+    let phone = try ExpressivePreset.whammy.appending(to: .init(), source: .phone, signal: .tiltRoll, channel: 0)
     #expect(!PhysicalPatchRuntime.supports(phone))
+    #expect(PhysicalPatchRuntime.supports(phone,allowRemote:true))
     #expect(phone.routes.first?.destination.kind == .pitchBend)
 }
 
@@ -49,4 +50,37 @@ import Testing
     let repeatSample = router.ingest(.init(session: id, signal: .angle, value: 0.5, sequence: 2, timestamp: 1.1), now: 1.1)
     #expect(repeatSample.isEmpty)
     #expect(router.disconnect(id).isEmpty)
+}
+
+@Test func allRemoteExpressiveSignalsHaveNativeTransport() throws {
+    for source in [SensorSource.phone,.tablet] {
+        for signal in ExpressivePreset.signals(for:source) {
+            let patch = try ExpressivePreset.whammy.appending(to:.init(),source:source,signal:signal,channel:0)
+            #expect(PhysicalPatchRuntime.supports(patch,allowRemote:true))
+        }
+        let patch = try ExpressivePreset.tiltEffects.appending(to:.init(),source:source,signal:.tiltRoll,channel:3)
+        #expect(PhysicalPatchRuntime.supports(patch,allowRemote:true))
+        #expect(patch.routes.map(\.signal) == [.tiltRoll,.tiltPitch,.tiltYaw])
+        #expect(patch.routes.allSatisfy { $0.destination.channel == 3 && $0.response?.smoothingMS == 25 })
+        #expect(try InstrumentPatch.read(patch.archive()) == patch)
+    }
+    #expect(throws:ExpressivePresetError.unsupportedInput) {
+        try ExpressivePreset.whammy.appending(to:.init(),source:.phone,signal:.angle,channel:0)
+    }
+}
+
+@Test func lidSweepUsesComfortableCalibratedDegrees() throws {
+    let p = try ExpressivePreset.whammy.appending(to:.init(),source:.lid,signal:.angle,channel:0,lidRange:90...120)
+    #expect(PhysicalPatchRuntime.supports(p))
+    var runtime = PhysicalPatchRuntime()
+    try runtime.configure(p)
+    let bend = SensorDestination(.pitchBend)
+    #expect(runtime.receiveScalar(source:.lid,value:PhysicalPatchRuntime.normalizedLid(90),hostTime:1,now:1) == [.init(bend,value:0)])
+    let middle = runtime.receiveScalar(source:.lid,value:PhysicalPatchRuntime.normalizedLid(105),hostTime:1.1,now:1.1)
+    #expect(middle.count == 1)
+    #expect(abs((middle.first?.value ?? 0)-8192) <= 1)
+    #expect(runtime.receiveScalar(source:.lid,value:PhysicalPatchRuntime.normalizedLid(120),hostTime:1.2,now:1.2) == [.init(bend,value:16383)])
+    #expect(runtime.receiveScalar(source:.lid,value:nil,hostTime:1.3,now:1.3) == [.init(bend,value:8192)])
+    #expect(ExpressivePreset.lidCalibration(lower:100,upper:105) == nil)
+    #expect(ExpressivePreset.lidCalibration(lower:.nan,upper:120) == nil)
 }

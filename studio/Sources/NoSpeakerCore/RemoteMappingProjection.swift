@@ -17,9 +17,9 @@ struct RemoteMappingProjection: Sendable {
     let rows: [[Int]]
     let labels: [RemoteMappingLabel]
 
-    init(patch: InstrumentPatch, source: SensorSource) throws {
+    init(patch: InstrumentPatch, source: SensorSource, synthetic:SensorSource? = nil) throws {
         guard source == .phone || source == .tablet,
-              PhysicalPatchRuntime.supports(patch, allowRemote: true),
+              (synthetic.map { PhysicalPatchRuntime.supportsHybrid(patch,synthetic:$0,allowRemote:true) } ?? PhysicalPatchRuntime.supports(patch,allowRemote:true)),
               Self.signals.count == 49 else { throw RemoteTouchError.invalidFrame }
         var grouped: [Target:Int] = [:]
         for route in patch.routes where route.source == source {

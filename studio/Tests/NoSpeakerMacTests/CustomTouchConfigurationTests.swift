@@ -13,12 +13,16 @@ import NoSpeakerCore
     #expect(config.permitsMelodicMIDI)
     config.trackpadOutput = .midiInstrument
     #expect(!config.permitsMelodicMIDI)
+    #expect(config.permitsMelodicMIDI(isMPE:true))
+    #expect(config.melodicMPEPitch(midi:64,isMPE:true)?.bend == 7168)
+    #expect(config.melodicMPEPitch(midi:64,isMPE:false) == nil)
     config.trackpadInstrument = .drums
     #expect(config.permitsMelodicMIDI)
     config.trackpadInstrument = .melodic
     config.fretless = true
     #expect(config.permitsMelodicMIDI)
     #expect(config.mappedMIDINotes == Array(60...84))
+    #expect(config.melodicMPEPitch(midi:64,isMPE:true) == nil)
     config.fretless = false
     custom.allowEqualTemperedMIDI = true
     config.customScale = custom
@@ -52,5 +56,60 @@ import NoSpeakerCore
     next = previous
     next.trackpadOutput = .midiInstrument
     #expect(next.requiresHapticReset(comparedTo:previous))
+}
+
+@Test func independentStringLayoutsPreserveLegacyFallbackAndResetMapping() throws {
+    let guitar = StringSurfaceLayout(tuning:.standard,frets:12)
+    let bass = StringSurfaceLayout(tuning:.bass,frets:24)
+    var config = TouchInstrumentConfiguration(surfaceSelection:.both,
+        trackpadInstrument:.guitar,magicMouseInstrument:.fretlessStrings,
+        stringLayout:guitar)
+    #expect(config.strings(for:.trackpad) == guitar)
+    #expect(config.strings(for:.magicMouse) == guitar)
+    let shared = config
+    config.mouseStringLayout = bass
+    #expect(config.strings(for:.trackpad) == guitar)
+    #expect(config.strings(for:.magicMouse) == bass)
+    #expect(config.requiresHapticReset(comparedTo:shared))
+    #expect(config.strings(for:.trackpad).cell(x:1,y:0)?.note == 52)
+    #expect(config.strings(for:.magicMouse).continuousCell(x:1,y:0)?.pitch == 52)
+    #expect(config.strings(for:.magicMouse).continuousCell(x:0,y:1)?.pitch == 43)
+    config.mouseStringLayout = nil
+    #expect(config == shared)
+}
+
+@Test func fretlessStringMIDIRequiresMPEOnlyForMIDIRoutedSurfaces() {
+    var config = TouchInstrumentConfiguration(surfaceSelection:.both,
+        trackpadInstrument:.guitar,magicMouseInstrument:.fretlessStrings,
+        trackpadOutput:.midiInstrument,magicMouseOutput:.trackpadHaptic)
+    #expect(config.permitsStringMIDI(isMPE:false))
+    config.magicMouseOutput = .both
+    #expect(!config.permitsStringMIDI(isMPE:false))
+    #expect(config.permitsStringMIDI(isMPE:true))
+    config.mouseStringLayout = StringSurfaceLayout(frets:Int.max)
+    #expect(!config.permitsStringMIDI(isMPE:true))
+    config.surfaceSelection = .trackpad
+    #expect(config.permitsStringMIDI(isMPE:false))
+    config.surfaceSelection = .both
+    config.mouseStringLayout = .init(tuning:.bass)
+    config.magicMouseInstrument = .melodic
+    config.fretless = true
+    #expect(!config.permitsStringMIDI(isMPE:false))
+    #expect(config.permitsStringMIDI(isMPE:true))
+}
+@Test func microtonalFrettedMIDIRequiresMPEButHapticDoesNot() {
+    var config = TouchInstrumentConfiguration(surfaceSelection:.both,
+        trackpadInstrument:.guitar,magicMouseInstrument:.guitar,
+        trackpadOutput:.midiInstrument,magicMouseOutput:.trackpadHaptic,
+        stringLayout:.init(),mouseStringLayout:.init(fretDivision:.edo53))
+    #expect(config.permitsStringMIDI(isMPE:false))
+    config.magicMouseOutput = .both
+    #expect(!config.permitsStringMIDI(isMPE:false))
+    #expect(config.permitsStringMIDI(isMPE:true))
+    config.mouseStringLayout = .init(customFretCents:[0,181,355,1200])
+    #expect(!config.permitsStringMIDI(isMPE:false))
+    #expect(config.permitsStringMIDI(isMPE:true))
+    config.mouseStringLayout = .init(customFretCents:[0,1201])
+    #expect(!config.permitsStringMIDI(isMPE:true))
 }
 #endif

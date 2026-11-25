@@ -1,13 +1,14 @@
 import Foundation
 
 public enum MIDIClipError: LocalizedError, Equatable {
-    case invalidClip, invalidNote, overlappingNote, empty
+    case invalidClip, invalidNote, overlappingNote, empty, tuningCapacity
     public var errorDescription: String? {
         switch self {
         case .invalidClip: "Invalid tempo, timing or clip length."
         case .invalidNote: "Invalid MIDI note, channel, velocity or duration."
         case .overlappingNote: "Overlapping identical notes on one MIDI channel are not supported."
         case .empty: "Add at least one note or drum hit before exporting."
+        case .tuningCapacity: "The tuned clip needs more than 15 fixed-bend MPE member channels. Reduce overlapping notes or distinct tunings."
         }
     }
 }
@@ -146,6 +147,11 @@ public enum MIDIClipWriter {
             if $0.channel != $1.channel { return $0.channel < $1.channel }
             return $0.pitch < $1.pitch
         }
+        return encodeEvents(bpm:clip.bpm,length:clip.length,events:events.map { ($0.tick,[UInt8(($0.off ? 0x80 : 0x90) | $0.channel),UInt8($0.pitch),UInt8($0.velocity)]) })
+    }
+
+    /// Caller supplies ordered, validated MIDI messages with absolute ticks.
+    static func encodeEvents(bpm:Double,length:Int,events:[(Int,[UInt8])]) -> Data {
         func be(_ value: Int, count: Int) -> [UInt8] {
             (0..<count).reversed().map { UInt8((value >> ($0 * 8)) & 255) }
         }
@@ -157,14 +163,14 @@ public enum MIDIClipWriter {
             return Array(bytes.reversed())
         }
         var track: [UInt8] = [0,0xFF,0x51,3]
-        track += be(Int((60_000_000 / clip.bpm).rounded()), count: 3)
+        track += be(Int((60_000_000 / bpm).rounded()), count: 3)
         var previous = 0
         for e in events {
-            track += vlq(e.tick - previous)
-            track += [UInt8((e.off ? 0x80 : 0x90) | e.channel), UInt8(e.pitch), UInt8(e.velocity)]
-            previous = e.tick
+            track += vlq(e.0 - previous)
+            track += e.1
+            previous = e.0
         }
-        track += vlq(clip.length - previous)
+        track += vlq(length - previous)
         track += [0xFF,0x2F,0]
         var file = Array("MThd".utf8) + be(6,count:4) + be(0,count:2) + be(1,count:2) + be(MIDIClip.ppq,count:2)
         file += Array("MTrk".utf8) + be(track.count,count:4) + track
