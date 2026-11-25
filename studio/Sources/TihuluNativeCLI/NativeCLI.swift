@@ -19,7 +19,7 @@ struct TihuluNativeCLI {
         let platformSupported:Bool
         let liveOutput = false
         let permissionRequests = false
-        let commands = ["capabilities","preflight","midi endpoints [--names]","gamepad devices [--names]"]
+        let commands = ["capabilities","preflight","midi endpoints [--names]","gamepad devices [--names]","midi monitor NAME SECONDS --confirm"]
     }
     struct Envelope<Payload:Encodable>: Encodable {
         let schema = 1
@@ -35,7 +35,7 @@ struct TihuluNativeCLI {
     }
 
     @MainActor
-    static func main() {
+    static func main() async {
         do {
             let args = Array(CommandLine.arguments.dropFirst())
             if args.isEmpty || args == ["--help"] || args == ["help"] || args == ["capabilities"] {
@@ -43,6 +43,21 @@ struct TihuluNativeCLI {
                 try emit(Capabilities(platformSupported:true))
                 #else
                 try emit(Capabilities(platformSupported:false))
+                #endif
+                return
+            }
+            if args.count>=2 && Array(args.prefix(2)) == ["midi","monitor"] {
+                guard args.count==5,args[4]=="--confirm",let seconds=Int(args[3]),
+                      String(seconds)==args[3],(1...10).contains(seconds),
+                      !args[2].isEmpty,args[2].utf8.count<=512,
+                      !args[2].unicodeScalars.contains(where:{ CharacterSet.controlCharacters.contains($0) }) else {
+                    throw CLIError("Use midi monitor NAME SECONDS --confirm (1-10 seconds).")
+                }
+                #if os(macOS)
+                let result=try await NativeMIDIMonitor.observe(sourceName:args[2],seconds:seconds)
+                try emit(Envelope(command:"midi monitor",result:result))
+                #else
+                throw CLIError("Native inspection requires macOS.")
                 #endif
                 return
             }

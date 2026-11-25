@@ -233,19 +233,22 @@
     {
       "id": "native-diagnostics",
       "api": [
-        "NativeEngineDiagnostics"
+        "NativeEngineDiagnostics",
+        "NativeMIDIMonitor"
       ],
       "source": [
         "studio/Sources/NoSpeakerMac/NativeEngineDiagnostics.swift",
-        "studio/Sources/TihuluNativeCLI/NativeCLI.swift"
+        "studio/Sources/TihuluNativeCLI/NativeCLI.swift",
+        "studio/Sources/NoSpeakerMac/NativeMIDIMonitor.swift"
       ],
       "cli": [
         "capabilities",
         "preflight",
         "midi endpoints [--names]",
-        "gamepad devices [--names]"
+        "gamepad devices [--names]",
+        "midi monitor NAME SECONDS --confirm"
       ],
-      "status": "read-only native CoreMIDI inventory, gamepad profile availability and permission preflight; no binding, hardware activation, event tap or live output"
+      "status": "read-only inventory and explicitly confirmed bounded aggregate MIDI receive observation; no live output or automatic hardware activation"
     }
   ],
   "constraints": {

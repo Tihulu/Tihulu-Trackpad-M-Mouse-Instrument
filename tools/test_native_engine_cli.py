@@ -23,13 +23,18 @@ assert help_doc["schema"] == 1
 assert help_doc["product"] == "tihulu-mac-instrument-native"
 assert help_doc["platformSupported"] == mac
 assert help_doc["liveOutput"] is False and help_doc["permissionRequests"] is False
-assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]"}
+assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]", "midi monitor NAME SECONDS --confirm"}
 for command in [("start",), ("midi", "send"), ("preflight", "--request-permissions"),
                 ("midi", "endpoints", "--names", "--send"), ("--unknown",),
-                ("preflight", "--names"), ("gamepad", "devices", "--bind"), ("gamepad", "devices", "--names", "--names")]:
+                ("midi", "monitor", "test", "1"), ("midi", "monitor", "test", "0", "--confirm"),
+                ("midi", "monitor", "test", "11", "--confirm"), ("midi", "monitor", "test", "01", "--confirm"),
+                ("midi", "monitor", "test", "1", "--confirm", "--names"), ("preflight", "--names"), ("gamepad", "devices", "--bind"), ("gamepad", "devices", "--names", "--names")]:
     invoke(*command, success=False)
 
 if mac:
+    # Unique missing source must fail without attaching any input port.
+    import uuid
+    assert "unavailable" in invoke("midi", "monitor", "TIHULU-absent-"+str(uuid.uuid4()), "1", "--confirm", success=False)
     def midi_shape(midi, named):
         for count, names in [("sourceCount", "sourceNames"), ("destinationCount", "destinationNames")]:
             assert type(midi[count]) is int and midi[count] >= 0
@@ -69,7 +74,8 @@ if mac:
                 assert 0 < len(device["name"]) <= 128
 else:
     for command in [("preflight",), ("midi", "endpoints"), ("midi", "endpoints", "--names"),
-                    ("gamepad", "devices"), ("gamepad", "devices", "--names")]:
+                    ("gamepad", "devices"), ("gamepad", "devices", "--names"),
+                    ("midi", "monitor", "test", "1", "--confirm")]:
         assert "requires macOS" in invoke(*command, success=False)
 
 print("Native CLI capability, read-only boundary and platform tests passed.")
