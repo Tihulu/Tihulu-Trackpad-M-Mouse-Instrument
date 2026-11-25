@@ -260,10 +260,17 @@ public struct MIDIHelperSustainState: Sendable {
 /// independent consumer caches. The OS click itself has no device identity.
 public enum PhysicalClickAttribution {
     public static func resolve<Surface:Hashable>(_ touching:Set<Surface>,
-        snapshotRevision:UInt64?,currentRevision:UInt64?,receivedAt:Double?,now:Double) -> Surface? {
+        snapshotRevision:UInt64?,currentRevision:UInt64?,receivedAt:Double?,now:Double,
+        clickReceipt:Double? = nil) -> Surface? {
         guard let snapshotRevision, let currentRevision, snapshotRevision == currentRevision,
               let receivedAt, receivedAt.isFinite, now.isFinite, now >= receivedAt,
               now-receivedAt < 0.35, touching.count == 1 else { return nil }
+        if let clickReceipt {
+            // Never attribute an earlier click to a later surface snapshot.
+            // Also reject clicks before the monotonic epoch or in the future.
+            guard clickReceipt.isFinite,clickReceipt >= 0,receivedAt >= 0,
+                  receivedAt <= clickReceipt,clickReceipt <= now else { return nil }
+        }
         return touching.first
     }
 }

@@ -300,3 +300,12 @@ import Testing
     let next = gate.permits(touching:true,clicking:false,freshFrame:true)
     #expect(next)
 }
+
+@Test func clickAttributionRejectsContactsThatArrivedAfterTheClick() {
+    let one = Set(["trackpad"])
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,receivedAt:1.02,now:1.04,clickReceipt:1.01) == nil)
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,receivedAt:1.01,now:1.04,clickReceipt:1.02) == "trackpad")
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,receivedAt:1.01,now:1.04,clickReceipt:1.05) == nil)
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,receivedAt:1.01,now:1.04,clickReceipt:.nan) == nil)
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,receivedAt:1.01,now:1.04,clickReceipt:-1) == nil)
+}

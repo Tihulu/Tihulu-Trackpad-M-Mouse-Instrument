@@ -4123,18 +4123,18 @@ final class StudioController: ObservableObject {
                 guard let self,self.captureGeneration == generation,
                       let monitor = self.captureMonitor else { return }
                 let batch = monitor.drainPhysicalInput()
-                if batch.invalidated {
+                if batch.invalidated || batch.events.count != batch.receipts.count {
                     self.invalidatePhysicalClickState()
                     return
                 }
-                for event in batch.events {
+                for (event,receipt) in zip(batch.events,batch.receipts) {
                     guard self.captureGeneration == generation else { return }
                     guard monitor.acceptsPhysicalInput(batch) else {
                         self.invalidatePhysicalClickState()
                         return
                     }
                     switch event {
-                    case .click(let down,let pressure): self.handlePhysicalClick(down,pressure:pressure)
+                    case .click(let down,let pressure): self.handlePhysicalClick(down,pressure:pressure,receipt:receipt)
                     case .pressure(let pressure): self.handlePhysicalPressure(pressure)
                     }
                 }
@@ -4278,14 +4278,14 @@ final class StudioController: ObservableObject {
         handlePhysicalClick(false,pressure:0)
     }
 
-    private func handlePhysicalClick(_ down: Bool, pressure: Double) {
+    private func handlePhysicalClick(_ down: Bool, pressure: Double,receipt:Double? = nil) {
         if down {
             guard !physicalClickDown else { return }
             physicalClickDown = true
             // Use only the most recent shared, unfiltered monitor snapshot.
             clickedSurface = PhysicalClickAttribution.resolve(clickTouchingSurfaces,
                 snapshotRevision:clickSnapshotRevision,currentRevision:touch?.currentSampleRevision,
-                receivedAt:clickSnapshotReceivedAt,now:ProcessInfo.processInfo.systemUptime)
+                receivedAt:clickSnapshotReceivedAt,now:ProcessInfo.processInfo.systemUptime,clickReceipt:receipt)
             trackpadClickPressure = clickedSurface == .trackpad && pressure.isFinite && (0...1).contains(pressure) ? pressure : nil
         } else {
             physicalClickDown = false

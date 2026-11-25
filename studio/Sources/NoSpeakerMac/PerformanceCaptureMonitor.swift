@@ -118,6 +118,7 @@ public enum CapturePhysicalInput:Equatable,Sendable {
 
 public struct CapturePhysicalInputBatch:Sendable {
     public let events:[CapturePhysicalInput]
+    public let receipts:[Double]
     public let invalidated:Bool
     public let epoch:UInt64
     public let oldestReceipt:Double?
@@ -133,6 +134,7 @@ struct CapturePhysicalMailbox {
     private var lastReceipt:Double?
     private(set) var epoch:UInt64 = 0
     private var events:[CapturePhysicalInput] = []
+    private var receipts:[Double] = []
     private var invalidated = false
     private var pending = false
     private(set) var coalesced:UInt64 = 0
@@ -144,11 +146,14 @@ struct CapturePhysicalMailbox {
             if oldestReceipt == nil { oldestReceipt = now }
             if case .pressure = event, case .pressure? = events.last {
                 events[events.count-1] = event
+                receipts[receipts.count-1] = now
                 if coalesced < UInt64.max { coalesced += 1 }
             } else if events.count < Self.capacity {
                 events.append(event)
+                receipts.append(now)
             } else {
                 events.removeAll(keepingCapacity:true)
+                receipts.removeAll(keepingCapacity:true)
                 invalidated = true
                 epoch &+= 1
                 if overflows < UInt64.max { overflows += 1 }
@@ -158,6 +163,7 @@ struct CapturePhysicalMailbox {
     }
     mutating func invalidate() -> Bool {
         events.removeAll(keepingCapacity:true)
+        receipts.removeAll(keepingCapacity:true)
         invalidated = true
         epoch &+= 1
         oldestReceipt = nil
@@ -173,8 +179,9 @@ struct CapturePhysicalMailbox {
             oldestReceipt.map({ now-$0 >= Self.maximumAge }) == true {
             _ = invalidate()
         }
-        let batch = CapturePhysicalInputBatch(events:events,invalidated:invalidated,epoch:epoch,oldestReceipt:oldestReceipt)
+        let batch = CapturePhysicalInputBatch(events:events,receipts:receipts,invalidated:invalidated,epoch:epoch,oldestReceipt:oldestReceipt)
         events.removeAll(keepingCapacity:true)
+        receipts.removeAll(keepingCapacity:true)
         oldestReceipt = nil
         invalidated = false
         pending = false

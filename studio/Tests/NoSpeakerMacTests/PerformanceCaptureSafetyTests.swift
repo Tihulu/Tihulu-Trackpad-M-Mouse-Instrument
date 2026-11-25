@@ -116,6 +116,7 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
         let batch = mailbox.drain(now:1.03)
         XCTAssertEqual(batch.events,[.click(true,0.2),.pressure(0.999),.click(false,0)])
         XCTAssertEqual(mailbox.coalesced,999)
+        XCTAssertEqual(batch.receipts,[1,1+999.0/100000,1.02])
         XCTAssertFalse(batch.invalidated)
         XCTAssertTrue(mailbox.append(.click(true,0.3),now:1.04))
     }
@@ -130,6 +131,7 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
         let batch = mailbox.drain(now:2.05)
         XCTAssertTrue(batch.invalidated)
         XCTAssertTrue(batch.events.isEmpty)
+        XCTAssertTrue(batch.receipts.isEmpty)
         XCTAssertTrue(mailbox.append(.click(true,0.5),now:2.06))
         XCTAssertFalse(mailbox.drain(now:2.07).invalidated)
     }
