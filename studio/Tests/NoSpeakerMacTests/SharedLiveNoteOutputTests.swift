@@ -100,4 +100,25 @@ private final class SharedNoteMockSink: @unchecked Sendable {
     #expect(sink.read().0.count == 1)
     host.retire()
 }
+@Test func sharedLiveNoteAttackKeepsCurrentHeldFrameAndOtherSource() throws {
+    let sink = SharedNoteMockSink()
+    let coordinator = HapticOutputCoordinator(clock:{ 1 },sink:{ try sink.write($0) })
+    let host = SharedLiveNoteOutput(coordinator:coordinator,automaticScheduling:false,clock:{ 1 })
+    let a = try host.begin(.chords) { _ in sink.recordFailure() }
+    let b = try host.begin(.touchBar) { _ in sink.recordFailure() }
+    let old = HapticFrame(tones:[.init(frequencyHz:220)],durationMS:18,level:0.5)
+    let held = HapticFrame(tones:[.init(frequencyHz:440)],durationMS:18,level:0.5)
+    let other = HapticFrame(tones:[.init(frequencyHz:660)],durationMS:18,level:0.5)
+    host.update(a,frame:old,level:1,attack:true)
+    host.update(a,frame:held,level:1)
+    host.update(b,frame:other,level:1)
+    host.renderOnce()
+    #expect(Set(sink.read().0.last?.tones.map(\.frequencyHz) ?? []) == Set([220.0,440.0,660.0]))
+    host.renderOnce()
+    #expect(Set(sink.read().0.last?.tones.map(\.frequencyHz) ?? []) == Set([440.0,660.0]))
+    host.release(a)
+    host.renderOnce()
+    #expect(sink.read().0.last?.tones == other.tones)
+    host.retire()
+}
 #endif
