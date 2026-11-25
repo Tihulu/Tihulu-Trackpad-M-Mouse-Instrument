@@ -871,7 +871,7 @@ private struct TouchInstrumentView: View {
                     .frame(width: 230)
                     .disabled(studio.touchRunning || !hasMelodic)
 
-                    Toggle("Multi Touch", isOn: $multiTouch)
+                    Toggle("MIDI Multi Touch", isOn: $multiTouch)
                         .toggleStyle(.switch)
                         .disabled(studio.touchRunning)
 
@@ -927,7 +927,7 @@ private struct TouchInstrumentView: View {
                                 ForEach(SurfaceOutputRoute.allCases) { Text($0.rawValue).tag($0) }
                             }
                             .frame(width: 200)
-                            Text(trackpadInstrument == .drums ? "GM · MIDI Ch 10" : (trackpadInstrument == .chords ? "Chord Bank · 8 pads" : trackpadInstrument.rawValue))
+                            Text(trackpadInstrument == .drums ? (trackpadOutput.sendsMIDI ? "GM · MIDI Ch 10" : "Local multi-finger drums") : (trackpadInstrument == .chords ? "Chord Bank · 8 pads" : trackpadInstrument.rawValue))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -946,12 +946,17 @@ private struct TouchInstrumentView: View {
                                 ForEach(SurfaceOutputRoute.allCases) { Text($0.rawValue).tag($0) }
                             }
                             .frame(width: 200)
-                            Text(magicMouseInstrument == .drums ? "GM · MIDI Ch 10" : (magicMouseInstrument == .chords ? "Chord Bank · 8 pads" : magicMouseInstrument.rawValue))
+                            Text(magicMouseInstrument == .drums ? (magicMouseOutput.sendsMIDI ? "GM · MIDI Ch 10" : "Local multi-finger drums") : (magicMouseInstrument == .chords ? "Chord Bank · 8 pads" : magicMouseInstrument.rawValue))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
                         }
 
+                        if hasDrums && ((surfaceSelection.accepts(.trackpad) && trackpadInstrument == .drums && trackpadOutput.sendsHaptics) ||
+                            (surfaceSelection.accepts(.magicMouse) && magicMouseInstrument == .drums && magicMouseOutput.sendsHaptics)) {
+                            Text("Local drums use independent finger strikes. Use Touch trigger for light taps; lift each finger to retrigger. Multiple strikes share the six-tone Force Touch actuator. MIDI Multi Touch controls outgoing MIDI only.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         Text("Magic Mouse → Trackpad Haptic drives your Mac's Force Touch motor. Magic Mouse does not contain a NoSpeaker haptic motor. Select Magic Mouse or Both above to enable its live touch notes.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
