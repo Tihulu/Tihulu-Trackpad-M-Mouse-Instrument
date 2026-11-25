@@ -1174,7 +1174,7 @@ public final class PerformanceGroupMIDIHost {
     public func startGamepads(profile: PerformanceGroupProfile, allowLayering: Bool = false,
                               allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false,
                               tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:], allowRemote:Bool = false,
-                              hapticGroups:Set<UUID> = []) throws {
+                              hapticGroups:Set<UUID> = [],allowTunedHaptics:Bool = false) throws {
         guard canStart else { throw HostError.activeOrCleanupRequired }
         // Never retune retained ports during another session's release tails
         // or silently switch a previously configured receiver to standard mode.
@@ -1183,8 +1183,14 @@ public final class PerformanceGroupMIDIHost {
         }
         var next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering,
             allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera,tuning:tuning,allowRemote:allowRemote)
-        let projection:PerformanceGroupHapticProjection? = hapticGroups.isEmpty ? nil :
-            try PerformanceGroupHapticProjection(profile:profile,selected:hapticGroups,tuned:Set(tuning.keys))
+        let projection:PerformanceGroupHapticProjection?
+        if hapticGroups.isEmpty { projection = nil }
+        else if tuning.isEmpty {
+            projection = try .init(profile:profile,selected:hapticGroups)
+        } else {
+            guard allowTunedHaptics,!allowRemote else { throw PerformanceGroupHapticProjection.AdmissionError.invalidSelection }
+            projection = try .init(profile:profile,selected:hapticGroups,preparedTuning:tuning)
+        }
         try openPorts(profile)
         groupHapticProjection = nil
         delivery = nil

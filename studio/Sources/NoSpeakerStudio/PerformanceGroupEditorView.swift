@@ -12,7 +12,15 @@ struct PerformanceGroupEditorView: View {
     @State private var hapticSelection:Set<UUID> = []
     @State private var tuningPreview: PerformanceGroupTuningConfiguration?
     @State private var tuningDraft = PerformanceGroupTuningDraft()
-    @State private var pendingTunedStart: PerformanceGroupTuningConfiguration?
+    private struct TunedStartSnapshot {
+        let tuning:PerformanceGroupTuningConfiguration
+        let profile:PerformanceGroupProfile
+        let storedData:Data?
+        let controllers:[SensorSource:UUID]
+        let haptics:Set<UUID>
+        let layering:Bool
+    }
+    @State private var pendingTunedStart:TunedStartSnapshot?
     @State private var confirmTunedStart = false
     @State private var profile = PerformanceGroupProfile()
     @State private var mobileDraft:PerformanceGroupMobileDraft?
@@ -227,8 +235,9 @@ struct PerformanceGroupEditorView: View {
             message = "Save or reload the current profile and select distinct controllers first."
             return
         }
-        guard hapticSelection.isEmpty || (StudioController.groupHapticStartEnabled && tuning == nil && hapticSelection.isSubset(of:hapticEligibleIDs)) else {
-            message = "Review selected Trackpad groups; MPE and group Trackpad output cannot start together."
+        guard hapticSelection.isEmpty || (StudioController.groupHapticStartEnabled && hapticSelection.isSubset(of:hapticEligibleIDs) &&
+                (tuning == nil || (StudioController.groupTunedHapticStartEnabled && remoteTransport == nil))) else {
+            message = "Review Trackpad selection. MPE haptic output requires a separately enabled local Start."
             return
         }
         if let tuning {
@@ -266,14 +275,16 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var canStartTunedGroups: Bool {
-        guard StudioController.groupMPEStartEnabled, canStartGroups,hapticSelection.isEmpty,
+        guard StudioController.groupMPEStartEnabled, canStartGroups,
+              (hapticSelection.isEmpty || (StudioController.groupTunedHapticStartEnabled && hapticSelection.isSubset(of:hapticEligibleIDs))),
               studio.groupRegisteredIDs.isEmpty, let tuningPreview else { return false }
         return (try? tuningPreview.plan(matching:saved)) != nil
     }
 
     private func requestTunedStart() {
         guard canStartTunedGroups, let tuningPreview else { return }
-        pendingTunedStart = tuningPreview
+        pendingTunedStart = .init(tuning:tuningPreview,profile:saved,storedData:storedData,
+            controllers:studio.gamepadBindings,haptics:hapticSelection,layering:allowLayering)
         confirmTunedStart = true
     }
 
@@ -364,7 +375,9 @@ struct PerformanceGroupEditorView: View {
         if StudioController.groupHapticStartEnabled {
             GroupBox("Experimental Trackpad note output") {
                 VStack(alignment:.leading,spacing:5) {
-                    Text("Select standard MIDI groups to mirror on the shared actuator. Off by default. Not MPE, drum synthesis, or audio playback; short attacks are best-effort within a four-entry, 40 ms buffer.")
+                    Text(StudioController.groupTunedHapticStartEnabled ?
+                         "Mirror selected standard or locally confirmed fixed-member MPE groups. Remote MPE with Trackpad output is not supported. Off by default; short attacks are best-effort." :
+                         "Select standard MIDI groups to mirror on the shared actuator. Off by default. Not MPE, drum synthesis, or audio playback; short attacks are best-effort within a four-entry, 40 ms buffer.")
                         .font(.caption)
                     ForEach(saved.groups.filter { hapticEligibleIDs.contains($0.id) }) { group in
                         Toggle(group.name,isOn:Binding(
@@ -568,11 +581,19 @@ struct PerformanceGroupEditorView: View {
             Button("Confirm MPE Start") {
                 guard let snapshot = pendingTunedStart else { return }
                 pendingTunedStart = nil
-                startSavedGroups(tuning:snapshot)
+                guard canStartTunedGroups,snapshot.profile == saved,snapshot.storedData == storedData,
+                      snapshot.controllers == studio.gamepadBindings,snapshot.haptics == hapticSelection,
+                      snapshot.layering == allowLayering,snapshot.tuning == tuningPreview else {
+                    message = "MPE Start confirmation expired. Review the current profile and selections."
+                    return
+                }
+                startSavedGroups(tuning:snapshot.tuning)
             }
             Button("Cancel",role:.cancel) { pendingTunedStart = nil }
         } message: {
-            Text("This sends MPE setup and pitch-bend configuration to separate ports. Use compatible DAW instruments. Close retained ports before another Start; closing does not reset the DAW receiver.")
+            Text("This sends MPE setup and pitch-bend configuration to separate ports. Use compatible DAW instruments. Selected Trackpad groups: " +
+                 String(pendingTunedStart?.haptics.count ?? 0) +
+                 ". Close retained ports before another Start; closing does not reset the DAW receiver.")
         }
     }
 }

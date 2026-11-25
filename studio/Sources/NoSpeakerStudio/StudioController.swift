@@ -227,6 +227,14 @@ final class StudioController: ObservableObject {
         #endif
     }
 
+    static var groupTunedHapticStartEnabled:Bool {
+        #if TIHULU_GROUP_MPE_HAPTIC_LIVE
+        return groupHapticStartEnabled && groupMPEStartEnabled
+        #else
+        return false
+        #endif
+    }
+
     @Published private(set) var groupTunedConfiguration: PerformanceGroupTuningConfiguration?
 
     func startGroupGamepads(profile: PerformanceGroupProfile, allowLayering: Bool,
@@ -235,8 +243,9 @@ final class StudioController: ObservableObject {
                             remoteTransport:RemoteLoopbackTransport? = nil,
                             remotePage:RemoteLoopbackPageServer? = nil,
                             confirmedLAN:Bool = false,hapticGroups:Set<UUID> = []) {
-        guard hapticGroups.isEmpty || (Self.groupHapticStartEnabled && tuning == nil) else {
-            groupGamepadStatus = "Group Trackpad output requires an experimental standard MIDI start."
+        guard hapticGroups.isEmpty || (Self.groupHapticStartEnabled &&
+                (tuning == nil || (Self.groupTunedHapticStartEnabled && confirmedTuning && remoteTransport == nil))) else {
+            groupGamepadStatus = "Group Trackpad output requires an enabled standard or explicitly confirmed local MPE start."
             return
         }
         let remoteEnabled = remoteTransport != nil
@@ -301,8 +310,13 @@ final class StudioController: ObservableObject {
         cancelStartupGreeting()
         let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
         if !hapticGroups.isEmpty {
-            guard (try? PerformanceGroupHapticProjection(profile:profile,selected:hapticGroups)) != nil,
-                  requireEngine(),driver != nil else {
+            let projection:PerformanceGroupHapticProjection?
+            if activation.tuning.isEmpty {
+                projection = try? .init(profile:profile,selected:hapticGroups)
+            } else {
+                projection = try? .init(profile:profile,selected:hapticGroups,preparedTuning:activation.tuning)
+            }
+            guard projection != nil,requireEngine(),driver != nil else {
                 groupGamepadStatus = "Selected group Trackpad output unavailable; Start refused."
                 return
             }
@@ -325,7 +339,8 @@ final class StudioController: ObservableObject {
         }
         do {
             try groupHost.startGamepads(profile:activation.profile,allowLayering:activation.allowLayering,
-                allowSurfaces:true,allowScalars:true,allowCamera:true,tuning:activation.tuning,allowRemote:activation.allowRemote,hapticGroups:hapticGroups)
+                allowSurfaces:true,allowScalars:true,allowCamera:true,tuning:activation.tuning,allowRemote:activation.allowRemote,hapticGroups:hapticGroups,
+                allowTunedHaptics:Self.groupTunedHapticStartEnabled && confirmedTuning)
             groupTunedConfiguration = tuning
         } catch {
             builderGamepads.stop()
