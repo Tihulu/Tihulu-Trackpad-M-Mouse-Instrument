@@ -403,6 +403,7 @@ final class StudioController: ObservableObject {
     private var touchMultiTouchEnabled = true
     private var touchMIDIChannel = 0
     private var touchSeparateChannels: DAWSurfaceChannels?
+    private var touchIndependentDAWSustain = false
 
     @Published private(set) var keyboardAuditRunning = false
     @Published private(set) var keyboardAuditResult:KeyboardOutputAudit?
@@ -2656,6 +2657,7 @@ final class StudioController: ObservableObject {
         multiTouch: Bool = true,
         midiChannel: Int = 0,
         separateChannels: DAWSurfaceChannels? = nil,
+        independentDAWSustain: Bool = false,
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
         guard !touchRunning, allowLivePerformance() else { return }
@@ -2691,6 +2693,7 @@ final class StudioController: ObservableObject {
         touchMultiTouchEnabled = multiTouch
         touchMIDIChannel = max(0, min(15, midiChannel))
         touchSeparateChannels = separateChannels
+        touchIndependentDAWSustain = separateChannels != nil && independentDAWSustain
         touchSustainSettings = sustainSettings
         touch.invalidatePendingSamples()
         touchSustainState.reset()
@@ -2733,6 +2736,7 @@ final class StudioController: ObservableObject {
 
     func stopTouch() {
         touchSeparateChannels = nil
+        touchIndependentDAWSustain = false
         midi?.releaseTouchSustain()
         touchSustainState.reset()
         touchInstrumentSustainActive = false
@@ -2753,10 +2757,22 @@ final class StudioController: ObservableObject {
         stopCaptureMonitorIfIdle()
     }
 
+    private func previewContactEdge(_ old: [TouchPerformanceState], _ next: [TouchPerformanceState]) -> Bool {
+        if old.count != next.count { return true }
+        return zip(old,next).contains { a,b in
+            a.contactID != b.contactID || a.surface != b.surface ||
+            a.isDown != b.isDown || a.isTouching != b.isTouching
+        }
+    }
+
     private func handleTouchStates(_ states: [TouchPerformanceState]) {
         liveTouchStates = states
         // Every accepted hardware frame reaches the musical path before UI.
         if touchRunning {
+            // Fixed independent pedals are committed before note edges in
+            // this same snapshot; legacy/MPE ordering remains unchanged.
+            let earlySustain = touchMIDIOutEnabled && touchIndependentDAWSustain
+            if earlySustain { updateTouchSustain(states) }
             if touchMIDIOutEnabled {
                 midi?.sendTouchStates(
                     states,
@@ -2767,10 +2783,11 @@ final class StudioController: ObservableObject {
                     separateChannels: touchSeparateChannels
                 )
             }
-            updateTouchSustain(states)
+            if !earlySustain { updateTouchSustain(states) }
         }
         guard instrumentPreviewRequested, states != touchStates,
-              touchPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty) else { return }
+              touchPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
+                  contactEdge:previewContactEdge(touchStates,states)) else { return }
         touchStates = states
         if let first = states.first(where: { $0.surface == .trackpad && $0.isTouching }) {
             touchContact = TrackpadContact(id:first.contactID,isDown:true,x:Float(first.x),y:Float(first.y),size:Float(first.pressure))
@@ -3024,7 +3041,8 @@ final class StudioController: ObservableObject {
         liveHelperStates = states
         defer {
             if helperPreviewRequested, states != midiHelperStates,
-               helperPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty) {
+               helperPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
+                   contactEdge:previewContactEdge(midiHelperStates,states)) {
                 midiHelperStates = states
             }
         }
@@ -3423,11 +3441,11 @@ final class StudioController: ObservableObject {
         if touchInstrumentSustainActive != instrumentSustained { touchInstrumentSustainActive = instrumentSustained }
         touch?.setSustainActive(snapshot.isActive && hapticsEnabled)
         if touchMIDIOutEnabled {
-            midi?.setTouchSustain(
-                snapshot.isActive,
-                baseChannel: touchMIDIChannel,
-                separateChannels: touchSeparateChannels
-            )
+            if let split = touchSeparateChannels {
+                midi?.setTouchSustainChannels(split.sustainTargets(snapshot,independent:touchIndependentDAWSustain))
+            } else {
+                midi?.setTouchSustain(snapshot.isActive,baseChannel:touchMIDIChannel)
+            }
         }
     }
 

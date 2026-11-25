@@ -4,9 +4,9 @@ public struct TouchPreviewCadence: Sendable {
     private var last: Double?
     public init() {}
     public mutating func reset() { last = nil }
-    public mutating func permits(now: Double, cleared: Bool) -> Bool {
+    public mutating func permits(now: Double, cleared: Bool, contactEdge: Bool = false) -> Bool {
         guard now.isFinite, now >= 0 else { return false }
-        if cleared || last.map({ now < $0 || now - $0 >= 1.0/60.0 }) ?? true {
+        if cleared || contactEdge || last.map({ now < $0 || now - $0 >= 1.0/60.0 }) ?? true {
             last = now
             return true
         }

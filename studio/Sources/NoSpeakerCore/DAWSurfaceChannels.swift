@@ -9,4 +9,14 @@ public struct DAWSurfaceChannels: Sendable, Equatable {
         self.magicMouse = magicMouse
     }
     public var all: Set<Int> { [trackpad,magicMouse] }
+
+    /// Shared is the legacy behavior. Independent mode maps each pedal to
+    /// its own fixed channel, including when no note is currently held.
+    public func sustainTargets(_ snapshot: MIDIHelperSustainSnapshot, independent: Bool) -> Set<Int> {
+        guard independent else { return snapshot.isActive ? all : [] }
+        var result: Set<Int> = []
+        if snapshot.trackpadActive { result.insert(trackpad) }
+        if snapshot.magicMouseActive { result.insert(magicMouse) }
+        return result
+    }
 }

@@ -644,6 +644,11 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.unlock()
         if canSend { sendSustainTransitions(commands) }
     }
+    /// Standard split mode has fixed channels; replace, never accumulate
+    /// previously held channels as the MPE sustain path must do.
+    public func setTouchSustainChannels(_ channels: Set<Int>) {
+        replaceSustain(.touch,channels:channels)
+    }
     public func releaseTouchSustain() { replaceSustain(.touch,channels:[]) }
 
     private func releaseAllOutgoingSustain() {
