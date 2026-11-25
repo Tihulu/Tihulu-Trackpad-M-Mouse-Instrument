@@ -25,6 +25,9 @@ public struct BoundedMIDIPlayback: Sendable {
     private var start: UInt64 = 0
     private var last: UInt64 = 0
     private var next = 0
+    // Each onset owns the immediately following off for its destination.
+    // Build once; avoid scanning the remaining schedule for every onset.
+    private let onsetEnds:[Int:UInt64]
 
     public init(clip input: MIDIClip) throws {
         let clip = try input.validated()
@@ -47,6 +50,17 @@ public struct BoundedMIDIPlayback: Sendable {
             }
             return a.command.destination.number < b.command.destination.number
         }
+        var nextOff:[SensorDestination:UInt64] = [:]
+        var ends:[Int:UInt64] = [:]
+        for index in events.indices.reversed() {
+            let event=events[index]
+            if event.command.value == 0 {
+                nextOff[event.command.destination]=event.offsetNS
+            } else if let end=nextOff.removeValue(forKey:event.command.destination) {
+                ends[index]=end
+            }
+        }
+        onsetEnds=ends
     }
 
     /// Begin once. No sends until the caller explicitly advances.
@@ -100,9 +114,7 @@ public struct BoundedMIDIPlayback: Sendable {
             }
             let cmd=event.command
             if cmd.value > 0 {
-                if events[(next+1)...].contains(where:{
-                    $0.command.destination == cmd.destination && $0.command.value == 0 && $0.offsetNS <= elapsed
-                }) {
+                guard let end=onsetEnds[next],end>elapsed else {
                     retire(.faulted,send:send); return
                 }
                 outstanding.insert(cmd.destination)
@@ -122,6 +134,12 @@ public struct BoundedMIDIPlayback: Sendable {
     /// Keep outstanding debt; never silently return a successful stop.
     public mutating func abort(send: (SensorCommand) -> Bool) {
         if state == .ready || state == .playing { retire(.faulted,send:send) }
+    }
+
+    /// A terminal result can be invalidated by subsequent sink identity
+    /// loss. Do not re-admit playback or retry against an unknown sink.
+    public mutating func invalidateTerminalResult() {
+        if state == .finished || state == .stopped { state = .faulted }
     }
 
     public mutating func retryCleanup(send: (SensorCommand) -> Bool) {

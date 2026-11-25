@@ -198,7 +198,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     let changed="TIHULU rest fixture "+UUID().uuidString
     try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,changed as CFString)==noErr)
     let report=try await running.value
-    #expect(report.state=="faulted" && report.outstandingNotes==0)
+    #expect(report.state=="faulted" && report.outstandingNotes==0 && !report.cleanupConfirmed)
     #expect(player.lifecycle.identityRetired && player.lifecycle.recoveryRequired)
     #expect(!player.lifecycle.running && player.lifecycle.sourceOpen)
     #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
@@ -239,6 +239,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,("TIHULU cleanup fixture "+UUID().uuidString) as CFString)==noErr)
     #expect(throws:NativeMIDIPlayback.Failure.self) { _=try player.retryCleanup() }
     #expect(player.lifecycle.identityRetired && player.lifecycle.recoveryRequired)
+    #expect(player.lifecycle.state=="faulted")
     try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,player.sourceName as CFString)==noErr)
     #expect(throws:NativeMIDIPlayback.Failure.self) { _=try player.retryCleanup() }
     #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }

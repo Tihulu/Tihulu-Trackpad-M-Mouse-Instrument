@@ -161,3 +161,35 @@ private func playbackClip() -> MIDIClip {
     #expect(player.state == .faulted && player.outstanding.isEmpty)
     #expect(try !player.begin(now:0))
 }
+
+@Test func boundedPlaybackIndexedOffRejectsExpiredRetriggerButKeepsFirstGate() throws {
+    let clip=MIDIClip(bpm:120,length:960,notes:[
+        .init(start:0,duration:96,channel:0,pitch:60,velocity:90),
+        .init(start:96,duration:1,channel:0,pitch:60,velocity:100),
+        .init(start:0,duration:960,channel:1,pitch:60,velocity:80)
+    ])
+    var player=try BoundedMIDIPlayback(clip:clip)
+    _=try player.begin(now:0)
+    var commands:[SensorCommand]=[]
+    player.advance(now:0){commands.append($0);return true}
+    player.advance(now:51_000_000){commands.append($0);return true}
+    #expect(player.state == .faulted)
+    #expect(commands.map(\.value)==[90,80,0,0])
+    #expect(commands[2].destination.channel==0 && commands[3].destination.channel==1)
+    #expect(player.outstanding.isEmpty)
+}
+
+@Test func boundedPlaybackTerminalInvalidationIsOneShotAndRetainsDebt() throws {
+    var player=try BoundedMIDIPlayback(clip:playbackClip())
+    _=try player.begin(now:0)
+    player.advance(now:0){_ in true}
+    player.stop{_ in false}
+    let debt=player.outstanding
+    #expect(player.state == .stopped && debt.count==2)
+    player.invalidateTerminalResult()
+    #expect(player.state == .faulted && player.outstanding==debt)
+    let restarted=try player.begin(now:1)
+    #expect(!restarted)
+    player.retryCleanup{_ in true}
+    #expect(player.state == .faulted && player.outstanding.isEmpty)
+}

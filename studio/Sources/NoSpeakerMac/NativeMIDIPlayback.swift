@@ -137,6 +137,11 @@ public final class NativeMIDIPlayback {
                 await Task.yield()
             }
         }
+        // A final check covers the last send and cancellation while sleeping.
+        if !gate.validate() {
+            player.abort { gate.send($0) }
+            player.invalidateTerminalResult()
+        }
         identityRetired=gate.retired
         return report(cancelled:stopRequested || Task.isCancelled)
     }
@@ -150,8 +155,15 @@ public final class NativeMIDIPlayback {
         // An empty note ledger is not evidence that the endpoint still
         // belongs to this session. Do not report successful recovery
         // against a retired or replaced source.
-        guard gate.validate() else { throw Failure.sourceIdentityLost }
+        guard gate.validate() else {
+            player.invalidateTerminalResult()
+            throw Failure.sourceIdentityLost
+        }
         player.retryCleanup { gate.send($0) }
+        guard gate.validate() else {
+            player.invalidateTerminalResult()
+            throw Failure.sourceIdentityLost
+        }
         return report(cancelled:wasCancelled)
     }
 
@@ -177,7 +189,7 @@ public final class NativeMIDIPlayback {
 
     private func report(cancelled:Bool) -> Report {
         .init(state:player.state.rawValue,cancelled:cancelled,
-              cleanupConfirmed:player.outstanding.isEmpty,
+              cleanupConfirmed:player.outstanding.isEmpty && !identityRetired && !disposalFailed,
               outstandingNotes:player.outstanding.count,receiverConfirmed:false)
     }
 
