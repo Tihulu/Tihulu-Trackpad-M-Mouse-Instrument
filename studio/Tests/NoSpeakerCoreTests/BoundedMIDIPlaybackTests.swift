@@ -221,3 +221,29 @@ private func playbackClip() -> MIDIClip {
     #expect(player.outstanding.isEmpty)
     player.advance(now:10_000_000_000){ _ in Issue.record("Faulted session emitted another edge");return false }
 }
+
+@Test func boundedSimulationChecksRetriggerPolyphonyAndTrailingRest() throws {
+    let schedule=try BoundedMIDIPlayback(clip:playbackClip())
+    let report=try BoundedMIDISimulation.run(schedule)
+    #expect(report.noteOns==3 && report.noteOffs==3)
+    #expect(report.peakConcurrentNotes==2 && report.durationNS==1_000_000_000)
+    #expect(report.completed && report.outstandingNotes==0 && !report.hardware && !report.receiverConfirmed)
+    #expect(schedule.state == .ready)
+}
+
+@Test func boundedSimulationRefusesPreviouslyStartedOrStoppedSchedule() throws {
+    var schedule=try BoundedMIDIPlayback(clip:playbackClip())
+    _=try schedule.begin(now:0)
+    #expect(throws:BoundedMIDISimulation.Failure.self) { _=try BoundedMIDISimulation.run(schedule) }
+    schedule.stop{_ in true}
+    #expect(throws:BoundedMIDISimulation.Failure.self) { _=try BoundedMIDISimulation.run(schedule) }
+}
+
+@Test func boundedSimulationChecksMaximumPolyphony() throws {
+    let notes=(0..<256).map {
+        MIDIClip.Note(start:0,duration:480,channel:$0/128,pitch:$0%128,velocity:90)
+    }
+    let report=try BoundedMIDISimulation.run(BoundedMIDIPlayback(clip:.init(bpm:120,length:19200,notes:notes)))
+    #expect(report.noteOns==256 && report.noteOffs==256 && report.peakConcurrentNotes==256)
+    #expect(report.outstandingNotes==0 && report.durationNS==10_000_000_000 && report.completed)
+}

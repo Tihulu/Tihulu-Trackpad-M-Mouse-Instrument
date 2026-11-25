@@ -238,7 +238,8 @@
       "api": [
         "NativeEngineDiagnostics",
         "NativeMIDIMonitor",
-        "BoundedMIDIObservation"
+        "BoundedMIDIObservation",
+        "BoundedMIDISimulation"
       ],
       "source": [
         "studio/Sources/NoSpeakerMac/NativeEngineDiagnostics.swift",
@@ -249,7 +250,8 @@
         "studio/Sources/NoSpeakerProcessSignals/ProcessStop.c",
         "studio/Sources/NoSpeakerProcessSignals/include/ProcessStop.h",
         "studio/Sources/NoSpeakerCore/BoundedMIDIPlayback.swift",
-        "studio/Sources/NoSpeakerCore/BoundedMIDIPlanInput.swift"
+        "studio/Sources/NoSpeakerCore/BoundedMIDIPlanInput.swift",
+        "studio/Sources/NoSpeakerCore/BoundedMIDISimulation.swift"
       ],
       "cli": [
         "capabilities",
@@ -259,9 +261,10 @@
         "gamepad sample --confirm",
         "midi monitor NAME SECONDS --confirm",
         "session probe SECONDS --confirm",
-        "midi plan JSON"
+        "midi plan JSON",
+        "midi simulate JSON"
       ],
-      "status": "read-only inventory, explicitly confirmed normalized controller snapshots and bounded aggregate MIDI receive observation; no live output or automatic hardware activation; foreground SIGINT/SIGTERM cancellation and portable no-hardware session probe; portable bounded nominal MIDI planning (no output)"
+      "status": "read-only inventory, explicitly confirmed normalized controller snapshots and bounded aggregate MIDI receive observation; no live output or automatic hardware activation; foreground SIGINT/SIGTERM cancellation and portable no-hardware session probe; portable bounded nominal MIDI planning (no output); deterministic offline note-lifecycle simulation"
     },
     {
       "id": "native-nominal-playback",

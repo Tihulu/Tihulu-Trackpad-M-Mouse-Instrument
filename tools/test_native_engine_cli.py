@@ -26,7 +26,7 @@ assert help_doc["schema"] == 1
 assert help_doc["product"] == "tihulu-mac-instrument-native"
 assert help_doc["platformSupported"] == mac
 assert help_doc["liveOutput"] is False and help_doc["permissionRequests"] is False
-assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]", "gamepad sample --confirm", "midi monitor NAME SECONDS --confirm", "session probe SECONDS --confirm", "midi plan JSON"}
+assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]", "gamepad sample --confirm", "midi monitor NAME SECONDS --confirm", "session probe SECONDS --confirm", "midi plan JSON", "midi simulate JSON"}
 for command in [("start",), ("midi", "send"), ("preflight", "--request-permissions"),
                 ("midi", "endpoints", "--names", "--send"), ("--unknown",),
                 ("midi", "monitor", "test", "1"), ("midi", "monitor", "test", "0", "--confirm"),
@@ -62,6 +62,14 @@ for bad in [wire.replace('"bpm": 120', '"bpm": 120, "bpm": 121'),
             wire.replace('"pitch": 60', r'"p\u0069tch": 60', 1),
             wire + " {}"]:
     invoke("midi", "plan", bad, success=False)
+simulation = invoke("midi", "simulate", wire)
+assert simulation["command"] == "midi simulate" and simulation["liveOutput"] is False
+assert simulation["result"] == {"noteOns": 3, "noteOffs": 3, "peakConcurrentNotes": 2,
+                                "durationNS": 1000000000, "outstandingNotes": 0,
+                                "completed": True, "hardware": False, "receiverConfirmed": False}
+for bad in ("", "{}", wire.replace('"pitch": 60', '"pitch": 60, "pitch": 61', 1)):
+    invoke("midi", "simulate", bad, success=False)
+invoke("midi", "simulate", wire, "--confirm", success=False)
 probe = invoke("session", "probe", "1", "--confirm")
 assert probe["command"] == "session probe" and probe["liveOutput"] is False
 assert probe["result"] == {"requestedSeconds": 1, "completed": True, "hardware": False}

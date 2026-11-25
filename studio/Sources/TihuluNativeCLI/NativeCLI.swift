@@ -21,7 +21,7 @@ struct TihuluNativeCLI {
         let platformSupported:Bool
         let liveOutput = false
         let permissionRequests = false
-        let commands = ["capabilities","preflight","midi endpoints [--names]","gamepad devices [--names]","gamepad sample --confirm","midi monitor NAME SECONDS --confirm","session probe SECONDS --confirm","midi plan JSON"]
+        let commands = ["capabilities","preflight","midi endpoints [--names]","gamepad devices [--names]","gamepad sample --confirm","midi monitor NAME SECONDS --confirm","session probe SECONDS --confirm","midi plan JSON","midi simulate JSON"]
     }
     struct Envelope<Payload:Encodable>: Encodable {
         let schema = 1
@@ -59,6 +59,14 @@ struct TihuluNativeCLI {
         }
         return .init(noteCount:clip.notes.count,eventCount:player.events.count,
                      durationNS:player.durationNS,peakConcurrentNotes:peak)
+    }
+
+    static func playbackSimulation(_ json:String) throws -> BoundedMIDISimulation.Report {
+        guard json.utf8.count<=BoundedMIDIPlanInput.maximumBytes else {
+            throw BoundedMIDIPlanInput.Failure.invalid
+        }
+        let (_,player)=try BoundedMIDIPlanInput.prepare(Data(json.utf8))
+        return try BoundedMIDISimulation.run(player)
     }
 
     struct SessionProbe:Encodable,Sendable {
@@ -126,6 +134,11 @@ struct TihuluNativeCLI {
             if args.count>=2 && Array(args.prefix(2)) == ["midi","plan"] {
                 guard args.count==3 else { throw CLIError("Use midi plan JSON; no live output.") }
                 try emit(Envelope(command:"midi plan",result:playbackPlan(args[2])))
+                return
+            }
+            if args.count>=2 && Array(args.prefix(2)) == ["midi","simulate"] {
+                guard args.count==3 else { throw CLIError("Use midi simulate JSON; no live output.") }
+                try emit(Envelope(command:"midi simulate",result:playbackSimulation(args[2])))
                 return
             }
             if args.count>=2 && Array(args.prefix(2)) == ["session","probe"] {
