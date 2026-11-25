@@ -81,13 +81,17 @@
     {
       "id": "tuning-mpe",
       "api": [
-        "AirTunedOutput"
+        "AirTunedOutput",
+        "CustomScale"
       ],
       "source": [
-        "studio/Sources/NoSpeakerCore/AirTunedOutput.swift"
+        "studio/Sources/NoSpeakerCore/AirTunedOutput.swift",
+        "studio/Sources/NoSpeakerCore/CustomScale.swift"
       ],
-      "cli": [],
-      "status": "library; separate group MPE not implemented"
+      "cli": [
+        "scale plan"
+      ],
+      "status": "offline pitch planning; separate group MPE not implemented"
     },
     {
       "id": "haptic-mixing",
@@ -97,8 +101,10 @@
       "source": [
         "studio/Sources/NoSpeakerCore/HapticFrameMixer.swift"
       ],
-      "cli": [],
-      "status": "library; hardware CLI planned"
+      "cli": [
+        "haptics mix"
+      ],
+      "status": "offline frame mix preview; hardware CLI planned"
     },
     {
       "id": "native-midi-touch",
