@@ -220,3 +220,42 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     let result=try draft.applying(to:profile)
     #expect(result.groups[0].patch.routes[0]==draft.routes[0])
 }
+
+@Test func mobileDraftRetargetNormalizesKindAndRefusesReservedNumbers() throws {
+    let group=PerformanceInstrumentGroup(name:"XY",patch:.init(routes:[
+        .init(id:"x",source:.phone,signal:.x,destination:.init(.controlChange,channel:3,number:74),
+              response:.init(minimum:0.2,maximum:0.8,smoothingMS:20,release:0.5))
+    ]))
+    let profile=PerformanceGroupProfile(groups:[group])
+    var draft=try PerformanceGroupMobileDraft(profile:profile,groupID:group.id,source:.phone)
+    let bad=draft.retarget("x",kind:.controlChange,number:101)
+    #expect(!bad && draft.routes==group.patch.routes)
+    let note=draft.retarget("x",kind:.note)
+    #expect(note && draft.routes[0].destination == .init(.note,channel:3,number:60))
+    #expect(draft.routes[0].response == nil)
+    let bend=draft.retarget("x",kind:.pitchBend)
+    #expect(bend && draft.routes[0].destination == .init(.pitchBend,channel:3))
+    let gain=draft.retarget("x",kind:.controlChange,number:7)
+    #expect(gain && draft.routes[0].response?.release==0)
+    let result=try draft.applying(to:profile)
+    #expect(result.groups[0].patch.routes==draft.routes)
+}
+
+@Test func mobileDraftRetargetKeepsBinaryAndPianoSurfaceRules() throws {
+    let group=PerformanceInstrumentGroup(name:"Keys and switch",patch:.init(routes:[
+        .init(id:"key",source:.phone,signal:.pianoKey0,destination:.init(.note,number:48)),
+        .init(id:"switch",source:.phone,signal:.pedalSwitch1,destination:.init(.controlChange,number:80))
+    ]))
+    let profile=PerformanceGroupProfile(groups:[group])
+    var draft=try PerformanceGroupMobileDraft(profile:profile,groupID:group.id,source:.phone)
+    let old=draft.routes
+    let wrong=draft.retarget("key",kind:.pitchBend)
+    let gain=draft.retarget("switch",kind:.controlChange,number:11)
+    #expect(!wrong && !gain && draft.routes==old)
+    #expect(!PerformanceGroupMobileDraft.allowedTargetNumbers(for:.pedalSwitch1,kind:.controlChange).contains(7))
+    #expect(!PerformanceGroupMobileDraft.allowedTargetNumbers(for:.x,kind:.controlChange).contains(64))
+    let changed=draft.retarget("switch",kind:.controlChange,number:81)
+    #expect(changed)
+    let result=try draft.applying(to:profile)
+    #expect(result.groups[0].patch.routes==draft.routes)
+}

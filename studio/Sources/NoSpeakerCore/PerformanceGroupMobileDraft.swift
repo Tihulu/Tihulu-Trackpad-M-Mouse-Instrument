@@ -68,6 +68,50 @@ public struct PerformanceGroupMobileDraft: Identifiable, Equatable, Sendable {
         return []
     }
 
+    /// MIDI numbers that can be selected without reserved channel-mode,
+    /// bank/RPN/NRPN selectors, or a binary switch that cannot return off.
+    public static func allowedTargetNumbers(for signal:SensorSignal,kind:SensorDestinationKind) -> [Int] {
+        guard allowedTargetKinds(for:signal).contains(kind) else { return [] }
+        switch kind {
+        case .note: return Array(0...127)
+        case .pitchBend,.sustain: return [0]
+        case .controlChange:
+            let reserved:Set<Int> = [0,6,32,38,64,96,97,98,99,100,101]
+            let isSwitch = signal == .pedalSwitch1 || signal == .pedalSwitch2
+            return (0...119).filter { !reserved.contains($0) && (!isSwitch || ![7,11].contains($0)) }
+        }
+    }
+
+    /// Change a target atomically. Preserve input calibration and gate
+    /// settings, but never carry a continuous response into a note/pedal
+    /// gate or accidentally retain a former target's release on kind change.
+    @discardableResult
+    public mutating func retarget(_ mappingID:String,kind:SensorDestinationKind,number:Int? = nil) -> Bool {
+        guard let index = routes.firstIndex(where:{ $0.id == mappingID }),
+              routes[index].source == source else { return false }
+        var copy = routes[index]
+        let choices = Self.allowedTargetNumbers(for:copy.signal,kind:kind)
+        guard !choices.isEmpty else { return false }
+        let old = copy.destination
+        let selected = number ?? (kind == old.kind && choices.contains(old.number) ? old.number :
+            (kind == .note ? 60 : kind == .controlChange ? 74 : 0))
+        guard choices.contains(selected) else { return false }
+        copy.destination = .init(kind,channel:old.channel,number:selected)
+        if !ContinuousResponse.isContinuous(copy.destination) {
+            copy.response = nil
+        } else if kind != old.kind {
+            copy.response = nil
+        }
+        if kind == .controlChange && [7,11].contains(selected) && copy.response?.release == nil {
+            var response = copy.response ?? .init()
+            response.release = 0
+            copy.response = response
+        }
+        guard InstrumentPatch.permits(copy),PerformanceGroupGamepadSession.permitsLiveControl(copy) else { return false }
+        routes[index] = copy
+        return true
+    }
+
     /// Add the unmapped controls of a family as one validated transaction.
     /// Existing routes and widget metadata are never overwritten. Refuse
     /// the entire operation if capacity or the two-family fence would fail.

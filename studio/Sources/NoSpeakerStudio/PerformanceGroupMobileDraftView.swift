@@ -54,15 +54,24 @@ struct PerformanceGroupMobileDraftView: View {
                         GroupBox {
                             VStack(alignment:.leading,spacing:5) {
                                 Text(route.signal.rawValue).font(.headline)
-                                Picker("MIDI target",selection:$route.destination.kind) {
+                                Picker("MIDI target",selection:Binding(
+                                    get:{ route.destination.kind },
+                                    set:{ kind in
+                                        if !draft.retarget(route.id,kind:kind) { message = "Target incompatible with current calibration." }
+                                    })) {
                                     ForEach(PerformanceGroupMobileDraft.allowedTargetKinds(for:route.signal),id:\.self) { kind in Text(kind.rawValue).tag(kind) }
                                 }
                                 Stepper("Channel \(route.destination.channel+1)",value:$route.destination.channel,in:0...15)
                                 if route.destination.kind == .note || route.destination.kind == .controlChange {
-                                    Stepper("Number \(route.destination.number)",value:$route.destination.number,in:0...(route.destination.kind == .note ? 127 : 119))
-                                } else {
-                                    Button("Set unused number to zero") { route.destination.number = 0 }
-                                        .disabled(route.destination.number == 0)
+                                    Picker("MIDI number",selection:Binding(
+                                        get:{ route.destination.number },
+                                        set:{ number in
+                                            if !draft.retarget(route.id,kind:route.destination.kind,number:number) { message = "MIDI target rejected." }
+                                        })) {
+                                        ForEach(PerformanceGroupMobileDraft.allowedTargetNumbers(for:route.signal,kind:route.destination.kind),id:\.self) { number in
+                                            Text(String(number)).tag(number)
+                                        }
+                                    }
                                 }
                                 if route.destination.kind == .note {
                                     Stepper("Velocity \(route.velocity)",value:$route.velocity,in:1...127)
@@ -90,17 +99,28 @@ struct PerformanceGroupMobileDraftView: View {
                                 if ContinuousResponse.isContinuous(route.destination) {
                                     Text("Release: " + String(route.response?.releaseValue(for:route.destination) ?? ContinuousResponse.defaultRelease(route.destination)))
                                         .font(.caption)
+                                    if route.signal != .pedalSwitch1 && route.signal != .pedalSwitch2 {
+                                        DisclosureGroup("Output range and smoothing") {
+                                            let response = Binding<ContinuousResponse>(
+                                                get:{ route.response ?? .init() },
+                                                set:{ route.response = $0 })
+                                            Slider(value:response.minimum,in:0...1,step:0.01) { Text("Output minimum") }
+                                            Slider(value:response.maximum,in:0...1,step:0.01) { Text("Output maximum") }
+                                            Text(String(format:"Output %.2f – %.2f",response.wrappedValue.minimum,response.wrappedValue.maximum)).font(.caption)
+                                            Stepper("Smoothing \(response.wrappedValue.smoothingMS) ms",value:response.smoothingMS,in:0...250,step:5)
+                                        }
+                                    }
                                     HStack {
                                         Button("Explicit zero release") {
                                             var response = route.response ?? .init()
                                             response.release = 0
                                             route.response = response
-                                        }
+                                        }.disabled(route.signal == .pedalSwitch1 || route.signal == .pedalSwitch2)
                                         Button("Explicit center release") {
                                             var response = route.response ?? .init()
                                             response.release = 0.5
                                             route.response = response
-                                        }
+                                        }.disabled(route.signal == .pedalSwitch1 || route.signal == .pedalSwitch2)
                                     }
                                 }
                                 if route.response != nil {
