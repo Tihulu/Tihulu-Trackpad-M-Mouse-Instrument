@@ -14,3 +14,7 @@ Evidence-only draft candidate, not a release or a merge of either development PR
 ## Acceptance
 
 All shared tests, native fixture inventory and each isolated fixture, CLI and consumer checks, experimental compile flags, app boundary and preview package checks must pass on this exact tree. Inspect actual logs. Any regression blocks integration. The original development PRs remain independent.
+
+## First integration failure and remediation
+
+Run 45709143202 used the initial main-target PR merge checkout (3365bf2, main base c504a8430e1a6d55573c8cd9f10f6a7465d3cbc6), before retargeting to the frozen QA base. The macOS compiler also exposed a real private-access mismatch in the integrated head: MIDIProcessClient was private while the SDK monitor and playback need module-internal access. The integrated source was re-read and corrected, with no widening to a public API. For this QA branch both jobs explicitly check out the event's exact PR head SHA and assert the checkout identity, then use it for bundle and DMG provenance. Original development branches and main are unaffected. Do not erase the failed run or classify the fix as passed before its own CI.

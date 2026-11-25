@@ -52,7 +52,7 @@ public enum MIDIHapticError: LocalizedError {
 /// process disposes its last MIDI client. After that, subsequent creation can
 /// return OSStatus -2 until process restart. Keep exactly one client alive for
 /// the lifetime of the app, including across MIDI mode switches and reconnects.
-private final class MIDIProcessClient: @unchecked Sendable {
+final class MIDIProcessClient: @unchecked Sendable {
     static let shared = MIDIProcessClient()
     private let lock = NSLock()
     private var retainedClient = MIDIClientRef()

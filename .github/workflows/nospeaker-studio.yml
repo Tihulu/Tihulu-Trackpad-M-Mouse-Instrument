@@ -40,6 +40,17 @@ jobs:
         working-directory: studio
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+      - name: Record and verify checkout provenance
+        env:
+          EXPECTED_SHA: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$EXPECTED_SHA"
+          echo "TIHULU_CHECKOUT_SHA=$actual" >> "$GITHUB_ENV"
+          echo "Verified checkout: $actual; tree: $(git rev-parse HEAD^{tree})"
       - name: Swift version
         run: swift --version
       - name: Remote browser lifecycle tests
@@ -57,6 +68,17 @@ jobs:
         working-directory: studio
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+      - name: Record and verify checkout provenance
+        env:
+          EXPECTED_SHA: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$EXPECTED_SHA"
+          echo "TIHULU_CHECKOUT_SHA=$actual" >> "$GITHUB_ENV"
+          echo "Verified checkout: $actual; tree: $(git rev-parse HEAD^{tree})"
       - name: Xcode and Swift versions
         run: |
           xcodebuild -version
@@ -157,7 +179,7 @@ jobs:
       - name: Build app bundle in installer mode
         env:
           TIHULU_BUILD_CHANNEL: ${{ github.ref == 'refs/heads/main' && 'stable' || 'preview' }}
-        run: NOSPEAKER_STUDIO_SKIP_TESTS=1 NOSPEAKER_STUDIO_BUILD_SHA="$GITHUB_SHA" ./scripts/build-app.sh
+        run: NOSPEAKER_STUDIO_SKIP_TESTS=1 NOSPEAKER_STUDIO_BUILD_SHA="$TIHULU_CHECKOUT_SHA" ./scripts/build-app.sh
       - name: Validate TIHULU app branding and icon
         run: |
           APP="dist/Tihulu Trackpad & M. Mouse Instrument.app"
@@ -197,8 +219,8 @@ jobs:
           cd dist
           shasum -a 256 Tihulu-0.3.0-preview.dmg > PREVIEW-SHA256SUMS
           cd ..
-          ./scripts/verify-preview-dmg.sh dist/Tihulu-0.3.0-preview.dmg dist/PREVIEW-SHA256SUMS "$GITHUB_SHA"
-          printf 'checkout_sha=%s\nhead_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_SHA" "$PREVIEW_HEAD_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > dist/PREVIEW-PROVENANCE.txt
+          ./scripts/verify-preview-dmg.sh dist/Tihulu-0.3.0-preview.dmg dist/PREVIEW-SHA256SUMS "$TIHULU_CHECKOUT_SHA"
+          printf 'checkout_sha=%s\nhead_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$TIHULU_CHECKOUT_SHA" "$PREVIEW_HEAD_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > dist/PREVIEW-PROVENANCE.txt
       - name: Upload preview DMG without publishing a release
         if: github.ref != 'refs/heads/main'
         uses: actions/upload-artifact@v4
