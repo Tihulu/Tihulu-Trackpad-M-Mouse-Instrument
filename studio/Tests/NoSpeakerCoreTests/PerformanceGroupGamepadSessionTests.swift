@@ -82,9 +82,10 @@ private func gamepadGroup(_ source: SensorSource) -> PerformanceInstrumentGroup 
     let neutral = try gamepadSnapshot()
     var output: [PerformanceGroupCommand] = []
     let sink: (PerformanceGroupCommand) -> Bool = { output.append($0); return true }
+    _ = engine.receive(.gamepad1,token:a,frame:neutral,now:0,send:sink)
+    _ = engine.receive(.gamepad2,token:b,frame:neutral,now:0,send:sink)
     for (source,token,value) in [(SensorSource.gamepad1,a,0.8),(SensorSource.gamepad2,b,0.3)] {
         let frame = try #require(GamepadFrame(buttons:Array(repeating:0,count:12),triggers:[value,0],sticks:[0,0,0,0]))
-        _ = engine.receive(source,token:token,frame:neutral,now:0,send:sink)
         _ = engine.receive(source,token:token,frame:frame,now:0.01,send:sink)
     }
     #expect(engine.activeSessions == 2)
