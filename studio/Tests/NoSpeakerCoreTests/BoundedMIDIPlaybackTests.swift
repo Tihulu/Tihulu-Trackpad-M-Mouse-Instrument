@@ -139,3 +139,25 @@ private func playbackClip() -> MIDIClip {
     #expect(player.state == .stopped)
     #expect(commands.isEmpty && player.outstanding.isEmpty)
 }
+
+@Test func boundedPlaybackExternalFaultPreservesOnlyOutstandingCleanup() throws {
+    var player=try BoundedMIDIPlayback(clip:playbackClip())
+    _=try player.begin(now:0)
+    var sent:[SensorCommand]=[]
+    player.advance(now:0){sent.append($0);return true}
+    player.abort{sent.append($0);return false}
+    #expect(player.state == .faulted)
+    #expect(sent.map(\.value)==[90,80,0,0])
+    #expect(player.outstanding.count==2)
+    player.retryCleanup{sent.append($0);return true}
+    #expect(player.outstanding.isEmpty)
+    #expect(sent.map(\.value)==[90,80,0,0,0,0])
+    #expect(try !player.begin(now:1))
+}
+
+@Test func boundedPlaybackExternalFaultBeforeStartSendsNothing() throws {
+    var player=try BoundedMIDIPlayback(clip:playbackClip())
+    player.abort{_ in Issue.record("Unexpected send before start");return false}
+    #expect(player.state == .faulted && player.outstanding.isEmpty)
+    #expect(try !player.begin(now:0))
+}
