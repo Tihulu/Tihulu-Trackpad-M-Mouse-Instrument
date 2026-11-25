@@ -110,11 +110,13 @@ public struct SensorMapping: Codable, Equatable, Identifiable, Sendable {
     public var hysteresis: Double
     public var velocity: Int
     public var response: ContinuousResponse?
+    public var pedalMode: GamepadPedalMode?
 
     public init(id: String, source: SensorSource, signal: SensorSignal,
                 destination: SensorDestination, calibration: SensorCalibration = .init(),
                 priority: Int = 0, threshold: Double = 0.55,
-                hysteresis: Double = 0.08, velocity: Int = 100, response: ContinuousResponse? = nil) {
+                hysteresis: Double = 0.08, velocity: Int = 100, response: ContinuousResponse? = nil,
+                pedalMode: GamepadPedalMode? = nil) {
         self.id = id
         self.source = source
         self.signal = signal
@@ -125,6 +127,7 @@ public struct SensorMapping: Codable, Equatable, Identifiable, Sendable {
         self.hysteresis = hysteresis
         self.velocity = velocity
         self.response = response
+        self.pedalMode = pedalMode
     }
 
     public var isValid: Bool {
@@ -134,7 +137,8 @@ public struct SensorMapping: Codable, Equatable, Identifiable, Sendable {
         threshold.isFinite && (0.05...1).contains(threshold) &&
         hysteresis.isFinite && (0...0.5).contains(hysteresis) && hysteresis < threshold &&
         (1...127).contains(velocity) &&
-        (response.map { ContinuousResponse.isContinuous(destination) && $0.isValid } ?? true)
+        (response.map { ContinuousResponse.isContinuous(destination) && $0.isValid } ?? true) &&
+        GamepadPedalMode.permits(self)
     }
 }
 
@@ -203,6 +207,7 @@ public struct SensorRouter: Sendable {
     private var emitted: [SensorDestination: Int] = [:]
     private var releaseValues: [SensorDestination: Int] = [:]
     private var sharedSwitches: Set<SensorDestination> = []
+    private var pedalPressed: Set<Owner> = []
 
     public init() {}
     public var sessionCount: Int { sessions.count }
@@ -214,12 +219,14 @@ public struct SensorRouter: Sendable {
         guard proposed.count <= Self.maxMappings, proposed.allSatisfy(\.isValid),
               Set(proposed.map(\.id)).count == proposed.count,
               let releases = ContinuousResponse.releaseValues(for: proposed),
-              let switches = AirHandsHelper.sharedSwitchTargets(proposed) else {
+              let switches = AirHandsHelper.sharedSwitchTargets(proposed),
+              let pedalSwitches = GamepadPedalMode.switchTargets(proposed) else {
             throw SensorRouterError.invalidMappings
         }
         mappings = proposed
         releaseValues = releases
-        sharedSwitches = switches
+        sharedSwitches = switches.union(pedalSwitches)
+        pedalPressed.removeAll()
     }
 
     public mutating func connect(_ source: SensorSource, now: Double) throws -> UUID {
@@ -259,7 +266,16 @@ public struct SensorRouter: Sendable {
             let owner = Owner(session: event.session, mapping: mapping.id)
             let value: Int
             var filtered = normalized
-            if (mapping.signal == .airStrike || AirStrumPerformance.isStringSignal(mapping.signal)) && mapping.destination.kind == .note {
+            if let mode = mapping.pedalMode {
+                let wasPressed = pedalPressed.contains(owner)
+                let pressed = normalized >= (wasPressed ? mapping.threshold-mapping.hysteresis : mapping.threshold)
+                if pressed { pedalPressed.insert(owner) }
+                else { pedalPressed.remove(owner) }
+                if mode == .toggle {
+                    guard pressed && !wasPressed else { continue }
+                    value = (contributions[owner]?.value ?? 0) > 0 ? 0 : 127
+                } else { value = pressed ? 127 : 0 }
+            } else if (mapping.signal == .airStrike || AirStrumPerformance.isStringSignal(mapping.signal)) && mapping.destination.kind == .note {
                 // Host onset detector supplies strength; route velocity caps output.
                 // No synthetic zero is used for release; remove ownership instead.
                 value = event.value > 0 ? max(1, Int((normalized * Double(mapping.velocity)).rounded())) : 0
@@ -293,8 +309,11 @@ public struct SensorRouter: Sendable {
             prior = event.sequence
         }
         guard session.timestamp.map({ now >= $0 }) ?? true else { return [] }
-        let ids = Set(mappings.filter { $0.source == session.source && signals.contains($0.signal) }.map(\.id))
-        contributions = contributions.filter { $0.key.session != id || !ids.contains($0.key.mapping) }
+        let released = mappings.filter { $0.source == session.source && signals.contains($0.signal) }
+        let ids = Set(released.map(\.id))
+        let unlatched = Set(released.filter { $0.pedalMode != .toggle }.map(\.id))
+        pedalPressed = pedalPressed.filter { $0.session != id || !ids.contains($0.mapping) }
+        contributions = contributions.filter { $0.key.session != id || !unlatched.contains($0.key.mapping) }
         for event in events { _ = accept(event,now:now) }
         return reconcile()
     }
@@ -309,6 +328,7 @@ public struct SensorRouter: Sendable {
     public mutating func releaseSignals(session id: UUID, signals: Set<SensorSignal>) -> [SensorCommand] {
         guard let session = sessions[id] else { return [] }
         let ids = Set(mappings.filter { $0.source == session.source && signals.contains($0.signal) }.map(\.id))
+        pedalPressed = pedalPressed.filter { $0.session != id || !ids.contains($0.mapping) }
         contributions = contributions.filter { $0.key.session != id || !ids.contains($0.key.mapping) }
         return reconcile()
     }
@@ -325,6 +345,7 @@ public struct SensorRouter: Sendable {
         let removed = ids.intersection(sessions.keys)
         guard !removed.isEmpty else { return [] }
         for id in removed { sessions.removeValue(forKey:id) }
+        pedalPressed = pedalPressed.filter { !removed.contains($0.session) }
         contributions = contributions.filter { !removed.contains($0.key.session) }
         return reconcile()
     }
@@ -338,6 +359,7 @@ public struct SensorRouter: Sendable {
 
     public mutating func panic() -> [SensorCommand] {
         sessions.removeAll()
+        pedalPressed.removeAll()
         contributions.removeAll()
         return reconcile()
     }

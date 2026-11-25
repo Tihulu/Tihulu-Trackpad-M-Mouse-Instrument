@@ -52,7 +52,8 @@ public enum GamepadMappingEditor {
     /// Replacement is scoped to the selected physical control. Other slot
     /// routes, including calibration and custom responses, remain untouched.
     public static func replace(in patch: InstrumentPatch, source: SensorSource, signal: SensorSignal,
-                               destinations: [SensorDestination], velocity: Int = 100) throws -> InstrumentPatch {
+                               destinations: [SensorDestination], velocity: Int = 100,
+                               pedalMode: GamepadPedalMode? = nil) throws -> InstrumentPatch {
         guard patch.isValid, GamepadFrame.sources.contains(source), GamepadFrame.signals.contains(signal),
               destinations.count <= 12, Set(destinations).count == destinations.count,
               (1...127).contains(velocity) else { throw SensorRouterError.invalidMappings }
@@ -66,9 +67,11 @@ public enum GamepadMappingEditor {
             let matches = previous.filter { $0.destination == target }
             if matches.count == 1, var existing = matches.first {
                 if target.kind == .note { existing.velocity = velocity }
+                existing.pedalMode = pedalMode
+                if pedalMode != nil { existing.calibration = .init(); existing.response = nil }
                 return existing
             }
-            return SensorMapping(id:UUID().uuidString,source:source,signal:signal,destination:target,velocity:velocity)
+            return SensorMapping(id:UUID().uuidString,source:source,signal:signal,destination:target,velocity:velocity,pedalMode:pedalMode)
         }
         guard next.isValid else { throw SensorRouterError.invalidMappings }
         return next
