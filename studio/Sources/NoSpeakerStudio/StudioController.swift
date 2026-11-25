@@ -674,7 +674,19 @@ final class StudioController: ObservableObject {
                     remoteTransport.start()
                     remotePage?.start()
                 }
-                startPatchWatchdog()
+                // Arm from a real initial snapshot, then process native value
+                // changes without waiting for the 20 ms watchdog.
+                if let token = patchNativeToken {
+                    for source in sources.intersection(GamepadFrame.sources) {
+                        receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token)
+                    }
+                    if patchRunning {
+                        builderGamepads.beginEvents { [weak self] source,frame in
+                            self?.receiveBuilderGamepad(source:source,frame:frame,token:token)
+                        }
+                    }
+                }
+                if patchRunning { startPatchWatchdog() }
             } else if patchSimulation.hasDualCamera || patchSimulation.hasHelperHands {
                 startAirDebugWatchdog()
             }
@@ -908,6 +920,12 @@ final class StudioController: ObservableObject {
         recordPatchCommands(commands)
     }
 
+    private func receiveBuilderGamepad(source:SensorSource,frame:GamepadFrame?,token:UUID) {
+        guard patchRunning, patchPhysical, patchNativeToken == token else { return }
+        let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:ProcessInfo.processInfo.systemUptime)
+        recordPatchCommands(commands)
+    }
+
     private func startPatchWatchdog() {
         guard let mailbox = patchMailbox else { return }
         patchWatchdog = Task { [weak self] in
@@ -955,9 +973,8 @@ final class StudioController: ObservableObject {
         guard patchRunning else { return }
         let gamepadSources = Set(instrumentPatch.routes.map(\.source)).intersection(GamepadFrame.sources)
         for source in gamepadSources.sorted(by:{ $0.rawValue < $1.rawValue }) {
-            let frame = builderGamepads.read(source)
-            let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:ProcessInfo.processInfo.systemUptime)
-            recordPatchCommands(commands)
+            guard let token = patchNativeToken else { return }
+            receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token)
             guard patchRunning else { return }
         }
         let expired = patchPhysicalRuntime.expire(now: ProcessInfo.processInfo.systemUptime)
