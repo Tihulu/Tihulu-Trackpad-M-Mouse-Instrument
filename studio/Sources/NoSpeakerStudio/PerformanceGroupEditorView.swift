@@ -204,6 +204,12 @@ struct PerformanceGroupEditorView: View {
         (saved.layeredInputs.isEmpty || allowLayering)
     }
 
+    private var canStartTunedRemoteGroups:Bool {
+        guard canStartRemoteGroups,StudioController.groupMPEStartEnabled,
+              studio.groupRegisteredIDs.isEmpty,let tuningPreview else { return false }
+        return (try? tuningPreview.plan(matching:saved)) != nil
+    }
+
     private var canStartTunedGroups: Bool {
         guard StudioController.groupMPEStartEnabled, canStartGroups,
               studio.groupRegisteredIDs.isEmpty, let tuningPreview else { return false }
@@ -307,8 +313,9 @@ struct PerformanceGroupEditorView: View {
                     Text("Mobile group Start is disabled in this build.").font(.caption).foregroundStyle(.orange)
                 }
                 if supportedRemoteProfile && StudioController.groupRemoteStartEnabled {
-                    PerformanceGroupRemotePanel(sources:remoteSources,canStart:canStartRemoteGroups) { transport,page,confirmed in
-                        startSavedGroups(remoteTransport:transport,remotePage:page,confirmedLAN:confirmed)
+                    PerformanceGroupRemotePanel(sources:remoteSources,canStart:canStartRemoteGroups,
+                        tuning:tuningPreview,canStartTuned:canStartTunedRemoteGroups) { transport,page,confirmed,tuning in
+                        startSavedGroups(tuning:tuning,remoteTransport:transport,remotePage:page,confirmedLAN:confirmed)
                     }
                 }
                 if localSources.contains(.lid) {
@@ -402,7 +409,7 @@ struct PerformanceGroupEditorView: View {
     var body: some View {
         DisclosureGroup("Performance Studio - Instrument Groups (experimental)") {
             VStack(alignment:.leading,spacing:10) {
-                Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox, Trackpad, Magic Mouse, Touch Bar ribbon, lid and single-hand camera Helper profiles. Other sources still use the existing Builder.")
+                Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox, Trackpad, Magic Mouse, Touch Bar ribbon, lid and single-hand camera Helper profiles. Mobile groups and MPE require their separate experimental build gates.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Add empty group") { add(patch:.init()) }
