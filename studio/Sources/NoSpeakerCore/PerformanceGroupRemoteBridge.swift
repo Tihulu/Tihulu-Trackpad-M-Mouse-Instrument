@@ -33,7 +33,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         guard ready,!stopped,!session.retired,session.remoteSlots.contains(source),
               !session.boundSources.contains(source),
               !bindings.values.contains(where:{ $0.source == source }) else { throw RemoteTouchError.unavailable }
-        try pairing.issue(secret:secret,source:source,now:now)
+        try pairing.issue(secret:secret,source:source,now:now,allowGroupSlots:true)
         invitationIssuedAt = now
     }
 

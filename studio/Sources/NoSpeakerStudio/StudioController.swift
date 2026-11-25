@@ -312,7 +312,7 @@ final class StudioController: ObservableObject {
         groupStoppedIDs = []
         refreshGroupOutputState()
         do {
-            for source in sources.subtracting([.phone,.tablet]).sorted(by:{ $0.rawValue < $1.rawValue }) {
+            for source in sources.subtracting(Set(SensorSource.groupRemoteSources)).sorted(by:{ $0.rawValue < $1.rawValue }) {
                 groupGamepadTokens[source] = try groupHost.bindGamepad(source,now:ProcessInfo.processInfo.systemUptime)
             }
         } catch {

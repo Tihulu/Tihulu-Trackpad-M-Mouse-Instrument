@@ -32,7 +32,7 @@ public struct PerformanceGroupActivationPlan: Sendable {
             throw AdmissionError.cleanupRequired
         }
         let hasRemote = profile.groups.contains { group in
-            group.patch.routes.contains { $0.source == .phone || $0.source == .tablet }
+            group.patch.routes.contains { $0.source.isGroupRemote }
         }
         guard hasRemote == allowRemote else { throw AdmissionError.remoteModeMismatch }
         guard PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true,

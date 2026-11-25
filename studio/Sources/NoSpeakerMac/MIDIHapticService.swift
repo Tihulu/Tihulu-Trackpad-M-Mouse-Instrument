@@ -1290,7 +1290,7 @@ public final class PerformanceGroupMIDIHost {
     }
 
     public func bindGamepad(_ source: SensorSource, now: Double) throws -> UUID {
-        guard source != .phone,source != .tablet else { throw RemoteTouchError.unavailable }
+        guard !source.isGroupRemote else { throw RemoteTouchError.unavailable }
         guard var state = gamepads else { throw HostError.notStarted }
         let token = try state.bind(source,now:now)
         gamepads = state

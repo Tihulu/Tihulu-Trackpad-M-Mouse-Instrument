@@ -113,10 +113,36 @@ struct PerformanceGroupEditorView: View {
                     Text("No mappings yet.").font(.caption).foregroundStyle(.secondary)
                 }
                 groupActions(group)
+                remoteRetargetMenu(group)
                 Button("Replace draft mappings from Builder") { replaceMappings(group.id) }
                     .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
             }
         }.disabled(readFailed || editingLocked)
+    }
+
+    /// Change a copied Builder group's mobile source without exposing
+    /// group-only sources in the legacy Builder source picker.
+    @ViewBuilder private func remoteRetargetMenu(_ group:PerformanceInstrumentGroup) -> some View {
+        let used = Set(profile.groups.flatMap { $0.patch.routes.map(\.source) })
+        let original = SensorSource.groupRemoteSources.filter { source in
+            group.patch.routes.contains { $0.source == source }
+        }
+        let free = SensorSource.groupRemoteSources.filter { !used.contains($0) }
+        if !original.isEmpty {
+            Menu("Assign mobile slot") {
+                ForEach(original,id:\.self) { from in
+                    Menu(from.rawValue) {
+                        ForEach(free,id:\.self) { to in
+                            Button(to.rawValue) {
+                                message = profile.reassignRemoteSource(groupID:group.id,from:from,to:to)
+                                    ? "Mobile source reassigned in draft. Save and review tuning before Start."
+                                    : "Slot reassignment refused; original group retained."
+                            }
+                        }
+                    }
+                }
+            }.disabled(free.isEmpty || editingLocked)
+        }
     }
 
     private func groupActions(_ group: PerformanceInstrumentGroup) -> some View {
@@ -153,7 +179,7 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var remoteSources:[SensorSource] {
-        [.phone,.tablet].filter { source in saved.groups.contains { group in
+        SensorSource.groupRemoteSources.filter { source in saved.groups.contains { group in
             group.patch.routes.contains { $0.source == source }
         } }
     }

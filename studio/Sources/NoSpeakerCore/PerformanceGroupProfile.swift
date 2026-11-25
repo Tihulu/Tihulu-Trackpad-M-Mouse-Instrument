@@ -53,6 +53,32 @@ public struct PerformanceGroupProfile: Codable, Equatable, Sendable {
         return add(.init(id:newID,name:original.name,patch:original.patch))
     }
 
+    /// Explicit offline retarget of an existing remote mapping family to an
+    /// unused slot. Preserve mapping IDs, destinations, calibration, layout
+    /// labels and the group's port identity. Never overwrite another slot.
+    @discardableResult
+    public mutating func reassignRemoteSource(groupID:UUID,from:SensorSource,to:SensorSource) -> Bool {
+        guard isValid,from.isGroupRemote,to.isGroupRemote,from != to,
+              let index = groups.firstIndex(where:{ $0.id == groupID }),
+              !groups.contains(where:{ $0.patch.routes.contains(where:{ $0.source == to }) }) else { return false }
+        let moved = groups[index].patch.routes.filter { $0.source == from }
+        guard !moved.isEmpty else { return false }
+        var next = self
+        for routeIndex in next.groups[index].patch.routes.indices where next.groups[index].patch.routes[routeIndex].source == from {
+            next.groups[index].patch.routes[routeIndex].source = to
+        }
+        if var layout = next.groups[index].patch.performanceLayout {
+            for widgetIndex in layout.widgets.indices where layout.widgets[widgetIndex].source == from {
+                layout.widgets[widgetIndex].source = to
+            }
+            next.groups[index].patch.performanceLayout = layout
+        }
+        let targetRoutes = next.groups[index].patch.routes.filter { $0.source == to }
+        guard next.isValid,PerformanceGroupRemoteSurface.modes(for:targetRoutes) != nil else { return false }
+        self = next
+        return true
+    }
+
     /// A source assigned to several planned ports is intentional layering only
     /// after explicit runtime consent. This projection never starts any source.
     public var layeredInputs: [PatchSimulation.Input] {

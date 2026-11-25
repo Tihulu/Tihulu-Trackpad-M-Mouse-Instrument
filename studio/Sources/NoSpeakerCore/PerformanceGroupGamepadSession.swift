@@ -132,12 +132,12 @@ public struct PerformanceGroupGamepadSession: Sendable {
                                 allowScalars:Bool = false, allowCamera:Bool = false,
                                 allowRemote:Bool = false) -> Bool {
         let routes = profile.groups.flatMap { $0.patch.routes }
-        let remote = Dictionary(grouping:routes.filter { $0.source == .phone || $0.source == .tablet },by:{ $0.source })
+        let remote = Dictionary(grouping:routes.filter { $0.source.isGroupRemote },by:{ $0.source })
         guard remote.isEmpty || (allowRemote && remote.values.allSatisfy({ PerformanceGroupRemoteSurface.modes(for:$0) != nil })) else { return false }
         return profile.isValid && !routes.isEmpty && routes.allSatisfy {
             guard permitsLiveControl($0) else { return false }
             if GamepadFrame.sources.contains($0.source) { return GamepadFrame.permits($0) }
-            if $0.source == .phone || $0.source == .tablet { return allowRemote }
+            if $0.source.isGroupRemote { return allowRemote }
             if allowCamera, $0.source == .camera {
                 return [.x,.y,.gesture].contains($0.signal) &&
                     ContinuousResponse.isContinuous($0.destination)
@@ -158,7 +158,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         let routes = profile.groups.flatMap { $0.patch.routes }
         mapped = Dictionary(grouping:routes,by:{ $0.source }).mapValues { Set($0.map(\.signal)) }
-        remoteModes = Dictionary(grouping:routes.filter { $0.source == .phone || $0.source == .tablet },by:{ $0.source })
+        remoteModes = Dictionary(grouping:routes.filter { $0.source.isGroupRemote },by:{ $0.source })
             .compactMapValues { PerformanceGroupRemoteSurface.modes(for:$0) }
         smoothed = Set(routes.filter { ($0.response?.smoothingMS ?? 0) > 0 }.map(\.source))
         if tuning.isEmpty {

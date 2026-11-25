@@ -14,7 +14,7 @@ public enum RemotePiano {
 
     public static func permits(_ route: SensorMapping) -> Bool {
         guard signals.contains(route.signal) else { return true }
-        guard route.source == .phone || route.source == .tablet,
+        guard route.source.isGroupRemote,
               (route.calibration.apply(1) ?? -1) >= route.threshold else { return false }
         return route.signal == .pianoSustain ? route.destination.kind == .sustain : route.destination.kind == .note
     }

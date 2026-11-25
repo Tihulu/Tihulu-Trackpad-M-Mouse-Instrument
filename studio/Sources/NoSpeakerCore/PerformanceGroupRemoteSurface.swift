@@ -20,7 +20,7 @@ public enum PerformanceGroupRemoteSurface: String, CaseIterable, Sendable {
 
     public static func modes(for routes:[SensorMapping]) -> Set<Self>? {
         guard !routes.isEmpty, routes.allSatisfy({
-            ($0.source == .phone || $0.source == .tablet) &&
+            $0.source.isGroupRemote &&
             PerformanceGroupGamepadSession.permitsLiveControl($0) &&
             $0.pedalMode == nil
         }) else { return nil }

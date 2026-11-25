@@ -99,7 +99,7 @@ public struct PhysicalPatchRuntime: Sendable {
     public static func supportsHybrid(_ patch:InstrumentPatch, synthetic:SensorSource, allowRemote:Bool = false) -> Bool {
         let sources = Set(patch.routes.map(\.source))
         let remote = sources.intersection([.phone,.tablet])
-        guard patch.isValid,[SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external,.camera].contains(synthetic),
+        guard patch.isValid,!sources.contains(where: { $0.isGroupOnlyRemote }),[SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external,.camera].contains(synthetic),
               sources.subtracting(remote).subtracting(GamepadFrame.sources).count <= reservedLocalSessions,
               allowRemote == !remote.isEmpty else { return false }
         let syntheticRoutes = patch.routes.filter { $0.source == synthetic }

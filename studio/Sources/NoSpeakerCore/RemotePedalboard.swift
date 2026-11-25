@@ -18,7 +18,7 @@ public enum RemotePedalboard {
     }
     public static func permits(_ route: SensorMapping) -> Bool {
         guard let index = signals.firstIndex(of: route.signal) else { return true }
-        guard route.source == .phone || route.source == .tablet else { return false }
+        guard route.source.isGroupRemote else { return false }
         if index < 3 { return ContinuousResponse.isContinuous(route.destination) }
         if index == 3 {
             return route.destination.kind == .sustain && (route.calibration.apply(1) ?? -1) >= route.threshold

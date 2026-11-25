@@ -54,7 +54,7 @@ struct SensorMappingLabView: View {
                         HStack {
                             Text("Source A").frame(width: 75, alignment: .leading)
                             Picker("Source A", selection: $sourceA) {
-                                ForEach(SensorSource.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                                ForEach(SensorSource.legacyBuilderSources, id: \.self) { Text($0.rawValue).tag($0) }
                             }.labelsHidden()
                             Image(systemName: "arrow.right")
                             Picker("Target A", selection: $targetA) {
@@ -64,7 +64,7 @@ struct SensorMappingLabView: View {
                         HStack {
                             Text("Source B").frame(width: 75, alignment: .leading)
                             Picker("Source B", selection: $sourceB) {
-                                ForEach(SensorSource.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                                ForEach(SensorSource.legacyBuilderSources, id: \.self) { Text($0.rawValue).tag($0) }
                             }.labelsHidden()
                             Image(systemName: "arrow.right")
                             Picker("Target B", selection: $targetB) {
