@@ -221,15 +221,97 @@ def tokens(text):
     return re.findall(r"[a-z0-9_]+", text.lower())
 
 
-def search(args):
-    with Path(args.index).open("rb") as stream:
+def read_index(path):
+    with Path(path).open("rb") as stream:
         data = stream.read(MAX_INDEX + 1)
     if len(data) > MAX_INDEX:
         raise ValueError("Index exceeds size limit")
     doc = json.loads(data)
     meta, rows = doc["metadata"], doc["chunks"]
-    if meta["schema"] != SCHEMA or not 0 < len(rows) <= MAX_CHUNKS:
+    if (not isinstance(meta, dict) or meta["schema"] != SCHEMA
+            or not isinstance(rows, list) or not 0 < len(rows) <= MAX_CHUNKS
+            or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", meta["commit"])
+            or meta["mode"] not in {"lexical", "semantic"}):
         raise ValueError("Unsupported or invalid index")
+    if meta["mode"] == "semantic":
+        dimension = meta["dimension"]
+        if (type(dimension) is not int or not 1 <= dimension <= 4096
+                or len(rows) * dimension > 8000000
+                or not re.fullmatch(r"[0-9a-f]{64}", meta["model_sha256"])):
+            raise ValueError("Invalid semantic index metadata")
+    else:
+        if meta["dimension"] is not None or meta["model_sha256"] is not None:
+            raise ValueError("Invalid lexical index metadata")
+    for row in rows:
+        if (not isinstance(row, dict) or not isinstance(row["path"], str)
+                or not allowed(row["path"])
+                or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", row["blob"])
+                or type(row["start"]) is not int or type(row["end"]) is not int
+                or not 1 <= row["start"] <= row["end"] <= MAX_FILE
+                or not isinstance(row["text"], str)
+                or len(row["text"].encode("utf-8")) > 24000
+                or row["end"] - row["start"] + 1 != len(row["text"].split("\n"))):
+            raise ValueError("Invalid source row")
+        if meta["mode"] == "semantic":
+            if not isinstance(row.get("embedding"), list) or len(row["embedding"]) != dimension:
+                raise ValueError("Invalid stored embedding dimension")
+            if any(type(v) not in (int, float) or not math.isfinite(v) for v in row["embedding"]):
+                raise ValueError("Invalid stored embedding value")
+        elif "embedding" in row:
+            raise ValueError("Unexpected embedding in lexical index")
+    return meta, rows
+
+
+def verify_sources(repo, meta, rows):
+    """Check source claims against committed Git objects, not working files.
+
+    This verifies text provenance, not retrieval completeness, embedding
+    accuracy or whether any instructions in the source should be followed.
+    """
+    root = Path(repo).resolve(strict=True)
+    commit = git(root, "rev-parse", "--verify", "--end-of-options", meta["commit"] + "^{commit}").decode().strip()
+    if commit != meta["commit"]:
+        raise ValueError("Commit identity mismatch")
+    tree = {}
+    for entry in git(root, "ls-tree", "-r", "-z", "--full-tree", commit).split(b"\0"):
+        if not entry:
+            continue
+        fields, name = entry.split(b"\t", 1)
+        mode, kind, oid = fields.decode("ascii").split()
+        path = name.decode("utf-8", errors="strict")
+        if kind == "blob" and mode in {"100644", "100755"} and allowed(path):
+            tree[path] = oid
+    cached = {}
+    total = 0
+    for row in rows:
+        if tree.get(row["path"]) != row["blob"]:
+            raise ValueError("Source path/blob mismatch: " + row["path"])
+        oid = row["blob"]
+        if oid not in cached:
+            size = int(git(root, "cat-file", "-s", oid))
+            total += size
+            if size > MAX_FILE or total > MAX_SOURCE:
+                raise ValueError("Source verification budget exceeded")
+            cached[oid] = git(root, "cat-file", "blob", oid).decode("utf-8").splitlines()
+        lines = cached[oid]
+        if (row["end"] > len(lines)
+                or "\n".join(lines[row["start"]-1:row["end"]]) != row["text"]):
+            raise ValueError("Source text/line mismatch: " + row["path"])
+    return {"commit": commit, "source_verified": True, "rows": len(rows),
+            "scope": "source provenance only"}
+
+
+def verify(args):
+    meta, rows = read_index(args.index)
+    return verify_sources(args.repo, meta, rows)
+
+
+def search(args):
+    meta, rows = read_index(args.index)
+    verified = False
+    if args.repo:
+        verify_sources(args.repo, meta, rows)
+        verified = True
     if not 1 <= args.limit <= 50 or not args.query.strip() or len(args.query) > 4096:
         raise ValueError("Invalid query or result limit")
     ranked = []
@@ -261,7 +343,7 @@ def search(args):
                 ranked.append((score, row))
         mode = "lexical"
     ranked.sort(key=lambda item: (-item[0], item[1]["path"], item[1]["start"]))
-    return {"commit": meta["commit"], "mode": mode, "results": [
+    return {"commit": meta["commit"], "mode": mode, "source_verified": verified, "results": [
         {**{k: row[k] for k in ("path", "blob", "start", "end", "text")}, "score": round(score, 6)}
         for score, row in ranked[:args.limit]]}
 
@@ -279,12 +361,16 @@ def main(argv=None):
     q.add_argument("--query", required=True)
     q.add_argument("--limit", type=int, default=8)
     q.add_argument("--model-dir")
+    q.add_argument("--repo", help="Verify source text against this local Git repository before retrieval")
+    v = sub.add_parser("verify")
+    v.add_argument("--index", required=True)
+    v.add_argument("--repo", default=".")
     args = parser.parse_args(argv)
     try:
-        result = build(args) if args.command == "build" else search(args)
+        result = {"build": build, "search": search, "verify": verify}[args.command](args)
         print(json.dumps(result, ensure_ascii=True, allow_nan=False))
         return 0
-    except (ValueError, OSError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
+    except (ValueError, OSError, KeyError, TypeError, OverflowError, subprocess.CalledProcessError) as exc:
         print("repo-index: " + str(exc), file=sys.stderr)
         return 2
 
