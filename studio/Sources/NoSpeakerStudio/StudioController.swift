@@ -157,6 +157,7 @@ final class StudioController: ObservableObject {
     @Published private(set) var groupDisposalCount = 0
     @Published private(set) var groupFaultIDs: Set<UUID> = []
     @Published private(set) var groupStoppedIDs: Set<UUID> = []
+    @Published private(set) var groupSourceStates: [SensorSource:PerformanceGroupGamepadSession.SourceState] = [:]
     private var groupGamepadTokens: [SensorSource:UUID] = [:]
     private var groupSurfaceMailbox: PatchSurfaceMailbox?
     private var groupHinge: MacBookHingeAngleSource?
@@ -173,6 +174,8 @@ final class StudioController: ObservableObject {
         if registered != groupRegisteredIDs { groupRegisteredIDs = registered }
         if cleanup != groupCleanupIDs { groupCleanupIDs = cleanup }
         if disposal != groupDisposalCount { groupDisposalCount = disposal }
+        let states = groupHost.localSourceStates
+        if states != groupSourceStates { groupSourceStates = states }
     }
 
     func startGroupGamepads(profile: PerformanceGroupProfile, allowLayering: Bool) {
@@ -269,6 +272,7 @@ final class StudioController: ObservableObject {
                 return
             }
         }
+        refreshGroupOutputState()
         groupGamepadStatus = "Group ports registered. Release controller controls and lift each touch surface before playing."
         for source in GamepadFrame.orderedSources where groupGamepadTokens[source] != nil {
             receiveGroupGamepad(source:source,frame:builderGamepads.read(source),run:token)
