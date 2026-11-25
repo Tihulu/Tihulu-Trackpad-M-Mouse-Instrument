@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SensorSource: String, Codable, CaseIterable, Sendable {
-    case trackpad, magicMouse, touchBar, lid, camera, microphone, phone, tablet, external
+    case trackpad, magicMouse, touchBar, lid, camera, microphone, phone, tablet, external, gamepad1, gamepad2
 }
 
 /// Adapters normalize physical units and assign the host's monotonic time.
@@ -24,6 +24,8 @@ public enum SensorSignal: String, Codable, CaseIterable, Sendable {
     case pianoKey18, pianoKey19, pianoKey20, pianoKey21, pianoKey22, pianoKey23, pianoKey24
     case pianoSustain
     case pedalExpression, pedalVolume, pedalWah, pedalSustain, pedalSwitch1, pedalSwitch2
+    case padA, padB, padX, padY, padLB, padRB, padLT, padRT
+    case padUp, padDown, padLeft, padRight, padLSX, padLSY, padRSX, padRSY, padLClick, padRClick
 }
 
 public struct SensorCalibration: Codable, Equatable, Sendable {

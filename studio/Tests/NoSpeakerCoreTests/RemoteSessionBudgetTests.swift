@@ -251,3 +251,16 @@ private func budgetFrame(_ sequence: Int, _ version: Int, _ kind: String, _ payl
     #expect(runtime.expire(now:1.6).filter { $0 == .init(note,value:0) }.count == 1)
     #expect(runtime.activeRouterSessionCount == 0)
 }
+
+@Test func gamepadSlotsReserveCapacityBeforeRemoteAdmission() throws {
+    var runtime = PhysicalPatchRuntime()
+    let controllers = [SensorSource.gamepad1,.gamepad2].map {
+        SensorMapping(id:$0.rawValue,source:$0,signal:.padA,destination:.init(.note,number:60))
+    }
+    try runtime.configure(.init(routes:capacityRoutes(.phone,all:true)+capacityRoutes(.tablet,all:false)+controllers),allowRemote:true)
+    #expect(runtime.reservedGamepadSessions == 2)
+    #expect(runtime.remoteSessionLimit == 9)
+    _ = try capacityPair(&runtime,.phone,1)
+    #expect(throws:RemoteTouchError.capacity) { try capacityPair(&runtime,.tablet,1.1) }
+    #expect(runtime.reservedRemoteSessions == 7)
+}

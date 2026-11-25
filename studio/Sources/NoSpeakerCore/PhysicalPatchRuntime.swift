@@ -20,6 +20,9 @@ public struct PhysicalPatchRuntime: Sendable {
     private var hybridReceipt: Double?
     private var sessions: [SensorSource: UUID] = [:]
     private var seen: [SensorSource: Double] = [:]
+    private var gamepadArmed:Set<SensorSource> = []
+    public var reservedGamepadSessions:Int { supported.intersection(GamepadFrame.sources).count }
+    public var remoteSessionLimit:Int { Self.maximumRemoteSessions-reservedGamepadSessions }
     private var sequence: UInt64 = 0
     private var motionSources: Set<SensorSource> = []
     private var touchSources: Set<SensorSource> = []
@@ -65,6 +68,7 @@ public struct PhysicalPatchRuntime: Sendable {
         patch.isValid && !patch.routes.isEmpty && patch.routes.allSatisfy {
             switch $0.source {
             case .trackpad, .magicMouse: return supportedSignals.contains($0.signal)
+            case .gamepad1,.gamepad2: return GamepadFrame.permits($0)
             case .lid: return $0.signal == .angle
             case .touchBar: return $0.signal == .x
             case .camera: return [.x,.y,.gesture,.contact].contains($0.signal) || AirDualHandPerformance.signals.contains($0.signal) || AirStrumPerformance.isStringSignal($0.signal) || AirHandsHelper.allSignals.contains($0.signal)
@@ -88,7 +92,7 @@ public struct PhysicalPatchRuntime: Sendable {
         let sources = Set(patch.routes.map(\.source))
         let remote = sources.intersection([.phone,.tablet])
         guard patch.isValid,[SensorSource.trackpad,.magicMouse,.touchBar,.lid,.external,.camera].contains(synthetic),
-              sources.subtracting(remote).count <= reservedLocalSessions,
+              sources.subtracting(remote).subtracting(GamepadFrame.sources).count <= reservedLocalSessions,
               allowRemote == !remote.isEmpty else { return false }
         let syntheticRoutes = patch.routes.filter { $0.source == synthetic }
         let simple:Set<SensorSignal> = [.x,.y,.contact,.contactSize,.pressure,.angle,.speed,.gesture,.expression]
@@ -144,6 +148,7 @@ public struct PhysicalPatchRuntime: Sendable {
         remoteEnabled = allowRemote
         pairing.clear()
         seen = [:]
+        gamepadArmed = []
         sequence = 0
     }
 
@@ -215,6 +220,39 @@ public struct PhysicalPatchRuntime: Sendable {
     public static func normalizedLid(_ degrees: Double) -> Double? {
         guard degrees.isFinite, (5...175).contains(degrees) else { return nil }
         return (degrees - 5) / 170
+    }
+
+    /// The adapter supplies a full snapshot of a previously bound controller.
+    /// Neutral frame required before first play or after loss/stall.
+    public mutating func receiveGamepad(source:SensorSource,frame:GamepadFrame?,now:Double) -> [SensorCommand] {
+        guard GamepadFrame.sources.contains(source),supported.contains(source) else { return [] }
+        guard let frame,now.isFinite,now >= 0 else { return releaseGamepad(source) }
+        if let last = seen[source],now < last || now-last >= Self.timeout {
+            return releaseGamepad(source)
+        }
+        seen[source] = now
+        if !gamepadArmed.contains(source) {
+            if frame.active.isEmpty { gamepadArmed.insert(source) }
+            return []
+        }
+        if sessions[source] == nil {
+            guard !frame.active.isEmpty else { return [] }
+            sessions[source] = try? router.connect(source,now:now)
+        }
+        guard let session = sessions[source] else { return [] }
+        var events:[SensorEvent] = []
+        for signal in GamepadFrame.signals {
+            guard let value = frame.active[signal] else { continue }
+            sequence &+= 1
+            events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:now))
+        }
+        router.heartbeat(session,now:now)
+        return router.ingestFrame(session:session,releasing:Set(GamepadFrame.signals).subtracting(frame.active.keys),events:events,now:now)
+    }
+    public mutating func releaseGamepad(_ source:SensorSource) -> [SensorCommand] {
+        guard GamepadFrame.sources.contains(source) else { return [] }
+        gamepadArmed.remove(source); seen.removeValue(forKey:source)
+        return disconnect(source)
     }
 
     /// Scalar adapters share the same router and ownership as touch surfaces.
@@ -360,7 +398,7 @@ public struct PhysicalPatchRuntime: Sendable {
         // Reserve the full advertised source capability before admitting a peer.
         // Reservations persist until peer removal, not merely stream release.
         guard cost > 0 else { throw RemoteTouchError.unavailable }
-        guard reservedRemoteSessions + cost <= Self.maximumRemoteSessions else { throw RemoteTouchError.capacity }
+        guard reservedRemoteSessions + cost <= remoteSessionLimit else { throw RemoteTouchError.capacity }
         let id = UUID()
         remotePeers[id] = RemoteTouchPeer(source: source, now: now, mappingDetails: invitation.mappingDetails, mappingLabels: invitation.mappingLabels)
         return id
@@ -647,6 +685,7 @@ public struct PhysicalPatchRuntime: Sendable {
         }.sorted { $0.rawValue < $1.rawValue }
         var removed: Set<UUID> = []
         for source in stale {
+            if GamepadFrame.sources.contains(source) { gamepadArmed.remove(source); seen.removeValue(forKey:source) }
             if let id = sessions.removeValue(forKey:source) { removed.insert(id) }
         }
         let expiredPeers = remotePeers.filter { $0.value.expired(now:now) }.map(\.key)
@@ -689,6 +728,7 @@ public struct PhysicalPatchRuntime: Sendable {
         sessions = [:]
         hybridSource = nil; hybridInputs = []; hybridSession = nil; hybridReceipt = nil
         seen = [:]
+        gamepadArmed = []
         supported = []
         motionSources = []
         touchSources = []

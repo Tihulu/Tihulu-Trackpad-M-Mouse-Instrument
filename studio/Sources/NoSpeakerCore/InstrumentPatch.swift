@@ -13,7 +13,7 @@ public struct InstrumentPatch: Codable, Equatable, Sendable {
     }
 
     public static func permits(_ route: SensorMapping) -> Bool {
-        guard route.isValid, AirDualHandPerformance.permits(route), AirStrumPerformance.permits(route), AirHandsHelper.permits(route), RemoteDrumPads.permits(route), RemotePiano.permits(route), RemotePedalboard.permits(route) else { return false }
+        guard route.isValid, GamepadFrame.permits(route), AirDualHandPerformance.permits(route), AirStrumPerformance.permits(route), AirHandsHelper.permits(route), RemoteDrumPads.permits(route), RemotePiano.permits(route), RemotePedalboard.permits(route) else { return false }
         // Protect channel configuration and bank switching in generic patches.
         return route.destination.kind != .controlChange ||
             ![0,6,32,38,96,97,98,99,100,101].contains(route.destination.number)
