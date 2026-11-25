@@ -15,7 +15,7 @@ struct PerformanceGroupTuningPreviewView: View {
 
     init(profile:PerformanceGroupProfile,locked:Bool,
          configuration:Binding<PerformanceGroupTuningConfiguration?>,
-         draft:Binding<PerformanceGroupTuningDraft> = .constant(.init())) {
+         draft:Binding<PerformanceGroupTuningDraft>) {
         self.profile = profile
         self.locked = locked
         self._configuration = configuration
