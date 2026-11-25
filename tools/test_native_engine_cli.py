@@ -158,4 +158,18 @@ else:
                     ("midi", "monitor", "test", "1", "--confirm")]:
         assert "requires macOS" in invoke(*command, success=False)
 
+# Directly compile and run the actual C signal bridge, not a reimplementation.
+# The helper tests both deterministic orders at the terminal boundary.
+from pathlib import Path
+import tempfile
+root = Path(__file__).resolve().parent.parent
+bridge = root / "studio" / "Sources" / "NoSpeakerProcessSignals"
+with tempfile.TemporaryDirectory(prefix="tihulu-process-stop-") as temp:
+    fixture = Path(temp) / "stop-boundary"
+    subprocess.run(["cc", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror",
+                    "-I", str(bridge / "include"), str(bridge / "ProcessStop.c"),
+                    str(root / "tools" / "fixtures" / "test_process_stop.c"), "-o", str(fixture)],
+                   check=True, timeout=30)
+    subprocess.run([str(fixture)], check=True, timeout=5)
+print("Native C process-stop terminal boundary tests passed.")
 print("Native CLI capability, read-only boundary and platform tests passed.")
