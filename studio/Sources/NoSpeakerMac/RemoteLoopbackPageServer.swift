@@ -135,6 +135,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pianoBoard .blackKey{top:0;height:60%;background:#222;color:white;border-color:#666;z-index:2}
 #pianoBoard button[data-scale=true]{border-bottom:7px solid #79a8d2}
 #pianoBoard button[aria-pressed=true],#pianoSustain[aria-pressed=true]{background:#286b50;color:white;border-color:#79c9a5}
+#pianoBoard[data-strips=true]{display:flex;gap:3px;height:clamp(180px,40vh,340px)}
+#pianoBoard[data-strips=true] button{position:static;flex:1 1 0;min-width:0;width:auto!important;height:100%;border-radius:8px;background:#27394a;color:white;font-size:clamp(10px,2vw,16px);padding:0 0 12px}
+#pianoBoard[data-strips=true] button[aria-pressed=true]{background:#286b50;border-color:#79c9a5}
 #pianoBoard button:focus-visible{outline:3px solid #e5a33b;outline-offset:-4px}
 #pedalGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 #pedalGrid section{border:1px solid #777;border-radius:10px;padding:8px;min-width:0}
@@ -168,6 +171,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <button id="octaveDown" disabled>Octave −</button><span id="octaveLabel">C3–C4</span><button id="octaveUp" disabled>Octave +</button>
 <label for="pianoScale">Scale guide (visual only)</label><select id="pianoScale"><option value="all">Chromatic</option><option value="major">Major</option><option value="minor">Natural minor</option><option value="pentatonic">Major pentatonic</option></select>
 <label for="pianoRoot">Root note</label><select id="pianoRoot"><option value="0">C</option><option value="1">C♯</option><option value="2">D</option><option value="3">D♯</option><option value="4">E</option><option value="5">F</option><option value="6">F♯</option><option value="7">G</option><option value="8">G♯</option><option value="9">A</option><option value="10">A♯</option><option value="11">B</option></select>
+<button id="pianoStrips" aria-pressed="false" disabled>Note strips</button>
+<small id="pianoStripHint" hidden>Slide between assigned notes or hold multiple fingers. Lift to release; leaving the surface releases that finger. Discrete notes only, no independent pitch bend. Change layouts when all notes and pedal are released.</small>
 <div id="pianoBoard" aria-label="Piano keyboard"><button id="piano0" class="whiteKey" type="button" style="left:0%;width:12.5%" aria-pressed="false" disabled></button><button id="piano2" class="whiteKey" type="button" style="left:12.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano4" class="whiteKey" type="button" style="left:25%;width:12.5%" aria-pressed="false" disabled></button><button id="piano5" class="whiteKey" type="button" style="left:37.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano7" class="whiteKey" type="button" style="left:50%;width:12.5%" aria-pressed="false" disabled></button><button id="piano9" class="whiteKey" type="button" style="left:62.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano11" class="whiteKey" type="button" style="left:75%;width:12.5%" aria-pressed="false" disabled></button><button id="piano12" class="whiteKey" type="button" style="left:87.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano1" class="blackKey" type="button" style="left:8.6%;width:7.8%" aria-pressed="false" disabled></button><button id="piano3" class="blackKey" type="button" style="left:21.1%;width:7.8%" aria-pressed="false" disabled></button><button id="piano6" class="blackKey" type="button" style="left:46.1%;width:7.8%" aria-pressed="false" disabled></button><button id="piano8" class="blackKey" type="button" style="left:58.6%;width:7.8%" aria-pressed="false" disabled></button><button id="piano10" class="blackKey" type="button" style="left:71.1%;width:7.8%" aria-pressed="false" disabled></button></div>
 <button id="pianoSustain" type="button" aria-pressed="false" disabled>Sustain (hold)</button>
 <small>Hold multiple keys or the pedal. Lift to release. Octave changes are available only after all piano messages are acknowledged. Scale guide does not alter MIDI routing.</small></section>
@@ -524,6 +529,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const octaveDown=get("octaveDown"),octaveUp=get("octaveUp"),octaveLabel=get("octaveLabel"),pianoScale=get("pianoScale"),pianoRoot=get("pianoRoot");
   const pitchNames=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
   const scaleDegrees={all:[0,1,2,3,4,5,6,7,8,9,10,11],major:[0,2,4,5,7,9,11],minor:[0,2,3,5,7,8,10],pentatonic:[0,2,4,7,9]};
+  const pianoBoard=get("pianoBoard"),pianoStrips=get("pianoStrips"),pianoStripHint=get("pianoStripHint");
+  let strips=false;
   let pianoEnabled=false,pianoOctave=0,pianoOwners=new Map(),pianoQueue=[],pianoDesired=0,pianoSent=0,lastPianoSend=-Infinity,pianoEmergency=false;
   function pianoBusy(){return pianoDesired!==0||pianoSent!==0||pianoQueue.length!==0||pianoEmergency||pendingKind==="pianoKeys";}
   function syncPiano(){
@@ -533,13 +540,23 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     octaveUp.disabled=!admitted||!pianoEnabled||pianoOctave===1||!octaveAvailable(1)||pianoBusy();
     octaveLabel.textContent=verifiedScale()?"C"+(3+pianoOctave)+"–C"+(4+pianoOctave):"Keys "+(1+12*pianoOctave)+"–"+(13+12*pianoOctave);
     const scaleAllowed=verifiedScale();pianoScale.disabled=!scaleAllowed;pianoRoot.disabled=!scaleAllowed;
+    pianoStrips.disabled=!admitted||!Boolean(caps?.piano&33554431)||pianoBusy()||releasingAll;
+    pianoStrips.setAttribute("aria-pressed",String(strips));
+    pianoStrips.textContent=strips?"Piano layout":"Note strips";
+    pianoStripHint.hidden=!strips;
+    pianoBoard.setAttribute("data-strips",String(strips));
+    pianoBoard.setAttribute("aria-label",strips?"Assigned note strips":"Piano keyboard");
     const scale=scaleDegrees[pianoScale.value]||scaleDegrees.all;
     const root=Number(pianoRoot.value)||0;
     pianoButtons.forEach((b,i)=>{
       const index=i+12*pianoOctave,note=pitchNames[index%12]+(3+Math.floor(index/12));
       b.disabled=!admitted||!pianoEnabled||!has("piano",index)||pianoEmergency;
       const rows=targets(17+index);
-      const label=scaleAllowed?note:"K"+(index+1);
+      const singleNote=rows.length===1&&rows[0][1]===0?rows[0][3]:null;
+      const actual=singleNote===null?null:pitchNames[singleNote%12]+(Math.floor(singleNote/12)-1);
+      const label=strips?(mappingLabels.get(17+index)||actual||"K"+(index+1)):(scaleAllowed?note:"K"+(index+1));
+      b.hidden=strips&&!has("piano",index);
+      b.style.order=String(i);
       b.textContent=label;b.setAttribute("aria-label",(mappingLabels.has(17+index)?labelFor(17+index)+" · ":"")+label+(rows.length?" · "+rows.map(targetText).join("; "):" · mapping details hidden"));
       b.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<index))));
       b.setAttribute("data-scale",String(scaleAllowed&&pianoScale.value!=="all"&&scale.includes((index-root+12)%12)));
@@ -548,7 +565,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pianoPedal.hidden=!has("piano",25);pianoPedal.disabled=!admitted||!pianoEnabled||!has("piano",25)||pianoEmergency;
     pianoPedal.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<25))));
   }
-  function resetPiano(){pianoEnabled=false;pianoOctave=0;pianoOwners.clear();pianoQueue=[];pianoDesired=0;pianoSent=0;lastPianoSend=-Infinity;pianoEmergency=false;pianoStatus.textContent="Off.";syncPiano();}
+  function resetPiano(){strips=false;pianoEnabled=false;pianoOctave=0;pianoOwners.clear();pianoQueue=[];pianoDesired=0;pianoSent=0;lastPianoSend=-Infinity;pianoEmergency=false;pianoStatus.textContent="Off.";syncPiano();}
   function pianoChanged(){
     let mask=0;for(const index of pianoOwners.values())mask|=1<<index;
     if(mask===pianoDesired)return;
@@ -566,6 +583,26 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pianoOwners.set(owner,index);pianoChanged();
   }
   function pianoUp(owner){if(pianoOwners.delete(owner))pianoChanged();}
+  function moveStrip(e){
+    const owner="p"+e.pointerId;
+    if(!strips||!admitted||!pianoEnabled||pianoEmergency||!pianoOwners.has(owner)||pianoOwners.get(owner)===25)return;
+    e.preventDefault();
+    const r=pianoBoard.getBoundingClientRect();
+    if(![r.left,r.top,r.width,r.height,e.clientX,e.clientY].every(Number.isFinite)||r.width<=0||r.height<=0){
+      close("Invalid note surface geometry. Reconnect explicitly.");return;
+    }
+    if(e.clientX<r.left||e.clientX>r.left+r.width||e.clientY<r.top||e.clientY>r.top+r.height){
+      pianoUp(owner);return;
+    }
+    // Compact only the host-authorized notes. DOM order and geometry agree.
+    const zones=Array.from({length:13},(_,i)=>i+12*pianoOctave).filter(i=>has("piano",i));
+    if(!zones.length){pianoUp(owner);return;}
+    const gap=3, width=(r.width-gap*(zones.length-1))/zones.length;
+    if(width<=0){close("Note surface too narrow. Reconnect explicitly.");return;}
+    const slot=Math.min(zones.length-1,Math.floor((e.clientX-r.left)/(width+gap)));
+    const index=zones[slot];
+    if(index!==pianoOwners.get(owner)){pianoOwners.set(owner,index);pianoChanged();}
+  }
   function sendPiano(mask){send("pianoKeys",{mask});}
   function changeOctave(value){if(!admitted||!pianoEnabled||!octaveAvailable(value)||pianoBusy())return;pianoOctave=value;syncPiano();}
   const pedalEnable=get("pedalEnable"),pedalRelease=get("pedalRelease"),pedalStatus=get("pedalStatus");
@@ -883,6 +920,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pianoStatus.textContent=pianoEnabled?"Enabled. Use only with the mapped Mac preset.":"Off.";syncPiano();
   });
   pianoRelease.addEventListener("click",releasePiano);
+  pianoStrips.addEventListener("click",()=>{
+    if(currentView!=="play"||!admitted||releasingAll||pianoBusy()||!Boolean(caps?.piano&33554431))return;
+    strips=!strips;syncPiano();
+  });
   octaveDown.addEventListener("click",()=>changeOctave(0));
   octaveUp.addEventListener("click",()=>changeOctave(1));
   pianoScale.addEventListener("change",syncPiano);pianoRoot.addEventListener("change",syncPiano);
@@ -893,7 +934,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{close("Piano pointer capture failed.");return;}
       pianoDown("p"+e.pointerId,index());
     });
-    for(const name of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(name,e=>pianoUp("p"+e.pointerId));
+    if(i!==13)b.addEventListener("pointermove",moveStrip);
+    b.addEventListener("pointerup",e=>pianoUp("p"+e.pointerId));
+    for(const name of ["pointercancel","lostpointercapture"])b.addEventListener(name,e=>{
+      if(strips&&pianoOwners.has("p"+e.pointerId)){close("Note contact cancelled. Reconnect explicitly.");return;}
+      pianoUp("p"+e.pointerId);
+    });
     b.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();if(!e.repeat)pianoDown("k"+i,index());}});
     b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();pianoUp("k"+i);}});
     b.addEventListener("blur",()=>pianoUp("k"+i));

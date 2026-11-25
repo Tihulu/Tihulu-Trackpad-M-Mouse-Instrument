@@ -12,7 +12,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id]});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
   class WS{
@@ -551,4 +551,44 @@ test("ACK sample median uses even pair average",()=>{
   const a=setup();a.elements.pad.emit("pointerdown",xyEvent(1));a.ack(20);
   a.elements.pad.emit("pointerup",xyEvent(1));a.ack(40);
   assert.match(a.elements.ackLatency.textContent,/30 ms/);
+});
+
+test("note strips glide only through mapped zones and retain shared finger ownership",()=>{
+  const a=setup("granted",{...fullManifest,piano:(1<<0)|(1<<4)|(1<<7)});
+  a.elements.pianoStrips.emit("click");
+  assert.equal(a.elements.piano1.hidden,true);
+  assert.equal(a.elements.piano4.hidden,false);
+  a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.piano0.emit("pointerdown",drumEvent(2));
+  a.elements.piano0.emit("pointermove",xyEvent(1,50,50));a.step(25);
+  assert.equal(a.socket.frames.at(-1).mask,17);a.ack();
+  a.elements.piano0.emit("pointerup",drumEvent(2));a.step(25);
+  assert.equal(a.socket.frames.at(-1).mask,16);a.ack();
+  a.elements.piano0.emit("pointerup",drumEvent(1));a.step(25);
+  assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+});
+test("note strips layout cannot change during a held or unacknowledged note",()=>{
+  const a=setup();a.elements.pianoStrips.emit("click");a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.pianoStrips.emit("click");assert.equal(a.elements.pianoStrips.textContent,"Piano layout");
+  a.ack();a.elements.piano0.emit("pointerup",drumEvent(1));a.step(25);
+  a.elements.pianoStrips.emit("click");assert.equal(a.elements.pianoStrips.textContent,"Piano layout");
+  a.ack();a.elements.pianoStrips.emit("click");assert.equal(a.elements.pianoStrips.textContent,"Note strips");
+});
+test("note strip exit releases once and cannot reattack from a stale pointer",()=>{
+  const a=setup();a.elements.pianoStrips.emit("click");a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.piano0.emit("pointermove",xyEvent(1,120,50));a.step(25);
+  assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  const count=a.socket.frames.length;
+  a.elements.piano0.emit("pointermove",xyEvent(1,50,50));a.step(25);
+  assert.equal(a.socket.frames.length,count);
+});
+test("cancelled strip contact fails closed instead of replaying stale attacks",()=>{
+  const a=setup();a.elements.pianoStrips.emit("click");a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.piano0.emit("pointercancel",drumEvent(1));
+  assert.equal(a.socket.closed,true);
+  assert.equal(a.elements.pianoEnable.disabled,true);
 });
