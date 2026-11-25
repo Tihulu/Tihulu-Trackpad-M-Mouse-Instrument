@@ -90,7 +90,7 @@ public enum NativeMIDIMonitor {
         return try await withTaskCancellationHandler {
             var client=MIDIClientRef(),port=MIDIPortRef(),connected=false
             // Cleanup is attempted on every exit, including setup errors and cancellation.
-            func cleanup()->OSStatus {
+            @MainActor func cleanup()->OSStatus {
                 _ = counter.stop()
                 var result:OSStatus=noErr
                 if connected {
