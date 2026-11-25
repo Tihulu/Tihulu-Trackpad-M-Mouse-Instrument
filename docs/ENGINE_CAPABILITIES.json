@@ -76,9 +76,10 @@
         "studio/Sources/NoSpeakerCore/HelperRoutingSnapshot.swift"
       ],
       "cli": [
-        "sustain simulate"
+        "sustain simulate",
+        "helper simulate"
       ],
-      "status": "offline sustain simulation; expressive Helper CLI planned"
+      "status": "offline sustain and expressive ownership simulation; no live MIDI"
     },
     {
       "id": "tuning-mpe",
@@ -176,5 +177,6 @@
     "receiverConfirmation": false,
     "physicalAcceptance": "separate",
     "license": "MIT with upstream attribution; additional dependency and model licenses may differ"
-  }
+  },
+  "externalExample": "examples/EngineConsumer"
 }
