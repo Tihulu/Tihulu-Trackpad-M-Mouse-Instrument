@@ -77,10 +77,10 @@ def main(binary):
             {"start":0,"duration":480,"channel":0,"pitch":60,"velocity":90}]}))
         encoded = run(binary, "midi", "encode", frames)
         midi = base64.b64decode(encoded["data"], validate=True)
-        assert midi[:14] == b"MThd\\x00\\x00\\x00\\x06\\x00\\x00\\x00\\x01\\x03\\xc0"
+        assert midi[:14] == bytes.fromhex("4d 54 68 64 00 00 00 06 00 00 00 01 03 c0")
         assert midi[14:18] == b"MTrk" and len(midi) == encoded["bytes"]
-        assert midi.endswith(b"\\xff\\x2f\\x00")
-        assert b"\\x90\\x3c\\x5a" in midi and b"\\x80\\x3c\\x00" in midi
+        assert midi.endswith(bytes.fromhex("ff 2f 00"))
+        assert bytes.fromhex("90 3c 5a") in midi and bytes.fromhex("80 3c 00") in midi
         assert encoded["nominalPitchesOnly"] and not encoded["hardware"]
         frames.write_text(json.dumps({"bpm":120,"length":960,"notes":[
             {"start":0,"duration":480,"channel":0,"pitch":60,"velocity":90},
@@ -101,7 +101,7 @@ def main(binary):
             "hits":[{"index":0,"voice":"kick","velocity":1},
                     {"index":4,"voice":"snare","velocity":0.8}]}))
         drums = base64.b64decode(run(binary, "midi", "drums", frames)["data"], validate=True)
-        assert b"\\x99\\x24\\x7f" in drums and b"\\x99\\x26" in drums
+        assert bytes.fromhex("99 24 7f") in drums and bytes.fromhex("99 26") in drums
         frames.write_text(json.dumps([
             {"owner":"touch","channels":[0]},
             {"owner":"helper","channels":[0,2]},
