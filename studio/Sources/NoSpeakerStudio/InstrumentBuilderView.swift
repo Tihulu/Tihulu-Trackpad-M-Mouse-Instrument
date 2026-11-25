@@ -628,7 +628,8 @@ struct InstrumentBuilderView: View {
                 }
             }
             if gamepadHapticAvailable {
-                Text("Trackpad renders up to six folded tones; sustain, pitch bend (±2 semitones), CC7 and CC11 are supported. Other CCs are DAW controls, not local effects. Stop competing haptic sessions first.")
+                SharedNoteOutputSetting().disabled(studio.patchRunning)
+                Text("Trackpad renders up to six folded tones in total; sustain, pitch bend (±2 semitones), CC7 and CC11 are supported. Other CCs are DAW controls, not local effects. Shared mode allows Chord Pads and Touch Bar; other haptic engines remain exclusive.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
