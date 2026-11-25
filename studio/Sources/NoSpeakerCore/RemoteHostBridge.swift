@@ -149,6 +149,6 @@ public struct RemoteHostBridge: Sendable {
     }
 
     private func fresh(_ receipt: Double, now: Double) -> Bool {
-        receipt.isFinite && receipt >= 0 && receipt <= now && now-receipt < 0.1
+        MonotonicReceiptAdmission.permits(receipt:receipt,now:now,maximumAge:0.1)
     }
 }

@@ -347,8 +347,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
         clock = now
         var reports = reset(staleSources(now:now),send:send)
         guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
-        guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now,
-              now-hostTime < Self.timeout,
+        guard hostTime >= binding.boundAt,
+              PhysicalPatchRuntime.admitsPhysicalReceipt(hostTime,now:now),
               binding.lastSurfaceReceipt.map({ hostTime >= $0 }) ?? true else {
             reports += reset([source],send:send)
             return .init(status:.lost,reports:reports)

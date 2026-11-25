@@ -3562,7 +3562,20 @@ final class StudioController: ObservableObject {
                 clickSnapshotRevision = sample.clickObservation?.stamp.revision
                 clickSnapshotReceivedAt = sample.clickObservation?.receivedAt
             }
-            handleSharedSurfaceStates(sample,admitTouch:mappedCurrent)
+            guard handleSharedSurfaceStates(sample,admitTouch:mappedCurrent) else {
+                touchDispatchMetrics.reject()
+                if touchRunning || midiHelperRunning {
+                    handleTouchInputBacklog()
+                    if batch.more {
+                        Task { @MainActor [weak self, weak inbox] in
+                            guard let self, let inbox else { return }
+                            self.drainTouchInbox(inbox,generation:generation,token:token)
+                        }
+                    }
+                    return
+                }
+                continue
+            }
             touchDispatchMetrics.record(queuedAt:sample.queuedAt,startedAt:startedAt,
                 endedAt:ProcessInfo.processInfo.systemUptime)
         }
@@ -3591,7 +3604,7 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func handleSharedSurfaceStates(_ sample:QueuedTouchSnapshot,admitTouch:Bool) {
+    private func handleSharedSurfaceStates(_ sample:QueuedTouchSnapshot,admitTouch:Bool) -> Bool {
         let instrumentStates = admitTouch && (instrumentPreviewRequested || touchRunning) ? sample.states.filter {
             currentTouchConfiguration.surfaceSelection.accepts($0.surface)
         } : nil
@@ -3603,12 +3616,19 @@ final class StudioController: ObservableObject {
         let selectedSource = helperSurfaceSelection.accepts(sample.sourceSurface)
         let pedalAdmitted = helperPedalPublicationFence.permits(sample.stamp,selectedSource:selectedSource)
         let effectsAdmitted = helperEffectsPublicationFence.permits(sample.stamp,selectedSource:selectedSource)
-        let pedal = applyPhysicalPedalFrame(touchStates:instrumentStates,
-            helperStates:pedalAdmitted ? helperStates : nil,freshFrame:true)
-        if let instrumentStates { handleTouchStates(instrumentStates,pedal:pedal) }
-        if let helperStates {
-            handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:effectsAdmitted)
-        }
+        var pedal:MIDIHelperSustainSnapshot?
+        return TouchPublicationAdmission.dispatch(queuedAt:sample.queuedAt,
+            now:{ ProcessInfo.processInfo.systemUptime },
+            prepare:{
+                pedal = applyPhysicalPedalFrame(touchStates:instrumentStates,
+                    helperStates:pedalAdmitted ? helperStates : nil,freshFrame:true)
+            },touch:{
+                if let instrumentStates { handleTouchStates(instrumentStates,pedal:pedal) }
+            },helper:{
+                if let helperStates {
+                    handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:effectsAdmitted)
+                }
+            })
     }
 
     /// Explicitly copy the current bank scale. Live performances never retune
