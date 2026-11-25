@@ -2757,6 +2757,14 @@ final class StudioController: ObservableObject {
         stopCaptureMonitorIfIdle()
     }
 
+    private func previewContactEdge(_ old: [TouchPerformanceState], _ next: [TouchPerformanceState]) -> Bool {
+        if old.count != next.count { return true }
+        return zip(old,next).contains { a,b in
+            a.contactID != b.contactID || a.surface != b.surface ||
+            a.isDown != b.isDown || a.isTouching != b.isTouching
+        }
+    }
+
     private func handleTouchStates(_ states: [TouchPerformanceState]) {
         liveTouchStates = states
         // Every accepted hardware frame reaches the musical path before UI.
@@ -2778,7 +2786,8 @@ final class StudioController: ObservableObject {
             if !earlySustain { updateTouchSustain(states) }
         }
         guard instrumentPreviewRequested, states != touchStates,
-              touchPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty) else { return }
+              touchPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
+                  contactEdge:previewContactEdge(touchStates,states)) else { return }
         touchStates = states
         if let first = states.first(where: { $0.surface == .trackpad && $0.isTouching }) {
             touchContact = TrackpadContact(id:first.contactID,isDown:true,x:Float(first.x),y:Float(first.y),size:Float(first.pressure))
@@ -3032,7 +3041,8 @@ final class StudioController: ObservableObject {
         liveHelperStates = states
         defer {
             if helperPreviewRequested, states != midiHelperStates,
-               helperPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty) {
+               helperPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
+                   contactEdge:previewContactEdge(midiHelperStates,states)) {
                 midiHelperStates = states
             }
         }
