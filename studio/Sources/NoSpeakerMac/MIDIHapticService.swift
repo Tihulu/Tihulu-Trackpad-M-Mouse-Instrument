@@ -1159,9 +1159,11 @@ public final class PerformanceGroupMIDIHost {
     /// Only a caller owning the frozen physical controller bindings may use
     /// this entry point. The caller must provide the existing watchdog cadence.
     /// No automatic activation, device polling or handler installation here.
-    public func startGamepads(profile: PerformanceGroupProfile, allowLayering: Bool = false) throws {
+    public func startGamepads(profile: PerformanceGroupProfile, allowLayering: Bool = false,
+                              allowSurfaces: Bool = false) throws {
         guard canStart else { throw HostError.activeOrCleanupRequired }
-        let next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering)
+        let next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering,
+                                                       allowSurfaces:allowSurfaces)
         try openPorts(profile)
         delivery = nil
         gamepads = next
@@ -1210,6 +1212,15 @@ public final class PerformanceGroupMIDIHost {
         -> PerformanceGroupGamepadSession.Result? {
         guard var state = gamepads else { return nil }
         let result = state.receive(source,token:token,frame:frame,now:now,send:send)
+        gamepads = state
+        return result
+    }
+
+    public func receiveSurface(_ source:SensorSource, token:UUID, x:Double?, y:Double?, size:Double?,
+                               hostTime:Double, now:Double) -> PerformanceGroupGamepadSession.Result? {
+        guard var state = gamepads else { return nil }
+        let result = state.receiveSurface(source,token:token,x:x,y:y,size:size,
+                                          hostTime:hostTime,now:now,send:send)
         gamepads = state
         return result
     }
