@@ -22,7 +22,7 @@ function clock(){
 }
 function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
   children:[],setAttribute(){},replaceChildren(...children){this.children=children},
-  appendChild(child){this.children=this.children.filter(x=>x!==child);this.children.push(child);return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
+  appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
   emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
 const ptr=(id)=>({pointerId:id,button:0,clientX:25,clientY:25,preventDefault(){}});
 const kindOf=k=>({orientationArm:"orientation",motionRelease:"orientation",accelerationArm:"acceleration",accelerationRelease:"acceleration",rotationArm:"rotation",rotationRelease:"rotation",release:"touch"}[k]||k);
