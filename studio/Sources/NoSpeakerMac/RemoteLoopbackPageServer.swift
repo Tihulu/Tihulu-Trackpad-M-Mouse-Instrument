@@ -389,14 +389,15 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function ready(manifest,rows,labels=new Map()){
     clearMapping();
     if(groupNeutralHandshake){
-      const surfaces=[manifest.touch,!!manifest.drums,!!manifest.piano,!!manifest.pedals].filter(Boolean).length;
-      if(surfaces!==1||manifest.tilt||manifest.acceleration||manifest.rotation||manifest.airDrums){close("Unsupported group surface.");return;}
-      groupReady={manifest,rows,labels};
+      const queue=[];
+      if(manifest.touch)queue.push(["release"]);
+      if(manifest.drums)queue.push(["drumPads",{mask:0}]);
+      if(manifest.piano)queue.push(["pianoKeys",{mask:0}]);
+      if(manifest.pedals)queue.push(["pedalboard",{mask:0,levels:[0,0,0,0,0,0]}]);
+      if(queue.length<1||queue.length>2||manifest.tilt||manifest.acceleration||manifest.rotation||manifest.airDrums){close("Unsupported group surface.");return;}
+      groupReady={manifest,rows,labels,queue};
       status.textContent="Arming neutral group controls…";
-      if(manifest.touch)send("release");
-      else if(manifest.drums)send("drumPads",{mask:0});
-      else if(manifest.piano)send("pianoKeys",{mask:0});
-      else send("pedalboard",{mask:0,levels:[0,0,0,0,0,0]});
+      send(...queue.shift());
       return;
     }
     finishReady(manifest,rows,labels);
@@ -876,8 +877,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       }
       if(groupReady){
         if(!pending||e.data!=="accepted"){close("Group neutral handshake rejected.");return;}
-        const armed=groupReady;groupReady=null;
+        const armed=groupReady;
         clearDeadline();pending=false;pendingKind=null;
+        if(armed.queue.length){send(...armed.queue.shift());return;}
+        groupReady=null;
         finishReady(armed.manifest,armed.rows,armed.labels);return;
       }
       if(!pending||!caps||e.data!=="accepted"){close("Unexpected response.");return;}
