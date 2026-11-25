@@ -1,9 +1,8 @@
 import Foundation
 
-/// Offline standard-MIDI haptic projection. It consumes only reconciled
-/// group output, never raw input events. No timer, driver or MIDI endpoint.
-/// Tuned/MPE groups are deliberately excluded: master/member bend and
-/// sustain must be modeled before their pitches can be rendered correctly.
+/// Offline haptic projection consuming reconciled wire MIDI, never raw
+/// input events. No timer, driver or MIDI endpoint. Tuned groups require
+/// an explicit frozen plan and successful setup before observation.
 public struct PerformanceGroupHapticProjection: Sendable {
     public enum AdmissionError:Error,Equatable { case invalidSelection }
     private var targets:[UUID:Set<SensorDestination>]
@@ -23,6 +22,32 @@ public struct PerformanceGroupHapticProjection: Sendable {
             ($0.id,Set($0.patch.routes.map(\.destination)))
         })
         voices = Dictionary(uniqueKeysWithValues:selected.map { ($0,GamepadHapticVoices()) })
+    }
+
+    /// Explicit prepared-plan path. The caller must construct this only
+    /// for the exact plan whose setup completed successfully. Do not pass
+    /// setup commands to observe; it accepts only translated live targets.
+    public init(profile:PerformanceGroupProfile,selected:Set<UUID>,
+                preparedTuning tuning:[UUID:PerformanceGroupTuningPlan.Specification]) throws {
+        guard !tuning.isEmpty else { throw AdmissionError.invalidSelection }
+        let plan = try PerformanceGroupTuningPlan(profile:profile,tuning:tuning)
+        let groups = profile.groups.filter { !$0.patch.routes.isEmpty }
+        guard !selected.isEmpty,selected.isSubset(of:groups.map(\.id)) else { throw AdmissionError.invalidSelection }
+        var mapped:[UUID:Set<SensorDestination>] = [:]
+        var renderers:[UUID:GamepadHapticVoices] = [:]
+        for group in groups where selected.contains(group.id) {
+            var wire:Set<SensorDestination> = []
+            for route in group.patch.routes {
+                let item = PerformanceGroupCommand(groupID:group.id,command:.init(route.destination,value:0))
+                guard let translated = plan.translate(item) else { throw AdmissionError.invalidSelection }
+                wire.insert(translated.command.destination)
+            }
+            mapped[group.id] = wire
+            if let zone = plan.zones[group.id] { renderers[group.id] = .init(zone:zone) }
+            else { renderers[group.id] = .init() }
+        }
+        targets = mapped
+        voices = renderers
     }
 
     /// A failed send invalidates only the selected group's projection.

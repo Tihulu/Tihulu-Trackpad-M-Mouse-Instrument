@@ -7,7 +7,14 @@ public struct GamepadHapticVoices: Sendable {
     private var bends: [Int:Int] = [:]
     private var expression: [Int:Int] = [:]
     private var volume: [Int:Int] = [:]
+    private var fixedMembers:[Int:Int]?
     public init() {}
+
+    /// A prepared lower MPE zone has a frozen ±2-semitone bend per
+    /// member. This renderer does not parse or transmit RPN messages.
+    init(zone:PerformanceGroupTuningPlan.Zone) {
+        fixedMembers = Dictionary(uniqueKeysWithValues:zone.members.map { ($0.channel,$0.bend) })
+    }
 
     /// First native haptic slice deliberately admits gamepad-only patches.
     public static func supports(_ patch: InstrumentPatch) -> Bool {
@@ -18,6 +25,20 @@ public struct GamepadHapticVoices: Sendable {
     public mutating func apply(_ command: SensorCommand) {
         let d = command.destination, v = command.value
         guard d.isValid else { return }
+        if let members = fixedMembers {
+            if d.kind == .note {
+                guard members[d.channel] != nil else { return }
+            } else {
+                guard d.channel == 0 else { return }
+                if d.kind == .sustain {
+                    guard v == 0 || v == 127 else { return }
+                    for channel in members.keys.sorted() {
+                        _ = notes.control(channel:channel,controller:64,value:v)
+                    }
+                    return
+                }
+            }
+        }
         switch d.kind {
         case .note:
             guard (0...127).contains(v) else { return }
@@ -36,13 +57,22 @@ public struct GamepadHapticVoices: Sendable {
         }
     }
 
+    private func pitchAndGain(channel:Int) -> (Double,Double) {
+        if let members = fixedMembers,let member = members[channel] {
+            let offset = Double(member-8192)/8192*2
+            let master = Double((bends[0] ?? 8192)-8192)/8192*2
+            return (offset+master,Double(volume[0] ?? 127)/127 * Double(expression[0] ?? 127)/127)
+        }
+        return (Double((bends[channel] ?? 8192)-8192)/8192*2,
+                Double(volume[channel] ?? 127)/127 * Double(expression[channel] ?? 127)/127)
+    }
+
     /// The transient is only the accepted new note, not a snapshot of
     /// other held notes. Respect current channel gain and bend.
     public func attackFrame(_ command:SensorCommand) -> HapticFrame? {
         let d = command.destination
         guard d.kind == .note,d.isValid,(1...127).contains(command.value) else { return nil }
-        let bend = Double((bends[d.channel] ?? 8192)-8192)/8192*2
-        let gain = Double(volume[d.channel] ?? 127)/127 * Double(expression[d.channel] ?? 127)/127
+        let (bend,gain) = pitchAndGain(channel:d.channel)
         guard gain > 0,let rendered = NoteHapticRenderer.frame(notes:[d.number],velocity:command.value,
             safety:.init(),semitoneOffset:bend,expression:gain) else { return nil }
         return .init(tones:rendered.tones,durationMS:18,level:rendered.level)
@@ -54,8 +84,7 @@ public struct GamepadHapticVoices: Sendable {
         // physical actuator is shared and limited to six audible tones.
         var byFrequency: [Double:Double] = [:]
         for (key,state) in notes.notes {
-            let bend = Double((bends[key.channel] ?? 8192)-8192)/8192*2
-            let gain = Double(volume[key.channel] ?? 127)/127 * Double(expression[key.channel] ?? 127)/127
+            let (bend,gain) = pitchAndGain(channel:key.channel)
             guard gain > 0,
                   let rendered = NoteHapticRenderer.frame(notes:[key.note],velocity:state.velocity,
                        safety:policy,semitoneOffset:bend,expression:gain),
