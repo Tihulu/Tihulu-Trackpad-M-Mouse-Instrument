@@ -490,7 +490,12 @@ public final class MIDIHapticService: @unchecked Sendable {
                 }
                 if outgoingTouches[key] == nil {
                     // Preserve other active channels while initializing this one.
-                    var staged = continuousOwners.values(for:.touch).filter { $0.key.channel != channel }
+                    // A reused continuous-pitch channel is about to receive its
+                    // new bend before note-on. Keep the old bend ownership until
+                    // then, rather than send a gratuitous neutral and repeat RPN.
+                    var staged = continuousOwners.values(for:.touch).filter {
+                        $0.key.channel != channel || (isFretlessMelody && $0.key.kind == .pitchBend)
+                    }
                     for (target,value) in frameControls where target.channel == channel { staged[target] = value }
                     sendContinuousUpdates(continuousOwners.replace(.touch,values:staged))
                     if isMPE {
@@ -509,15 +514,17 @@ public final class MIDIHapticService: @unchecked Sendable {
                 let target = SensorDestination(.pitchBend,channel:channel)
                 let value = LegacyContinuousOwners.Value(max(0,min(16383,bend)),neutral:8192,bendRange:bendRange)
                 frameControls[target] = value
-                // Establish the winning range and pitch before a new note.
-                sendContinuousUpdates(continuousOwners.set(.touch,target:target,value:value))
+                // Held voices are reconciled once at frame end. Onsets and
+                // rearticulations still establish pitch/range before the note.
                 if let existing = outgoingTouches[key] {
                     if existing.note != anchor || !existing.fretless {
+                        sendContinuousUpdates(continuousOwners.set(.touch,target:target,value:value))
                         sendOwnedNotes(noteOwners.release(.touch(key)))
                         sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity))))
                         outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true, mpe: midiMode == .mpe)
                     }
                 } else {
+                    sendContinuousUpdates(continuousOwners.set(.touch,target:target,value:value))
                     sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity))))
                     outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true, mpe: midiMode == .mpe)
                 }
