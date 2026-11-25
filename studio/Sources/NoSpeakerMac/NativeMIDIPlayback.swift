@@ -10,13 +10,14 @@ import NoSpeakerCore
 @MainActor
 public final class NativeMIDIPlayback {
     public enum Failure: LocalizedError {
-        case invalidLifecycle, native(String,Int32), cleanupPending, sourceIdentityLost
+        case invalidLifecycle, native(String,Int32), cleanupPending, sourceIdentityLost, sessionFailure(String,String)
         public var errorDescription:String? {
             switch self {
             case .invalidLifecycle: return "Playback is not in the required lifecycle state."
             case .native(let action,let code): return "MIDI "+action+" failed ("+String(code)+")."
             case .cleanupPending: return "MIDI note cleanup is unconfirmed; retain the source and retry."
             case .sourceIdentityLost: return "Original MIDI source identity is unconfirmed; never send to or dispose a replacement."
+            case .sessionFailure(let primary,let cleanup): return "Playback failed ("+primary+"); cleanup failed ("+cleanup+"). Retain session for recovery."
             }
         }
     }
@@ -26,6 +27,13 @@ public final class NativeMIDIPlayback {
         public let cleanupConfirmed:Bool
         public let outstandingNotes:Int
         public let receiverConfirmed:Bool
+    }
+
+    /// The successful close report is distinct from receiver confirmation.
+    public struct ClosedSessionReport: Encodable, Sendable {
+        public let playback:Report
+        public let sourceDisposed:Bool
+        public let recoveryRequired:Bool
     }
 
     public struct Lifecycle: Encodable, Sendable {
@@ -58,6 +66,13 @@ public final class NativeMIDIPlayback {
 
     public init(clip:MIDIClip) throws {
         player=try BoundedMIDIPlayback(clip:clip)
+    }
+
+    /// Reuse the exact validated schedule returned by the portable planner.
+    /// A previously started copy cannot be turned into a fresh session.
+    public init(prepared:BoundedMIDIPlayback) throws {
+        guard prepared.state == .ready,prepared.outstanding.isEmpty else { throw Failure.invalidLifecycle }
+        player=prepared
     }
 
     /// Register a unique virtual source, but send no messages until run().
@@ -144,6 +159,32 @@ public final class NativeMIDIPlayback {
         }
         identityRetired=gate.retired
         return report(cancelled:stopRequested || Task.isCancelled)
+    }
+
+    /// Explicitly opened one-shot session. Complete the operation, retry
+    /// owned note debt once, then dispose only the original endpoint.
+    /// The caller retains this instance if any stage requires recovery.
+    /// Never automatically opens a device or treats a fault as success.
+    public func runAndClose() async throws -> ClosedSessionReport {
+        guard opened,endpoint != 0,!running,player.state == .ready else {
+            throw Failure.invalidLifecycle
+        }
+        let initial:Report
+        do {
+            initial=try await run()
+        } catch {
+            let primary=error
+            do { try close() }
+            catch { throw Failure.sessionFailure(primary.localizedDescription,error.localizedDescription) }
+            throw primary
+        }
+        let final=initial.outstandingNotes>0 ? try retryCleanup() : initial
+        guard final.cleanupConfirmed else {
+            if identityRetired { throw Failure.sourceIdentityLost }
+            throw Failure.cleanupPending
+        }
+        try close()
+        return .init(playback:final,sourceDisposed:endpoint==0,recoveryRequired:lifecycle.recoveryRequired)
     }
 
     /// Retry only outstanding note-offs on the exact original endpoint.

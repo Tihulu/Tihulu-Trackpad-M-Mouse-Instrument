@@ -265,4 +265,52 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,player.sourceName as CFString)==noErr)
     #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
 }
+@Test @MainActor func nativePlaybackPreparedScheduleRejectsPreviouslyStartedAndUnopenedSession() async throws {
+    var schedule=try BoundedMIDIPlayback(clip:nativePlaybackClip())
+    let fresh=try NativeMIDIPlayback(prepared:schedule)
+    await #expect(throws:NativeMIDIPlayback.Failure.self) { _=try await fresh.runAndClose() }
+    _=try schedule.begin(now:0)
+    #expect(throws:NativeMIDIPlayback.Failure.self) { _=try NativeMIDIPlayback(prepared:schedule) }
+    #expect(!fresh.lifecycle.sourceOpen)
+}
+
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackRunAndCloseDisposesOnlyOwnSource() async throws {
+    let schedule=try BoundedMIDIPlayback(clip:nativePlaybackClip())
+    let player=try NativeMIDIPlayback(prepared:schedule)
+    let sibling=try NativeMIDIPlayback(prepared:schedule)
+    try player.open()
+    defer { _=try? player.close() }
+    try sibling.open()
+    defer { _=try? sibling.close() }
+    player.requestStop()
+    let result=try await player.runAndClose()
+    #expect(result.playback.state=="stopped" && result.playback.cancelled)
+    #expect(result.sourceDisposed && !result.recoveryRequired && result.playback.cleanupConfirmed)
+    #expect(!result.playback.receiverConfirmed && !player.lifecycle.sourceOpen)
+    #expect(throws:NativeMIDIMonitor.Failure.self) { _=try NativeMIDIMonitor.resolve(name:player.sourceName) }
+    #expect(sibling.lifecycle.sourceOpen && !sibling.lifecycle.recoveryRequired)
+    _=try NativeMIDIMonitor.resolve(name:sibling.sourceName)
+    await #expect(throws:NativeMIDIPlayback.Failure.self) { _=try await player.runAndClose() }
+}
+
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackRunAndClosePreservesIdentityRecoveryOnFailure() async throws {
+    let player=try NativeMIDIPlayback(clip:nativePlaybackClip())
+    try player.open()
+    let source=try NativeMIDIMonitor.resolve(name:player.sourceName)
+    defer {
+        _=MIDIEndpointDispose(source)
+        MIDIProcessClient.shared.unregisterIsolatedSource(source)
+    }
+    let changed="TIHULU session fixture "+UUID().uuidString
+    try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,changed as CFString)==noErr)
+    await #expect(throws:NativeMIDIPlayback.Failure.self) { _=try await player.runAndClose() }
+    #expect(player.lifecycle.sourceOpen && player.lifecycle.identityRetired && player.lifecycle.recoveryRequired)
+    #expect(player.lifecycle.state=="faulted")
+    try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,player.sourceName as CFString)==noErr)
+    #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
+}
 #endif
