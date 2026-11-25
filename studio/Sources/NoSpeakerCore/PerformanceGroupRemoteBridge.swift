@@ -4,6 +4,7 @@ public struct PerformanceGroupRemoteBatch: Sendable {
     public var reports:[PerformanceGroupDelivery.Report] = []
     public var actions:[RemoteHostAction] = []
     public var fault = false
+    public init() {}
 }
 
 /// Serial host-owned bridge over the established RemoteHostEvent transport.
