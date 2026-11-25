@@ -245,6 +245,7 @@ final class StudioController: ObservableObject {
     private var patchPadTokens: [PatchSimulation.Input: UUID] = [:]
     private var surfaceMonitorToken: UUID?
     private var surfaceSnapshotCursor = TouchSnapshotCursor()
+    private var touchDispatchMetrics = TouchDispatchMetrics()
     private var touchPreviewCadence = TouchPreviewCadence()
     private var helperPreviewCadence = TouchPreviewCadence()
     // Unthrottled state for musical processing and physical-click attribution.
@@ -2365,17 +2366,27 @@ final class StudioController: ObservableObject {
             let token = UUID()
             surfaceMonitorToken = token
             surfaceSnapshotCursor.reset()
+            touchDispatchMetrics = TouchDispatchMetrics()
             touchPreviewCadence.reset()
             helperPreviewCadence.reset()
             liveTouchStates = []
             liveHelperStates = []
             clearClickAttribution()
             try touch.startStampedPreview(configuration: monitoringConfiguration) { [weak self] states,stamp in
+                let queuedAt = ProcessInfo.processInfo.systemUptime
                 Task { @MainActor in
                     guard let self, self.engineGeneration == generation,
-                          self.surfaceMonitorToken == token, self.touchPreviewRunning,
-                          let revision = self.touch?.currentSampleRevision,
-                          self.surfaceSnapshotCursor.accept(stamp,currentRevision:revision) else { return }
+                          self.surfaceMonitorToken == token, self.touchPreviewRunning else { return }
+                    let startedAt = ProcessInfo.processInfo.systemUptime
+                    guard let revision = self.touch?.currentSampleRevision,
+                          self.surfaceSnapshotCursor.accept(stamp,currentRevision:revision) else {
+                        self.touchDispatchMetrics.reject()
+                        return
+                    }
+                    defer {
+                        self.touchDispatchMetrics.record(queuedAt:queuedAt,startedAt:startedAt,
+                            endedAt:ProcessInfo.processInfo.systemUptime)
+                    }
                     self.clickTouchingSurfaces = Set(states.filter(\.isTouching).map(\.surface))
                     self.clickSnapshotRevision = stamp.revision
                     self.clickSnapshotReceivedAt = ProcessInfo.processInfo.systemUptime
@@ -2899,6 +2910,21 @@ final class StudioController: ObservableObject {
 
     /// Read-only report for the Diagnostics panel. Never records key contents,
     /// typed text, device identifiers, user paths, or private recordings.
+    func resetTouchDispatchMetrics() { touchDispatchMetrics = TouchDispatchMetrics() }
+
+    func touchDispatchDiagnosticReport() -> String {
+        let m = touchDispatchMetrics
+        func ms(_ seconds: Double) -> String { String(format:"%.2f ms",seconds*1000) }
+        return """
+        Accepted snapshots: \(m.count)
+        Rejected stale/reordered snapshots: \(m.rejected)
+        Main queue mean / max: \(ms(m.queueMean)) / \(ms(m.queueMax))
+        Queue delays ≥ 10 ms: \(m.queueOver10ms)
+        Main processing mean / max: \(ms(m.processingMean)) / \(ms(m.processingMax))
+        Callback-to-main timing only; not hardware-to-audio latency.
+        """
+    }
+
     func globalCaptureDiagnosticReport() -> String {
         let os = ProcessInfo.processInfo.operatingSystemVersionString
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development"
