@@ -7,11 +7,11 @@ struct SharedNoteOutputSetting: View {
     @EnvironmentObject private var studio: StudioController
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Toggle("Shared Chord Pads + Touch Bar (experimental)", isOn: Binding(
+            Toggle("Shared Chord Pads + Touch Bar + Xbox (experimental)", isOn: Binding(
                 get: { studio.sharedNoteOutputEnabled },
                 set: { studio.setSharedNoteOutputEnabled($0) }
             )).disabled(studio.liveNoteOwnsHaptics)
-            Text("Off by default. Enable before arming either Trackpad/Both output. Both share a six-tone budget. Use the chord strip beside the Touch Bar controls; other haptic engines remain exclusive. Panic resets this setting.")
+            Text("Off by default. Enable before arming Trackpad/Both output. Chord Pads, Touch Bar and native gamepad-only Builder can share one six-tone budget. Other haptic engines remain exclusive. Panic resets this setting.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
