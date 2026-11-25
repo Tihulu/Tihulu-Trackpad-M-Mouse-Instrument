@@ -69,6 +69,48 @@ struct CaptureKeyEdges {
     }
 }
 
+/// Pair pointer edges across capture toggles. A click that began outside
+/// capture must still deliver its release. A swallowed down must not leak
+/// its drag/up to the foreground app when capture ends.
+struct CapturePointerEdges {
+    enum Edge { case down,up,drag,other }
+    private var swallowed:Set<Int64> = []
+    private var passed:Set<Int64> = []
+    mutating func reset() { swallowed.removeAll(); passed.removeAll() }
+    mutating func suppress(button:Int64,edge:Edge,captured:Bool) -> Bool {
+        guard (0...31).contains(button) else { return captured }
+        switch edge {
+        case .down:
+            swallowed.remove(button); passed.remove(button)
+            if captured { swallowed.insert(button) } else { passed.insert(button) }
+            return captured
+        case .up:
+            if swallowed.remove(button) != nil { return true }
+            if passed.remove(button) != nil { return false }
+            // Unknown down may have happened before the tap was installed
+            // or during a disabled interval. Never trap its release.
+            return false
+        case .drag: return captured || swallowed.contains(button)
+        case .other: return captured
+        }
+    }
+}
+
+/// Permit isolated transient timeout recovery but disarm a repeatedly
+/// failing filter. The clock is monotonic; invalid time fails open.
+struct CaptureRecoveryBudget {
+    static let window:Double = 10
+    static let maximum = 3
+    private var attempts:[Double] = []
+    mutating func allow(now:Double) -> Bool {
+        guard now.isFinite,now >= 0,attempts.last.map({ now >= $0 }) ?? true else { return false }
+        attempts.removeAll { now-$0 >= Self.window }
+        guard attempts.count < Self.maximum else { return false }
+        attempts.append(now)
+        return true
+    }
+}
+
 public enum PerformanceCaptureError: LocalizedError {
     case permissionDenied
     case tapUnavailable
@@ -122,6 +164,8 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     private var shortcut: PerformanceCaptureShortcut = .defaultShortcut
     private var captureHotkeyEnabled = false
     private var keyEdges = CaptureKeyEdges()
+    private var pointerEdges = CapturePointerEdges()
+    private var recoveryBudget = CaptureRecoveryBudget()
     private var keyDownEvents: UInt64 = 0
     private var pointerEvents: UInt64 = 0
     private var shortcutMatches: UInt64 = 0
@@ -209,7 +253,10 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         lock.unlock()
         if let existingPort {
             if CGEvent.tapIsEnabled(tap: existingPort) { return }
+            // Never recycle a disabled instance while old callbacks may be
+            // draining. The controller can create a fresh monitor explicitly.
             stop()
+            throw PerformanceCaptureError.tapUnavailable
         }
 
         guard AXIsProcessTrusted() else {
@@ -273,6 +320,9 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         runLoopSource = source
         listening = false
         captured = false
+        keyEdges.reset()
+        pointerEdges.reset()
+        recoveryBudget = .init()
         let thread = Thread { [self] in
             runEventTapLoop(generation: generation, gate: gate)
         }
@@ -312,10 +362,10 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
         let loop = CFRunLoopGetCurrent()
         CFRunLoopAddSource(loop, source, CFRunLoopMode.commonModes)
-        CGEvent.tapEnable(tap: port, enable: true)
         lock.lock()
         let shouldRun = generation == inputGeneration
         if shouldRun {
+            CGEvent.tapEnable(tap: port, enable: true)
             inputRunLoop = loop
             listening = true
             lastEventTapStatus = "Started on dedicated event thread"
@@ -335,7 +385,9 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             runLoopSource = nil
             listening = false
             captured = false
+            captureHotkeyEnabled = false
             keyEdges.reset()
+            pointerEdges.reset()
             lastEventTapStatus = "Dedicated event loop exited"
         }
         lock.unlock()
@@ -355,6 +407,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         captured = false
         captureHotkeyEnabled = false
         keyEdges.reset()
+        pointerEdges.reset()
         // Retain the last failure reason for diagnosis; do not erase it.
         lock.unlock()
 
@@ -399,35 +452,35 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             lock.lock()
+            guard listening,let port = eventTap else { lock.unlock(); return passthrough }
+            captured = false
+            // An up may be missing. Forget edge ownership and permit unknown
+            // pointer releases so recovery cannot trap a foreground drag.
+            keyEdges.reset()
+            pointerEdges.reset()
+            var recovered = false
             if type == .tapDisabledByTimeout {
                 tapTimeouts &+= 1
                 lastEventTapStatus = "Disabled by macOS timeout"
+                if recoveryBudget.allow(now:ProcessInfo.processInfo.systemUptime) {
+                    // Serialize enable with Stop's state transition; do not
+                    // enable a port that Stop has already retired.
+                    CGEvent.tapEnable(tap:port,enable:true)
+                    recovered = CGEvent.tapIsEnabled(tap:port)
+                    if recovered { lastEventTapStatus = "Recovered after timeout" }
+                } else { lastEventTapStatus = "Repeated timeouts; explicit re-enable required" }
             } else {
                 tapDisabledByUserInput &+= 1
                 lastEventTapStatus = "Disabled by macOS/user input"
             }
-            lock.unlock()
-            // Fail open immediately: never leave the pointer captured after the
-            // system disables this event tap. A timeout can be transient when the
-            // macOS or other system services temporarily delay event delivery.
-            releasePointer()
-            if type == .tapDisabledByTimeout {
-                lock.lock()
-                let port = eventTap
-                let wasListening = listening
-                lock.unlock()
-                if wasListening, let port {
-                    CGEvent.tapEnable(tap: port, enable: true)
-                    if CGEvent.tapIsEnabled(tap: port) {
-                        markEventTapStatus("Recovered after timeout")
-                        onMonitorRecovered?()
-                        return passthrough
-                    }
-                }
+            if !recovered {
+                listening = false
+                captureHotkeyEnabled = false
             }
-            // A user/system-disabled tap must not be overridden automatically.
-            // The controller disarms monitoring without closing the haptic driver.
-            onMonitorFailed?()
+            lock.unlock()
+            onCaptureChanged?(false)
+            if recovered { onMonitorRecovered?() }
+            else { onMonitorFailed?() }
             return passthrough
         }
 
@@ -441,6 +494,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             }
 
             lock.lock()
+            guard listening else { lock.unlock(); return passthrough }
             let action = keyEdges.handle(key:keyCode,down:type == .keyDown,repeatKey:repeatKey,
                                          matches:shortcut.matches(event),armed:listening && captureHotkeyEnabled,
                                          captured:captured)
@@ -460,6 +514,25 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             return passthrough
         }
 
+        lock.lock()
+        guard listening else { lock.unlock(); return passthrough }
+        pointerEvents &+= 1
+        let edge:CapturePointerEdges.Edge
+        let button:Int64
+        switch type {
+        case .leftMouseDown,.leftMouseUp,.leftMouseDragged: button = 0
+        case .rightMouseDown,.rightMouseUp,.rightMouseDragged: button = 1
+        default: button = event.getIntegerValueField(.mouseEventButtonNumber)
+        }
+        switch type {
+        case .leftMouseDown,.rightMouseDown,.otherMouseDown: edge = .down
+        case .leftMouseUp,.rightMouseUp,.otherMouseUp: edge = .up
+        case .leftMouseDragged,.rightMouseDragged,.otherMouseDragged: edge = .drag
+        default: edge = .other
+        }
+        let suppress = pointerEdges.suppress(button:button,edge:edge,captured:captured)
+        lock.unlock()
+
         if type == .leftMouseDown || type == .leftMouseUp {
             onPhysicalClick?(
                 type == .leftMouseDown,
@@ -469,10 +542,6 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             onPhysicalPressure?(event.getDoubleValueField(.mouseEventPressure))
         }
 
-        lock.lock()
-        pointerEvents &+= 1
-        let suppress = captured
-        lock.unlock()
         // Capture cannot distinguish mouse and trackpad at CGEvent level;
         // suppress all OS pointer movement/clicks while the mode is enabled.
         // Escape and the assigned keyboard shortcut always remain available.

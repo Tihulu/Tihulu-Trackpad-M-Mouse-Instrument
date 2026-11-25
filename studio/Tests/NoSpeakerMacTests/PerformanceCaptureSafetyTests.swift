@@ -68,5 +68,44 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
             displayName: "⇧Space"
         ).isValid)
     }
+
+    func testPointerReleasePairingAcrossCaptureChanges() {
+        var edges = CapturePointerEdges()
+        XCTAssertFalse(edges.suppress(button:0,edge:.down,captured:false))
+        XCTAssertTrue(edges.suppress(button:0,edge:.drag,captured:true))
+        XCTAssertFalse(edges.suppress(button:0,edge:.up,captured:true))
+        XCTAssertTrue(edges.suppress(button:1,edge:.down,captured:true))
+        XCTAssertTrue(edges.suppress(button:1,edge:.drag,captured:false))
+        XCTAssertTrue(edges.suppress(button:1,edge:.up,captured:false))
+        XCTAssertFalse(edges.suppress(button:1,edge:.down,captured:false))
+        XCTAssertFalse(edges.suppress(button:1,edge:.up,captured:false))
+    }
+
+    func testUnknownPointerReleaseAfterTimeoutIsNotTrapped() {
+        var edges = CapturePointerEdges()
+        XCTAssertTrue(edges.suppress(button:0,edge:.down,captured:true))
+        edges.reset()
+        XCTAssertFalse(edges.suppress(button:0,edge:.up,captured:true))
+        XCTAssertTrue(edges.suppress(button:0,edge:.other,captured:true))
+    }
+
+    func testLostKeyUpDoesNotBlockNextFreshShortcutAfterReset() {
+        var edges = CaptureKeyEdges()
+        XCTAssertEqual(edges.handle(key:46,down:true,repeatKey:false,matches:true,armed:true,captured:false),.toggle)
+        edges.reset()
+        XCTAssertEqual(edges.handle(key:46,down:true,repeatKey:true,matches:true,armed:true,captured:false),.pass)
+        XCTAssertEqual(edges.handle(key:46,down:true,repeatKey:false,matches:true,armed:true,captured:false),.toggle)
+    }
+
+    func testCaptureRecoveryBudgetBoundsRepeatedTimeouts() {
+        var budget = CaptureRecoveryBudget()
+        XCTAssertTrue(budget.allow(now:1))
+        XCTAssertTrue(budget.allow(now:2))
+        XCTAssertTrue(budget.allow(now:3))
+        XCTAssertFalse(budget.allow(now:4))
+        XCTAssertFalse(budget.allow(now:2))
+        XCTAssertFalse(budget.allow(now:.nan))
+        XCTAssertTrue(budget.allow(now:11))
+    }
 }
 #endif
