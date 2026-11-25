@@ -266,3 +266,5 @@ Native read-only observation now uses the existing retained process-wide CoreMID
 
 ### Offline fault audit
 `tihulu-mac-instrument-native midi audit JSON` tests the exact validated clip at every note-on/off edge, simulating failure both before and after delivery, failed immediate cleanup and one successful owned-debt retry. At most 512 events and 1,024 scenarios; no hardware, filesystem input, sleeping or live MIDI. A success report means all simulated scenarios preserve ownership and clear debt, not that playback completed or a physical receiver is silent. The report carries event count, scenario count, passed scenario count, maximum cleanup debt, and explicit false hardware/receiver flags.
+
+The fault audit independently tracks the exact debt expected at the failed edge, excluding every previously confirmed note-off even when that pitch was used earlier. Each scenario now also injects a partial cleanup retry, confirms the exact remaining set and retries only that set. The scenario count and CLI JSON schema are unchanged. This is a deterministic ownership check, not an assertion about physical MIDI delivery.

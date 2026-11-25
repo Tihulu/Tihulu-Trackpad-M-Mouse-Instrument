@@ -31,7 +31,7 @@ public enum BoundedMIDISimulation {
 
     /// Sweep every planned send edge twice: delivery failed before or
     /// after reaching the simulated receiver. All immediate cleanup sends
-    /// then fail, followed by one successful owned-debt retry.
+    /// then fail, followed by a partial retry and a successful owned-debt retry.
     /// Work is bounded by the same 256-note/512-event schedule limit.
     public static func audit(_ schedule:BoundedMIDIPlayback) throws -> Audit {
         guard schedule.state == .ready,!schedule.events.isEmpty else { throw Failure.invalidSchedule }
@@ -41,7 +41,9 @@ public enum BoundedMIDISimulation {
                 var player=schedule
                 guard try player.begin(now:0) else { throw Failure.invalidSchedule }
                 var sounding:Set<SensorDestination>=[]
-                var admitted:Set<SensorDestination>=[]
+                // Independent expected debt tracks successful releases,
+                // not merely every note ever admitted during this clip.
+                var expectedDebt:Set<SensorDestination>=[]
                 var failed=false,valid=true,attempted=0,steps=0
                 var cleanup:Set<SensorDestination>=[]
                 func receive(_ command:SensorCommand) {
@@ -57,7 +59,7 @@ public enum BoundedMIDISimulation {
                     player.advance(now:deadline) { command in
                         if failed {
                             // No new note or unrelated cleanup is permitted.
-                            if command.value != 0 || !admitted.contains(command.destination) ||
+                            if command.value != 0 || !expectedDebt.contains(command.destination) ||
                                 !cleanup.insert(command.destination).inserted { valid=false }
                             return false
                         }
@@ -65,7 +67,7 @@ public enum BoundedMIDISimulation {
                               command==schedule.events[attempted].command else {
                             valid=false;failed=true;return false
                         }
-                        if command.value>0 { admitted.insert(command.destination) }
+                        if command.value>0 { expectedDebt.insert(command.destination) }
                         let failNow=attempted==edge
                         attempted+=1
                         if failNow {
@@ -74,27 +76,50 @@ public enum BoundedMIDISimulation {
                             return false
                         }
                         receive(command)
+                        if command.value==0 { expectedDebt.remove(command.destination) }
                         return true
                     }
                 }
                 let debt=player.outstanding
                 guard valid,failed,attempted==edge+1,player.state == .faulted,
                       player.fault == .sendFailed,cleanup==debt,
-                      sounding.isSubset(of:debt),debt.isSubset(of:admitted) else {
+                      sounding.isSubset(of:debt),debt==expectedDebt else {
                     throw Failure.invalidSchedule
                 }
                 maximumDebt=max(maximumDebt,debt.count)
+                // Exercise a partial retry as well. Only unresolved
+                // destinations may appear in the second retry.
                 var retries:Set<SensorDestination>=[]
+                var remaining:Set<SensorDestination>=[]
                 player.retryCleanup { command in
                     if command.value != 0 || !debt.contains(command.destination) ||
+                        !retries.insert(command.destination).inserted { valid=false }
+                    if retries.count % 2 == 1 {
+                        remaining.insert(command.destination)
+                        // Failed delivery is deliberately ambiguous.
+                        if delivered { sounding.remove(command.destination) }
+                        return false
+                    }
+                    sounding.remove(command.destination)
+                    return true
+                }
+                guard valid,retries==debt,player.outstanding==remaining,
+                      sounding.isSubset(of:remaining),player.state == .faulted else {
+                    throw Failure.invalidSchedule
+                }
+                retries.removeAll()
+                player.retryCleanup { command in
+                    if command.value != 0 || !remaining.contains(command.destination) ||
                         !retries.insert(command.destination).inserted { valid=false }
                     // Duplicate note-off is intentional for ambiguous
                     // delivery, but only for an owned unresolved debt.
                     sounding.remove(command.destination)
                     return true
                 }
-                guard valid,retries==debt,sounding.isEmpty,player.outstanding.isEmpty,
-                      player.state == .faulted else { throw Failure.invalidSchedule }
+                guard valid,retries==remaining,sounding.isEmpty,player.outstanding.isEmpty,
+                      player.state == .faulted,player.fault == .sendFailed else {
+                    throw Failure.invalidSchedule
+                }
                 passed+=1
             }
         }

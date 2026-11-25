@@ -470,3 +470,13 @@ private func playbackClip() -> MIDIClip {
     #expect(report.eventCount==512 && report.scenarios==1024 && report.passedScenarios==1024)
     #expect(report.maximumCleanupDebt==256 && report.allCleanAfterRetry)
 }
+
+@Test func boundedMIDIAuditDoesNotIncludeHistoricallyReleasedNotesInDebt() throws {
+    let notes=(0..<8).map { index in
+        MIDIClip.Note(start:index*120,duration:120,channel:0,pitch:60+index,velocity:90)
+    }
+    let schedule=try BoundedMIDIPlayback(clip:.init(bpm:120,length:960,notes:notes))
+    let result=try BoundedMIDISimulation.audit(schedule)
+    #expect(result.scenarios==32 && result.passedScenarios==32)
+    #expect(result.maximumCleanupDebt==1 && result.allCleanAfterRetry)
+}
