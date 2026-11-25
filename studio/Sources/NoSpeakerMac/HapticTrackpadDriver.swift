@@ -11,6 +11,7 @@ public enum HapticDriverError: LocalizedError {
     case noTrackpad
     case noHapticTrackpad
     case ambiguousExternalSurfaces
+    case inventoryBusy
     case actuatorOpenFailed
     case actuationCreationFailed
     case invalidActuationFrame
@@ -23,6 +24,7 @@ public enum HapticDriverError: LocalizedError {
         case .noTrackpad: return "No compatible trackpad was found."
         case .noHapticTrackpad: return "A trackpad was found, but its haptic actuator could not be opened."
         case .ambiguousExternalSurfaces: return "More than one external touch device matches the legacy Magic Mouse route. Disconnect the extra devices and restart monitoring."
+        case .inventoryBusy: return "Native device inventory is busy or unavailable. Retry explicitly after the outstanding read finishes."
         case .actuatorOpenFailed: return "The trackpad haptic actuator could not be opened."
         case .actuationCreationFailed: return "The trackpad framework could not create a haptic frame."
         case .invalidActuationFrame: return "Invalid haptic frame or actuator safety configuration."
@@ -207,6 +209,7 @@ private let trackpadFrameCallback: FrameCallback = { device, data, count, timest
 public final class HapticTrackpadDriver: @unchecked Sendable {
     private let safety: HapticSafetyPolicy
     private let lifetime = ActuatorLifetimeGate()
+    private static let inventoryGate = NativeInventoryReadGate()
     private var framework: UnsafeMutableRawPointer?
     private var deviceList: CFArray?
     private var motorDeviceID: UInt64 = 0
@@ -224,28 +227,40 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         public let available:Set<UInt64>?
     }
 
-    /// Call from a background worker, never a native contact callback.
-    /// Retained list objects are scoped to the lifetime gate.
-    public func surfaceInventory() -> SurfaceInventory {
-        lifetime.snapshot {
-            let expected = monitoredDeviceIDs
-            guard !expected.isEmpty,let createList,let getID,
-                  let list = createList()?.takeRetainedValue() else {
-                return .init(expected:expected,available:nil)
-            }
-            var available:Set<UInt64> = []
-            for index in 0..<CFArrayGetCount(list) {
-                guard let raw = CFArrayGetValueAtIndex(list,index) else {
-                    return .init(expected:expected,available:nil)
-                }
-                var id:UInt64 = 0
-                guard getID(UnsafeMutableRawPointer(mutating:raw),&id) == 0 else {
-                    return .init(expected:expected,available:nil)
-                }
-                available.insert(id)
-            }
-            return .init(expected:expected,available:available)
+    public var registeredSurfaceIDs:Set<UInt64> {
+        lifetime.snapshot { monitoredDeviceIDs }
+    }
+
+    /// Start one bounded-size enumeration without holding the actuator
+    /// lifetime lock. The worker retains this driver/framework; closing
+    /// the actuator need not wait for private inventory enumeration.
+    @discardableResult
+    public func requestSurfaceInventory(_ result:NativeInventoryResultSlot<SurfaceInventory>) -> Bool {
+        guard let token=Self.inventoryGate.tryBegin() else { return false }
+        let expected=lifetime.snapshot { monitoredDeviceIDs }
+        guard !expected.isEmpty else { Self.inventoryGate.finish(token);return false }
+        DispatchQueue.global(qos:.utility).async { [self,result] in
+            defer { Self.inventoryGate.finish(token) }
+            let available=withExtendedLifetime(self) { readSurfaceInventory() }
+            result.publish(.init(expected:expected,available:available))
         }
+        return true
+    }
+
+    // Function pointers are initialized once and the worker retains self.
+    // Do not access the mutable motor/session device list here.
+    private func readSurfaceInventory()->Set<UInt64>? {
+        guard let createList,let getID,let list=createList()?.takeRetainedValue() else { return nil }
+        let count=CFArrayGetCount(list)
+        guard (0...64).contains(count) else { return nil }
+        var available:Set<UInt64> = []
+        for index in 0..<count {
+            guard let raw=CFArrayGetValueAtIndex(list,index) else { return nil }
+            var id:UInt64=0
+            guard getID(UnsafeMutableRawPointer(mutating:raw),&id)==0 else { return nil }
+            available.insert(id)
+        }
+        return available
     }
 
     private var createList: CreateList?
@@ -311,6 +326,8 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
 
     private func openLocked() throws {
         if opened { return }
+        guard let token=Self.inventoryGate.tryBegin() else { throw HapticDriverError.inventoryBusy }
+        defer { Self.inventoryGate.finish(token) }
         guard let createList, let getID, let actuatorCreate, let actuatorOpen else { throw HapticDriverError.symbolsUnavailable }
         guard let list = createList()?.takeRetainedValue(), CFArrayGetCount(list) > 0 else { throw HapticDriverError.noTrackpad }
         deviceList = list
@@ -412,7 +429,9 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
             throw HapticDriverError.symbolsUnavailable
         }
 
-        stopTouchLocked()
+        guard let token=Self.inventoryGate.tryBegin() else { throw HapticDriverError.inventoryBusy }
+        defer { Self.inventoryGate.finish(token) }
+        if !touchDevicesInUse.isEmpty { stopTouchLocked() }
         // Re-enumerate on explicit start; the actuator's original list may
         // predate a Bluetooth device connection or disconnection.
         guard let deviceList = createList()?.takeRetainedValue() else { throw HapticDriverError.noTrackpad }
@@ -478,6 +497,8 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
     }
 
     private func stopTouchLocked() {
+        // Revoke publication before private callback/device teardown.
+        TouchBridge.shared.clear()
         for device in touchDevicesInUse {
             unregisterCallback?(device, trackpadFrameCallback)
             deviceStop?(device)
@@ -485,7 +506,6 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         touchDevicesInUse.removeAll()
         monitoredDeviceIDs.removeAll()
         monitoredKinds.removeAll()
-        TouchBridge.shared.clear()
     }
 }
 #endif

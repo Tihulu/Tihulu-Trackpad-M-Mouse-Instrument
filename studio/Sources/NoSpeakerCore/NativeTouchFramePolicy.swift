@@ -1,3 +1,5 @@
+import Foundation
+
 /// Defensive boundary for the existing private multitouch callback.
 /// The contact limit matches the physical Builder mailbox. This validates
 /// the envelope, not the lifetime or size of a native pointer.
@@ -47,5 +49,38 @@ public struct NativeSurfaceInventoryGuard: Sendable {
 public enum NativeSurfaceAdmission {
     public static func missing<Surface:Hashable>(required:Set<Surface>,registered:Set<Surface>?) -> Set<Surface> {
         required.subtracting(registered ?? [])
+    }
+}
+
+
+/// Process-wide nonwaiting admission for private inventory calls. A stalled
+/// worker cannot cause an unbounded queue of subsequent native enumerations.
+public final class NativeInventoryReadGate: @unchecked Sendable {
+    private let lock=NSLock()
+    private var active:UUID?
+    public init() {}
+    public func tryBegin()->UUID? {
+        lock.lock();defer { lock.unlock() }
+        guard active == nil else { return nil }
+        let token=UUID();active=token;return token
+    }
+    public func finish(_ token:UUID) {
+        lock.lock();defer { lock.unlock() }
+        if active==token { active=nil }
+    }
+}
+
+/// One result slot owned by a single monitor generation. No asynchronous
+/// waiter is required; missing results are evidence of unavailable inventory.
+public final class NativeInventoryResultSlot<Value:Sendable>: @unchecked Sendable {
+    private let lock=NSLock()
+    private var result:Value?
+    public init() {}
+    public func publish(_ value:Value) {
+        lock.lock();defer { lock.unlock() };result=value
+    }
+    public func take()->Value? {
+        lock.lock();defer { lock.unlock() }
+        let value=result;result=nil;return value
     }
 }

@@ -3443,17 +3443,20 @@ final class StudioController: ObservableObject {
     private func startSurfaceInventoryCheck(generation:UInt64,token:UUID) {
         surfaceInventoryTask?.cancel()
         guard let driver else { return }
-        surfaceInventoryTask = Task { [weak self,driver] in
+        let expected=driver.registeredSurfaceIDs
+        let results=NativeInventoryResultSlot<HapticTrackpadDriver.SurfaceInventory>()
+        driver.requestSurfaceInventory(results)
+        surfaceInventoryTask = Task { [weak self,driver,results] in
             var evidence = NativeSurfaceInventoryGuard()
             while !Task.isCancelled {
                 do { try await Task.sleep(for:.seconds(1)) } catch { return }
                 guard let self,self.engineGeneration == generation,
                       self.surfaceMonitorToken == token,self.touchPreviewRunning else { return }
-                let inventory = await Task.detached(priority:.utility) { driver.surfaceInventory() }.value
-                guard !Task.isCancelled,self.engineGeneration == generation,
-                      self.surfaceMonitorToken == token,self.touchPreviewRunning else { return }
-                switch evidence.observe(expected:inventory.expected,available:inventory.available) {
-                case .healthy,.suspect: continue
+                let inventory=results.take()
+                let available=inventory?.expected == expected ? inventory?.available : nil
+                switch evidence.observe(expected:expected,available:available) {
+                case .healthy,.suspect:
+                    driver.requestSurfaceInventory(results)
                 case .lost,.unavailable:
                     self.handleSurfaceInventoryFault()
                     return

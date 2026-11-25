@@ -79,3 +79,37 @@ import Testing
     #expect(NativeSurfaceAdmission.missing(required:Set<Int>(),registered:nil).isEmpty)
     #expect(NativeSurfaceAdmission.missing(required:Set([2]),registered:Set<Int>()) == [2])
 }
+
+
+@Test func inventoryReadGateRejectsConcurrentAndObsoleteLeases() throws {
+    let gate=NativeInventoryReadGate()
+    let first=try #require(gate.tryBegin())
+    #expect(gate.tryBegin()==nil)
+    gate.finish(first)
+    let second=try #require(gate.tryBegin())
+    gate.finish(first)
+    #expect(gate.tryBegin()==nil)
+    gate.finish(second)
+    #expect(gate.tryBegin() != nil)
+}
+
+@Test func inventoryResultSlotsDoNotCarryRetiredMonitorEvidence() {
+    let old=NativeInventoryResultSlot<Int>()
+    let current=NativeInventoryResultSlot<Int>()
+    old.publish(1)
+    #expect(current.take()==nil)
+    current.publish(2)
+    #expect(current.take()==2)
+    #expect(current.take()==nil)
+    old.publish(3)
+    #expect(current.take()==nil)
+}
+
+@Test func inventoryPollingTreatsStalledWorkerAsUnavailableWithoutWaiting() {
+    let slot=NativeInventoryResultSlot<Set<UInt64>>()
+    var evidence=NativeSurfaceInventoryGuard()
+    let a=evidence.observe(expected:[1],available:slot.take())
+    let b=evidence.observe(expected:[1],available:slot.take())
+    let c=evidence.observe(expected:[1],available:slot.take())
+    #expect(a == .suspect && b == .suspect && c == .unavailable)
+}
