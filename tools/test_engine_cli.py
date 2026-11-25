@@ -52,6 +52,25 @@ def main(binary):
         run(binary, "groups", "simulate", groups, frames, "--allow-layering", success=False)
         frames.write_text(json.dumps([{**samples[0], "values":{"contact":2}}]))
         run(binary, "groups", "simulate", groups, frames, "--allow-layering", success=False)
+        scale = run(binary, "scale", "plan", "60", "0, 180, 400, 700, 1200")
+        assert scale["microtonal"] and scale["planned"]
+        assert [p["note"] for p in scale["pitches"]] == [60, 62, 64, 67]
+        assert scale["pitches"][1]["bend"] < 8192
+        run(binary, "scale", "plan", "60", "0, 150, 400", success=False)
+        frames.write_text(json.dumps([
+            {"source":"touch","frame":{"tones":[{"frequencyHz":220,"amplitude":1}],
+                                       "durationMS":18,"level":0.4}},
+            {"source":"gamepad","frame":{"tones":[{"frequencyHz":330,"amplitude":1}],
+                                         "durationMS":18,"level":0.4}}
+        ]))
+        mixed = run(binary, "haptics", "mix", frames)
+        assert mixed["hardware"] is False
+        assert sorted(t["frequencyHz"] for t in mixed["frame"]["tones"]) == [220, 330]
+        assert mixed["frame"]["durationMS"] <= 18
+        invalid = json.loads(frames.read_text())
+        invalid[1]["source"] = "touch"
+        frames.write_text(json.dumps(invalid))
+        run(binary, "haptics", "mix", frames, success=False)
         run(binary, "live", "start", success=False)
     print("Engine CLI smoke tests passed.")
 
