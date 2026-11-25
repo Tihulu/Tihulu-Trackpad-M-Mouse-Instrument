@@ -173,9 +173,18 @@ public enum VoiceHapticService {
         guard !fm.fileExists(atPath:dest.path), !fm.fileExists(atPath:destConfig.path) else {
             throw VoiceHapticError.piperModelExists
         }
-        // Copy the configuration first so incomplete models are never listed.
-        try fm.copyItem(at:config,to:destConfig)
-        do { try fm.copyItem(at:model,to:dest) }
+        let staging = directory.appendingPathComponent(".import-"+UUID().uuidString,isDirectory:true)
+        try fm.createDirectory(at:staging,withIntermediateDirectories:false)
+        defer { try? fm.removeItem(at:staging) }
+        let stagedModel = staging.appendingPathComponent(model.lastPathComponent)
+        let stagedConfig = URL(fileURLWithPath:stagedModel.path+".json")
+        try fm.copyItem(at:config,to:stagedConfig)
+        try fm.copyItem(at:model,to:stagedModel)
+        guard LocalVoiceModel.validPair(stagedModel) else { throw VoiceHapticError.piperModelMissing }
+        // Publish the complete model last. FileManager.moveItem refuses
+        // existing destinations; never overwrite a preexisting voice.
+        try fm.moveItem(at:stagedConfig,to:destConfig)
+        do { try fm.moveItem(at:stagedModel,to:dest) }
         catch {
             try? fm.removeItem(at:destConfig)
             throw error
