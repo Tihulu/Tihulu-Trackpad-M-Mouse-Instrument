@@ -743,11 +743,11 @@ public final class TouchInstrumentService: @unchecked Sendable {
         }
 
         let now = ProcessInfo.processInfo.systemUptime
-        if !hits.isEmpty {
-            for hit in hits {
-                guard submitFrame(hit, level: config.masterLevel, token: token, revision:revision) else { return }
-            }
-            drumPriorityUntil = now + (hits.map(\.durationMS).max() ?? 0) / 1000
+        if let hit = DrumHapticMixer.mix(hits) {
+            // One physical waveform per tick: do not let the last finger
+            // overwrite the other strikes in the same actuator interval.
+            guard submitFrame(hit, level: config.masterLevel, token: token, revision:revision) else { return }
+            drumPriorityUntil = now + hit.durationMS / 1000
             return
         }
         // The motor is shared; give a one-shot drum its nominal duration
