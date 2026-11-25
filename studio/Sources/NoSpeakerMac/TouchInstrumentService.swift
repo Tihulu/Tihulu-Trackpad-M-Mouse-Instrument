@@ -447,6 +447,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private func invalidateSamplesLocked() {
         sampleRevision &+= 1
         pendingMelodicAttacks.removeAll()
+        drumStrikes.discardPending()
         latestStatesBySurface.removeAll()
         lastFrameBySurface.removeAll()
     }
