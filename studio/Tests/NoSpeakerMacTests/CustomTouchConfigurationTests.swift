@@ -150,4 +150,21 @@ import NoSpeakerCore
     config.magicMouseInstrument = .fretlessStrings
     #expect(!config.permitsSeparateDAWSurfaceChannels)
 }
+@Test func validMasterGainDoesNotInvalidateMusicalSnapshots() {
+    let initial = TouchInstrumentConfiguration()
+    var next = initial
+    next.masterLevel = 0.3
+    #expect(!next.requiresSampleInvalidation(comparedTo:initial))
+    next.masterLevel = 0
+    #expect(!next.requiresSampleInvalidation(comparedTo:initial))
+    next.masterLevel = .nan
+    #expect(next.requiresSampleInvalidation(comparedTo:initial))
+    #expect(initial.requiresSampleInvalidation(comparedTo:next))
+    next = initial
+    next.fretless.toggle()
+    #expect(next.requiresSampleInvalidation(comparedTo:initial))
+    next = initial
+    next.zoneWidth = 1.5
+    #expect(next.requiresSampleInvalidation(comparedTo:initial))
+}
 #endif
