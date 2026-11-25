@@ -500,6 +500,11 @@ final class StudioController: ObservableObject {
             groupFaultIDs.formUnion(failures)
             groupStoppedIDs.formUnion(failures)
             groupGamepadStatus = "A group MIDI send failed. Affected groups stopped; inspect cleanup status."
+        }
+        // Publish reconciled edges promptly, not just on the next 20 ms
+        // watchdog. The independent latest-frame mailbox never waits for
+        // the physical driver. Silent polling does not do extra rendering.
+        if !failures.isEmpty || reports.contains(where:{ $0.accepted > 0 }) {
             updateGroupHaptics()
         }
         refreshGroupOutputState()
