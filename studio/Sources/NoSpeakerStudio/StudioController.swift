@@ -3495,6 +3495,14 @@ final class StudioController: ObservableObject {
     func updateTouchConfiguration(_ configuration: TouchInstrumentConfiguration) {
         var configuration = configuration
         configuration.magicMouseOrientation = magicMouseOrientation
+        if touchRunning && configuration.surfaceSelection != currentTouchConfiguration.surfaceSelection {
+            touch?.invalidatePendingSamples()
+            touchClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
+            touchSustainState.reset()
+            midi?.releaseTouchSustain()
+            touch?.setSustainActive(false)
+            touchInstrumentSustainActive = false
+        }
         currentTouchConfiguration = configuration
         refreshSharedSurfaceMonitoring()
     }
@@ -3769,6 +3777,21 @@ final class StudioController: ObservableObject {
     }
 
     func updateMIDIHelperSurface(_ surfaceSelection: TouchSurfaceSelection) {
+        if midiHelperRunning && surfaceSelection != helperSurfaceSelection {
+            touch?.invalidatePendingSamples()
+            helperClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
+            helperSustainState.reset()
+            helperRearmGate.invalidate()
+            helperEffectsRearmGate.invalidate()
+            midi?.releaseHelperSustain()
+            if helperSendToDAW {
+                midi?.resetHelperControls(assignments:helperAssignments,channel:helperTargetChannel,
+                    vibratoCC:helperVibratoCC,expressionCC:helperExpressionCC)
+            }
+            midiHelperSustainActive = false
+            midiHelperTrackpadSustainActive = false
+            midiHelperMagicMouseSustainActive = false
+        }
         helperSurfaceSelection = surfaceSelection
         refreshSharedSurfaceMonitoring()
     }
@@ -3934,7 +3957,8 @@ final class StudioController: ObservableObject {
                 .filter { $0.surface == .trackpad }
                 .map(\.pressure),
             magicMouseTouching: active.contains { $0.surface == .magicMouse },
-            settings: helperSustainSettings,
+            settings: helperSustainSettings.restricted(trackpad:helperSurfaceSelection.accepts(.trackpad),
+                magicMouse:helperSurfaceSelection.accepts(.magicMouse)),
             trackpadClickDown: selectedClick && clickedSurface == .trackpad,
             magicMouseClickDown: selectedClick && clickedSurface == .magicMouse,
             trackpadClickPressure: trackpadClickPressure,
@@ -4325,7 +4349,8 @@ final class StudioController: ObservableObject {
                 .filter { $0.surface == .trackpad }
                 .map(\.pressure),
             magicMouseTouching: active.contains { $0.surface == .magicMouse },
-            settings: touchSustainSettings,
+            settings: touchSustainSettings.restricted(trackpad:currentTouchConfiguration.surfaceSelection.accepts(.trackpad),
+                magicMouse:currentTouchConfiguration.surfaceSelection.accepts(.magicMouse)),
             trackpadClickDown: selectedClick && clickedSurface == .trackpad,
             magicMouseClickDown: selectedClick && clickedSurface == .magicMouse,
             trackpadClickPressure: trackpadClickPressure,

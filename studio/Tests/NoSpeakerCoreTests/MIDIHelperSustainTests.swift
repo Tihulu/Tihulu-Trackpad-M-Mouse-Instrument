@@ -329,3 +329,20 @@ import Testing
     touch.begin(now:.nan)
     #expect(!touch.permits(receipt:3.2,now:3.3,selected:true))
 }
+
+@Test func deselectedSurfaceCannotRetainToggleSustain() {
+    let settings = MIDIHelperSustainSettings(trackpadEnabled:true,magicMouseEnabled:true,
+        magicMouseGesture:.physicalClickToggle,trackpadGesture:.physicalClickToggle)
+    var state = MIDIHelperSustainState()
+    let both = state.update(trackpadContactSizes:[],magicMouseTouching:false,settings:settings,
+        trackpadClickDown:true,magicMouseClickDown:true)
+    #expect(both.trackpadActive && both.magicMouseActive)
+    let mouseOnly = settings.restricted(trackpad:false,magicMouse:true)
+    let restricted = state.update(trackpadContactSizes:[],magicMouseTouching:false,settings:mouseOnly)
+    #expect(!restricted.trackpadActive && restricted.magicMouseActive)
+    let neither = state.update(trackpadContactSizes:[],magicMouseTouching:false,
+        settings:settings.restricted(trackpad:false,magicMouse:false))
+    #expect(!neither.isActive)
+    let restored = state.update(trackpadContactSizes:[],magicMouseTouching:false,settings:settings)
+    #expect(!restored.isActive && settings.trackpadEnabled && settings.magicMouseEnabled)
+}

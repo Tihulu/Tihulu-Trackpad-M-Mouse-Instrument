@@ -59,6 +59,15 @@ public struct MIDIHelperSustainSettings: Sendable, Equatable {
         self.magicMouseTapThreshold = magicMouseTapThreshold
     }
 
+    /// The user's pedal settings remain stored; only selected surfaces
+    /// may participate in the current consumer's sustain ownership.
+    public func restricted(trackpad:Bool,magicMouse:Bool) -> Self {
+        var result = self
+        result.trackpadEnabled = trackpadEnabled && trackpad
+        result.magicMouseEnabled = magicMouseEnabled && magicMouse
+        return result
+    }
+
     public var needsPhysicalClicks: Bool {
         (trackpadEnabled &&
             (trackpadGesture == .physicalClickHold || trackpadGesture == .physicalClickToggle ||
