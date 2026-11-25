@@ -1137,6 +1137,7 @@ public final class PerformanceGroupMIDIHost {
     private init() {}
 
     public var registeredIDs: Set<UUID> { ports.registeredIDs }
+    public var localSourceStates: [SensorSource:PerformanceGroupGamepadSession.SourceState] { gamepads?.sourceStates ?? [:] }
     public var pendingCleanup: Set<UUID> {
         (delivery?.pendingCleanup ?? []).union(gamepads?.pendingCleanup ?? [])
     }
