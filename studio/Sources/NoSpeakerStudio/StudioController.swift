@@ -1048,6 +1048,8 @@ final class StudioController: ObservableObject {
     private var patchPadTasks: [PatchSimulation.Input: Task<Void, Never>] = [:]
     private var patchPadTokens: [PatchSimulation.Input: UUID] = [:]
     private var surfaceMonitorToken: UUID?
+    private var surfaceInventoryTask: Task<Void,Never>?
+    private var handlingSurfaceInventoryFault = false
     private var surfaceInbox: OrderedTouchInbox<QueuedTouchSnapshot>?
     private var surfaceSnapshotCursor = TouchPublicationCursor()
     private var helperPedalPublicationFence = TouchConsumerPublicationFence()
@@ -2949,6 +2951,8 @@ final class StudioController: ObservableObject {
         trackpadClickPressure = nil
         stopSystemAudio()
         playback?.stop(closeDriver: false)
+        surfaceInventoryTask?.cancel()
+        surfaceInventoryTask = nil
         surfaceMonitorToken = nil
         surfaceInbox?.close()
         surfaceInbox = nil
@@ -3337,11 +3341,13 @@ final class StudioController: ObservableObject {
     /// Distribute the same physical frames to independently enabled Instrument
     /// and Helper consumers, filtered by surface assignment.
     private func refreshSharedSurfaceMonitoring() {
-        guard let touch else { return }
+        guard !handlingSurfaceInventoryFault,let touch else { return }
         let needed = instrumentPreviewRequested || helperPreviewRequested ||
                      touchRunning || midiHelperRunning || groupSurfaceMailbox != nil ||
                      (patchPhysical && instrumentPatch.routes.contains { $0.source != patchHybridSource && ($0.source == .trackpad || $0.source == .magicMouse) })
         if !needed {
+            surfaceInventoryTask?.cancel()
+            surfaceInventoryTask = nil
             surfaceMonitorToken = nil
             surfaceInbox?.close()
             surfaceInbox = nil
@@ -3389,7 +3395,10 @@ final class StudioController: ObservableObject {
                 }
             }
             touchPreviewRunning = true
+            startSurfaceInventoryCheck(generation:generation,token:token)
         } catch {
+            surfaceInventoryTask?.cancel()
+            surfaceInventoryTask = nil
             surfaceMonitorToken = nil
             surfaceInbox?.close()
             surfaceInbox = nil
@@ -3397,6 +3406,63 @@ final class StudioController: ObservableObject {
             touchPreviewRunning = false
             fail(error)
         }
+    }
+
+    private func startSurfaceInventoryCheck(generation:UInt64,token:UUID) {
+        surfaceInventoryTask?.cancel()
+        guard let driver else { return }
+        surfaceInventoryTask = Task { [weak self,driver] in
+            var evidence = NativeSurfaceInventoryGuard()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for:.seconds(1)) } catch { return }
+                guard let self,self.engineGeneration == generation,
+                      self.surfaceMonitorToken == token,self.touchPreviewRunning else { return }
+                let inventory = await Task.detached(priority:.utility) { driver.surfaceInventory() }.value
+                guard !Task.isCancelled,self.engineGeneration == generation,
+                      self.surfaceMonitorToken == token,self.touchPreviewRunning else { return }
+                switch evidence.observe(expected:inventory.expected,available:inventory.available) {
+                case .healthy,.suspect: continue
+                case .lost,.unavailable:
+                    self.handleSurfaceInventoryFault()
+                    return
+                }
+            }
+        }
+    }
+
+    private func handleSurfaceInventoryFault() {
+        guard !handlingSurfaceInventoryFault else { return }
+        handlingSurfaceInventoryFault = true
+        defer { handlingSurfaceInventoryFault = false }
+        // Release the cursor and retire publication before MIDI cleanup.
+        // Unrelated group sources, audio and sequencers are not panicked.
+        retireCaptureMonitor()
+        captureArmed = false
+        captureHotkeyArmed = false
+        surfaceInventoryTask?.cancel()
+        surfaceInventoryTask = nil
+        surfaceMonitorToken = nil
+        surfaceInbox?.close()
+        surfaceInbox = nil
+        clearClickAttribution()
+        instrumentPreviewRequested = false
+        helperPreviewRequested = false
+        if touchRunning { stopTouch() }
+        if midiHelperRunning { stopMIDIHelper() }
+        if let run = groupRunToken,groupSurfaceMailbox != nil {
+            retireGroupSurfaces([.trackpad,.magicMouse],
+                reason:"Native surface inventory lost. Surface owners released; restart explicitly.",run:run)
+        }
+        if patchMailbox != nil { stopInstrumentPatch() }
+        touch?.stopPreview()
+        touchPreviewRunning = false
+        liveTouchStates = []
+        liveHelperStates = []
+        touchStates = []
+        midiHelperStates = []
+        touchContact = TrackpadContact()
+        captureStatus = "Cursor free · native surface inventory lost"
+        lastError = "Native touch device disconnected or inventory unavailable. Surface performances stopped; reconnect devices and restart explicitly."
     }
 
     private func drainTouchInbox(_ inbox: OrderedTouchInbox<QueuedTouchSnapshot>, generation: UInt64, token: UUID) {

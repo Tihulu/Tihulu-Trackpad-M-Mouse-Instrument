@@ -15,3 +15,29 @@ public enum NativeTouchFramePolicy {
         return .decode(count)
     }
 }
+
+
+/// Inventory evidence is independent of contact cadence. A motionless
+/// held finger is never itself evidence of device loss.
+public struct NativeSurfaceInventoryGuard: Sendable {
+    public enum Verdict: Equatable, Sendable {
+        case healthy, suspect, lost(Set<UInt64>), unavailable
+    }
+    private var misses:[UInt64:Int] = [:]
+    private var unknown = 0
+    public init() {}
+    public mutating func observe(expected:Set<UInt64>,available:Set<UInt64>?) -> Verdict {
+        guard !expected.isEmpty else { misses.removeAll(); unknown = 0; return .healthy }
+        guard let available else {
+            misses.removeAll()
+            unknown = min(3,unknown+1)
+            return unknown >= 3 ? .unavailable : .suspect
+        }
+        unknown = 0
+        let missing = expected.subtracting(available)
+        misses = Dictionary(uniqueKeysWithValues:missing.map { ($0,min(2,(misses[$0] ?? 0)+1)) })
+        let lost = Set(misses.filter { $0.value >= 2 }.keys)
+        if !lost.isEmpty { return .lost(lost) }
+        return missing.isEmpty ? .healthy : .suspect
+    }
+}

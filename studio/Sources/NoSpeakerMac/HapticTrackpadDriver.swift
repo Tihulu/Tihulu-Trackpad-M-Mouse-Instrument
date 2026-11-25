@@ -10,6 +10,7 @@ public enum HapticDriverError: LocalizedError {
     case symbolsUnavailable
     case noTrackpad
     case noHapticTrackpad
+    case ambiguousExternalSurfaces
     case actuatorOpenFailed
     case actuationCreationFailed
 
@@ -19,6 +20,7 @@ public enum HapticDriverError: LocalizedError {
         case .symbolsUnavailable: return "The required private trackpad functions are unavailable on this macOS version."
         case .noTrackpad: return "No compatible trackpad was found."
         case .noHapticTrackpad: return "A trackpad was found, but its haptic actuator could not be opened."
+        case .ambiguousExternalSurfaces: return "More than one external touch device matches the legacy Magic Mouse route. Disconnect the extra devices and restart monitoring."
         case .actuatorOpenFailed: return "The trackpad haptic actuator could not be opened."
         case .actuationCreationFailed: return "The trackpad framework could not create a haptic frame."
         }
@@ -207,6 +209,36 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
     private var motor: CFTypeRef?
     private var motorPointer: UnsafeMutableRawPointer?
     private var touchDevicesInUse: [UnsafeMutableRawPointer] = []
+    private var monitoredDeviceIDs: Set<UInt64> = []
+
+    public struct SurfaceInventory: Sendable {
+        public let expected:Set<UInt64>
+        public let available:Set<UInt64>?
+    }
+
+    /// Call from a background worker, never a native contact callback.
+    /// Retained list objects are scoped to the lifetime gate.
+    public func surfaceInventory() -> SurfaceInventory {
+        lifetime.snapshot {
+            let expected = monitoredDeviceIDs
+            guard !expected.isEmpty,let createList,let getID,
+                  let list = createList()?.takeRetainedValue() else {
+                return .init(expected:expected,available:nil)
+            }
+            var available:Set<UInt64> = []
+            for index in 0..<CFArrayGetCount(list) {
+                guard let raw = CFArrayGetValueAtIndex(list,index) else {
+                    return .init(expected:expected,available:nil)
+                }
+                var id:UInt64 = 0
+                guard getID(UnsafeMutableRawPointer(mutating:raw),&id) == 0 else {
+                    return .init(expected:expected,available:nil)
+                }
+                available.insert(id)
+            }
+            return .init(expected:expected,available:available)
+        }
+    }
 
     private var createList: CreateList?
     private var getID: GetID?
@@ -365,13 +397,16 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         includeExternalSurfaces: Bool,
         handler: @escaping @Sendable (SurfaceTouchFrame) -> Void
     ) throws {
-        guard let deviceList, let getID, let registerCallback, let deviceStart else {
+        guard let createList, let getID, let registerCallback, let deviceStart else {
             throw HapticDriverError.symbolsUnavailable
         }
 
         stopTouchLocked()
-
+        // Re-enumerate on explicit start; the actuator's original list may
+        // predate a Bluetooth device connection or disconnection.
+        guard let deviceList = createList()?.takeRetainedValue() else { throw HapticDriverError.noTrackpad }
         var selected: [UnsafeMutableRawPointer] = []
+        var selectedIDs:Set<UInt64> = []
         var kinds: [UnsafeMutableRawPointer: TouchSurfaceKind] = [:]
 
         for index in 0..<CFArrayGetCount(deviceList) {
@@ -381,16 +416,24 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
             guard getID(device, &id) == 0 else { continue }
 
             if id == motorDeviceID {
+                guard selectedIDs.insert(id).inserted else { continue }
                 selected.append(device)
                 kinds[device] = .trackpad
             } else if includeExternalSurfaces, !(deviceIsBuiltIn?(device) ?? false) {
+                guard selectedIDs.insert(id).inserted else { continue }
                 selected.append(device)
                 kinds[device] = .magicMouse
             }
         }
 
-        guard !selected.isEmpty else { throw HapticDriverError.noTrackpad }
-
+        guard selectedIDs.contains(motorDeviceID) else { throw HapticDriverError.noTrackpad }
+        // Legacy surface/contact identity cannot represent two external
+        // devices as one Mouse without false releases and ID collisions.
+        guard kinds.values.filter({ $0 == .magicMouse }).count <= 1 else {
+            throw HapticDriverError.ambiguousExternalSurfaces
+        }
+        self.deviceList = deviceList
+        monitoredDeviceIDs = selectedIDs
         TouchBridge.shared.configure(surfaces: kinds, handler: handler)
         for device in selected {
             registerCallback(device, trackpadFrameCallback)
@@ -428,6 +471,7 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
             deviceStop?(device)
         }
         touchDevicesInUse.removeAll()
+        monitoredDeviceIDs.removeAll()
         TouchBridge.shared.clear()
     }
 }
