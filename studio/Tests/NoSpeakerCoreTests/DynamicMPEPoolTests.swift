@@ -105,3 +105,23 @@ private func poolNote(_ note:Int,_ value:Int) -> SensorCommand { .init(.init(.no
     let foreign = live.receive(.init(.init(.note,channel:4,number:38),value:100)) { _ in Issue.record("foreign channel");return true }
     #expect(foreign == .invalid)
 }
+
+
+@Test func dynamicPoolFailedMasterPedalReleaseRetainsReservationDebt() throws {
+    let plan = try dynamicPoolFixture()
+    var pool = DynamicMPEPoolSession(plan:plan)
+    _ = pool.prepare { _ in true }
+    let pedal = SensorDestination(.sustain,channel:3)
+    _ = pool.receive(.init(pedal,value:127)) { _ in true }
+    _ = pool.receive(poolNote(38,100)) { _ in true }
+    _ = pool.receive(poolNote(38,0)) { _ in true }
+    #expect(pool.reservedCount == 1 && pool.activeCount == 0)
+    var attempted:[SensorCommand] = []
+    let failed = pool.receive(.init(pedal,value:0)) { attempted.append($0);return false }
+    #expect(failed == .failed && pool.pendingCleanup && pool.reservedCount == 1)
+    #expect(attempted == [.init(.init(.sustain),value:0),.init(.init(.sustain),value:0)])
+    attempted.removeAll()
+    let clean = pool.retryCleanup { attempted.append($0);return true }
+    #expect(clean && pool.reservedCount == 0 && !pool.pendingCleanup)
+    #expect(attempted == [.init(.init(.sustain),value:0)])
+}
