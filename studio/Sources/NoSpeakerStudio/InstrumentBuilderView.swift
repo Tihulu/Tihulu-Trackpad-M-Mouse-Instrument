@@ -263,7 +263,7 @@ struct InstrumentBuilderView: View {
                             Toggle("Tune Air strings from current Custom Scale (MPE)",isOn:$tunedAir)
                                 .disabled(studio.patchRunning)
                             if tunedAir {
-                                Text("Dedicated TIHULU Air Strings MPE port. String-only camera patch, one logical MIDI channel, up to 15 distinct notes. Explicit MIDI output required. No Hybrid/Remote or nominal Ensemble take. The current bank root and offsets are frozen at Start.")
+                                Text("Dedicated TIHULU Air Strings MPE port. Camera strings and supported master effects, one logical MIDI channel, up to 15 distinct notes. Explicit MIDI output required. No Hybrid/Remote. Armed recording preserves MPE setup and effects. The current bank root and offsets are frozen at Start.")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }

@@ -23,7 +23,7 @@ struct EnsembleTakePanel: View {
                     Button("Discard take",role:.destructive) { studio.discardEnsembleTake() }.disabled(!studio.ensembleTakeReady || studio.ensembleRecording)
                 }
                 Text(studio.ensembleTakeStatus).font(.caption)
-                Text("Records reconciled Builder notes, CC, sustain and pitch bend into separate MIDI-channel tracks. Memory only; max 120 seconds / 32,768 events. No video, audio, source identity or DAW-delivery guarantee. Export tempo is fixed; this is not clock or tempo automation. Finishing a take does not stop live instruments.")
+                Text("Records reconciled Builder notes, CC, sustain and pitch bend into separate MIDI-channel tracks. Tuned Air uses one ordered MPE track with tuning setup. Memory only; max 120 seconds / 32,768 events. No video, audio, source identity or DAW-delivery guarantee. Export tempo is fixed; this is not clock or tempo automation. Finishing a take does not stop live instruments.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.orange) }
             }.padding(6)

@@ -49,11 +49,14 @@ final class StudioController: ObservableObject {
     private func beginEnsembleTakeIfArmed() {
         guard ensembleRecordNext else { return }
         ensembleRecordNext = false
-        guard let take = EnsembleTake(patch:instrumentPatch,bpm:ensembleRecordBPM,now:ProcessInfo.processInfo.systemUptime) else { return }
+        guard let take = EnsembleTake(patch:instrumentPatch,bpm:ensembleRecordBPM,now:ProcessInfo.processInfo.systemUptime,tuning:airTunedPlan) else {
+            ensembleTakeStatus = "Recording could not be armed for this patch"
+            return
+        }
         ensembleTake = take
         ensembleRecording = true
         ensembleTakeReady = false
-        ensembleTakeStatus = "Recording reconciled Builder commands"
+        ensembleTakeStatus = take.isTuned ? "Recording tuned Air MPE" : "Recording reconciled Builder commands"
         let token = UUID()
         ensembleTakeToken = token
         ensembleTakeTimeout = Task { [weak self] in
@@ -71,7 +74,7 @@ final class StudioController: ObservableObject {
         ensembleTakeTimeout = nil
         ensembleRecording = false
         ensembleTakeReady = !take.events.isEmpty
-        ensembleTakeStatus = "\(take.events.count) events · " + (take.truncated ? "bounded partial take" : "take finished")
+        ensembleTakeStatus = (take.isTuned ? "MPE · " : "") + "\(take.events.count) events · " + (take.truncated ? "bounded partial take" : "take finished")
     }
 
     func stopEnsembleTake() {
@@ -451,8 +454,8 @@ final class StudioController: ObservableObject {
         guard !patchRunning else { return }
         var requestedTuning:AirTunedOutput?
         if tunedAir {
-            guard sendMIDI,remoteTransport == nil,synthetic == nil,!ensembleRecordNext,let scale = chordBank.customScale else {
-                patchStatus = "Tuned Air requires dedicated MIDI, custom scale, no Hybrid/Remote or armed nominal recording."
+            guard sendMIDI,remoteTransport == nil,synthetic == nil,let scale = chordBank.customScale else {
+                patchStatus = "Tuned Air requires dedicated MIDI, custom scale and no Hybrid/Remote."
                 return
             }
             do { requestedTuning = try AirTunedOutput(patch:instrumentPatch,scale:scale,root:chordBank.root) }

@@ -12,15 +12,19 @@ public struct EnsembleTake: Sendable {
     public let bpm: Double
     private let origin: Double
     private let releases: [SensorDestination:Int]
+    private let tuning:AirTunedOutput?
+    public var isTuned:Bool { tuning != nil }
     private var outstanding: [SensorDestination:Int] = [:]
     private var lastTime: Double
     public private(set) var events: [Event] = []
     public private(set) var endTick: Int?
     public private(set) var truncated = false
-    public init?(patch:InstrumentPatch,bpm:Double,now:Double) {
+    public init?(patch:InstrumentPatch,bpm:Double,now:Double,tuning:AirTunedOutput? = nil) {
         guard patch.isValid,!patch.routes.isEmpty,bpm.isFinite,(20...300).contains(bpm),
               now.isFinite,now >= 0,now < 1e12,
-              let releases = ContinuousResponse.releaseValues(for:patch.routes) else { return nil }
+              let releases = ContinuousResponse.releaseValues(for:patch.routes),
+              tuning.map({ $0.logicalTargets == Set(releases.keys) }) ?? true else { return nil }
+        self.tuning = tuning
         self.bpm = bpm; self.origin = now; self.lastTime = now; self.releases = releases
     }
     private func tick(_ time:Double) -> Int {
@@ -33,7 +37,7 @@ public struct EnsembleTake: Sendable {
         checkTime(now:now)
         guard endTick == nil else { return false }
         guard now.isFinite,now >= lastTime,now-origin < Self.maximumDuration,
-              events.count < Self.maximumEvents-SensorRouter.maxMappings,
+              events.count < Self.maximumEvents-SensorRouter.maxMappings-(tuning?.setupCommands.count ?? 0),
               let release = releases[command.destination],
               (0...(command.destination.kind == .pitchBend ? 16383 : 127)).contains(command.value)
         else { truncated = true; finish(now:lastTime); return false }
@@ -76,6 +80,16 @@ public struct EnsembleTake: Sendable {
     /// Same-tick events retain reconciled order within their channel.
     public func encoded() throws -> Data {
         guard let endTick,!events.isEmpty else { throw MIDIClipError.empty }
+        if let tuning {
+            // One track preserves setup, master effects and member gates in
+            // exact order even at equal ticks. Never export nominal fallback.
+            var wire = tuning.setupCommands.map { (0,TunedMIDIClip.wireBytes($0)) }
+            for event in events {
+                guard let command = tuning.translate(event.command) else { throw MIDIClipError.invalidNote }
+                wire.append((event.tick,TunedMIDIClip.wireBytes(command)))
+            }
+            return MIDIClipWriter.encodeEvents(bpm:bpm,length:endTick,events:wire)
+        }
         func be(_ value:Int,_ count:Int)->[UInt8] {
             (0..<count).reversed().map { UInt8((value >> ($0*8)) & 255) }
         }

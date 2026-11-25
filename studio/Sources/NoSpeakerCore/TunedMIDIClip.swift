@@ -53,6 +53,7 @@ public struct TunedMIDIClip: Sendable {
         rpn(15,6,0)
         rpn(0,6,members.count)
         rpn(0,0,2,fine:true)
+        commands.append(.init(.init(.pitchBend),value:8192))
         for member in members {
             rpn(member.channel,0,2,fine:true)
             commands.append(.init(.init(.pitchBend,channel:member.channel),value:member.bend))
@@ -60,12 +61,18 @@ public struct TunedMIDIClip: Sendable {
         return commands
     }
 
-    public func encoded() -> Data {
-        var events:[(Int,[UInt8])] = setupCommands.map { command in
-            let d = command.destination, v = command.value
-            if d.kind == .pitchBend { return (0,[UInt8(0xe0|d.channel),UInt8(v & 127),UInt8(v >> 7)]) }
-            return (0,[UInt8(0xb0|d.channel),UInt8(d.number),UInt8(v)])
+    static func wireBytes(_ command:SensorCommand) -> [UInt8] {
+        let d = command.destination, v = command.value
+        switch d.kind {
+        case .pitchBend: return [UInt8(0xe0|d.channel),UInt8(v & 127),UInt8(v >> 7)]
+        case .note: return [UInt8((v == 0 ? 0x80 : 0x90)|d.channel),UInt8(d.number),UInt8(v)]
+        case .sustain: return [UInt8(0xb0|d.channel),64,UInt8(v)]
+        case .controlChange: return [UInt8(0xb0|d.channel),UInt8(d.number),UInt8(v)]
         }
+    }
+
+    public func encoded() -> Data {
+        var events:[(Int,[UInt8])] = setupCommands.map { (0,Self.wireBytes($0)) }
         struct Gate {
             let tick:Int
             let channel:Int
