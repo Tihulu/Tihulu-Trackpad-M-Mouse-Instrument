@@ -86,6 +86,9 @@ def main(binary):
             {"start":0,"duration":480,"channel":0,"pitch":60,"velocity":90},
             {"start":100,"duration":480,"channel":0,"pitch":60,"velocity":90}]}))
         run(binary, "midi", "encode", frames, success=False)
+        frames.write_text(json.dumps({"bpm":120,"length":960,"notes":[
+            {"start":0,"duration":480,"channel":0,"pitch":60,"velocity":90,"cents":-20}]}))
+        run(binary, "midi", "encode", frames, success=False)
         melody = {"bpm":120,"stepsPerBeat":4,"length":16,"channel":2,
                   "steps":[{"index":0,"midi":60,"velocity":0.8,"gate":0.8},
                            {"index":1,"velocity":0.8,"gate":0.8}]}
