@@ -29,6 +29,8 @@ private struct TouchDraft: Codable {
     var multiTouch: Bool = true
     var midiMode: TouchMIDIMode = .standard
     var midiChannel: Int = 1
+    // Optional for backward-compatible workspace decoding; nil means shared.
+    var separateMouseMIDIChannel: Int? = nil
     var trackpadInstrument: SurfaceInstrumentMode = .melodic
     var magicMouseInstrument: SurfaceInstrumentMode = .melodic
     var trackpadOutput: SurfaceOutputRoute = .trackpadHaptic
@@ -103,6 +105,7 @@ private struct WorkspaceSettings: Codable {
         (0.1...1).contains(touch.pressThreshold) &&
         (1...127).contains(touch.fixedVelocity) &&
         (1...16).contains(touch.midiChannel) &&
+        (touch.separateMouseMIDIChannel.map { (1...16).contains($0) } ?? true) &&
         (touch.stringLayout?.isValid ?? true) &&
         (touch.mouseStringLayout?.isValid ?? true) &&
         (0.1...1).contains(touch.sustainTrackpadThreshold) &&
@@ -220,7 +223,7 @@ struct ContentView: View {
                     case .mapping: InstrumentBuilderView()
                     case .chords: ChordPadPanel(compact: false)
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
-                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, stringLayout: $touchDraft.stringLayout, mouseStringLayout: $touchDraft.mouseStringLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
+                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, separateMouseMIDIChannel: $touchDraft.separateMouseMIDIChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, stringLayout: $touchDraft.stringLayout, mouseStringLayout: $touchDraft.mouseStringLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
                     case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture, magicMouseTapThreshold: $helperDraft.magicMouseTapThreshold, sharePedalSurface:$helperDraft.sharePedalSurface,configureReceiverBendRange:$helperDraft.configureReceiverBendRange)
                     case .touchBar: TouchBarModeView()
                     case .notes: NoteSequencerView(notes: $noteDraft.notes, selectedMIDI: $noteDraft.selectedMIDI, velocity: $noteDraft.velocity, loop: $noteDraft.loop, groove: $noteDraft.groove, output: $noteDraft.output)
@@ -758,6 +761,7 @@ private struct TouchInstrumentView: View {
     @Binding var multiTouch: Bool
     @Binding var midiMode: TouchMIDIMode
     @Binding var midiChannel: Int
+    @Binding var separateMouseMIDIChannel: Int?
 
     @Binding var trackpadInstrument: SurfaceInstrumentMode
     @Binding var magicMouseInstrument: SurfaceInstrumentMode
@@ -779,6 +783,14 @@ private struct TouchInstrumentView: View {
 
     private var needsFretlessMPE: Bool {
         midiMode == .standard && configuration.requiresPolyphonicFretlessMPE(multiTouch:multiTouch)
+    }
+
+    private var separateDAWChannels: DAWSurfaceChannels? {
+        guard let mouse = separateMouseMIDIChannel else { return nil }
+        return DAWSurfaceChannels(trackpad:midiChannel-1,magicMouse:mouse-1)
+    }
+    private var canSplitDAWChannels: Bool {
+        configuration.permitsSeparateDAWSurfaceChannels && midiMode == .standard
     }
 
     private var mappedMIDINotes: [Int] { configuration.mappedMIDINotes }
@@ -869,6 +881,9 @@ private struct TouchInstrumentView: View {
                         if studio.touchRunning {
                             studio.stopTouch()
                         } else {
+                            // A requested split must be valid rather than silently
+                            // falling back to one shared MIDI channel.
+                            if separateMouseMIDIChannel != nil && (!canSplitDAWChannels || separateDAWChannels == nil) { return }
                             let selectedMode: TouchMIDIMode = needsFretlessMPE ? .mpe : midiMode
                             midiMode = selectedMode
                             studio.startTouch(
@@ -877,6 +892,7 @@ private struct TouchInstrumentView: View {
                                 midiMode: selectedMode,
                                 multiTouch: multiTouch,
                                 midiChannel: midiChannel - 1,
+                                separateChannels: separateDAWChannels,
                                 sustainSettings: .init(
                                     trackpadEnabled: sustainEnabled && sustainTrackpadEnabled,
                                     trackpadContactThreshold: sustainTrackpadThreshold,
@@ -890,6 +906,7 @@ private struct TouchInstrumentView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!studio.touchRunning && separateMouseMIDIChannel != nil && (!canSplitDAWChannels || separateDAWChannels == nil))
                 }
 
                 if needsFretlessMPE && !studio.touchRunning {
@@ -1114,7 +1131,7 @@ private struct TouchInstrumentView: View {
                             .font(.caption).foregroundStyle(.secondary).padding(6)
                     }
                 }
-                if configuration.hasMIDIOutput {
+                if configuration.hasMIDIOutput || separateMouseMIDIChannel != nil {
                     GroupBox("Logic Pro / DAW MIDI Out") {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 14) {
@@ -1135,6 +1152,26 @@ private struct TouchInstrumentView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
+                            }
+
+                            if canSplitDAWChannels || separateMouseMIDIChannel != nil {
+                                Toggle("Separate Trackpad and Magic Mouse MIDI channels",isOn:Binding(
+                                    get:{ separateMouseMIDIChannel != nil },
+                                    set:{ enabled in separateMouseMIDIChannel = enabled ? (midiChannel == 3 ? 4 : 3) : nil }
+                                )).disabled(studio.touchRunning)
+                                if let mouse = separateMouseMIDIChannel {
+                                    Stepper("Magic Mouse Channel \(mouse)",value:Binding(
+                                        get:{ separateMouseMIDIChannel ?? 3 },
+                                        set:{ separateMouseMIDIChannel = $0 }
+                                    ),in:1...16).disabled(studio.touchRunning)
+                                    if !canSplitDAWChannels || separateDAWChannels == nil {
+                                        Text("Choose two distinct channels, Standard MIDI, and two pitched MIDI surfaces; turn off Fretless. Disable this split to use another mode.")
+                                            .font(.caption).foregroundStyle(.orange)
+                                    } else {
+                                        Text("Logic MIDI Input: NoSpeaker Touch MIDI Out · Trackpad Ch \(midiChannel) · Magic Mouse Ch \(mouse). Shared Touch sustain affects both. Choose the Helper target channel explicitly.")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
                             }
 
                             if hasDrums {

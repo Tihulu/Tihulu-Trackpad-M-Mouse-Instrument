@@ -358,7 +358,8 @@ public final class MIDIHapticService: @unchecked Sendable {
         configuration: TouchInstrumentConfiguration,
         midiMode: TouchMIDIMode,
         baseChannel: Int = 0,
-        multiTouchEnabled: Bool = true
+        multiTouchEnabled: Bool = true,
+        separateChannels: DAWSurfaceChannels? = nil
     ) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
@@ -379,6 +380,14 @@ public final class MIDIHapticService: @unchecked Sendable {
             configuration.output(for: $0).sendsMIDI
         }
         let safeMelodicChannel = SurfaceMIDIChannel.melodic(base: baseChannel, hasMIDIDrums: anyDrums)
+        if separateChannels != nil && (midiMode != .standard || !configuration.permitsSeparateDAWSurfaceChannels) {
+            endAllTouchOutput()
+            return
+        }
+        func melodicChannel(_ surface: TouchSurfaceKind) -> Int {
+            guard let split = separateChannels else { return safeMelodicChannel }
+            return surface == .trackpad ? split.trackpad : split.magicMouse
+        }
 
         let stringRouteAllowed = configuration.permitsStringMIDI(isMPE:midiMode == .mpe)
         let melodicRouteAllowed = configuration.permitsMelodicMIDI(isMPE:midiMode == .mpe)
@@ -414,7 +423,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             for state in desired where configuration.instrument(for:state.surface) == .chords {
                 guard let slot = state.chordSlot, let pad = bank.pad(at:slot) else { continue }
                 let key = TouchKey(surface:state.surface,id:state.contactID)
-                chordTargets[key] = Set(pad.notes.map { .init(.note,channel:safeMelodicChannel,number:$0) })
+                chordTargets[key] = Set(pad.notes.map { .init(.note,channel:melodicChannel(state.surface),number:$0) })
                 chordVelocities[key] = max(1,min(127,state.velocity))
             }
         }
@@ -452,7 +461,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             }
             let isFretlessMelody = stringCell != nil || tunedMelody != nil || (instrument == .melodic && configuration.fretless)
             let isMPE = midiMode == .mpe && !drums
-            let standardChannel = drums ? GMDrumPads.midiChannel : safeMelodicChannel
+            let standardChannel = drums ? GMDrumPads.midiChannel : melodicChannel(state.surface)
             let anchor = stringCell?.anchor ?? tunedMelody?.anchor ?? max(0,min(127,configuration.baseMIDINote +
                 Int((configuration.pitchSpanSemitones / 2.0).rounded())))
             let targetNote = isFretlessMelody ? anchor : max(0,min(127,state.quantizedMIDI))
@@ -478,7 +487,7 @@ public final class MIDIHapticService: @unchecked Sendable {
                 guard let free = mpeChannels.next(occupied:used,sustained:outgoingSustainChannels()) else { continue }
                 channel = free
             } else {
-                channel = safeMelodicChannel
+                channel = standardChannel
             }
 
             // Onsets must not inherit a retired member's expression/pressure.
@@ -622,14 +631,14 @@ public final class MIDIHapticService: @unchecked Sendable {
     public func releaseTouchBarSustain() { replaceSustain(.touchBar,channels:[]) }
 
     /// Retains previously held MPE channels until this owner releases.
-    public func setTouchSustain(_ active: Bool, baseChannel: Int) {
+    public func setTouchSustain(_ active: Bool, baseChannel: Int, separateChannels: DAWSurfaceChannels? = nil) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         let previous = sustainOwners.channels(for:.touch)
         let currentNoteChannels = Set(outgoingTouches.values.map(\.channel)).union(physicalChordGates.channels)
         let fallback = max(0,min(15,baseChannel))
         let targets = active && canSend
-            ? previous.union(currentNoteChannels.isEmpty && previous.isEmpty ? [fallback] : currentNoteChannels)
+            ? previous.union(separateChannels?.all ?? (currentNoteChannels.isEmpty && previous.isEmpty ? [fallback] : currentNoteChannels))
             : Set<Int>()
         let commands = sustainOwners.replace(.touch,channels:targets)
         lock.unlock()

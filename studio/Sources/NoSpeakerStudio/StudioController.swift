@@ -402,6 +402,7 @@ final class StudioController: ObservableObject {
     private var touchMIDIMode: TouchMIDIMode = .standard
     private var touchMultiTouchEnabled = true
     private var touchMIDIChannel = 0
+    private var touchSeparateChannels: DAWSurfaceChannels?
 
     @Published private(set) var keyboardAuditRunning = false
     @Published private(set) var keyboardAuditResult:KeyboardOutputAudit?
@@ -1642,7 +1643,7 @@ final class StudioController: ObservableObject {
     /// Snapshot of the active standard melodic MIDI route. A copy is explicit;
     /// never guess a per-note MPE member or a percussion destination.
     var activeTouchControlChannel: Int? {
-        guard touchRunning, touchMIDIOutEnabled, midiRunning else { return nil }
+        guard touchRunning, touchMIDIOutEnabled, midiRunning, touchSeparateChannels == nil else { return nil }
         let surfaces = currentTouchConfiguration.selectedSurfaces.filter {
             currentTouchConfiguration.output(for: $0).sendsMIDI
         }
@@ -2654,9 +2655,16 @@ final class StudioController: ObservableObject {
         midiMode: TouchMIDIMode = .standard,
         multiTouch: Bool = true,
         midiChannel: Int = 0,
+        separateChannels: DAWSurfaceChannels? = nil,
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
-        guard allowLivePerformance() else { return }
+        guard !touchRunning, allowLivePerformance() else { return }
+        if separateChannels != nil {
+            guard midiOut, midiMode == .standard, configuration.permitsSeparateDAWSurfaceChannels else {
+                lastError = "Separate DAW channels require two pitched Standard MIDI surfaces. Disable MPE/fretless or use the shared route."
+                return
+            }
+        }
         guard !midiOut || midiMode == .mpe || !configuration.requiresPolyphonicFretlessMPE(multiTouch:multiTouch) else {
             lastError = "Fretless Multi Touch MIDI needs MPE. Select MPE for independent fingers, or turn Multi Touch off for Standard MIDI."
             return
@@ -2682,6 +2690,7 @@ final class StudioController: ObservableObject {
         touchMIDIMode = midiMode
         touchMultiTouchEnabled = multiTouch
         touchMIDIChannel = max(0, min(15, midiChannel))
+        touchSeparateChannels = separateChannels
         touchSustainSettings = sustainSettings
         touch.invalidatePendingSamples()
         touchSustainState.reset()
@@ -2723,6 +2732,7 @@ final class StudioController: ObservableObject {
     }
 
     func stopTouch() {
+        touchSeparateChannels = nil
         midi?.releaseTouchSustain()
         touchSustainState.reset()
         touchInstrumentSustainActive = false
@@ -2753,7 +2763,8 @@ final class StudioController: ObservableObject {
                     configuration: currentTouchConfiguration,
                     midiMode: touchMIDIMode,
                     baseChannel: touchMIDIChannel,
-                    multiTouchEnabled: touchMultiTouchEnabled
+                    multiTouchEnabled: touchMultiTouchEnabled,
+                    separateChannels: touchSeparateChannels
                 )
             }
             updateTouchSustain(states)
@@ -3399,7 +3410,8 @@ final class StudioController: ObservableObject {
         if touchMIDIOutEnabled {
             midi?.setTouchSustain(
                 snapshot.isActive,
-                baseChannel: touchMIDIChannel
+                baseChannel: touchMIDIChannel,
+                separateChannels: touchSeparateChannels
             )
         }
     }
