@@ -23,6 +23,13 @@ struct TihuluEngineCLI {
         let releasing: [String]?
     }
 
+    struct MixInput: Decodable {
+        let source: String
+        let frame: HapticFrame
+        let priority: Int?
+        let exclusive: Bool?
+    }
+
     static func main() {
         do {
             let result = try run(Array(CommandLine.arguments.dropFirst()))
@@ -54,7 +61,7 @@ struct TihuluEngineCLI {
                 "schema":1, "hardware":false,
                 "commands":["capabilities","patch example","patch validate FILE","patch routes FILE",
                     "groups example","groups validate FILE","groups ports FILE",
-                    "groups simulate PROFILE FRAMES [--allow-layering]"]
+                    "groups simulate PROFILE FRAMES [--allow-layering]", "scale plan ROOT CENTS", "haptics mix FILE"]
             ]
         }
         if args == ["capabilities"] {
@@ -63,7 +70,50 @@ struct TihuluEngineCLI {
                 "maxGroups":PerformanceGroupProfile.maximumGroups,
                 "maxRoutes":PerformanceGroupProfile.maximumRoutes,
                 "maxSessions":PerformanceGroupRouter.maxSessions,
-                "midiDelivery":"simulation only","mpePorts":"not implemented in CLI"]
+                "midiDelivery":"simulation only","mpePorts":"not implemented in CLI",
+                "scalePlanning":true,"hapticMixPreview":true]
+        }
+        if args.count == 4, args[0] == "scale", args[1] == "plan" {
+            guard let root = Int(args[2]), (0...115).contains(root),
+                  let scale = CustomScale.fromDegreeCents(args[3],name:"CLI scale") else {
+                throw CLIError("Invalid root or unsupported degree cents")
+            }
+            let rows: [[String:Any]] = try scale.intervals.map { degree in
+                let note = root + degree
+                guard let pitch = scale.mpePitch(midi:note,root:root),
+                      let hz = scale.tunedFrequency(midi:note,root:root) else {
+                    throw CLIError("Invalid tuned pitch")
+                }
+                return ["note":pitch.anchor,"bend":pitch.bend,"bendRange":pitch.bendRange,
+                        "frequencyHz":hz,"degreeCents":degree*100+(scale.centOffsets[degree] ?? 0)]
+            }
+            return ["schema":1,"planned":true,"hardware":false,"microtonal":scale.isMicrotonal,"pitches":rows]
+        }
+        if args.count == 3, args[0] == "haptics", args[1] == "mix" {
+            let inputs = try JSONDecoder().decode([MixInput].self,from:read(args[2]))
+            guard (1...HapticMixSource.allCases.count).contains(inputs.count) else {
+                throw CLIError("Invalid haptic source count")
+            }
+            var mixer = HapticFrameMixer()
+            var seen: Set<HapticMixSource> = []
+            for input in inputs {
+                let priority = input.priority ?? 0
+                guard let source = HapticMixSource(rawValue:input.source),
+                      seen.insert(source).inserted, (-100...100).contains(priority) else {
+                    throw CLIError("Invalid or repeated haptic source")
+                }
+                let lease = mixer.begin(source,priority:priority,mode:input.exclusive == true ? .exclusive : .continuous)
+                guard mixer.submit(input.frame,from:lease,now:0) else {
+                    throw CLIError("Invalid haptic frame")
+                }
+            }
+            let frame: Any
+            if let mixed = mixer.render(now:0) {
+                frame = try JSONSerialization.jsonObject(with:JSONEncoder().encode(mixed))
+            } else {
+                frame = NSNull()
+            }
+            return ["schema":1,"simulated":true,"hardware":false,"frame":frame]
         }
         if args == ["patch","example"] {
             let data = try InstrumentPatch.starter.archive()
