@@ -310,3 +310,34 @@ private func groupTunedSnapshot(_ down:Bool = false) throws -> GamepadFrame {
     let explicitlyStandard = try PerformanceGroupDAWProjection(profile:renamed)
     #expect(explicitlyStandard.groups.allSatisfy { $0.mode == .standard })
 }
+
+
+@Test func groupTuningFileBoundsAndExplicitScaleValidation() throws {
+    let a = tunedGroup(.gamepad1)
+    let profile = PerformanceGroupProfile(groups:[a])
+    let scale = try #require(CustomScale.fromDegreeCents("0, 180, 400, 500, 700, 900, 1100, 1200",
+                                                       name:"Independent scale"))
+    #expect(scale.isMicrotonal)
+    #expect(scale.degreeCents == [0,180,400,500,700,900,1100])
+    #expect(CustomScale.fromDegreeCents("0, 150, 400",name:"Tie") == nil)
+    #expect(CustomScale.fromDegreeCents("0, 180, 180",name:"Duplicate") == nil)
+    #expect(CustomScale.fromDegreeCents("0, 400, 180",name:"Unsorted") == nil)
+    #expect(CustomScale.fromDegreeCents("0, 180, 1201",name:"Out of range") == nil)
+    #expect(CustomScale.fromDegreeCents("0, 180, 400",name:"") == nil)
+    let configuration = try PerformanceGroupTuningConfiguration(profile:profile,
+        tuning:[a.id:.init(scale:scale,root:60)])
+    let encoded = try configuration.archive()
+    let decoded = try PerformanceGroupTuningConfiguration.read(encoded,matching:profile)
+    #expect(decoded == configuration)
+    let oversized = Data(repeating:0,count:WorkspaceArchive.maximumBytes + 1)
+    #expect(throws:WorkspaceArchiveError.tooLarge) {
+        try PerformanceGroupTuningConfiguration.read(oversized,matching:profile)
+    }
+    #expect(throws:Error.self) {
+        try PerformanceGroupTuningConfiguration.read(Data(encoded.dropLast()),matching:profile)
+    }
+    #expect(throws:MIDIClipError.invalidClip) {
+        try PerformanceGroupTuningConfiguration(profile:profile,
+            tuning:[a.id:.init(scale:scale,root:128)])
+    }
+}
