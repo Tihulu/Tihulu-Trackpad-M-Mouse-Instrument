@@ -22,6 +22,10 @@ struct InstrumentBuilderView: View {
     @State private var airRange = AirRangeCapture()
     @State private var drumPreset: AirDrumPreset = .snare
     @State private var remoteSource: SensorSource = .phone
+    @State private var expressionPreset: MobileExpressionPreset = .major
+    @State private var expressionRoot = 48
+    @State private var expressionChannel = 0
+    @State private var expressionCustom = "48, 50, 52, 53, 55, 57, 59, 60"
     @State private var routeSource: SensorSource?
     @State private var routeSearch = ""
     @State private var expandedRoutes: Set<String> = []
@@ -207,6 +211,7 @@ struct InstrumentBuilderView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8).disabled(studio.patchRunning)
                 }
+                expressionPresetPanel.disabled(studio.patchRunning)
                 GroupBox("Routes · \(draft.routes.count)/64") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
@@ -498,6 +503,60 @@ struct InstrumentBuilderView: View {
             if !studio.patchPhysical { studio.stopInstrumentPatch() }
             else { studio.releaseHybridControls() }
             studio.rememberBuilderDraft(draft)
+        }
+    }
+
+    private var expressionPresetPanel: some View {
+        GroupBox("Mobile Expression · note zones") {
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("Device", selection: $remoteSource) {
+                    Text("Phone").tag(SensorSource.phone)
+                    Text("Tablet").tag(SensorSource.tablet)
+                }
+                Picker("Notes", selection: $expressionPreset) {
+                    ForEach(MobileExpressionPreset.allCases) { preset in
+                        Text(preset.title).tag(preset)
+                    }
+                }
+                if expressionPreset == .custom {
+                    TextField("1–25 MIDI notes, 0–127", text: $expressionCustom)
+                    Text("Enter notes in your preferred left-to-right order. Repeated notes are allowed.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Stepper("Root MIDI note \(expressionRoot)", value: $expressionRoot, in: 0...115)
+                }
+                Stepper("MIDI channel \(expressionChannel + 1)", value: $expressionChannel, in: 0...15)
+                let notes = expressionPreset.notes(root: expressionRoot, custom: expressionCustom)
+                let hasExisting = draft.routes.contains {
+                    $0.source == remoteSource && RemotePiano.signals.contains($0.signal)
+                }
+                if let notes {
+                    Text("Notes: " + notes.map { String($0) }.joined(separator: ", "))
+                        .font(.caption.monospacedDigit())
+                } else {
+                    Text("Invalid note list. Use 1–25 MIDI notes between 0 and 127.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                if hasExisting {
+                    Text("This device already has piano or note-zone mappings. Edit them in Routes, or use another device or a new draft.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                Button("Add note zones + sustain") {
+                    do {
+                        draft = try expressionPreset.appending(to: draft, source: remoteSource,
+                            channel: expressionChannel, root: expressionRoot, custom: expressionCustom)
+                        routeSource = remoteSource
+                        routeSearch = ""
+                        physical = true
+                        message = "Note zones added. Pair in Play setup; choose Note strips on the mobile page."
+                    } catch {
+                        message = "Cannot add note zones: check existing mappings and route capacity."
+                    }
+                }.disabled(hasExisting || !draft.isValid || notes == nil ||
+                            (notes?.count ?? 0) + 1 > SensorRouter.maxMappings - draft.routes.count)
+                Text("Discrete MIDI notes, fixed velocity. The paired browser can use piano or note strips. Independent pitch bend, microtonal tuning and MPE are not available in this mode.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(8)
         }
     }
 
