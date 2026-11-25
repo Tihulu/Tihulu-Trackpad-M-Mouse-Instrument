@@ -4288,6 +4288,7 @@ final class StudioController: ObservableObject {
         if let captureMonitor { return captureMonitor }
         captureGeneration &+= 1
         let generation = captureGeneration
+        let panicEngineGeneration = engineGeneration
         let capture = PerformanceCaptureMonitor()
         capture.onCaptureChanged = { [weak self] _ in
             Task { @MainActor in
@@ -4302,7 +4303,10 @@ final class StudioController: ObservableObject {
         }
         capture.onPanic = { [weak self] in
             Task { @MainActor in
-                guard let self, self.captureGeneration == generation else { return }
+                guard let self,PerformanceCaptureSafety.acceptsEmergencyRequest(
+                    engineAtCapture:panicEngineGeneration,currentEngine:self.engineGeneration) else { return }
+                // Tap replacement/disarm cannot cancel an already accepted
+                // Escape. Explicit engine retirement fences old requests.
                 self.panicStop()
             }
         }

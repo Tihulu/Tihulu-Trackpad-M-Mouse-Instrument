@@ -16,6 +16,22 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
         ))
     }
 
+    func testAcceptedPanicSurvivesCaptureReplacementButNotEngineReplacement() {
+        // The capture generation can advance while engine generation stays.
+        // The emergency policy intentionally has no capture-generation input.
+        XCTAssertTrue(PerformanceCaptureSafety.acceptsEmergencyRequest(engineAtCapture:10,currentEngine:10))
+        XCTAssertFalse(PerformanceCaptureSafety.acceptsEmergencyRequest(engineAtCapture:10,currentEngine:11))
+        XCTAssertFalse(PerformanceCaptureSafety.acceptsEmergencyRequest(engineAtCapture:11,currentEngine:10))
+    }
+
+    func testPanicEdgeCanOnlyBeAcceptedOnceWhilePointerIsReleased() {
+        var edges = CaptureKeyEdges()
+        XCTAssertEqual(edges.handle(key:53,down:true,repeatKey:false,matches:false,armed:true,captured:true),.panic)
+        XCTAssertEqual(edges.handle(key:53,down:true,repeatKey:true,matches:false,armed:false,captured:false),.swallow)
+        XCTAssertEqual(edges.handle(key:53,down:false,repeatKey:false,matches:false,armed:false,captured:false),.swallow)
+        XCTAssertEqual(edges.handle(key:53,down:true,repeatKey:false,matches:false,armed:false,captured:false),.pass)
+    }
+
     func testCapturedGlobalEscapeRemainsPanicStop() {
         XCTAssertTrue(PerformanceCaptureSafety.shouldPanicOnGlobalEscape(
             isCaptured: true, keyCode: 53, isRepeat: false

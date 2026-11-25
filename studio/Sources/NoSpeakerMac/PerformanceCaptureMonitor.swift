@@ -51,6 +51,12 @@ public enum PerformanceCaptureSafety {
     ) -> Bool {
         isCaptured && keyCode == 53 && !isRepeat
     }
+
+    /// An accepted emergency edge belongs to the performance engine, not
+    /// the replaceable event tap. A new engine must never receive an old panic.
+    public static func acceptsEmergencyRequest(engineAtCapture:UInt64,currentEngine:UInt64) -> Bool {
+        engineAtCapture == currentEngine
+    }
 }
 
 /// Pair swallowed downs/ups by hardware keycode, not changing modifiers.
@@ -63,7 +69,9 @@ struct CaptureKeyEdges {
         if !down { return swallowed.remove(key) != nil ? .swallow : .pass }
         if swallowed.contains(key) { return .swallow }
         if repeatKey { return .pass }
-        if captured && key == 53 { swallowed.insert(key); return .panic }
+        if PerformanceCaptureSafety.shouldPanicOnGlobalEscape(isCaptured:captured,keyCode:key,isRepeat:repeatKey) {
+            swallowed.insert(key); return .panic
+        }
         if armed && matches { swallowed.insert(key); return .toggle }
         return .pass
     }
@@ -557,9 +565,11 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     @discardableResult
     public func setPointerCaptured(_ value:Bool) -> Bool {
         if !value { releasePointer(); return true }
+        // Permission IPC must not run while holding the native input lock.
+        let authorized = AXIsProcessTrusted()
         lock.lock()
-        guard listening,captureHotkeyEnabled,let port = eventTap,
-              CGEvent.tapIsEnabled(tap:port),AXIsProcessTrusted() else {
+        guard authorized,listening,!stopped,!panicLatched,captureHotkeyEnabled,let port = eventTap,
+              CGEvent.tapIsEnabled(tap:port) else {
             captured = false
             lock.unlock()
             onCaptureChanged?(false)
@@ -645,9 +655,11 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
                 changed = false
             }
             lock.unlock()
+            // Deliver the emergency intent before ordinary physical/UI
+            // notifications. It has already synchronously freed the pointer.
+            if action == .panic { onPanic?() }
             if invalidateSignal { onPhysicalInputAvailable?() }
             if let changed { onCaptureChanged?(changed) }
-            if action == .panic { onPanic?() }
             if action != .pass { return nil }
             return passthrough
         }
