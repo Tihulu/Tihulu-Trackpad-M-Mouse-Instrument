@@ -309,7 +309,7 @@ public enum PhysicalClickAttribution {
         snapshotRevision:UInt64?,currentRevision:UInt64?,receivedAt:Double?,now:Double,
         clickReceipt:Double? = nil,notBefore:Double? = nil) -> Surface? {
         guard let snapshotRevision, let currentRevision, snapshotRevision == currentRevision,
-              let receivedAt, receivedAt.isFinite, now.isFinite, now >= receivedAt,
+              let receivedAt, receivedAt.isFinite, receivedAt>=0,now.isFinite,now>=receivedAt,
               now-receivedAt < 0.35, touching.count == 1 else { return nil }
         if let notBefore {
             // An event-monitor invalidation retires all earlier contact

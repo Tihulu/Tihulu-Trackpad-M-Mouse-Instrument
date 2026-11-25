@@ -4349,6 +4349,9 @@ final class StudioController: ObservableObject {
     /// Each retired monitor has its own callback fence.
     private func ensureCaptureMonitor() -> PerformanceCaptureMonitor {
         if let captureMonitor { return captureMonitor }
+        // Preview may have continued while the previous tap was absent.
+        // A newly created tap must not inherit those contact observations.
+        clearClickAttribution()
         captureGeneration &+= 1
         let generation = captureGeneration
         let panicEngineGeneration = engineGeneration
@@ -4557,6 +4560,9 @@ final class StudioController: ObservableObject {
         physicalClickDown = false
         clickedSurface = nil
         trackpadClickPressure = nil
+        // Every explicit attribution reset is a publication boundary,
+        // including preview-only, engine restart and monitor recreation.
+        clickAttributionNotBefore=ProcessInfo.processInfo.systemUptime
     }
 
     private func invalidatePhysicalClickState() {
@@ -4564,9 +4570,6 @@ final class StudioController: ObservableObject {
         touchSustainState.invalidatePhysicalClicks(settings:touchSustainSettings)
         handlePhysicalClick(false,pressure:0)
         clearClickAttribution()
-        // Do not re-admit an observation captured before the loss even if
-        // it arrives from the separate touch mailbox after recovery.
-        clickAttributionNotBefore=ProcessInfo.processInfo.systemUptime
     }
 
     private func handlePhysicalClick(_ down: Bool, pressure: Double,receipt:Double? = nil) {

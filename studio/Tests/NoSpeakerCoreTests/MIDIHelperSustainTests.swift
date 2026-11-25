@@ -676,3 +676,22 @@ import Testing
         #expect(next.magicMouseActive && !next.trackpadActive)
     }
 }
+
+@Test func physicalClickAttributionRejectsPreEpochContactEvenWithoutReceipt() {
+    let surfaces:Set<String>=["trackpad"]
+    #expect(PhysicalClickAttribution.resolve(surfaces,snapshotRevision:1,currentRevision:1,
+        receivedAt:-0.05,now:0.1)==nil)
+    #expect(PhysicalClickAttribution.resolve(surfaces,snapshotRevision:1,currentRevision:1,
+        receivedAt:0,now:0.1)=="trackpad")
+}
+
+@Test func freshCaptureEpochCannotInheritPreviewOnlyTouch() {
+    let surfaces:Set<String>=["mouse"]
+    let boundary=10.0
+    for before in [9.99,9.999] {
+        #expect(PhysicalClickAttribution.resolve(surfaces,snapshotRevision:7,currentRevision:7,
+            receivedAt:before,now:10.05,clickReceipt:10.04,notBefore:boundary)==nil)
+    }
+    #expect(PhysicalClickAttribution.resolve(surfaces,snapshotRevision:7,currentRevision:7,
+        receivedAt:10.01,now:10.05,clickReceipt:10.04,notBefore:boundary)=="mouse")
+}
