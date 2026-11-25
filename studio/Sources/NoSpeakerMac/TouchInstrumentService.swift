@@ -177,6 +177,14 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         return scale.mappedMIDINotes(root: baseMIDINote, zoneWidth: zoneWidth)
     }
 
+    /// Only MIDI-routed melodic contacts require independent bend channels.
+    /// Haptic-only surfaces and GM drums do not require an MPE receiver.
+    public func requiresPolyphonicFretlessMPE(multiTouch: Bool) -> Bool {
+        multiTouch && fretless && selectedSurfaces.contains {
+            instrument(for: $0) == .melodic && output(for: $0).sendsMIDI
+        }
+    }
+
     public var permitsMelodicMIDI: Bool { permitsMelodicMIDI(isMPE:false) }
 
     public func permitsMelodicMIDI(isMPE:Bool) -> Bool {
