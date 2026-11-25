@@ -171,6 +171,21 @@ final class StudioController: ObservableObject {
     private var groupRunToken: UUID?
     private var groupWatchdog: Task<Void,Never>?
     private var groupHost: PerformanceGroupMIDIHost { .shared }
+    private var groupRemoteTransport: RemoteLoopbackTransport?
+    private var groupRemotePage: RemoteLoopbackPageServer?
+    private var groupRemoteRunID: UUID?
+    @Published private(set) var groupRemoteReady = false
+    @Published private(set) var groupRemotePeers: Set<UUID> = []
+    @Published private(set) var groupRemoteEndpoint: RemoteEndpoint?
+    @Published private(set) var groupRemoteStatus = "Mobile listener off"
+
+    static var groupRemoteStartEnabled: Bool {
+        #if TIHULU_GROUP_REMOTE_LIVE
+        true
+        #else
+        false
+        #endif
+    }
 
     private func refreshGroupOutputState() {
         let registered = groupHost.registeredIDs
@@ -197,7 +212,25 @@ final class StudioController: ObservableObject {
 
     func startGroupGamepads(profile: PerformanceGroupProfile, allowLayering: Bool,
                             tuning: PerformanceGroupTuningConfiguration? = nil,
-                            confirmedTuning: Bool = false) {
+                            confirmedTuning: Bool = false,
+                            remoteTransport:RemoteLoopbackTransport? = nil,
+                            remotePage:RemoteLoopbackPageServer? = nil,
+                            confirmedLAN:Bool = false) {
+        let remoteEnabled = remoteTransport != nil
+        guard remoteEnabled == (remotePage != nil),
+              !remoteEnabled || Self.groupRemoteStartEnabled else {
+            groupGamepadStatus = "Mobile group transport is disabled or incomplete."
+            return
+        }
+        if let transport = remoteTransport, let page = remotePage {
+            guard transport.endpoint == page.endpoint,
+                  transport.endpoint.isLoopback ||
+                    (confirmedLAN && remoteLoopbackVerified &&
+                     RemoteLANChoice.available().contains(where:{ $0.endpoint == transport.endpoint })) else {
+                groupGamepadStatus = "Remote endpoint or trusted LAN confirmation is invalid."
+                return
+            }
+        }
         guard tuning == nil || Self.groupMPEStartEnabled else {
             groupGamepadStatus = "Live MPE is disabled in this build; use the offline preview."
             return
@@ -217,7 +250,7 @@ final class StudioController: ObservableObject {
             activation = try .init(profile:profile,mode:tuning.map { .tuned($0) } ?? .standard,
                 allowLayering:allowLayering,confirmedTuning:confirmedTuning,
                 registeredIDs:groupHost.registeredIDs,cleanupIDs:groupHost.pendingCleanup,
-                pendingDisposalCount:groupHost.pendingDisposalCount)
+                pendingDisposalCount:groupHost.pendingDisposalCount,allowRemote:remoteEnabled)
         } catch {
             groupGamepadStatus = "Group Start rejected: " + String(describing:error)
             return
@@ -259,7 +292,7 @@ final class StudioController: ObservableObject {
         }
         do {
             try groupHost.startGamepads(profile:activation.profile,allowLayering:activation.allowLayering,
-                allowSurfaces:true,allowScalars:true,allowCamera:true,tuning:activation.tuning)
+                allowSurfaces:true,allowScalars:true,allowCamera:true,tuning:activation.tuning,allowRemote:activation.allowRemote)
             groupTunedConfiguration = tuning
         } catch {
             builderGamepads.stop()
@@ -279,7 +312,7 @@ final class StudioController: ObservableObject {
         groupStoppedIDs = []
         refreshGroupOutputState()
         do {
-            for source in sources.sorted(by:{ $0.rawValue < $1.rawValue }) {
+            for source in sources.subtracting([.phone,.tablet]).sorted(by:{ $0.rawValue < $1.rawValue }) {
                 groupGamepadTokens[source] = try groupHost.bindGamepad(source,now:ProcessInfo.processInfo.systemUptime)
             }
         } catch {
@@ -333,6 +366,23 @@ final class StudioController: ObservableObject {
             groupCameraMirrorX = patchCameraMirrorX
             camera.start(deviceID:patchCameraDeviceID)
         }
+        if let transport = remoteTransport, let page = remotePage {
+            do {
+                groupRemoteRunID = try groupHost.beginRemoteGroupBridge()
+                groupRemoteTransport = transport
+                groupRemotePage = page
+                groupRemoteEndpoint = transport.endpoint
+                groupRemoteReady = false
+                groupRemotePeers = []
+                groupRemoteStatus = "Starting TLS controller"
+                transport.start()
+                page.start()
+            } catch {
+                stopGroupGamepads()
+                groupGamepadStatus = "Mobile bridge setup failed; all group output released."
+                return
+            }
+        }
         refreshGroupOutputState()
         groupGamepadStatus = tuning == nil
             ? "Standard group ports registered. Release controller controls and lift each touch surface before playing."
@@ -353,6 +403,8 @@ final class StudioController: ObservableObject {
                 self.drainGroupSurfaces(run:token)
                 guard self.groupRunToken == token else { return }
                 self.drainGroupCamera(run:token)
+                guard self.groupRunToken == token else { return }
+                self.drainGroupRemote(run:token)
                 for source in GamepadFrame.orderedSources where self.groupGamepadTokens[source] != nil {
                     guard self.groupRunToken == token else { return }
                     self.receiveGroupGamepad(source:source,frame:self.builderGamepads.read(source),run:token)
@@ -379,7 +431,7 @@ final class StudioController: ObservableObject {
             groupGamepadTokens.removeValue(forKey:source)
             consumeGroupReports(groupHost.unbindGamepad(source,token:token))
             groupGamepadStatus = "Controller input lost. Stop and explicitly restart to bind a replacement."
-            if groupGamepadTokens.isEmpty { stopGroupGamepads() }
+            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
             return
         }
         if let result = groupHost.receiveGamepad(source,token:token,frame:frame,now:ProcessInfo.processInfo.systemUptime) {
@@ -402,7 +454,7 @@ final class StudioController: ObservableObject {
     private func retireGroupSource(_ source:SensorSource,reason:String,run:UUID) {
         guard groupRunToken == run, let token = groupGamepadTokens.removeValue(forKey:source) else { return }
         consumeGroupReports(groupHost.unbindGamepad(source,token:token))
-        if groupGamepadTokens.isEmpty { stopGroupGamepads() }
+        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
         groupGamepadStatus = reason + (groupCleanupIDs.isEmpty ? "" : " MIDI cleanup pending.")
     }
 
@@ -494,6 +546,87 @@ final class StudioController: ObservableObject {
         }
     }
 
+    func issueGroupRemoteInvitation(source:SensorSource) throws -> Data {
+        guard groupGamepadsRunning,groupRemoteReady,let run = groupRemoteRunID else {
+            throw RemoteTouchError.unavailable
+        }
+        let secret = try RemoteLoopbackTransport.invitation()
+        try groupHost.issueRemoteGroupInvitation(run:run,secret:secret,source:source,
+                                                now:ProcessInfo.processInfo.systemUptime)
+        return secret
+    }
+
+    func cancelGroupRemoteInvitation() {
+        if let run = groupRemoteRunID { groupHost.cancelRemoteGroupInvitation(run:run) }
+    }
+
+    func revokeGroupRemote(_ connection:UUID) {
+        guard let run = groupRemoteRunID,let transport = groupRemoteTransport else { return }
+        let result = groupHost.revokeRemoteGroupConnection(run:run,connection:connection)
+        transport.revoke(connection)
+        groupRemotePeers = groupHost.remoteGroupConnections(run:run)
+        consumeGroupReports(result.reports)
+    }
+
+    private func detachGroupRemoteTransport(reason:String) {
+        let transport = groupRemoteTransport
+        let page = groupRemotePage
+        groupRemoteRunID = nil
+        groupRemoteTransport = nil
+        groupRemotePage = nil
+        groupRemoteReady = false
+        groupRemotePeers = []
+        groupRemoteEndpoint = nil
+        groupRemoteStatus = reason
+        transport?.stop()
+        page?.stop()
+    }
+
+    func stopGroupRemote() {
+        guard let run = groupRemoteRunID else { return }
+        let result = groupHost.stopRemoteGroupBridge(run:run)
+        detachGroupRemoteTransport(reason:"Mobile listener stopped; local groups retained.")
+        consumeGroupReports(result.reports)
+        if groupGamepadsRunning && groupGamepadTokens.isEmpty { stopGroupGamepads() }
+    }
+
+    private func drainGroupRemote(run:UUID) {
+        guard groupRunToken == run,let listener = groupRemoteRunID,
+              let transport = groupRemoteTransport,let page = groupRemotePage else { return }
+        switch page.status {
+        case .failed,.stopped:
+            stopGroupRemote()
+            groupRemoteStatus = "HTTPS controller failed; remote owners released."
+            return
+        case .starting,.ready: break
+        }
+        let result = groupHost.processRemoteGroupEvents(run:listener,events:transport.drain(),
+                                                        now:ProcessInfo.processInfo.systemUptime)
+        consumeGroupReports(result.reports)
+        guard groupRunToken == run,groupRemoteRunID == listener,groupRemoteTransport === transport else { return }
+        if result.fault || result.actions.contains(.stop) {
+            detachGroupRemoteTransport(reason:"Remote listener retired; remote owners released.")
+            if groupGamepadTokens.isEmpty { stopGroupGamepads() }
+            return
+        }
+        for action in result.actions {
+            switch action {
+            case .acknowledge(let id,let ok): transport.acknowledge(id,accepted:ok)
+            case .capabilities(let id,let caps): transport.acknowledge(id,accepted:true,capabilities:caps)
+            case .mapping(let id,let mapping): transport.acknowledge(id,accepted:true,mapping:mapping)
+            case .mappingLabels(let id,_): transport.acknowledge(id,accepted:false)
+            case .revoke(let id): transport.revoke(id)
+            case .stop: break
+            }
+        }
+        let ready = groupHost.remoteGroupReady(run:listener) && page.status == .ready
+        let peers = groupHost.remoteGroupConnections(run:listener)
+        if groupRemoteReady != ready { groupRemoteReady = ready }
+        if groupRemotePeers != peers { groupRemotePeers = peers }
+        let status = ready ? "TLS controller ready; receiver not verified." : "Waiting for TLS controller"
+        if groupRemoteStatus != status { groupRemoteStatus = status }
+    }
+
     func stopGroupGamepads() {
         // Invalidate callbacks before stopping the existing adapter.
         guard groupGamepadsRunning else { return }
@@ -505,6 +638,7 @@ final class StudioController: ObservableObject {
         groupStoppedIDs = groupRegisteredIDs
         // Release MIDI before potentially slow native monitor teardown.
         if let report = groupHost.panic() { consumeGroupReports([report]) }
+        detachGroupRemoteTransport(reason:"Mobile listener off")
         builderGamepads.stop()
         groupHinge?.stop()
         groupHinge = nil
