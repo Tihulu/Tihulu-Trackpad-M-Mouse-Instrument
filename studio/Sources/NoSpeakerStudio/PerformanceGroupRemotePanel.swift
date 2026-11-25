@@ -31,6 +31,7 @@ struct PerformanceGroupRemotePanel: View {
     @State private var confirmedLAN = false
     @State private var source:SensorSource = .phone
     @State private var invitation = ""
+    @State private var shareLabels = false
     @State private var invitationSource:SensorSource?
     @State private var invitationTask:Task<Void,Never>?
     @State private var invitationGeneration:UUID?
@@ -53,7 +54,7 @@ struct PerformanceGroupRemotePanel: View {
         clearInvitation()
         guard studio.groupRemoteReady,sources.contains(source),!studio.groupRemoteSlots.values.contains(source) else { return }
         do {
-            invitation = try studio.issueGroupRemoteInvitation(source:source)
+            invitation = try studio.issueGroupRemoteInvitation(source:source,shareLabels:shareLabels)
                 .map { String(format:"%02x",$0) }.joined()
             invitationSource = source
             let generation = UUID()
@@ -112,7 +113,7 @@ struct PerformanceGroupRemotePanel: View {
     var body: some View {
         GroupBox("Mobile group controllers — experimental TLS") {
             VStack(alignment:.leading,spacing:7) {
-                Text("Up to two mapped surface families per phone/tablet slot. Enable experimental combinations explicitly in the browser to play both together. No MIDI addresses or custom labels shared. Trusted TLS identity required.")
+                Text("Up to two mapped surface families per phone/tablet slot. Enable experimental combinations explicitly in the browser to play both together. MIDI addresses stay hidden. Custom labels are optional per invitation. Trusted TLS identity required.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !studio.groupGamepadsRunning {
                     Toggle("Private LAN (requires successful Builder loopback diagnostic)",isOn:$lan)
@@ -172,7 +173,11 @@ struct PerformanceGroupRemotePanel: View {
                             ForEach(sources,id:\.self) { slot in
                                 Text(slot.rawValue + (studio.groupRemoteSlots.values.contains(slot) ? " · connected" : " · available")).tag(slot)
                             }
-                        }.onChange(of:source) { _ in clearInvitation() }
+                        }.onChange(of:source) { _ in clearInvitation(); shareLabels = false }
+                        Toggle("Share this slot's custom control labels",isOn:$shareLabels)
+                            .onChange(of:shareLabels) { _ in clearInvitation() }
+                        Text("Labels may contain personal text. Off by default; changing consent requires a new invitation. Existing peers must disconnect and pair again.")
+                            .font(.caption)
                         Button("Create one-time invitation") { issue() }
                             .disabled(!sources.contains(source) || studio.groupRemoteSlots.values.contains(source))
                         if !invitation.isEmpty {

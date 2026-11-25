@@ -1251,11 +1251,11 @@ public final class PerformanceGroupMIDIHost {
         remoteBridge?.cancelInvitation()
     }
 
-    public func issueRemoteGroupInvitation(run:UUID,secret:Data,source:SensorSource,now:Double) throws {
+    public func issueRemoteGroupInvitation(run:UUID,secret:Data,source:SensorSource,now:Double,shareLabels:Bool = false) throws {
         guard run == remoteRunID,var bridge = remoteBridge,let state = gamepads else {
             throw RemoteTouchError.unavailable
         }
-        try bridge.issue(secret:secret,source:source,now:now,session:state)
+        try bridge.issue(secret:secret,source:source,now:now,session:state,shareLabels:shareLabels)
         remoteBridge = bridge
     }
 

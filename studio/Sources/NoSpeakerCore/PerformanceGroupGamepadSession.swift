@@ -66,6 +66,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     private let mapped: [SensorSource:Set<SensorSignal>]
     private let smoothed: Set<SensorSource>
     private let remoteModes: [SensorSource:Set<PerformanceGroupRemoteSurface>]
+    private let remoteLabels: [SensorSource:[RemoteMappingLabel]]
     private var bindings: [SensorSource:Binding] = [:]
     private var cameraTracking = AirTrackingGate()
     private var clock = 0.0
@@ -101,6 +102,11 @@ public struct PerformanceGroupGamepadSession: Sendable {
                      drums:modes.contains(.drums) ? mask(RemoteDrumPads.signals) : 0,
                      piano:modes.contains(.piano) ? mask(RemotePiano.signals) : 0,
                      pedals:modes.contains(.pedalboard) ? mask(RemotePedalboard.signals) : 0)
+    }
+
+    /// Frozen host-only labels. The bridge must authorize disclosure per invitation.
+    func groupRemoteLabels(_ source:SensorSource) -> [RemoteMappingLabel] {
+        remoteLabels[source] ?? []
     }
 
     /// Retire multiple remote owners atomically, never a local source or a
@@ -160,6 +166,22 @@ public struct PerformanceGroupGamepadSession: Sendable {
         mapped = Dictionary(grouping:routes,by:{ $0.source }).mapValues { Set($0.map(\.signal)) }
         remoteModes = Dictionary(grouping:routes.filter { $0.source.isGroupRemote },by:{ $0.source })
             .compactMapValues { PerformanceGroupRemoteSurface.modes(for:$0) }
+        // Only labels for mapped controls in this slot. Ambiguous labels on
+        // layered inputs are omitted rather than choosing one group's text.
+        var candidates:[SensorSource:[Int:Set<String>]] = [:]
+        for group in profile.groups {
+            for widget in group.patch.performanceLayout?.resolved(for:group.patch.routes) ?? [] {
+                guard widget.source.isGroupRemote,RemoteMappingLabel.permits(widget.label),
+                      let signal = RemoteMappingProjection.signals.firstIndex(of:widget.signal) else { continue }
+                candidates[widget.source,default:[:]][signal,default:[]].insert(widget.label)
+            }
+        }
+        remoteLabels = candidates.mapValues { values in
+            values.keys.sorted().compactMap { signal in
+                guard let labels = values[signal],labels.count == 1,let label = labels.first else { return nil }
+                return RemoteMappingLabel(signal:signal,text:label)
+            }
+        }
         smoothed = Set(routes.filter { ($0.response?.smoothingMS ?? 0) > 0 }.map(\.source))
         if tuning.isEmpty {
             delivery = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
@@ -472,7 +494,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
             return .init(status:.lost,reports:reports)
         }
         binding.remoteLastReceipt = hostTime
-        if frame.kind == .heartbeat || frame.kind == .capabilities || frame.kind == .mapping {
+        if frame.kind == .heartbeat || frame.kind == .capabilities || frame.kind == .mapping || frame.kind == .mappingLabels {
             guard binding.lease == nil else {
                 reports += reset([source],send:send)
                 return .init(status:.lost,reports:reports)

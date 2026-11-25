@@ -9,7 +9,7 @@ public struct PerformanceGroupRemoteBatch: Sendable {
 
 /// Serial host-owned bridge over the established RemoteHostEvent transport.
 /// It never opens a socket. An invitation selects an existing logical slot,
-/// not a browser-provided source or destination. No mapping disclosure.
+/// not a browser-provided source or destination. No MIDI destination disclosure.
 public struct PerformanceGroupRemoteBridge: Sendable {
     private struct Connection: Sendable {
         let source:SensorSource
@@ -17,9 +17,14 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         var capabilitiesSeen = false
         var mappingComplete = false
         var performanceStarted = false
+        var labels:[RemoteMappingLabel] = []
+        var nextLabelPage = 0
+        var labelsComplete = false
+        var metadataStartedAt:Double?
     }
     private var pairing = RemotePairingGate()
     private var invitationIssuedAt:Double?
+    private var invitationSharesLabels = false
     private var bindings:[UUID:Connection] = [:]
     public private(set) var ready = false
     public private(set) var stopped = false
@@ -29,17 +34,19 @@ public struct PerformanceGroupRemoteBridge: Sendable {
     public init() {}
 
     public mutating func issue(secret:Data,source:SensorSource,now:Double,
-                               session:PerformanceGroupGamepadSession) throws {
+                               session:PerformanceGroupGamepadSession,shareLabels:Bool = false) throws {
         guard ready,!stopped,!session.retired,session.remoteSlots.contains(source),
               !session.boundSources.contains(source),
               !bindings.values.contains(where:{ $0.source == source }) else { throw RemoteTouchError.unavailable }
         try pairing.issue(secret:secret,source:source,now:now,allowGroupSlots:true)
         invitationIssuedAt = now
+        invitationSharesLabels = shareLabels
     }
 
     public mutating func cancelInvitation() {
         pairing.clear()
         invitationIssuedAt = nil
+        invitationSharesLabels = false
     }
 
     public mutating func revoke(_ connection:UUID,session:inout PerformanceGroupGamepadSession,
@@ -103,14 +110,15 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                     result.actions.append(.acknowledge(id,false))
                     continue
                 }
-                invitationIssuedAt = nil
+                let shareLabels = invitationSharesLabels
+                cancelInvitation()
                 guard session.remoteSlots.contains(source),
                       let token = try? session.bind(source,now:now) else {
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
                     continue
                 }
-                bindings[id] = Connection(source:source,token:token)
+                bindings[id] = Connection(source:source,token:token,labels:shareLabels ? session.groupRemoteLabels(source) : [])
                 result.actions.append(.acknowledge(id,true))
             case .frame(let id,let bytes,let receipt):
                 guard !rejected.contains(id),var binding = bindings[id],
@@ -120,12 +128,25 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                     result.actions.append(.acknowledge(id,false))
                     continue
                 }
-                // V8 response is deliberately redacted. A client may request
-                // one page after capabilities and before performance only.
-                let metadataAllowed = frame.kind != .mapping ||
-                    (binding.capabilitiesSeen && !binding.mappingComplete &&
-                     !binding.performanceStarted && frame.page == 0)
-                guard metadataAllowed,frame.kind != .mappingLabels else {
+                // Redacted destination page, then optional consented label pages.
+                // No metadata refresh during or after musical performance.
+                let withinBudget = binding.metadataStartedAt.map { now-$0 < 10 } ?? true
+                let metadataAllowed:Bool
+                switch frame.kind {
+                case .capabilities:
+                    metadataAllowed = !binding.capabilitiesSeen && !binding.performanceStarted
+                case .mapping:
+                    metadataAllowed = withinBudget && binding.capabilitiesSeen && !binding.mappingComplete &&
+                        !binding.performanceStarted && frame.page == 0
+                case .mappingLabels:
+                    metadataAllowed = withinBudget && binding.mappingComplete && !binding.labelsComplete &&
+                        !binding.performanceStarted && frame.page == binding.nextLabelPage
+                default:
+                    // Direct core clients may omit metadata entirely. Once
+                    // the label sequence begins, it must finish before play.
+                    metadataAllowed = binding.nextLabelPage == 0 || binding.labelsComplete
+                }
+                guard metadataAllowed else {
                     result.reports += remove([id],session:&session,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
@@ -149,10 +170,20 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                         continue
                     }
                     binding.capabilitiesSeen = true
+                    binding.metadataStartedAt = now
                     result.actions.append(.capabilities(id,capabilities))
                 case .mapping:
                     binding.mappingComplete = true
                     result.actions.append(.mapping(id,.init(sequence:frame.sequence,page:0,pages:1,total:0,detail:false,rows:[])))
+                case .mappingLabels:
+                    let page = binding.nextLabelPage
+                    let total = binding.labels.count
+                    let pages = max(1,total)
+                    let response = RemoteMappingLabelPage(sequence:frame.sequence,page:page,pages:pages,total:total,
+                        rows:total == 0 ? [] : [binding.labels[page]])
+                    binding.nextLabelPage += 1
+                    binding.labelsComplete = binding.nextLabelPage == pages
+                    result.actions.append(.mappingLabels(id,response))
                 case .heartbeat:
                     result.actions.append(.acknowledge(id,true))
                 default:

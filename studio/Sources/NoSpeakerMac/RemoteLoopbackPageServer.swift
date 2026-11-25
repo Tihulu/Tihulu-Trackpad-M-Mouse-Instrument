@@ -356,6 +356,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       return label;
     }catch{return null;}
   }
+  function groupLabelAvailable(id,manifest){
+    if(!Number.isSafeInteger(id))return false;
+    if(id>=0&&id<=2)return manifest.touch;
+    if(id>=9&&id<=16)return Boolean(manifest.drums&(1<<(id-9)));
+    if(id>=17&&id<=42)return Boolean(manifest.piano&(1<<(id-17)));
+    if(id>=43&&id<=48)return Boolean(manifest.pedals&(1<<(id-43)));
+    return false;
+  }
   function acceptLabels(data){
     const s=mappingStage,p=parseMapping(data,true);
     if(!s||s.phase!=="labels"||!p||p.kind!=="mappingLabels"||p.version!==8||p.sequence!==sequence||p.page!==s.next||
@@ -365,18 +373,18 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(s.next===0){s.labelTotal=p.total;s.labelPages=p.pages;}
     for(const r of p.rows){
       if(!Array.isArray(r)||r.length!==2||!Number.isSafeInteger(r[0])||r[0]<=s.lastLabel||
-        !s.rows.some(row=>row[0]===r[0]))return false;
+        !(groupNeutralHandshake&&!s.detail?groupLabelAvailable(r[0],s.manifest):s.rows.some(row=>row[0]===r[0])))return false;
       const label=decodeLabel(r[1]);if(label===null)return false;
       s.labels.set(r[0],label);s.lastLabel=r[0];
     }
     s.next++;clearDeadline();pending=false;pendingKind=null;
-    if(s.next===s.labelPages)ready(s.manifest,s.rows,s.labels);else nextMapping();
+    if(s.next===s.labelPages)ready(s.manifest,s.detail?s.rows:null,s.labels);else nextMapping();
     return true;
   }
   function renderMapping(){
     get("mappingSection").hidden=!caps;
-    get("mappingStatus").textContent=!caps?"":mappingRows?"Shared by the Mac. MIDI output is not confirmed by this display.":"Mapping details hidden by the Mac.";
-    get("mappingDetails").textContent=mappingRows?mappingRows.map(r=>labelFor(r[0])+" · "+targetText(r)).join("\n"):"";
+    get("mappingStatus").textContent=!caps?"":mappingRows?"Shared by the Mac. MIDI output is not confirmed by this display.":groupNeutralHandshake&&mappingLabels.size?"Custom control labels shared. MIDI addresses remain hidden.":"Mapping details hidden by the Mac.";
+    get("mappingDetails").textContent=mappingRows?mappingRows.map(r=>labelFor(r[0])+" · "+targetText(r)).join("\n"):groupNeutralHandshake?[...mappingLabels.keys()].map(labelFor).join("\n"):"";
     for(let i=0;i<8;i++){
       const r=targets(9+i);get("drum"+i).textContent=labelFor(9+i)+(r.length===1?" · "+targetText(r[0]):r.length>1?" · "+r.length+" targets":"");
     }
@@ -433,8 +441,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     s.next++;
     clearDeadline();pending=false;pendingKind=null;
     if(s.next===s.pages){
+      if(groupNeutralHandshake&&s.detail)return false; // group ports cannot be represented by legacy channel-only rows
       if(s.detail&&(!s.rows.length||!coverage(s.rows,s.manifest)))return false;
-      if(s.detail&&mappingLabelsV8){s.phase="labels";s.next=0;s.labels=new Map();s.lastLabel=-1;nextMapping();}
+      if((s.detail||groupNeutralHandshake)&&mappingLabelsV8){s.phase="labels";s.next=0;s.labels=new Map();s.lastLabel=-1;nextMapping();}
       else ready(s.manifest,s.detail?s.rows:null);
     }else nextMapping();
     return true;
@@ -574,7 +583,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       const rows=targets(17+index);
       const singleNote=rows.length===1&&rows[0][1]===0?rows[0][3]:null;
       const actual=singleNote===null?null:pitchNames[singleNote%12]+(Math.floor(singleNote/12)-1);
-      const label=strips?(mappingLabels.get(17+index)||actual||"K"+(index+1)):(scaleAllowed?note:"K"+(index+1));
+      const label=groupNeutralHandshake&&mappingLabels.has(17+index)?mappingLabels.get(17+index):strips?(mappingLabels.get(17+index)||actual||"K"+(index+1)):(scaleAllowed?note:"K"+(index+1));
       b.hidden=strips&&!has("piano",index);
       b.style.order=String(i);
       b.textContent=label;b.setAttribute("aria-label",(mappingLabels.has(17+index)?labelFor(17+index)+" · ":"")+label+(rows.length?" · "+rows.map(targetText).join("; "):" · mapping details hidden"));
@@ -637,7 +646,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pedalToggles.forEach((b,i)=>{
       const active=Boolean(pedalMask&(1<<i));
       b.disabled=!admitted||!pedalEnabled||!has("pedals",i)||pedalEmergency;
-      b.textContent=i<3?(active?"Release":"Activate"):(active?"On":"Off");
+      b.textContent=(groupNeutralHandshake&&mappingLabels.has(43+i)?mappingLabels.get(43+i)+" · ":"")+(i<3?(active?"Release":"Activate"):(active?"On":"Off"));
       b.setAttribute("aria-pressed",String(active));
     });
     pedalSliders.forEach((b,i)=>{

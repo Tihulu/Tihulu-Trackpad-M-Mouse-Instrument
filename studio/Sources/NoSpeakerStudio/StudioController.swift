@@ -548,13 +548,13 @@ final class StudioController: ObservableObject {
         }
     }
 
-    func issueGroupRemoteInvitation(source:SensorSource) throws -> Data {
+    func issueGroupRemoteInvitation(source:SensorSource,shareLabels:Bool = false) throws -> Data {
         guard groupGamepadsRunning,groupRemoteReady,let run = groupRemoteRunID else {
             throw RemoteTouchError.unavailable
         }
         let secret = try RemoteLoopbackTransport.invitation()
         try groupHost.issueRemoteGroupInvitation(run:run,secret:secret,source:source,
-                                                now:ProcessInfo.processInfo.systemUptime)
+                                                now:ProcessInfo.processInfo.systemUptime,shareLabels:shareLabels)
         return secret
     }
 
@@ -616,7 +616,7 @@ final class StudioController: ObservableObject {
             case .acknowledge(let id,let ok): transport.acknowledge(id,accepted:ok)
             case .capabilities(let id,let caps): transport.acknowledge(id,accepted:true,capabilities:caps)
             case .mapping(let id,let mapping): transport.acknowledge(id,accepted:true,mapping:mapping)
-            case .mappingLabels(let id,_): transport.acknowledge(id,accepted:false)
+            case .mappingLabels(let id,let labels): transport.acknowledge(id,accepted:true,labels:labels)
             case .revoke(let id): transport.revoke(id)
             case .stop: break
             }

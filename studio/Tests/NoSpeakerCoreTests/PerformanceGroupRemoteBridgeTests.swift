@@ -149,3 +149,77 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     _ = bridge.stop(session:&session,send:sink)
     #expect(bridge.connectionSlots.isEmpty && session.boundSources.isEmpty)
 }
+
+
+@Test func groupRemoteLabelConsentIsFrozenScopedAndRedactedByDefault() throws {
+    var phone = groupRemoteFixture(.phone2,.drumPad1,36)
+    phone.patch.performanceLayout = .init(widgets:[
+        .init(source:.phone2,signal:.drumPad1,label:"Kick <safe>"),
+        .init(source:.phone2,signal:.drumPad2,label:"Dormant"),
+        .init(source:.tablet2,signal:.pianoKey0,label:"Private other")
+    ])
+    var tablet = groupRemoteFixture(.tablet2,.pianoKey0,60)
+    tablet.patch.performanceLayout = .init(widgets:[.init(source:.tablet2,signal:.pianoKey0,label:"Keys")])
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[phone,tablet]),allowRemote:true)
+    var bridge = PerformanceGroupRemoteBridge()
+    let sink:(PerformanceGroupCommand)->Bool = {_ in true}
+    _ = bridge.process([.ready],now:1,session:&session,send:sink)
+    for (i,consent) in [false,true].enumerated() {
+        let time = 1+Double(i)
+        let peer = UUID(), secret = Data(repeating:UInt8(i+1),count:32)
+        try bridge.issue(secret:secret,source:.phone2,now:time,session:session,shareLabels:consent)
+        _ = bridge.process([.invitation(peer,secret,time+0.01)],now:time+0.01,session:&session,send:sink)
+        _ = bridge.process([.frame(peer,groupRemoteWire("capabilities",7,1),time+0.02)],now:time+0.02,session:&session,send:sink)
+        let mapping = bridge.process([.frame(peer,groupRemoteWire("mapping",8,2,",\"page\":0"),time+0.03)],now:time+0.03,session:&session,send:sink)
+        #expect(mapping.actions == [.mapping(peer,.init(sequence:2,page:0,pages:1,total:0,detail:false,rows:[]))])
+        let labels = bridge.process([.frame(peer,groupRemoteWire("mappingLabels",8,3,",\"page\":0"),time+0.04)],now:time+0.04,session:&session,send:sink)
+        let expected:[RemoteMappingLabel] = consent ? [.init(signal:9,text:"Kick <safe>")] : []
+        #expect(labels.actions == [.mappingLabels(peer,.init(sequence:3,page:0,pages:1,total:expected.count,rows:expected))])
+        let repeatPage = bridge.process([.frame(peer,groupRemoteWire("mappingLabels",8,4,",\"page\":0"),time+0.05)],now:time+0.05,session:&session,send:sink)
+        #expect(repeatPage.actions == [.acknowledge(peer,false)])
+        #expect(session.boundSources.isEmpty)
+    }
+}
+
+@Test func groupRemoteLabelProjectionOmitsConflictsAndInvalidText() throws {
+    var first = groupRemoteFixture(.phone,.drumPad1,36)
+    first.patch.routes.append(.init(id:"second",source:.phone,signal:.drumPad2,destination:.init(.note,number:38)))
+    first.patch.performanceLayout = .init(widgets:[
+        .init(source:.phone,signal:.drumPad1,label:"First"),
+        .init(source:.phone,signal:.drumPad2,label:"bad\u{202E}text")
+    ])
+    var second = groupRemoteFixture(.phone,.drumPad1,40)
+    second.patch.performanceLayout = .init(widgets:[.init(source:.phone,signal:.drumPad1,label:"Second")])
+    let session = try PerformanceGroupGamepadSession(profile:.init(groups:[first,second]),allowLayering:true,allowRemote:true)
+    #expect(session.groupRemoteLabels(.phone).isEmpty)
+    #expect(session.groupRemoteLabels(.tablet).isEmpty)
+}
+
+@Test func groupRemoteLabelSequenceRejectsEarlySkippedAndMidPerformanceRequests() throws {
+    var group = groupRemoteFixture(.phone,.drumPad1,36)
+    group.patch.routes.append(.init(id:"second",source:.phone,signal:.drumPad2,destination:.init(.note,number:38)))
+    group.patch.performanceLayout = .init(widgets:[
+        .init(source:.phone,signal:.drumPad1,label:"Kick"),
+        .init(source:.phone,signal:.drumPad2,label:"Snare")
+    ])
+    for scenario in 0..<3 {
+        var session = try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowRemote:true)
+        var bridge = PerformanceGroupRemoteBridge()
+        let sink:(PerformanceGroupCommand)->Bool = {_ in true}
+        let peer = UUID(), secret = Data(repeating:3,count:32)
+        _ = bridge.process([.ready],now:1,session:&session,send:sink)
+        try bridge.issue(secret:secret,source:.phone,now:1,session:session,shareLabels:true)
+        _ = bridge.process([.invitation(peer,secret,1.01)],now:1.01,session:&session,send:sink)
+        _ = bridge.process([.frame(peer,groupRemoteWire("capabilities",7,1),1.02)],now:1.02,session:&session,send:sink)
+        if scenario != 0 {
+            _ = bridge.process([.frame(peer,groupRemoteWire("mapping",8,2,",\"page\":0"),1.03)],now:1.03,session:&session,send:sink)
+        }
+        if scenario == 2 {
+            _ = bridge.process([.frame(peer,groupRemoteWire("drumPads",4,3,",\"mask\":0"),1.04)],now:1.04,session:&session,send:sink)
+        }
+        let page = scenario == 1 ? 1 : 0
+        let result = bridge.process([.frame(peer,groupRemoteWire("mappingLabels",8,4,",\"page\":\(page)"),1.05)],now:1.05,session:&session,send:sink)
+        #expect(result.actions == [.acknowledge(peer,false)])
+        #expect(bridge.connectionIDs.isEmpty)
+    }
+}

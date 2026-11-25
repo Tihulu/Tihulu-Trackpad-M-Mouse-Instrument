@@ -28,7 +28,8 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
   time+=13;if(manifest!==null)socket.onmessage({data:typeof manifest==="string"?manifest:JSON.stringify(manifest)});
   function step(ms=25){time+=ms;for(const [id,t] of [...timers])if(t.at<=time&&timers.delete(id))t.f();ticker?.()}
   function withheld(){step(50);const q=socket.frames.at(-1);if(q?.kind==="mapping"){socket.frames.pop();time+=13;socket.onmessage({data:JSON.stringify({kind:"mapping",version:8,sequence:q.sequence,page:0,pages:1,total:0,detail:false,rows:[]})});}}
-  if(autoMapping&&!socket.closed&&manifest!==null)withheld();
+  function withheldLabels(){step(50);const q=socket.frames.at(-1);if(q?.kind==="mappingLabels"){socket.frames.pop();time+=13;socket.onmessage({data:JSON.stringify({kind:"mappingLabels",version:8,sequence:q.sequence,page:0,pages:1,total:0,rows:[]})});}}
+  if(autoMapping&&!socket.closed&&manifest!==null){withheld();if(groupNeutral&&!socket.closed)withheldLabels();}
   if(experimental&&!socket.closed&&manifest!==null){elements.navSetup.emit("click");elements.workloadMode.emit("click");elements.navPlay.emit("click");}
   return {query,elements,window,document,socket,step,withheld,ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
     orientation(beta=0){window.emit("deviceorientation",{alpha:0,beta,gamma:0})}};
@@ -672,4 +673,37 @@ test("group browser cannot enter Play when second neutral ACK is missing",()=>{
   a.step(221);
   assert.equal(a.socket.closed,true);
   assert.equal(a.elements.playView.hidden,true);
+});
+
+
+test("group labels remain read-only and Play waits for labels and neutral ACK",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:1},false,false,true);
+  a.withheld();
+  a.step(50);
+  const q=a.socket.frames.at(-1);
+  assert.equal(q.kind,"mappingLabels");
+  assert.equal(a.elements.playView.hidden,true);
+  a.socket.onmessage({data:JSON.stringify({kind:"mappingLabels",version:8,sequence:q.sequence,page:0,pages:1,total:1,rows:[[9,Buffer.from("<Kick>").toString("base64url")]]})});
+  assert.equal(a.socket.frames.at(-1).kind,"drumPads");
+  assert.equal(a.elements.playView.hidden,true);
+  a.ack();
+  assert.equal(a.elements.playView.hidden,false);
+  assert.match(a.elements.drum0.textContent,/<Kick>/);
+  assert.match(a.elements.mappingStatus.textContent,/MIDI addresses remain hidden/);
+  assert.doesNotMatch(a.elements.mappingDetails.textContent,/Ch \d/);
+  a.elements.disconnect.emit("click");
+  assert.doesNotMatch(a.elements.drum0.textContent,/<Kick>/);
+});
+test("group label for unmapped discrete control fails closed",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:1},false,false,true);
+  a.withheld();a.step(50);
+  const q=a.socket.frames.at(-1);
+  a.socket.onmessage({data:JSON.stringify({kind:"mappingLabels",version:8,sequence:q.sequence,page:0,pages:1,total:1,rows:[[10,"U25hcmU"]]})});
+  assert.equal(a.socket.closed,true);
+  assert.equal(a.elements.playView.hidden,true);
+});
+test("group refuses misleading channel-only mapping details",()=>{
+  const a=setup("granted",touchOnly,false,false,true);
+  mappingResponse(a,[[0,1,0,74,1]],{},false);
+  assert.equal(a.socket.closed,true);
 });
