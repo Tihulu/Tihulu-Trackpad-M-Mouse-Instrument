@@ -170,6 +170,10 @@ final class StudioController: ObservableObject {
     private var groupSurfaceOrientation: SurfaceOrientation = .horizontal
     private var groupRunToken: UUID?
     private var groupWatchdog: Task<Void,Never>?
+    private var groupHaptics:LiveNoteHapticOutput?
+    private var groupHapticToken:UUID?
+    @Published private(set) var groupHapticStatus = "Group Trackpad output off"
+    @Published private(set) var groupHapticRunning = false
     private var groupTimingAccumulator = PerformanceGroupTimingDiagnostics()
     private var groupTimingLastPublished = 0.0
     @Published private(set) var groupTiming = PerformanceGroupTimingDiagnostics()
@@ -211,6 +215,14 @@ final class StudioController: ObservableObject {
         #endif
     }
 
+    static var groupHapticStartEnabled:Bool {
+        #if TIHULU_GROUP_HAPTIC_LIVE
+        true
+        #else
+        false
+        #endif
+    }
+
     @Published private(set) var groupTunedConfiguration: PerformanceGroupTuningConfiguration?
 
     func startGroupGamepads(profile: PerformanceGroupProfile, allowLayering: Bool,
@@ -218,7 +230,11 @@ final class StudioController: ObservableObject {
                             confirmedTuning: Bool = false,
                             remoteTransport:RemoteLoopbackTransport? = nil,
                             remotePage:RemoteLoopbackPageServer? = nil,
-                            confirmedLAN:Bool = false) {
+                            confirmedLAN:Bool = false,hapticGroups:Set<UUID> = []) {
+        guard hapticGroups.isEmpty || (Self.groupHapticStartEnabled && tuning == nil) else {
+            groupGamepadStatus = "Group Trackpad output requires an experimental standard MIDI start."
+            return
+        }
         let remoteEnabled = remoteTransport != nil
         guard remoteEnabled == (remotePage != nil),
               !remoteEnabled || Self.groupRemoteStartEnabled else {
@@ -244,7 +260,8 @@ final class StudioController: ObservableObject {
         }
         guard !patchRunning, !groupGamepadsRunning, !midiRunning, !midiHelperRunning,
               !touchRunning, !sequenceRunning, !chordArmed, !touchBarOutputArmed,
-              !isPlaying, !speakerBusy, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
+              !isPlaying, !speakerBusy, !liveHingeEnabled, !captureArmed, !pointerCaptured,
+              !liveNoteOwnsHaptics,!sequenceOwnsHaptics else {
             groupGamepadStatus = "Stop other live performances and Builder before starting group MIDI."
             return
         }
@@ -279,6 +296,15 @@ final class StudioController: ObservableObject {
         }
         cancelStartupGreeting()
         let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
+        if !hapticGroups.isEmpty {
+            guard (try? PerformanceGroupHapticProjection(profile:profile,selected:hapticGroups)) != nil,
+                  requireEngine(),driver != nil else {
+                groupGamepadStatus = "Selected group Trackpad output unavailable; Start refused."
+                return
+            }
+            renderGeneration &+= 1
+            playback?.stop(closeDriver:false)
+        }
         if needsSurface {
             guard requireEngine(), touch != nil else {
                 groupGamepadStatus = "Native surface monitoring unavailable on this Mac."
@@ -295,7 +321,7 @@ final class StudioController: ObservableObject {
         }
         do {
             try groupHost.startGamepads(profile:activation.profile,allowLayering:activation.allowLayering,
-                allowSurfaces:true,allowScalars:true,allowCamera:true,tuning:activation.tuning,allowRemote:activation.allowRemote)
+                allowSurfaces:true,allowScalars:true,allowCamera:true,tuning:activation.tuning,allowRemote:activation.allowRemote,hapticGroups:hapticGroups)
             groupTunedConfiguration = tuning
         } catch {
             builderGamepads.stop()
@@ -393,6 +419,13 @@ final class StudioController: ObservableObject {
         groupGamepadStatus = tuning == nil
             ? "Standard group ports registered. Release controller controls and lift each touch surface before playing."
             : "MPE setup sent; receiver not verified. Release controller controls and lift each touch surface before playing."
+        if !hapticGroups.isEmpty {
+            guard startGroupHaptics(run:token) else {
+                stopGroupGamepads()
+                groupGamepadStatus = "Requested Trackpad output could not start. Group Start aborted."
+                return
+            }
+        }
         pollGroupGamepads(run:token)
         guard groupRunToken == token else { return }
         builderGamepads.beginEvents { [weak self] source,frame in
@@ -415,7 +448,8 @@ final class StudioController: ObservableObject {
                 self.pollGroupGamepads(run:token)
                 guard self.groupRunToken == token else { return }
                 let end = ProcessInfo.processInfo.systemUptime
-                self.groupTimingAccumulator.record(start:cycleStarted,end:end)
+                self.updateGroupHaptics()
+                self.groupTimingAccumulator.record(start:cycleStarted,end:ProcessInfo.processInfo.systemUptime)
                 if end-self.groupTimingLastPublished >= 1 {
                     self.groupTimingLastPublished = end
                     self.groupTiming = self.groupTimingAccumulator
@@ -424,12 +458,49 @@ final class StudioController: ObservableObject {
         }
     }
 
+    private func startGroupHaptics(run:UUID) -> Bool {
+        guard groupRunToken == run,groupHaptics == nil,let driver else { return false }
+        let token = UUID()
+        let output = LiveNoteHapticOutput(driver:driver,requiresFreshGroupFrames:true)
+        groupHaptics = output
+        groupHapticToken = token
+        do {
+            try output.start { [weak self] message in
+                Task { @MainActor in
+                    guard let self,self.groupRunToken == run,self.groupHapticToken == token else { return }
+                    self.stopGroupHaptics(reason:"Trackpad output stopped: " + message)
+                }
+            }
+            groupHapticRunning = true
+            groupHapticStatus = "Experimental group Trackpad output active; MIDI remains separate."
+            updateGroupHaptics()
+            return true
+        } catch {
+            stopGroupHaptics(reason:"Trackpad output could not start.")
+            return false
+        }
+    }
+
+    private func updateGroupHaptics() {
+        groupHaptics?.update(frame:groupHost.groupHapticFrame,masterLevel:masterLevel,discardPendingAttacks:true)
+    }
+
+    func stopGroupHaptics(reason:String = "Group Trackpad output off; MIDI unchanged") {
+        groupHapticToken = nil
+        groupHost.disableGroupHaptics()
+        groupHaptics?.stop()
+        groupHaptics = nil
+        groupHapticRunning = false
+        groupHapticStatus = reason
+    }
+
     private func consumeGroupReports(_ reports: [PerformanceGroupDelivery.Report]) {
         let failures = reports.reduce(into:Set<UUID>()) { $0.formUnion($1.failedGroups) }
         if !failures.isEmpty {
             groupFaultIDs.formUnion(failures)
             groupStoppedIDs.formUnion(failures)
             groupGamepadStatus = "A group MIDI send failed. Affected groups stopped; inspect cleanup status."
+            updateGroupHaptics()
         }
         refreshGroupOutputState()
         if groupGamepadsRunning, !groupRegisteredIDs.isEmpty,
@@ -710,6 +781,7 @@ final class StudioController: ObservableObject {
         groupStoppedIDs = groupRegisteredIDs
         // Release MIDI before potentially slow native monitor teardown.
         if let report = groupHost.panic() { consumeGroupReports([report]) }
+        stopGroupHaptics(reason:"Group Trackpad output off")
         detachGroupRemoteTransport(reason:"Mobile listener off")
         builderGamepads.stop()
         groupHinge?.stop()
@@ -739,6 +811,7 @@ final class StudioController: ObservableObject {
         if let report = groupHost.stopGroup(id) {
             groupStoppedIDs.insert(id)
             consumeGroupReports([report])
+            updateGroupHaptics()
             if groupRegisteredIDs.isSubset(of:groupStoppedIDs) { stopGroupGamepads() }
         }
     }
@@ -991,7 +1064,7 @@ final class StudioController: ObservableObject {
     private var nativePianoTokens: [Int: UUID] = [:]
     private(set) var touchBarGestureEpoch = TouchBarGestureEpoch()
     var touchBarOwnsHaptics: Bool { touchBarOutputArmed }
-    var liveNoteOwnsHaptics: Bool { chordOwnsHaptics || touchBarOwnsHaptics || gamepadHaptics != nil }
+    var liveNoteOwnsHaptics: Bool { chordOwnsHaptics || touchBarOwnsHaptics || gamepadHaptics != nil || groupHaptics != nil }
     @Published private(set) var chordProgression = StudioController.readChordProgression()
     @Published private(set) var progressionRunning = false
     @Published private(set) var progressionStep: Int?

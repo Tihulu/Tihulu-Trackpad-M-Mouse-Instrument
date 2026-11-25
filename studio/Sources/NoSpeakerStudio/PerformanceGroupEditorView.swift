@@ -9,6 +9,7 @@ struct PerformanceGroupEditorView: View {
     let currentPatch: InstrumentPatch
     @EnvironmentObject private var studio: StudioController
     @State private var allowLayering = false
+    @State private var hapticSelection:Set<UUID> = []
     @State private var tuningPreview: PerformanceGroupTuningConfiguration?
     @State private var tuningDraft = PerformanceGroupTuningDraft()
     @State private var pendingTunedStart: PerformanceGroupTuningConfiguration?
@@ -51,6 +52,7 @@ struct PerformanceGroupEditorView: View {
             storedData = data
             saved = profile
             allowLayering = false
+            hapticSelection = []
             message = "Group configuration saved. No new MIDI endpoints created."
         } catch {
             message = error.localizedDescription
@@ -225,6 +227,10 @@ struct PerformanceGroupEditorView: View {
             message = "Save or reload the current profile and select distinct controllers first."
             return
         }
+        guard hapticSelection.isEmpty || (StudioController.groupHapticStartEnabled && tuning == nil && hapticSelection.isSubset(of:hapticEligibleIDs)) else {
+            message = "Review selected Trackpad groups; MPE and group Trackpad output cannot start together."
+            return
+        }
         if let tuning {
             guard StudioController.groupMPEStartEnabled, tuning == tuningPreview,
                   studio.groupRegisteredIDs.isEmpty,
@@ -235,7 +241,7 @@ struct PerformanceGroupEditorView: View {
         }
         studio.startGroupGamepads(profile:saved,allowLayering:allowLayering,
             tuning:tuning,confirmedTuning:tuning != nil,remoteTransport:remoteTransport,
-            remotePage:remotePage,confirmedLAN:confirmedLAN)
+            remotePage:remotePage,confirmedLAN:confirmedLAN,hapticGroups:hapticSelection)
     }
 
     private var canStartGroups: Bool {
@@ -254,13 +260,13 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var canStartTunedRemoteGroups:Bool {
-        guard canStartRemoteGroups,StudioController.groupMPEStartEnabled,
+        guard canStartRemoteGroups,StudioController.groupMPEStartEnabled,hapticSelection.isEmpty,
               studio.groupRegisteredIDs.isEmpty,let tuningPreview else { return false }
         return (try? tuningPreview.plan(matching:saved)) != nil
     }
 
     private var canStartTunedGroups: Bool {
-        guard StudioController.groupMPEStartEnabled, canStartGroups,
+        guard StudioController.groupMPEStartEnabled, canStartGroups,hapticSelection.isEmpty,
               studio.groupRegisteredIDs.isEmpty, let tuningPreview else { return false }
         return (try? tuningPreview.plan(matching:saved)) != nil
     }
@@ -350,10 +356,37 @@ struct PerformanceGroupEditorView: View {
         }.disabled(studio.groupGamepadsRunning)
     }
 
+    private var hapticEligibleIDs:Set<UUID> {
+        Set(saved.groups.filter { $0.patch.routes.contains(where:{ $0.destination.kind == .note }) }.map(\.id))
+    }
+
+    @ViewBuilder private var groupHapticControls:some View {
+        if StudioController.groupHapticStartEnabled {
+            GroupBox("Experimental Trackpad note output") {
+                VStack(alignment:.leading,spacing:5) {
+                    Text("Select standard MIDI groups to mirror on the shared actuator. Off by default. Not MPE, drum synthesis, or audio playback; short notes between host ticks may be missed.")
+                        .font(.caption)
+                    ForEach(saved.groups.filter { hapticEligibleIDs.contains($0.id) }) { group in
+                        Toggle(group.name,isOn:Binding(
+                            get:{ hapticSelection.contains(group.id) },
+                            set:{ on in
+                                if on { hapticSelection.insert(group.id) }
+                                else { hapticSelection.remove(group.id) }
+                            }))
+                        .disabled(studio.groupGamepadsRunning || profile != saved)
+                    }
+                    Text(studio.groupHapticStatus).font(.caption)
+                    Button("Stop Trackpad output only") { studio.stopGroupHaptics() }
+                        .disabled(!studio.groupHapticRunning)
+                }
+            }
+        }
+    }
+
     private var liveControls: some View {
         GroupBox("Experimental group MIDI - local controllers and Helpers") {
             VStack(alignment:.leading,spacing:8) {
-                Text("Xbox, Trackpad and Magic Mouse may share groups. Touch uses one primary contact; lift each surface to arm. Touch Bar ribbon, compatible lid-angle sensor and single-hand camera support continuous CC and pitch bend only. No local haptics, pressure or multi-touch. Live independent MPE requires a separately enabled experimental build.")
+                Text("Xbox, Trackpad and Magic Mouse may share groups. Touch uses one primary contact; lift each surface to arm. Touch Bar ribbon, compatible lid-angle sensor and single-hand camera support continuous CC and pitch bend only. No pressure or multi-touch. Group Trackpad note output requires its separate experimental build. Live independent MPE requires a separately enabled experimental build.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !supportedLocalProfile && !supportedRemoteProfile {
                     Text("Save a supported group profile to enable Start.").font(.caption)
@@ -361,6 +394,7 @@ struct PerformanceGroupEditorView: View {
                 if !remoteSources.isEmpty && !StudioController.groupRemoteStartEnabled {
                     Text("Mobile group Start is disabled in this build.").font(.caption).foregroundStyle(.orange)
                 }
+                groupHapticControls
                 if supportedRemoteProfile && StudioController.groupRemoteStartEnabled {
                     PerformanceGroupRemotePanel(sources:remoteSources,canStart:canStartRemoteGroups,
                         tuning:tuningPreview,canStartTuned:canStartTunedRemoteGroups) { transport,page,confirmed,tuning in

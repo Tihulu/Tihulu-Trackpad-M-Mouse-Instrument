@@ -60,7 +60,7 @@ jobs:
           set -euo pipefail
           scratch="$(mktemp -d "$RUNNER_TEMP/group-mpe-build.XXXXXX")"
           trap 'rm -rf "$scratch"' EXIT
-          swift build --scratch-path "$scratch" --product NoSpeakerStudio -Xswiftc -DTIHULU_GROUP_MPE_LIVE -Xswiftc -DTIHULU_GROUP_REMOTE_LIVE
+          swift build --scratch-path "$scratch" --product NoSpeakerStudio -Xswiftc -DTIHULU_GROUP_MPE_LIVE -Xswiftc -DTIHULU_GROUP_REMOTE_LIVE -Xswiftc -DTIHULU_GROUP_HAPTIC_LIVE
       - name: Install SVG icon renderer
         run: brew install librsvg
       - name: Build app bundle in installer mode
