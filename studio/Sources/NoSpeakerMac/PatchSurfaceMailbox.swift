@@ -20,7 +20,7 @@ public final class PatchSurfaceMailbox: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard !closed, !overflow, frame.surface != excludedSurface else { return }
-        guard samples.count < 64, frame.contacts.count <= 32 else {
+        guard samples.count < 64, frame.contacts.count <= NativeTouchFramePolicy.maximumContacts else {
             overflow = true
             samples.removeAll()
             return
