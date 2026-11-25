@@ -63,6 +63,11 @@ private final class MIDIProcessClient: @unchecked Sendable {
         isolatedSources.insert(source)
     }
 
+    func unregisterIsolatedSource(_ source: MIDIEndpointRef) {
+        lock.lock(); defer { lock.unlock() }
+        isolatedSources.remove(source)
+    }
+
     func isIsolatedSource(_ source: MIDIEndpointRef) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return isolatedSources.contains(source)
@@ -1079,6 +1084,10 @@ public final class ChordMIDIOutput {
 
     /// Return CoreMIDI's delivery status; never report success on a failed send.
     public func send(_ command: SensorCommand) -> Bool {
+        Self.send(command,endpoint:endpoint)
+    }
+
+    fileprivate static func send(_ command: SensorCommand, endpoint: MIDIEndpointRef) -> Bool {
         guard endpoint != 0, command.destination.isValid else { return false }
         let channel = command.destination.channel
         let value = command.value
@@ -1114,5 +1123,124 @@ public final class ChordMIDIOutput {
         return added && MIDIReceived(endpoint,&list) == noErr
     }
     // Keep the endpoint stable until process exit, as with the retained client.
+}
+/// Explicit experimental host. No UI or adapter calls start in this slice.
+/// Retains one process-wide owner so failed note-off or disposal debt cannot
+/// be lost by dropping a temporary view or recreating a controller.
+@MainActor
+public final class PerformanceGroupMIDIHost {
+    public static let shared = PerformanceGroupMIDIHost()
+    public enum HostError: Error { case activeOrCleanupRequired, notStarted }
+    private var ports = PerformanceGroupPortRegistry()
+    private var delivery: PerformanceGroupDelivery?
+    private init() {}
+
+    public var registeredIDs: Set<UUID> { ports.registeredIDs }
+    public var pendingCleanup: Set<UUID> { delivery?.pendingCleanup ?? [] }
+    public var pendingDisposalCount: Int { ports.pendingDisposalCount }
+
+    /// Call only after deliberate user activation and adapter readiness.
+    /// A different endpoint plan requires an explicit clean close first.
+    public func start(profile: PerformanceGroupProfile, allowLayering: Bool = false) throws {
+        if let delivery, !delivery.retired || !delivery.pendingCleanup.isEmpty {
+            throw HostError.activeOrCleanupRequired
+        }
+        let next = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
+        let plan = try PerformanceGroupEndpointPlan(profile:profile)
+        let client = try MIDIProcessClient.shared.acquire()
+        try ports.open(plan,lookup:Self.lookup,create:{ entry in
+            var endpoint = MIDIEndpointRef()
+            let status = MIDISourceCreate(client,entry.portName as CFString,&endpoint)
+            if endpoint != 0 { MIDIProcessClient.shared.registerIsolatedSource(endpoint) }
+            return .init(handle:endpoint,succeeded:status == noErr)
+        },assign:{ endpoint,id in
+            MIDIObjectSetIntegerProperty(endpoint,kMIDIPropertyUniqueID,id) == noErr
+        },dispose:Self.dispose)
+        delivery = next
+    }
+
+    private static func lookup(_ id: Int32) -> PerformanceGroupPortRegistry.Lookup {
+        var object = MIDIObjectRef()
+        let status = MIDIObjectFindByUniqueID(id,&object,nil)
+        if status == noErr, object != 0 { return .present(object) }
+        if status == kMIDIObjectNotFound { return .absent }
+        return .unavailable
+    }
+
+    private static func dispose(_ endpoint: UInt32) -> Bool {
+        guard MIDIEndpointDispose(endpoint) == noErr else { return false }
+        MIDIProcessClient.shared.unregisterIsolatedSource(endpoint)
+        return true
+    }
+
+    private func send(_ item: PerformanceGroupCommand) -> Bool {
+        guard let endpoint = ports.handle(for:item.groupID) else { return false }
+        return ChordMIDIOutput.send(item.command,endpoint:endpoint)
+    }
+
+    public func connect(_ source: SensorSource, now: Double) throws -> UUID {
+        guard var state = delivery else { throw HostError.notStarted }
+        let id = try state.connect(source,now:now)
+        delivery = state
+        return id
+    }
+
+    public func frame(lease: UUID, sequence: UInt64, now: Double,
+                      values: [SensorSignal:Double], releasing: Set<SensorSignal> = []) -> PerformanceGroupDelivery.Report? {
+        guard var state = delivery else { return nil }
+        let result = state.frame(lease:lease,sequence:sequence,now:now,values:values,releasing:releasing,send:send)
+        delivery = state
+        return result
+    }
+
+    public func disconnect(_ lease: UUID) -> PerformanceGroupDelivery.Report? {
+        guard var state = delivery else { return nil }
+        let result = state.disconnect(lease,send:send)
+        delivery = state
+        return result
+    }
+
+    public func expire(now: Double, timeout: Double) -> PerformanceGroupDelivery.Report? {
+        guard var state = delivery else { return nil }
+        let result = state.expire(now:now,timeout:timeout,send:send)
+        delivery = state
+        return result
+    }
+
+    public func stopGroup(_ id: UUID) -> PerformanceGroupDelivery.Report? {
+        guard var state = delivery else { return nil }
+        let result = state.stopGroup(id,send:send)
+        delivery = state
+        return result
+    }
+
+    public func panic() -> PerformanceGroupDelivery.Report? {
+        guard var state = delivery else { return nil }
+        let result = state.panic(send:send)
+        delivery = state
+        return result
+    }
+
+    public func retryCleanup(_ id: UUID) -> PerformanceGroupDelivery.Report? {
+        guard var state = delivery else { return nil }
+        let result = state.retryCleanup(id,send:send)
+        delivery = state
+        return result
+    }
+
+    /// Soft stop keeps registered ports; explicit close requires a retired,
+    /// debt-free session. Never dispose the only route for a pending note-off.
+    @discardableResult
+    public func close() -> Bool {
+        if let delivery, !delivery.retired || !delivery.pendingCleanup.isEmpty { return false }
+        let closed = ports.close(cleanupComplete:true,dispose:Self.dispose)
+        delivery = nil
+        return closed
+    }
+
+    @discardableResult
+    public func retryDisposal() -> Bool {
+        ports.retryDisposal(Self.dispose)
+    }
 }
 #endif
