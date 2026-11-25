@@ -279,6 +279,7 @@ public struct TouchHapticMetrics: Sendable {
     public fileprivate(set) var drainedDrumStrikes = 0
     public fileprivate(set) var motorSubmissions = 0
     public fileprivate(set) var motorErrors = 0
+    public fileprivate(set) var outputFaulted = false
 }
 
 public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
@@ -383,10 +384,14 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var sustainActive = false
     private var drumStrikes = DrumHapticStrikeBuffer()
     private var hapticMetrics = TouchHapticMetrics()
+    private var hapticFailureGate = HapticConsecutiveFailureGate()
+    private let onHapticFault: (@Sendable (String) -> Void)?
 
     public func hapticDiagnosticSnapshot() -> TouchHapticMetrics {
         lock.lock(); defer { lock.unlock() }
-        return hapticMetrics
+        var result = hapticMetrics
+        result.outputFaulted = hapticFailureGate.retired
+        return result
     }
 
     public func resetHapticDiagnostics() {
@@ -409,8 +414,9 @@ public final class TouchInstrumentService: @unchecked Sendable {
         qos: .userInteractive
     )
 
-    public init(driver: HapticTrackpadDriver) {
+    public init(driver: HapticTrackpadDriver,onHapticFault:(@Sendable (String) -> Void)? = nil) {
         self.driver = driver
+        self.onHapticFault = onHapticFault
     }
 
     public func startPreview(
@@ -540,6 +546,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.lock()
         if self.active != active {
             invalidateSamplesLocked()
+            hapticFailureGate.reset()
             gridDrumNotes.removeAll()
             chordSlots.removeAll()
             renderRevision &+= 1
@@ -819,7 +826,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         renderFence.submit(token) {
             lock.lock()
             defer { lock.unlock() }
-            guard active && configuration.localHapticSound else { return }
+            guard active && configuration.localHapticSound && !hapticFailureGate.retired else { return }
             // A released attack that occurred entirely between ticks gets
             // one bounded local pulse. Current contact state always wins.
             let now = ProcessInfo.processInfo.systemUptime
@@ -892,7 +899,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         var submitted = false
         renderFence.submit(token) {
             lock.lock()
-            let allowed = active && configuration.localHapticSound && renderRevision == revision
+            let allowed = active && configuration.localHapticSound && !hapticFailureGate.retired && renderRevision == revision
             lock.unlock()
             guard allowed else { return }
             do {
@@ -900,11 +907,18 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 submitted = true
                 lock.lock()
                 hapticMetrics.motorSubmissions &+= 1
+                if active && renderRevision == revision { hapticFailureGate.recordSuccess() }
                 lock.unlock()
             } catch {
                 lock.lock()
                 hapticMetrics.motorErrors &+= 1
+                let faulted = active && renderRevision == revision && hapticFailureGate.recordFailure()
+                if faulted {
+                    pendingMelodicAttacks.removeAll()
+                    drumStrikes.discardPending()
+                }
                 lock.unlock()
+                if faulted { onHapticFault?(error.localizedDescription) }
             }
         }
         return submitted

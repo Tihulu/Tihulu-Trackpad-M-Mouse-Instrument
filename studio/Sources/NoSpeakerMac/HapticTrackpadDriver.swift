@@ -13,6 +13,8 @@ public enum HapticDriverError: LocalizedError {
     case ambiguousExternalSurfaces
     case actuatorOpenFailed
     case actuationCreationFailed
+    case invalidActuationFrame
+    case actuationPlaybackFailed(Int32)
 
     public var errorDescription: String? {
         switch self {
@@ -23,6 +25,8 @@ public enum HapticDriverError: LocalizedError {
         case .ambiguousExternalSurfaces: return "More than one external touch device matches the legacy Magic Mouse route. Disconnect the extra devices and restart monitoring."
         case .actuatorOpenFailed: return "The trackpad haptic actuator could not be opened."
         case .actuationCreationFailed: return "The trackpad framework could not create a haptic frame."
+        case .invalidActuationFrame: return "Invalid haptic frame or actuator safety configuration."
+        case .actuationPlaybackFailed(let status): return "The trackpad framework returned actuation status " + String(status) + "."
         }
     }
 }
@@ -366,16 +370,18 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
     private func playLocked(_ inputFrame: HapticFrame, masterLevel: Double) throws {
         guard let motorPointer, let actuationCreate, let actuationPlay else { throw HapticDriverError.actuatorOpenFailed }
 
-        var frame = safety.clamp(inputFrame)
-        frame.level = min(1, max(0, frame.level * masterLevel))
-        guard frame.level > 0, !frame.tones.isEmpty else { return }
-        let amplitudeSum = max(0.0001, frame.tones.reduce(0) { $0 + max(0, $1.amplitude) })
+        let frame:HapticFrame
+        switch HapticActuationAdmission.prepare(inputFrame,masterLevel:masterLevel,safety:safety) {
+        case .invalid: throw HapticDriverError.invalidActuationFrame
+        case .silent: return
+        case .frame(let admitted): frame = admitted
+        }
         let shape: [String: Any] = [
             "BaseWaveform": ["Type": "Gaussian", "Amplitude": 0.0, "DurationMS": frame.durationMS],
             "Tones": frame.tones.map { tone in
                 [
                     "Type": "Sine",
-                    "Amplitude": max(0, tone.amplitude) / amplitudeSum,
+                    "Amplitude": tone.amplitude,
                     "DurationMS": frame.durationMS,
                     "DelayMS": 0.0,
                     "FrequencykHz": tone.frequencyHz / 1_000.0
@@ -383,8 +389,9 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
             }
         ]
         guard let actuation = actuationCreate(shape as CFDictionary, 0) else { throw HapticDriverError.actuationCreationFailed }
-        _ = actuationPlay(actuation, motorPointer, 0, Float(frame.level), 0)
-        Unmanaged<AnyObject>.fromOpaque(actuation).release()
+        defer { Unmanaged<AnyObject>.fromOpaque(actuation).release() }
+        let status = actuationPlay(actuation, motorPointer, 0, Float(frame.level), 0)
+        guard status == 0 else { throw HapticDriverError.actuationPlaybackFailed(status) }
     }
 
     public func startSurfaceMonitoring(

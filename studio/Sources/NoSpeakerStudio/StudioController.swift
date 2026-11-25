@@ -2922,7 +2922,14 @@ final class StudioController: ObservableObject {
             try driver.open()
             self.driver = driver
             self.playback = HapticPlaybackEngine(driver: driver)
-            self.touch = TouchInstrumentService(driver: driver)
+            let touchEngineGeneration = engineGeneration
+            self.touch = TouchInstrumentService(driver:driver,onHapticFault:{ [weak self] message in
+                Task { @MainActor in
+                    guard let self,self.engineGeneration == touchEngineGeneration,self.touchRunning,
+                          self.touch?.hapticDiagnosticSnapshot().outputFaulted == true else { return }
+                    self.lastError = "Touch haptic output stopped after repeated motor failures. MIDI routing unchanged; Stop/Start Touch to retry. " + message
+                }
+            })
             self.midi = MIDIHapticService(driver: driver)
             self.systemAudio = SystemAudioHapticCapture(driver: driver)
             engineReady = true
@@ -4225,6 +4232,7 @@ final class StudioController: ObservableObject {
             Magic Mouse max contacts / triggered: \(h.mouseRawMax) / \(h.mouseTriggeredMax)
             Drum strikes accepted / drained: \(h.acceptedDrumStrikes) / \(h.drainedDrumStrikes)
             Motor calls returned / threw: \(h.motorSubmissions) / \(h.motorErrors)
+            Touch motor fault latched: \(h.outputFaulted ? "YES" : "NO")
             Contact counts are committed active frames. Motor calls do not prove physical vibration.
             """
         } else { hapticReport = "Touch diagnostics unavailable." }
