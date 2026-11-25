@@ -346,3 +346,43 @@ import Testing
     let restored = state.update(trackpadContactSizes:[],magicMouseTouching:false,settings:settings)
     #expect(!restored.isActive && settings.trackpadEnabled && settings.magicMouseEnabled)
 }
+
+@Test func touchSurfaceRearmRejectsCachedAndHeldTapWithoutBlockingHelper() {
+    var touch = HelperRearmGate(), helper = HelperRearmGate()
+    var pedal = MIDIHelperSustainState()
+    let settings = MIDIHelperSustainSettings(magicMouseEnabled:true,magicMouseGesture:.tapToggle)
+    touch.invalidate()
+    pedal.reset()
+    // A queued click callback with an empty cache is not a neutral frame.
+    let cached = touch.permits(touching:false,clicking:false,freshFrame:false)
+    #expect(!cached && touch.waiting)
+    let held = touch.permits(touching:true,clicking:false,freshFrame:true)
+    #expect(!held && touch.waiting)
+    let otherConsumer = helper.permits(touching:true,clicking:false,freshFrame:true)
+    #expect(otherConsumer && !helper.waiting)
+    #expect(!pedal.snapshot.isActive)
+    let neutral = touch.permits(touching:false,clicking:false,freshFrame:true)
+    #expect(!neutral && !touch.waiting)
+    let onset = touch.permits(touching:true,clicking:false,freshFrame:true)
+    #expect(onset)
+    if onset {
+        let snapshot = pedal.update(trackpadContactSizes:[],magicMouseTouching:true,settings:settings)
+        #expect(snapshot.magicMouseActive)
+    }
+}
+
+@Test func physicalClickRearmDoesNotAdmitHeldClickOrConsumeOtherConsumerGate() {
+    var touch = HelperRearmGate(), helper = HelperRearmGate()
+    touch.invalidate()
+    helper.invalidate()
+    let down = touch.permits(touching:false,clicking:true,freshFrame:true)
+    #expect(!down && touch.waiting)
+    let upCallback = touch.permits(touching:false,clicking:false,freshFrame:false)
+    #expect(!upCallback && touch.waiting)
+    let idle = touch.permits(touching:false,clicking:false,freshFrame:true)
+    #expect(!idle && !touch.waiting && helper.waiting)
+    let next = touch.permits(touching:true,clicking:true,freshFrame:false)
+    #expect(next && helper.waiting)
+    touch.reset()
+    #expect(!touch.waiting && helper.waiting)
+}
