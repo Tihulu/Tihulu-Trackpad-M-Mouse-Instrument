@@ -398,13 +398,15 @@ final class StudioController: ObservableObject {
             while !Task.isCancelled {
                 do { try await Task.sleep(for:.milliseconds(20)) } catch { return }
                 guard let self, self.groupRunToken == token else { return }
+                // Drain known remote disconnects together with expiry before
+                // any local samples can reconcile shared continuous targets.
+                if self.groupRemoteRunID != nil { self.drainGroupRemote(run:token) }
+                guard self.groupRunToken == token else { return }
                 self.consumeGroupReports(self.groupHost.expireGamepads(now:ProcessInfo.processInfo.systemUptime))
                 guard self.groupRunToken == token else { return }
                 self.drainGroupSurfaces(run:token)
                 guard self.groupRunToken == token else { return }
                 self.drainGroupCamera(run:token)
-                guard self.groupRunToken == token else { return }
-                self.drainGroupRemote(run:token)
                 for source in GamepadFrame.orderedSources where self.groupGamepadTokens[source] != nil {
                     guard self.groupRunToken == token else { return }
                     self.receiveGroupGamepad(source:source,frame:self.builderGamepads.read(source),run:token)
