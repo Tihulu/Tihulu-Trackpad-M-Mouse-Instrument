@@ -11,6 +11,9 @@ struct InstrumentBuilderView: View {
     @State private var sendMIDI = false
     @State private var physical = false
     @State private var tunedAir = false
+    @State private var gamepadPresetSource:SensorSource = .gamepad1
+    @State private var gamepadPresetRole:GamepadFrame.Role = .lead
+    @State private var gamepadPresetChannel = 3
     @State private var syntheticSource: SensorSource?
     @State private var values: [PatchSimulation.Input: Double] = [:]
     @State private var message = ""
@@ -57,6 +60,28 @@ struct InstrumentBuilderView: View {
                         }
                     }.padding(8).disabled(studio.patchRunning)
                 }
+                GroupBox("Game controllers · Xbox / extended gamepad") {
+                    VStack(alignment:.leading,spacing:8) {
+                        HStack {
+                            Picker("Slot",selection:$gamepadPresetSource) {
+                                Text("Controller 1").tag(SensorSource.gamepad1)
+                                Text("Controller 2").tag(SensorSource.gamepad2)
+                            }
+                            Picker("Role",selection:$gamepadPresetRole) {
+                                ForEach(GamepadFrame.Role.allCases) { Text($0.rawValue.capitalized).tag($0) }
+                            }
+                            Stepper("MIDI ch \(gamepadPresetChannel+1)",value:$gamepadPresetChannel,in:0...15)
+                            Button("Add mappings") {
+                                var next = draft
+                                next.routes += gamepadPresetRole.routes(source:gamepadPresetSource,channel:gamepadPresetChannel)
+                                if next.isValid { draft = next; physical = true; message = "Choose the controller in Test instrument, release all controls, then Start." }
+                                else { message = "Cannot add preset: duplicate mappings or route capacity." }
+                            }
+                        }
+                        Text("Customize buttons, triggers and sticks in Routes. Helper has no notes or gain controls by default; use RT sustain, LT wah, left X bend and right Y modulation.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8)
+                }.disabled(studio.patchRunning)
                 GroupBox("Orchestra & Jam · ensemble templates") {
                     VStack(alignment:.leading,spacing:8) {
                         ForEach(EnsemblePreset.allCases) { preset in
@@ -255,6 +280,27 @@ struct InstrumentBuilderView: View {
                             if syntheticSource != nil {
                                 Text("Only the selected source is simulated. Other sources are native. Leaving this page releases simulated controls; a stalled UI lease expires in 350 ms. For paired phone/tablet routes, start through the Remote TLS panel.")
                                     .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        if physical && draft.routes.contains(where:{GamepadFrame.sources.contains($0.source)}) {
+                            GroupBox("Bind paired gamepads") {
+                                VStack(alignment:.leading,spacing:6) {
+                                    Button("Refresh connected controllers") { studio.refreshBuilderGamepads() }
+                                    if draft.routes.contains(where:{$0.source == .gamepad1}) {
+                                        Picker("Controller 1",selection:$studio.gamepadSlot1) {
+                                            Text("Select controller").tag(nil as UUID?)
+                                            ForEach(studio.gamepadChoices) { Text($0.name).tag(Optional($0.id)) }
+                                        }
+                                    }
+                                    if draft.routes.contains(where:{$0.source == .gamepad2}) {
+                                        Picker("Controller 2",selection:$studio.gamepadSlot2) {
+                                            Text("Select controller").tag(nil as UUID?)
+                                            ForEach(studio.gamepadChoices) { Text($0.name).tag(Optional($0.id)) }
+                                        }
+                                    }
+                                    Text("Pair in macOS Bluetooth settings first. Release all buttons, triggers and sticks to arm. Disconnect releases only that slot; restart to bind a replacement. Polling prototype: very short taps can be missed.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }.padding(6).disabled(studio.patchRunning)
                             }
                         }
                         Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)

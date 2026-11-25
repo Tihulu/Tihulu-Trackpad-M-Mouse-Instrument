@@ -92,6 +92,16 @@ final class StudioController: ObservableObject {
         guard !ensembleRecording,let take = ensembleTake else { throw MIDIClipError.empty }
         return try take.encoded()
     }
+    private let builderGamepads = BuilderGamepadSource()
+    @Published private(set) var gamepadChoices:[BuilderGamepadSource.Choice] = []
+    @Published var gamepadSlot1:UUID?
+    @Published var gamepadSlot2:UUID?
+    func refreshBuilderGamepads() {
+        guard !patchRunning else { return }
+        gamepadChoices = builderGamepads.refresh()
+        if !gamepadChoices.contains(where:{ $0.id == gamepadSlot1 }) { gamepadSlot1 = nil }
+        if !gamepadChoices.contains(where:{ $0.id == gamepadSlot2 }) { gamepadSlot2 = nil }
+    }
     private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
     private let airTunedMIDI = ChordMIDIOutput(name:"TIHULU Air Strings MPE")
     private var airTunedPlan:AirTunedOutput?
@@ -513,6 +523,10 @@ final class StudioController: ObservableObject {
         }
         do {
             try patchLedger.configure(instrumentPatch)
+            if physical && !builderGamepads.bind(required:sources,slot1:gamepadSlot1,slot2:gamepadSlot2) {
+                patchStatus = "Select distinct connected gamepads for all mapped slots, then Start again."
+                return
+            }
             if let requestedTuning {
                 airTunedPlan = requestedTuning
                 try airTunedMIDI.open()
@@ -886,6 +900,13 @@ final class StudioController: ObservableObject {
         guard patchRunning else { return }
         drainBuilderRemote(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
+        let gamepadSources = Set(instrumentPatch.routes.map(\.source)).intersection(GamepadFrame.sources)
+        for source in gamepadSources.sorted(by:{ $0.rawValue < $1.rawValue }) {
+            let frame = builderGamepads.read(source)
+            let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:ProcessInfo.processInfo.systemUptime)
+            recordPatchCommands(commands)
+            guard patchRunning else { return }
+        }
         let expired = patchPhysicalRuntime.expire(now: ProcessInfo.processInfo.systemUptime)
         recordPatchCommands(expired)
         guard patchRunning else { return }
@@ -1125,6 +1146,7 @@ final class StudioController: ObservableObject {
     }
 
     func stopInstrumentPatch() {
+        builderGamepads.stop()
         stopEnsembleTake()
         stopEnsembleClock()
         stopAirTrace()

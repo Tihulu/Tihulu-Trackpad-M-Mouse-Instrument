@@ -16,6 +16,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AVFoundation", .when(platforms: [.macOS])),
                 .linkedFramework("CoreMIDI", .when(platforms: [.macOS])),
+                .linkedFramework("GameController", .when(platforms: [.macOS])),
                 .linkedFramework("CoreAudio", .when(platforms: [.macOS])),
                 .linkedFramework("AudioToolbox", .when(platforms: [.macOS])),
                 .linkedFramework("IOKit", .when(platforms: [.macOS])),
