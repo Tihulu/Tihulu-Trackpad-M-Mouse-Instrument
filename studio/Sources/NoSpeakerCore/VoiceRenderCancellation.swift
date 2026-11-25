@@ -32,12 +32,20 @@ public enum VoiceProcessError: Error, LocalizedError {
 public enum VoiceProcessRunner {
     public static func run(_ process: Process, cancellation: VoiceRenderCancellation,
                            timeout: Double = 90) throws {
+        try run(process,cancellation:cancellation,timeout:timeout,onStarted:{})
+    }
+
+    // Internal synchronization point for deterministic child-process tests.
+    // Production callers retain the same API and deadline.
+    static func run(_ process: Process, cancellation: VoiceRenderCancellation,
+                    timeout: Double, onStarted: () -> Void) throws {
         try cancellation.check()
         guard timeout.isFinite, timeout > 0, timeout <= 90 else { throw VoiceProcessError.timeout }
         let finished = DispatchSemaphore(value:0)
         process.terminationHandler = { _ in finished.signal() }
         try process.run()
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        onStarted()
         while true {
             if finished.wait(timeout:.now()+0.05) == .success {
                 try cancellation.check()
