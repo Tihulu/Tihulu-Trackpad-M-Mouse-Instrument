@@ -1053,6 +1053,9 @@ final class StudioController: ObservableObject {
     private var clickSnapshotRevision: UInt64?
     private var clickSnapshotReceivedAt: Double?
     private var physicalClickDown = false
+    private var physicalClickReceipt:Double?
+    private var helperClickFence = PhysicalClickSessionFence()
+    private var touchClickFence = PhysicalClickSessionFence()
     @Published private(set) var sequenceRunning = false
     @Published private(set) var sequenceStatus = "Sequencer MIDI idle"
     private let sequenceMIDI = ChordMIDIOutput(name: "TIHULU Sequencer")
@@ -3575,6 +3578,7 @@ final class StudioController: ObservableObject {
             guard midiRunning else { return }
         }
 
+        touchClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
         touch.setActive(true)
         touchRunning = true
         startPerformanceEventMonitor()
@@ -3600,6 +3604,7 @@ final class StudioController: ObservableObject {
     }
 
     func stopTouch() {
+        touchClickFence.end()
         touchSeparateChannels = nil
         touchIndependentDAWSustain = false
         midi?.releaseTouchSustain()
@@ -3815,6 +3820,9 @@ final class StudioController: ObservableObject {
             pedalSettingsChanged:newSustainSettings != helperSustainSettings,
             surfaceChanged:surfaceSelection != helperSurfaceSelection,
             sharingChanged:sharePedalSurface != helperSharePedalSurface)
+        if !midiHelperRunning || transition.pedalChanged {
+            helperClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
+        }
         if !midiHelperRunning || transition.pedalChanged || transition.effectsChanged { touch?.invalidatePendingSamples() }
         if midiHelperRunning {
             if transition.effectsChanged {
@@ -3867,6 +3875,7 @@ final class StudioController: ObservableObject {
 
     func stopMIDIHelper() {
         guard midiHelperRunning else { return }
+        helperClickFence.end()
         touch?.invalidatePendingSamples()
         midi?.releaseHelperSustain()
         helperRearmGate.reset()
@@ -3913,7 +3922,8 @@ final class StudioController: ObservableObject {
         }
         guard midiHelperRunning else { return }
 
-        let selectedClick = clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false
+        let selectedClick = helperClickFence.permits(receipt:physicalClickReceipt,
+            now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false)
         let touching = states.contains(where: { $0.isTouching })
         let pedalReady = helperRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame)
         let effectsReady = helperEffectsRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame)
@@ -4267,6 +4277,7 @@ final class StudioController: ObservableObject {
         clickTouchingSurfaces.removeAll()
         clickSnapshotRevision = nil
         clickSnapshotReceivedAt = nil
+        physicalClickReceipt = nil
         physicalClickDown = false
         clickedSurface = nil
         trackpadClickPressure = nil
@@ -4282,6 +4293,7 @@ final class StudioController: ObservableObject {
         if down {
             guard !physicalClickDown else { return }
             physicalClickDown = true
+            physicalClickReceipt = receipt
             // Use only the most recent shared, unfiltered monitor snapshot.
             clickedSurface = PhysicalClickAttribution.resolve(clickTouchingSurfaces,
                 snapshotRevision:clickSnapshotRevision,currentRevision:touch?.currentSampleRevision,
@@ -4289,6 +4301,7 @@ final class StudioController: ObservableObject {
             trackpadClickPressure = clickedSurface == .trackpad && pressure.isFinite && (0...1).contains(pressure) ? pressure : nil
         } else {
             physicalClickDown = false
+            physicalClickReceipt = nil
             clickedSurface = nil
             trackpadClickPressure = nil
         }
@@ -4304,15 +4317,17 @@ final class StudioController: ObservableObject {
     }
 
     private func updateTouchSustain(_ states: [TouchPerformanceState]) {
-        let active = states.filter(\.isTouching)
+        let active = states.filter { $0.isTouching && currentTouchConfiguration.surfaceSelection.accepts($0.surface) }
+        let selectedClick = touchClickFence.permits(receipt:physicalClickReceipt,
+            now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { currentTouchConfiguration.surfaceSelection.accepts($0) } ?? false)
         let snapshot = touchSustainState.update(
             trackpadContactSizes: active
                 .filter { $0.surface == .trackpad }
                 .map(\.pressure),
             magicMouseTouching: active.contains { $0.surface == .magicMouse },
             settings: touchSustainSettings,
-            trackpadClickDown: clickedSurface == .trackpad,
-            magicMouseClickDown: clickedSurface == .magicMouse,
+            trackpadClickDown: selectedClick && clickedSurface == .trackpad,
+            magicMouseClickDown: selectedClick && clickedSurface == .magicMouse,
             trackpadClickPressure: trackpadClickPressure,
             magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure)
         )

@@ -256,6 +256,21 @@ public struct MIDIHelperSustainState: Sendable {
     }
 }
 
+/// Per-consumer boundary for physical click ownership. Long holds remain
+/// valid after admission, but cannot cross a new Start/routing epoch.
+public struct PhysicalClickSessionFence:Sendable {
+    private var startedAt:Double?
+    public init() {}
+    public mutating func begin(now:Double) {
+        startedAt = now.isFinite && now >= 0 ? now : nil
+    }
+    public mutating func end() { startedAt = nil }
+    public func permits(receipt:Double?,now:Double,selected:Bool) -> Bool {
+        guard selected,let startedAt,let receipt,receipt.isFinite,now.isFinite else { return false }
+        return receipt >= startedAt && now >= receipt
+    }
+}
+
 /// Conservative attribution from the current shared snapshot, not from
 /// independent consumer caches. The OS click itself has no device identity.
 public enum PhysicalClickAttribution {

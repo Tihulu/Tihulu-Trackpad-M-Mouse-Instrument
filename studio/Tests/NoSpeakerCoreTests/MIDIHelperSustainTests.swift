@@ -309,3 +309,23 @@ import Testing
     #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,receivedAt:1.01,now:1.04,clickReceipt:.nan) == nil)
     #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,receivedAt:1.01,now:1.04,clickReceipt:-1) == nil)
 }
+
+@Test func physicalClickSessionFenceRejectsPriorSessionsAndUnselectedSurfaces() {
+    var helper = PhysicalClickSessionFence(), touch = PhysicalClickSessionFence()
+    #expect(!helper.permits(receipt:1,now:2,selected:true))
+    helper.begin(now:1)
+    touch.begin(now:2)
+    #expect(helper.permits(receipt:1.5,now:3,selected:true))
+    #expect(!touch.permits(receipt:1.5,now:3,selected:true))
+    #expect(!helper.permits(receipt:1.5,now:3,selected:false))
+    #expect(!helper.permits(receipt:4,now:3,selected:true))
+    #expect(!helper.permits(receipt:.nan,now:3,selected:true))
+    #expect(helper.permits(receipt:1.5,now:100,selected:true))
+    helper.begin(now:3)
+    #expect(!helper.permits(receipt:1.5,now:3.1,selected:true))
+    #expect(touch.permits(receipt:2.1,now:3.1,selected:true))
+    helper.end()
+    #expect(!helper.permits(receipt:3.2,now:3.3,selected:true))
+    touch.begin(now:.nan)
+    #expect(!touch.permits(receipt:3.2,now:3.3,selected:true))
+}
