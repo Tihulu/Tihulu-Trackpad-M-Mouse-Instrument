@@ -417,6 +417,11 @@ final class StudioController: ObservableObject {
                 groupGamepadStatus = "Surface monitoring could not start; group output stopped."
                 return
             }
+            if let message = missingNativeSurfaceMessage(nativeSurfaces(for:Set(sources))) {
+                stopGroupGamepads()
+                groupGamepadStatus = message
+                return
+            }
         }
         if sources.contains(.touchBar) {
             groupNativeBar = true
@@ -1413,6 +1418,12 @@ final class StudioController: ObservableObject {
                     guard touchPreviewRunning else {
                         stopInstrumentPatch()
                         patchStatus = "Shared native surface monitoring failed."
+                        return
+                    }
+                    let physicalSources = Set(sources).filter { $0 != synthetic }
+                    if let message = missingNativeSurfaceMessage(nativeSurfaces(for:physicalSources)) {
+                        stopInstrumentPatch()
+                        patchStatus = message
                         return
                     }
                 }
@@ -3408,6 +3419,20 @@ final class StudioController: ObservableObject {
         }
     }
 
+    private func missingNativeSurfaceMessage(_ required:Set<TouchSurfaceKind>) -> String? {
+        let missing = NativeSurfaceAdmission.missing(required:required,registered:driver?.registeredSurfaceKinds)
+        guard !missing.isEmpty else { return nil }
+        let names = missing.map(\.rawValue).sorted().joined(separator:", ")
+        return "Native surface unavailable: " + names + ". Connect the device and reopen surface monitoring (or Reconnect), then Start explicitly."
+    }
+
+    private func nativeSurfaces(for sources:Set<SensorSource>) -> Set<TouchSurfaceKind> {
+        var required:Set<TouchSurfaceKind> = []
+        if sources.contains(.trackpad) { required.insert(.trackpad) }
+        if sources.contains(.magicMouse) { required.insert(.magicMouse) }
+        return required
+    }
+
     private func startSurfaceInventoryCheck(generation:UInt64,token:UUID) {
         surfaceInventoryTask?.cancel()
         guard let driver else { return }
@@ -3453,7 +3478,9 @@ final class StudioController: ObservableObject {
             retireGroupSurfaces([.trackpad,.magicMouse],
                 reason:"Native surface inventory lost. Surface owners released; restart explicitly.",run:run)
         }
-        if patchMailbox != nil { stopInstrumentPatch() }
+        if patchPhysical && instrumentPatch.routes.contains(where: {
+            $0.source != patchHybridSource && ($0.source == .trackpad || $0.source == .magicMouse)
+        }) { stopInstrumentPatch() }
         touch?.stopPreview()
         touchPreviewRunning = false
         liveTouchStates = []
@@ -3705,6 +3732,13 @@ final class StudioController: ObservableObject {
             updateTouchConfiguration(configuration)
         }
         guard touchPreviewRunning else { return }
+        if let message = missingNativeSurfaceMessage(Set(configuration.selectedSurfaces)) {
+            touchMIDIOutEnabled = false
+            touchSeparateChannels = nil
+            touchIndependentDAWSustain = false
+            lastError = message
+            return
+        }
 
         if midiOut, !midiRunning {
             startMIDI()
@@ -3905,6 +3939,13 @@ final class StudioController: ObservableObject {
     }
 
     func updateMIDIHelperSurface(_ surfaceSelection: TouchSurfaceSelection) {
+        if midiHelperRunning && surfaceSelection != helperSurfaceSelection,
+           let message = missingNativeSurfaceMessage(Set(TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) })) {
+            stopMIDIHelper()
+            helperSurfaceSelection = surfaceSelection
+            lastError = message
+            return
+        }
         if midiHelperRunning && surfaceSelection != helperSurfaceSelection {
             let sequence = touch?.consumerPublicationBoundary().sequence ?? 0
             helperPedalPublicationFence.begin(after:sequence)
@@ -3947,6 +3988,12 @@ final class StudioController: ObservableObject {
         configureReceiverBendRange:Bool = false
     ) {
         guard allowLivePerformance() else { return }
+        if midiHelperRunning,
+           let message = missingNativeSurfaceMessage(Set(TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) })) {
+            stopMIDIHelper()
+            lastError = message
+            return
+        }
         guard !sendToDAW || HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
                                                    vibratoCC:vibratoCC,expressionCC:expressionCC) else {
             // Reject the new configuration and stop any old active helper
@@ -4030,6 +4077,10 @@ final class StudioController: ObservableObject {
             updateMIDIHelperSurface(surfaceSelection)
         }
         guard touchPreviewRunning else { return }
+        if let message = missingNativeSurfaceMessage(Set(TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) })) {
+            lastError = message
+            return
+        }
 
         if !midiRunning {
             startMIDI()

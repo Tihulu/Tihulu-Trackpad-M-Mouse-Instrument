@@ -236,3 +236,7 @@ Explicit monitoring start refreshes the native device list and requires the actu
 ### Emergency request lifetime
 
 A native captured Escape releases the pointer synchronously, latches panic and dispatches emergency intent ahead of ordinary physical/UI notifications. The controller now accepts that intent for the originating engine generation even if the event tap is retired/replaced before MainActor delivery; an explicit engine retirement still fences it. Direct capture permission IPC is evaluated outside the input lock and the lock-protected capture admission explicitly rejects a stopped or panic-latched monitor. Two native regressions cover engine-generation fencing and repeated Escape pairing. Actual global shortcut latency and physical DAW cleanup remain HOLD; MainActor delivery is not a real-time deadline guarantee.
+
+### Native route start admission
+
+Legacy Touch, Helper, group and physical Builder startup now require every explicitly selected native surface to have been registered by the current monitor. Missing routes refuse start (or stop a changed live Helper) with an explicit reconnection/reopen instruction, rather than advertise an unplayable session. Synthetic Builder routes are excluded. Inventory-loss cleanup no longer stops a physical Builder with only unrelated sources. Two portable admission regressions added. Registered presence is not proof of usable touch delivery; native/hardware verification remains HOLD.

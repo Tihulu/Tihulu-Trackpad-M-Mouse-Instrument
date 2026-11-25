@@ -210,6 +210,10 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
     private var motorPointer: UnsafeMutableRawPointer?
     private var touchDevicesInUse: [UnsafeMutableRawPointer] = []
     private var monitoredDeviceIDs: Set<UInt64> = []
+    private var monitoredKinds: Set<TouchSurfaceKind> = []
+    public var registeredSurfaceKinds: Set<TouchSurfaceKind> {
+        lifetime.snapshot { monitoredKinds }
+    }
 
     public struct SurfaceInventory: Sendable {
         public let expected:Set<UInt64>
@@ -434,6 +438,7 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         }
         self.deviceList = deviceList
         monitoredDeviceIDs = selectedIDs
+        monitoredKinds = Set(kinds.values)
         TouchBridge.shared.configure(surfaces: kinds, handler: handler)
         for device in selected {
             registerCallback(device, trackpadFrameCallback)
@@ -472,6 +477,7 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         }
         touchDevicesInUse.removeAll()
         monitoredDeviceIDs.removeAll()
+        monitoredKinds.removeAll()
         TouchBridge.shared.clear()
     }
 }

@@ -66,3 +66,16 @@ import Testing
     let c = guardState.observe(expected:[1],available:[])
     #expect(a == .suspect && b == .healthy && c == .suspect)
 }
+
+
+@Test func nativeSurfaceAdmissionRequiresEveryExplicitRoute() {
+    #expect(NativeSurfaceAdmission.missing(required:Set([1,2]),registered:Set([1])) == [2])
+    #expect(NativeSurfaceAdmission.missing(required:Set([1]),registered:Set([1,2])).isEmpty)
+    #expect(NativeSurfaceAdmission.missing(required:Set([1,2]),registered:Set([1,2])).isEmpty)
+}
+
+@Test func nativeSurfaceAdmissionCannotTreatUnknownInventoryAsAvailable() {
+    #expect(NativeSurfaceAdmission.missing(required:Set([1,2]),registered:nil) == [1,2])
+    #expect(NativeSurfaceAdmission.missing(required:Set<Int>(),registered:nil).isEmpty)
+    #expect(NativeSurfaceAdmission.missing(required:Set([2]),registered:Set<Int>()) == [2])
+}

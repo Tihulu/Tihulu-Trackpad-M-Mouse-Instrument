@@ -41,3 +41,11 @@ public struct NativeSurfaceInventoryGuard: Sendable {
         return missing.isEmpty ? .healthy : .suspect
     }
 }
+
+/// Explicitly requested routes are all-or-nothing at start. An absent
+/// inventory is not evidence of an available surface.
+public enum NativeSurfaceAdmission {
+    public static func missing<Surface:Hashable>(required:Set<Surface>,registered:Set<Surface>?) -> Set<Surface> {
+        required.subtracting(registered ?? [])
+    }
+}
