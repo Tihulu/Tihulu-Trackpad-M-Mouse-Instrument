@@ -44,3 +44,14 @@ import Testing
     for index in originalParty.routes.indices { originalParty.routes[index].id = String(index) }
     #expect(quickParty == originalParty)
 }
+
+@Test func quickStartExpressionUsesOnlyRequestedDeviceAndSeparateChannels() throws {
+    let phone = try #require(MusicianQuickStart.phoneExpression.patch())
+    let tablet = try #require(MusicianQuickStart.tabletExpression.patch())
+    #expect(Set(phone.routes.map(\.source)) == [.phone])
+    #expect(Set(tablet.routes.map(\.source)) == [.tablet])
+    #expect(Set(phone.routes.map { $0.destination.channel }) == [0])
+    #expect(Set(tablet.routes.map { $0.destination.channel }) == [1])
+    #expect(phone.routes.filter { $0.destination.kind == .note }.map { $0.destination.number } == [48,50,52,53,55,57,59,60])
+    #expect(tablet.routes.contains { $0.destination.kind == .sustain })
+}
