@@ -40,6 +40,8 @@ public final class SystemAudioHapticCapture: NSObject, SCStreamOutput, SCStreamD
     private var masterLevel: Double = 0.7
     private var accepting = false
     private var expectedPTS: Double?
+    private var motorFailureGate = HapticConsecutiveFailureGate()
+    private var invalidAudioPackets = 0
     private var onFailure: (@Sendable (String) -> Void)?
 
     public init(driver: HapticTrackpadDriver) { self.driver = driver }
@@ -82,6 +84,8 @@ public final class SystemAudioHapticCapture: NSObject, SCStreamOutput, SCStreamD
             self.processor = nil
             self.timeline = LiveHapticTimeline(bufferSeconds: bufferSeconds)
             self.expectedPTS = nil
+            self.motorFailureGate.reset()
+            self.invalidAudioPackets = 0
             self.accepting = true
             let timer = DispatchSource.makeTimerSource(queue: captureQueue)
             timer.schedule(deadline: .now(), repeating: .milliseconds(5), leeway: .milliseconds(1))
@@ -100,7 +104,15 @@ public final class SystemAudioHapticCapture: NSObject, SCStreamOutput, SCStreamD
 
     private func renderDue() {
         guard accepting, let frame = timeline.takeDue(now: ProcessInfo.processInfo.systemUptime) else { return }
-        try? driver.play(frame, masterLevel: masterLevel)
+        do {
+            try driver.play(frame, masterLevel: masterLevel)
+            motorFailureGate.recordSuccess()
+        } catch {
+            if motorFailureGate.recordFailure() {
+                clearOutput()
+                onFailure?("Repeated speaker motor failures: " + error.localizedDescription)
+            }
+        }
     }
 
     private func clearOutput() {
@@ -137,16 +149,43 @@ public final class SystemAudioHapticCapture: NSObject, SCStreamOutput, SCStreamD
         }
     }
 
+    private func rejectAudioPacket() {
+        // Never replay a pre-fault partial window or scheduled sound after
+        // malformed capture data. A transient format change can recover.
+        processor = nil
+        timeline = LiveHapticTimeline(bufferSeconds:timeline.bufferSeconds)
+        expectedPTS = nil
+        invalidAudioPackets = min(3,invalidAudioPackets+1)
+        if invalidAudioPackets == 3 {
+            clearOutput()
+            onFailure?(SystemAudioCaptureError.unsupportedAudioFormat.localizedDescription)
+        }
+    }
+
     public func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
         guard accepting, self.stream === stream, outputType == .audio,
               sampleBuffer.isValid, CMSampleBufferDataIsReady(sampleBuffer) else { return }
         guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else { return }
+              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else {
+            rejectAudioPacket(); return
+        }
         let asbd = streamDescription.pointee
+        let channels = Int(asbd.mChannelsPerFrame)
+        let planar = (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+        let stride = MemoryLayout<Float>.size
         guard asbd.mFormatID == kAudioFormatLinearPCM,
               asbd.mBitsPerChannel == 32,
               (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0,
-              asbd.mSampleRate.isFinite, (8_000...96_000).contains(asbd.mSampleRate) else { return }
+              (asbd.mFormatFlags & kAudioFormatFlagIsBigEndian) == 0,
+              asbd.mSampleRate.isFinite, (8_000...96_000).contains(asbd.mSampleRate),
+              (1...8).contains(channels),Int(asbd.mBytesPerFrame) == (planar ? stride : channels*stride) else {
+            rejectAudioPacket(); return
+        }
+        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+        guard frameCount > 0,frameCount <= Int(asbd.mSampleRate*0.5),pts.isFinite else {
+            rejectAudioPacket(); return
+        }
 
         var requiredSize = 0
         var retainedBlockBuffer: CMBlockBuffer?
@@ -160,7 +199,10 @@ public final class SystemAudioHapticCapture: NSObject, SCStreamOutput, SCStreamD
             flags: 0,
             blockBufferOut: &retainedBlockBuffer
         )
-        guard firstStatus == noErr, requiredSize > 0 else { return }
+        let maxListSize = MemoryLayout<AudioBufferList>.size + 7*MemoryLayout<AudioBuffer>.stride
+        guard firstStatus == noErr,requiredSize >= MemoryLayout<AudioBufferList>.size,requiredSize <= maxListSize else {
+            rejectAudioPacket(); return
+        }
 
         let raw = UnsafeMutableRawPointer.allocate(byteCount: requiredSize, alignment: MemoryLayout<AudioBufferList>.alignment)
         defer { raw.deallocate() }
@@ -175,38 +217,50 @@ public final class SystemAudioHapticCapture: NSObject, SCStreamOutput, SCStreamD
             flags: UInt32(kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment),
             blockBufferOut: &retainedBlockBuffer
         )
-        guard status == noErr else { return }
+        guard status == noErr else { rejectAudioPacket(); return }
 
-        var samples: [Float] = []
+        var samples = [Float](repeating:0,count:frameCount)
+        // Check the reported list count before constructing the variable-
+        // length buffer view. Every pointer is validated before reading.
+        let bufferCount = Int(list.pointee.mNumberBuffers)
+        let expectedBuffers = planar ? channels : 1
+        guard bufferCount == expectedBuffers,
+              requiredSize >= MemoryLayout<AudioBufferList>.size + (bufferCount-1)*MemoryLayout<AudioBuffer>.stride else {
+            rejectAudioPacket(); return
+        }
         let audioBuffers = UnsafeMutableAudioBufferListPointer(list)
-        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
-        guard frameCount > 0, frameCount <= Int(asbd.mSampleRate * 0.5) else { return }
-        samples.reserveCapacity(frameCount)
-        if asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0 {
-            guard let buffer = audioBuffers.first, let first = buffer.mData,
-                  Int(buffer.mDataByteSize) >= frameCount * MemoryLayout<Float>.size else { return }
-            let pointer = first.assumingMemoryBound(to: Float.self)
-            samples.append(contentsOf: UnsafeBufferPointer(start: pointer, count: frameCount))
+        if planar {
+            for buffer in audioBuffers {
+                guard buffer.mNumberChannels == 1,let data = buffer.mData,
+                      Int(buffer.mDataByteSize) >= frameCount*stride else { rejectAudioPacket(); return }
+                let pointer = data.assumingMemoryBound(to:Float.self)
+                for frame in 0..<frameCount {
+                    let value = pointer[frame]
+                    guard value.isFinite else { rejectAudioPacket(); return }
+                    samples[frame] += max(-1,min(1,value))/Float(channels)
+                }
+            }
         } else {
-            let channels = Int(asbd.mChannelsPerFrame)
-            guard (1...8).contains(channels), let buffer = audioBuffers.first, let first = buffer.mData,
-                  Int(buffer.mDataByteSize) >= frameCount * channels * MemoryLayout<Float>.size else { return }
-            let pointer = first.assumingMemoryBound(to: Float.self)
+            guard let buffer = audioBuffers.first,Int(buffer.mNumberChannels) == channels,let data = buffer.mData,
+                  Int(buffer.mDataByteSize) >= frameCount*channels*stride else { rejectAudioPacket(); return }
+            let pointer = data.assumingMemoryBound(to:Float.self)
             for frame in 0..<frameCount {
-                var mono: Float = 0
-                for channel in 0..<channels { mono += pointer[frame * channels + channel] / Float(channels) }
-                samples.append(mono)
+                for channel in 0..<channels {
+                    let value = pointer[frame*channels+channel]
+                    guard value.isFinite else { rejectAudioPacket(); return }
+                    samples[frame] += max(-1,min(1,value))/Float(channels)
+                }
             }
         }
+        invalidAudioPackets = 0
         let sampleRate = asbd.mSampleRate
-        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
-        let discontinuity = pts.isFinite && expectedPTS.map { abs(pts - $0) > 0.035 } == true
+        let discontinuity = expectedPTS.map { abs(pts - $0) > 0.035 } == true
         if processor?.sampleRate != sampleRate || discontinuity {
             processor = LiveSpeechProcessor(sampleRate: sampleRate, profile: profile,
                 speechOptimized: optimized, automaticGain: autoGain, noiseGate: gate)
             timeline = LiveHapticTimeline(bufferSeconds: timeline.bufferSeconds)
         }
-        expectedPTS = pts.isFinite ? pts + Double(frameCount) / sampleRate : nil
+        expectedPTS = pts + Double(frameCount) / sampleRate
         let frames = processor?.append(samples) ?? []
         timeline.enqueue(frames, now: ProcessInfo.processInfo.systemUptime)
     }
