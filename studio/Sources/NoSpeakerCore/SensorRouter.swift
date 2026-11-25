@@ -215,6 +215,7 @@ public struct SensorRouter: Sendable {
     private var releaseValues: [SensorDestination: Int] = [:]
     private var sharedSwitches: Set<SensorDestination> = []
     private var pedalPressed: Set<Owner> = []
+    private var needsReconcile = false
 
     public init() {}
     public var sessionCount: Int { sessions.count }
@@ -302,9 +303,12 @@ public struct SensorRouter: Sendable {
                 }
                 value = response.output(filtered, target: mapping.destination)
             }
-            contributions[owner] = Contribution(owner: owner, destination: mapping.destination,
-                                                priority: mapping.priority, value: value,
-                                                filtered: filtered, timestamp: event.timestamp)
+            let previous = contributions.updateValue(
+                Contribution(owner:owner,destination:mapping.destination,priority:mapping.priority,
+                             value:value,filtered:filtered,timestamp:event.timestamp),forKey:owner)
+            // Keep smoothing state and the accepted timestamp even when the
+            // quantized wire value is unchanged. Only output ownership is dirty.
+            if previous?.value != value { needsReconcile = true }
         }
         return true
     }
@@ -324,7 +328,7 @@ public struct SensorRouter: Sendable {
             for mapping in mappingsByInput[.init(source:session.source,signal:signal)] ?? [] {
                 let owner = Owner(session:id,mapping:mapping.id)
                 pedalPressed.remove(owner)
-                if mapping.pedalMode != .toggle { contributions.removeValue(forKey:owner) }
+                if mapping.pedalMode != .toggle { removeContribution(owner) }
             }
         }
         for event in events { _ = accept(event,now:now) }
@@ -344,7 +348,7 @@ public struct SensorRouter: Sendable {
             for mapping in mappingsByInput[.init(source:session.source,signal:signal)] ?? [] {
                 let owner = Owner(session:id,mapping:mapping.id)
                 pedalPressed.remove(owner)
-                contributions.removeValue(forKey:owner)
+                removeContribution(owner)
             }
         }
         return reconcile()
@@ -363,7 +367,8 @@ public struct SensorRouter: Sendable {
         guard !removed.isEmpty else { return [] }
         for id in removed { sessions.removeValue(forKey:id) }
         pedalPressed = pedalPressed.filter { !removed.contains($0.session) }
-        contributions = contributions.filter { !removed.contains($0.key.session) }
+        let departing = contributions.keys.filter { removed.contains($0.session) }
+        for owner in departing { removeContribution(owner) }
         return reconcile()
     }
 
@@ -377,8 +382,13 @@ public struct SensorRouter: Sendable {
     public mutating func panic() -> [SensorCommand] {
         sessions.removeAll()
         pedalPressed.removeAll()
+        if !contributions.isEmpty { needsReconcile = true }
         contributions.removeAll()
         return reconcile()
+    }
+
+    private mutating func removeContribution(_ owner: Owner) {
+        if contributions.removeValue(forKey:owner) != nil { needsReconcile = true }
     }
 
     private static func precedes(_ a: Contribution, _ b: Contribution) -> Bool {
@@ -388,6 +398,8 @@ public struct SensorRouter: Sendable {
     }
 
     private mutating func reconcile() -> [SensorCommand] {
+        guard needsReconcile else { return [] }
+        needsReconcile = false
         // A single pass selects the same gate maxima and continuous
         // winners as the previous grouped-and-sorted implementation.
         var next: [SensorDestination:Int] = [:]
