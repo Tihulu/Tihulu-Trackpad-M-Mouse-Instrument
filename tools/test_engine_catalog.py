@@ -22,9 +22,8 @@ def main(binary):
             path = (ROOT / source).resolve()
             assert path.is_relative_to(ROOT) and path.is_file(), source
         if feature["id"] != "source-retrieval":
-            for command in feature["cli"]:
-                assert command not in commands, command
-                commands.add(command)
+            assert len(feature["cli"]) == len(set(feature["cli"])), feature["id"]
+            commands.update(feature["cli"])
     help_doc = json.loads(subprocess.check_output([binary, "--help"], timeout=20))
     exposed = { " ".join(s.split()[:2]) for s in help_doc["commands"] }
     assert exposed == commands | {"capabilities"}, (exposed, commands)
