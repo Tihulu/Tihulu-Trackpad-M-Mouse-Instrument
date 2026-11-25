@@ -123,6 +123,24 @@ swift run --package-path examples/EngineConsumer engine-consumer
 
 This separate package depends only on the public NoSpeakerCore library and verifies note plus sustain ownership and cleanup in memory. The developer CI builds it on Linux and macOS. See AGENTS.md for the coding-agent starting point.
 
+### Tuned MIDI, groove, and voice analysis
+
+The executable is named `tihulu-mac-instrument-engine` to avoid collisions with other TIHULU products. There is no legacy generic command alias. After building, use `swift run --skip-build tihulu-mac-instrument-engine` or the executable in the SwiftPM binary directory.
+
+```sh
+cat > tuned.json <<'JSON'
+{"root":60,"degreeCents":"0, 180, 400, 700, 1200","clip":{"bpm":120,"length":960,"notes":[{"start":0,"duration":240,"channel":0,"pitch":60,"velocity":90},{"start":0,"duration":240,"channel":0,"pitch":62,"velocity":90}]}}
+JSON
+swift run --skip-build tihulu-mac-instrument-engine midi tuned tuned.json > tuned-result.json
+python3 -c 'import json,base64; d=json.load(open("tuned-result.json")); open("tuned.mid","xb").write(base64.b64decode(d["data"],validate=True))'
+```
+
+The tuned export uses the existing TunedMIDIClip writer. It requires a single melodic input channel, excludes percussion input channel 10, and assigns up to 15 dedicated lower-zone MPE member channels with fixed bends for the entire clip. The receiver must support MPE and retain/import setup messages. It does not promise that a particular DAW preserves them. Unsupported scale degrees or exhausted channel capacity fail, rather than falling back to 12-TET.
+
+`midi groove FILE` takes a strict JSON object with `clip` and `groove` fields. Groove fields are swing, humanize, intensity, accent, probability and seed, using the existing bounded sixteenth-note policy. Output includes transformed symbolic clip and base64 SMF0. It is nominal-pitch export; microtonal data must use the tuned exporter, not be inserted as ignored fields.
+
+`voice analyze FILE` accepts `{"sampleRate":16000,"samples":[...]}` with 400 to 80000 normalized mono PCM samples in [-1,1]. It runs the existing HapticVoiceAnalyzer and returns scheduled haptic frames as data. This is analysis only, not TTS, speech recognition, microphone capture, physical vibration or audio playback. The five-second input cap is a conservative CLI development bound. No network or automatic model downloads.
+
 ## AI retrieval / vector index
 
 Run from the repository root:
