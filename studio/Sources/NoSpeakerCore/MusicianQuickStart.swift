@@ -17,7 +17,7 @@ public enum MusicianQuickStart: String, CaseIterable, Identifiable, Sendable {
     public var instructions: String {
         switch self {
         case .phoneDrums: "One phone: drum pads on MIDI channel 10."
-        case .controllerLead: "One paired controller: A/B/X/Y melody, sticks for expression and RT sustain, channel 4."
+        case .controllerLead: "One paired controller: A/B/X/Y melody, left X pitch bend, right Y filter and RT sustain, channel 4."
         case .controllerHelper: "One paired controller: RT sustain, LT wah, left X bend and right Y modulation, channel 1. Play notes from your separate DAW instrument."
         case .controllerDuo: "Two paired controllers: melody on channel 4, drums on channel 10."
         case .mobileDuo: "Phone drums on channel 10, tablet piano on channel 2."
