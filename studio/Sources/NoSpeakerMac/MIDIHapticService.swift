@@ -1135,6 +1135,9 @@ public final class PerformanceGroupMIDIHost {
     private var delivery: PerformanceGroupDelivery?
     private var gamepads: PerformanceGroupGamepadSession?
     private var retainedTunedPorts = false
+    private var groupHapticProjection:PerformanceGroupHapticProjection?
+    public var groupHapticFrame:HapticFrame? { groupHapticProjection?.frame() }
+    public func disableGroupHaptics() { groupHapticProjection = nil }
     private var remoteBridge: PerformanceGroupRemoteBridge?
     private var remoteRunID: UUID?
     private init() {}
@@ -1161,6 +1164,7 @@ public final class PerformanceGroupMIDIHost {
         remoteBridge = nil
         remoteRunID = nil
         delivery = next
+        groupHapticProjection = nil
     }
 
     /// Only a caller owning the frozen physical controller bindings may use
@@ -1168,7 +1172,8 @@ public final class PerformanceGroupMIDIHost {
     /// No automatic activation, device polling or handler installation here.
     public func startGamepads(profile: PerformanceGroupProfile, allowLayering: Bool = false,
                               allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false,
-                              tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:], allowRemote:Bool = false) throws {
+                              tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:], allowRemote:Bool = false,
+                              hapticGroups:Set<UUID> = []) throws {
         guard canStart else { throw HostError.activeOrCleanupRequired }
         // Never retune retained ports during another session's release tails
         // or silently switch a previously configured receiver to standard mode.
@@ -1177,7 +1182,10 @@ public final class PerformanceGroupMIDIHost {
         }
         var next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering,
             allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera,tuning:tuning,allowRemote:allowRemote)
+        let projection:PerformanceGroupHapticProjection? = hapticGroups.isEmpty ? nil :
+            try PerformanceGroupHapticProjection(profile:profile,selected:hapticGroups,tuned:Set(tuning.keys))
         try openPorts(profile)
+        groupHapticProjection = nil
         delivery = nil
         remoteBridge = nil
         remoteRunID = nil
@@ -1186,6 +1194,7 @@ public final class PerformanceGroupMIDIHost {
         // Publish even on failure, preserving the original selector debt.
         gamepads = next
         guard prepared else { throw HostError.tuningSetupFailed }
+        groupHapticProjection = projection
     }
 
     private func openPorts(_ profile: PerformanceGroupProfile) throws {
@@ -1216,8 +1225,11 @@ public final class PerformanceGroupMIDIHost {
     }
 
     private func send(_ item: PerformanceGroupCommand) -> Bool {
-        guard let endpoint = ports.handle(for:item.groupID) else { return false }
-        return ChordMIDIOutput.send(item.command,endpoint:endpoint)
+        let accepted:Bool
+        if let endpoint = ports.handle(for:item.groupID) { accepted = ChordMIDIOutput.send(item.command,endpoint:endpoint) }
+        else { accepted = false }
+        groupHapticProjection?.observe(item,accepted:accepted)
+        return accepted
     }
 
     /// Explicit listener ownership token; caller must start the established
@@ -1383,6 +1395,7 @@ public final class PerformanceGroupMIDIHost {
     }
 
     public func stopGroup(_ id: UUID) -> PerformanceGroupDelivery.Report? {
+        groupHapticProjection?.retire(id)
         if var state = gamepads {
             let result = state.stopGroup(id,send:send)
             gamepads = state
@@ -1396,6 +1409,7 @@ public final class PerformanceGroupMIDIHost {
 
     public func panic() -> PerformanceGroupDelivery.Report? {
         // Retire the callback generation before releasing all owners.
+        groupHapticProjection = nil
         remoteBridge = nil
         remoteRunID = nil
         if var state = gamepads {
@@ -1427,6 +1441,7 @@ public final class PerformanceGroupMIDIHost {
     public func close() -> Bool {
         guard canStart else { return false }
         let closed = ports.close(cleanupComplete:true,dispose:Self.dispose)
+        groupHapticProjection = nil
         delivery = nil
         gamepads = nil
         remoteBridge = nil
