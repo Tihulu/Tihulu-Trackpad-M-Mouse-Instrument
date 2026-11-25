@@ -121,3 +121,31 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     #expect(result.actions == [.revoke(a)])
     #expect(bridge.connectionIDs.isEmpty && session.boundSources.isEmpty)
 }
+
+
+@Test func remoteGroupSlotReplacementDoesNotStealOtherPendingInvitation() throws {
+    let phone = groupRemoteFixture(.phone,.drumPad1,36)
+    let tablet = groupRemoteFixture(.tablet,.pianoKey0,60)
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[phone,tablet]),allowRemote:true)
+    var bridge = PerformanceGroupRemoteBridge()
+    let a = UUID(), b = UUID(), duplicate = UUID()
+    let secretA = Data(repeating:1,count:32), secretB = Data(repeating:2,count:32)
+    let sink:(PerformanceGroupCommand)->Bool = { _ in true }
+    _ = bridge.process([.ready],now:1,session:&session,send:sink)
+    try bridge.issue(secret:secretA,source:.phone,now:1,session:session)
+    _ = bridge.process([.invitation(a,secretA,1.01)],now:1.01,session:&session,send:sink)
+    #expect(bridge.connectionSlots == [a:.phone])
+    try bridge.issue(secret:secretB,source:.tablet,now:1.02,session:session)
+    #expect(throws:RemoteTouchError.unavailable) {
+        try bridge.issue(secret:Data(repeating:3,count:32),source:.phone,now:1.03,session:session)
+    }
+    let result = bridge.process([.disconnected(a),.invitation(b,secretB,1.04)],now:1.04,session:&session,send:sink)
+    #expect(result.actions == [.acknowledge(b,true)])
+    #expect(bridge.connectionSlots == [b:.tablet])
+    #expect(session.boundSources == [.tablet])
+    let replay = bridge.process([.invitation(duplicate,secretB,1.05)],now:1.05,session:&session,send:sink)
+    #expect(replay.actions == [.acknowledge(duplicate,false)])
+    #expect(bridge.connectionSlots == [b:.tablet])
+    _ = bridge.stop(session:&session,send:sink)
+    #expect(bridge.connectionSlots.isEmpty && session.boundSources.isEmpty)
+}
