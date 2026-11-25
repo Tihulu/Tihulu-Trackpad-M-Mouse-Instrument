@@ -29,7 +29,7 @@ private func planJSON(_ note:String=noteJSON,bpm:String="120",length:String="192
         planJSON(noteJSON.replacingOccurrences(of:"\"pitch\":60",with:"\"pitch\":\"60\"")),
         planJSON(noteJSON.replacingOccurrences(of:"\"pitch\":60",with:"\"pitch\":060")),
         planJSON(bpm:"1e999"),planJSON(bpm:"+120"),planJSON(bpm:"120."),
-        planJSON(length:"99999999999999999999999"),planJSON()+ " {}",
+        planJSON(length:"99999999999999999999999"),planJSON() + " {}",
         planJSON(noteJSON+","),
         planJSON(noteJSON.replacingOccurrences(of:"\"pitch\":60,",with:"")),
         planJSON(noteJSON.replacingOccurrences(of:"\"pitch\":60",with:"\"output\":60"))
