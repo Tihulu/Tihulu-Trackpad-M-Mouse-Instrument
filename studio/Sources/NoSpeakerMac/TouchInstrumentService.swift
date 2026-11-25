@@ -580,9 +580,11 @@ public final class TouchInstrumentService: @unchecked Sendable {
         // Submit under the subscription lock to serialize detachment with
         // the bounded enqueue; no MIDI or actor dispatch in the subscriber.
         patchMailbox?.submit(frame)
-        lock.unlock()
 
-        guard config.surfaceSelection.accepts(frame.surface) else { return }
+        // Mapping is bounded by the native contact limit and has no I/O.
+        // Keep it in the same critical section as the publication so an
+        // earlier admitted down/up cannot be overtaken by a later mapper.
+        guard config.surfaceSelection.accepts(frame.surface) else { lock.unlock(); return }
 
         let instrument = config.instrument(for: frame.surface)
         var states: [TouchPerformanceState] = mappedNotes.isEmpty ? [] : frame.contacts.compactMap { contact -> TouchPerformanceState? in
@@ -650,7 +652,6 @@ public final class TouchInstrumentService: @unchecked Sendable {
             return state
         }
 
-        lock.lock()
         guard monitoring, monitoringToken == token, sampleRevision == revision,
               frameID > (lastFrameBySurface[frame.surface] ?? 0) else { lock.unlock(); return }
         lastFrameBySurface[frame.surface] = frameID
