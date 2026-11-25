@@ -280,6 +280,12 @@ public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
     }
 }
 
+public struct QueuedTouchSnapshot: Sendable {
+    public let states: [TouchPerformanceState]
+    public let stamp: TouchSnapshotStamp
+    public let queuedAt: Double
+}
+
 public final class TouchInstrumentService: @unchecked Sendable {
     private let driver: HapticTrackpadDriver
     private let lock = NSLock()
@@ -297,6 +303,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var patchMailbox: PatchSurfaceMailbox?
     private var active = false
     private var performanceHandler: (@Sendable ([TouchPerformanceState],TouchSnapshotStamp) -> Void)?
+    private var queuedInbox: OrderedTouchInbox<QueuedTouchSnapshot>?
+    private var queuedReady: (@Sendable () -> Void)?
     private var latestStatesBySurface: [TouchSurfaceKind: [TouchPerformanceState]] = [:]
     private var liveHapticStates: [TouchPerformanceState] = []
     private var sustainedHapticStates = HapticSustainVoices<TouchPerformanceState>()
@@ -331,9 +339,24 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
     public func startStampedPreview(configuration: TouchInstrumentConfiguration,
         onPerformance: @escaping @Sendable ([TouchPerformanceState],TouchSnapshotStamp) -> Void) throws {
+        try startMonitoring(configuration:configuration, handler:onPerformance, inbox:nil, onReady:nil)
+    }
+
+    /// Enqueue under the publication lock, notify after unlocking. This
+    /// preserves committed snapshot order across concurrent device callbacks.
+    public func startQueuedPreview(configuration: TouchInstrumentConfiguration,
+        inbox: OrderedTouchInbox<QueuedTouchSnapshot>, onReady: @escaping @Sendable () -> Void) throws {
+        try startMonitoring(configuration:configuration, handler:nil, inbox:inbox, onReady:onReady)
+    }
+
+    private func startMonitoring(configuration: TouchInstrumentConfiguration,
+        handler: (@Sendable ([TouchPerformanceState],TouchSnapshotStamp) -> Void)?,
+        inbox: OrderedTouchInbox<QueuedTouchSnapshot>?, onReady: (@Sendable () -> Void)?) throws {
         lock.lock()
         let changed = applyConfigurationLocked(configuration)
-        self.performanceHandler = onPerformance
+        self.performanceHandler = handler
+        self.queuedInbox = inbox
+        self.queuedReady = onReady
         let needsStart = !monitoring
         let token = needsStart ? UUID() : monitoringToken
         monitoringToken = token
@@ -353,6 +376,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 monitoring = false
                 monitoringToken = nil
                 performanceHandler = nil
+                queuedInbox = nil
+                queuedReady = nil
                 latestStatesBySurface.removeAll()
             }
             lock.unlock()
@@ -475,6 +500,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
         monitoring = false
         monitoringToken = nil
         performanceHandler = nil
+        queuedInbox = nil
+        queuedReady = nil
         latestStatesBySurface.removeAll()
         lock.unlock()
         driver.stopSurfaceMonitoring()
@@ -626,8 +653,11 @@ public final class TouchInstrumentService: @unchecked Sendable {
         // Commit the haptic snapshot under the same lock as publication.
         // A preview is never a percussion trigger.
         guard isActive && active else {
+            let inbox = queuedInbox, notify = queuedReady
+            let ready = inbox?.submit(.init(states:combined,stamp:stamp,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
             lock.unlock()
-            callback?(combined,stamp)
+            if inbox != nil { if ready { notify?() } }
+            else { callback?(combined,stamp) }
             return
         }
         let liveConfig = configuration
@@ -651,8 +681,11 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 sustainedHapticStates.remember(id:state.id,value:state)
             }
         }
+        let inbox = queuedInbox, notify = queuedReady
+        let ready = inbox?.submit(.init(states:combined,stamp:stamp,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
         lock.unlock()
-        callback?(combined,stamp)
+        if inbox != nil { if ready { notify?() } }
+        else { callback?(combined,stamp) }
     }
 
     private func renderHapticFrame(token: UUID) {
