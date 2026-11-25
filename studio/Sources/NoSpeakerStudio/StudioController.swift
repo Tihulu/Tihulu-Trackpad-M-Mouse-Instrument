@@ -191,6 +191,7 @@ final class StudioController: ObservableObject {
             groupGamepadStatus = "Use a valid saved local group profile and explicitly approve shared signals."
             return
         }
+        cancelStartupGreeting()
         let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
         if needsSurface {
             guard requireEngine(), touch != nil else {
@@ -336,6 +337,10 @@ final class StudioController: ObservableObject {
         groupWatchdog?.cancel()
         groupWatchdog = nil
         groupGamepadTokens.removeAll()
+        groupGamepadsRunning = false
+        groupStoppedIDs = groupRegisteredIDs
+        // Release MIDI before potentially slow native monitor teardown.
+        if let report = groupHost.panic() { consumeGroupReports([report]) }
         builderGamepads.stop()
         if let mailbox = groupSurfaceMailbox {
             touch?.setPatchMailbox(nil)
@@ -343,9 +348,6 @@ final class StudioController: ObservableObject {
             groupSurfaceMailbox = nil
             refreshSharedSurfaceMonitoring()
         }
-        groupGamepadsRunning = false
-        groupStoppedIDs = groupRegisteredIDs
-        if let report = groupHost.panic() { consumeGroupReports([report]) }
         groupGamepadStatus = groupCleanupIDs.isEmpty
             ? "Group MIDI stopped. Registered ports retained for restart."
             : "Group MIDI stopped; cleanup pending. Retry before restarting."
@@ -2482,7 +2484,7 @@ final class StudioController: ObservableObject {
             guard !Task.isCancelled, let self, self.engineReady,
                   self.playback === engine, !self.isPlaying,
                   !self.touchRunning, !self.midiRunning, !self.midiHelperRunning,
-                  !self.systemAudioRunning, !self.liveNoteOwnsHaptics, let events, !events.isEmpty else { return }
+                  !self.systemAudioRunning, !self.groupGamepadsRunning, !self.liveNoteOwnsHaptics, let events, !events.isEmpty else { return }
             self.startupGreetingPlaying = true
             let generation = self.renderGeneration
             engine.play(events: events, masterLevel: self.masterLevel) { [weak self] _ in
@@ -3534,6 +3536,7 @@ final class StudioController: ObservableObject {
         armed: Bool,
         shortcut: PerformanceCaptureShortcut
     ) {
+        guard !armed || !groupGamepadsRunning else { lastError = "Stop group MIDI before arming Capture."; return }
         guard shortcut.isValid else {
             lastError = "Escape is reserved for Panic Stop. Choose another key or key combination."
             return
