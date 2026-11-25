@@ -29,6 +29,8 @@ public final class NativeMIDIPlayback {
         public let receiverConfirmed:Bool
         public let faultReason:String?
         public let maximumObservedLatenessNS:UInt64
+        public let maximumIdentityCheckNS:UInt64
+        public let maximumNativeSendNS:UInt64
     }
 
     /// The successful close report is distinct from receiver confirmation.
@@ -66,6 +68,8 @@ public final class NativeMIDIPlayback {
     private var opened=false
     private var running=false
     private var stopRequested=false
+    private var maximumIdentityCheckNS:UInt64=0
+    private var maximumNativeSendNS:UInt64=0
 
     public init(clip:MIDIClip) throws {
         player=try BoundedMIDIPlayback(clip:clip)
@@ -116,7 +120,11 @@ public final class NativeMIDIPlayback {
         let source=endpoint,id=sourceID,name=sourceName
         // Capture the identity gate separately from the mutable playback ledger.
         let gate=IdentityGate(source:source,id:id,name:name,retired:identityRetired)
-        defer { identityRetired=gate.retired;wasCancelled=wasCancelled || stopRequested || Task.isCancelled }
+        defer {
+            recordGate(gate)
+            identityRetired=gate.retired
+            wasCancelled=wasCancelled || stopRequested || Task.isCancelled
+        }
         // Validate even when a stop was requested before the first note.
         // Cancellation must not disguise a retired source as a clean stop.
         guard gate.validate() else {
@@ -139,7 +147,8 @@ public final class NativeMIDIPlayback {
                 break
             }
             let cancelled=stopRequested
-            player.advance(now:Self.now(),refreshNow:{ Self.now() },shouldStop:{ cancelled || Task.isCancelled }) { command in
+            player.advance(now:Self.now(),refreshNow:{ Self.now() },shouldStop:{ cancelled || Task.isCancelled },
+                           authorizeOnset:{ gate.validate() }) { command in
                 if command.value > 0 && (cancelled || Task.isCancelled) { return false }
                 return gate.send(command)
             }
@@ -161,6 +170,7 @@ public final class NativeMIDIPlayback {
             player.invalidateTerminalResult()
         }
         identityRetired=gate.retired
+        recordGate(gate)
         return report(cancelled:stopRequested || Task.isCancelled)
     }
 
@@ -196,7 +206,7 @@ public final class NativeMIDIPlayback {
         guard opened,endpoint != 0,!running,player.state != .ready,
               player.state != .playing else { throw Failure.invalidLifecycle }
         let gate=IdentityGate(source:endpoint,id:sourceID,name:sourceName,retired:identityRetired)
-        defer { identityRetired=gate.retired }
+        defer { identityRetired=gate.retired;recordGate(gate) }
         // An empty note ledger is not evidence that the endpoint still
         // belongs to this session. Do not report successful recovery
         // against a retired or replaced source.
@@ -209,7 +219,13 @@ public final class NativeMIDIPlayback {
             player.invalidateTerminalResult()
             throw Failure.sourceIdentityLost
         }
+        recordGate(gate)
         return report(cancelled:wasCancelled)
+    }
+
+    private func recordGate(_ gate:IdentityGate) {
+        maximumIdentityCheckNS=max(maximumIdentityCheckNS,gate.maximumIdentityCheckNS)
+        maximumNativeSendNS=max(maximumNativeSendNS,gate.maximumNativeSendNS)
     }
 
     /// Never silently discard note debt or a failed endpoint disposal.
@@ -239,7 +255,8 @@ public final class NativeMIDIPlayback {
               cleanupConfirmed:player.outstanding.isEmpty && !identityRetired && !disposalFailed,
               outstandingNotes:player.outstanding.count,receiverConfirmed:false,
               faultReason:identityRetired ? "sourceIdentityLost" : player.fault?.rawValue,
-              maximumObservedLatenessNS:player.maximumObservedLatenessNS)
+              maximumObservedLatenessNS:player.maximumObservedLatenessNS,
+              maximumIdentityCheckNS:maximumIdentityCheckNS,maximumNativeSendNS:maximumNativeSendNS)
     }
 
     private nonisolated static func now() -> UInt64 {
@@ -260,10 +277,14 @@ public final class NativeMIDIPlayback {
         let id:Int32
         let name:String
         private(set) var retired:Bool
+        private(set) var maximumIdentityCheckNS:UInt64=0
+        private(set) var maximumNativeSendNS:UInt64=0
         init(source:MIDIEndpointRef,id:Int32,name:String,retired:Bool) {
             self.source=source;self.id=id;self.name=name;self.retired=retired
         }
         func validate()->Bool {
+            let started=NativeMIDIPlayback.now()
+            defer { maximumIdentityCheckNS=max(maximumIdentityCheckNS,NativeMIDIPlayback.now()-started) }
             guard !retired,NativeMIDIPlayback.matches(source:source,id:id,name:name) else {
                 retired=true
                 return false
@@ -272,6 +293,8 @@ public final class NativeMIDIPlayback {
         }
         func send(_ command:SensorCommand)->Bool {
             guard validate() else { return false }
+            let started=NativeMIDIPlayback.now()
+            defer { maximumNativeSendNS=max(maximumNativeSendNS,NativeMIDIPlayback.now()-started) }
             return NativeMIDIPlayback.send(command,source:source)
         }
     }

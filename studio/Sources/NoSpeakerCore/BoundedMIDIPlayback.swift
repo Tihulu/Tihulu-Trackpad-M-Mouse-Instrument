@@ -98,6 +98,7 @@ public struct BoundedMIDIPlayback: Sendable {
     /// a slow first send must not authorize a stale second onset.
     public mutating func advance(now: UInt64, refreshNow: () -> UInt64,
                                  shouldStop: () -> Bool = { false },
+                                 authorizeOnset: (() -> Bool)? = nil,
                                  send: (SensorCommand) -> Bool) {
         guard state == .playing else { return }
         var current=now
@@ -123,7 +124,28 @@ public struct BoundedMIDIPlayback: Sendable {
             }
             let cmd=event.command
             if cmd.value > 0 {
-                guard let end=onsetEnds[next],end>elapsed else {
+                // Native identity inspection can itself stall. Sample the
+                // clock again after authorization, before owning the onset.
+                // Cleanup does not depend on onset authorization.
+                var admittedElapsed=elapsed
+                if let authorizeOnset {
+                    guard authorizeOnset() else {
+                        retire(.faulted,fault:.externalFailure,send:send); return
+                    }
+                    if shouldStop() { retire(.stopped,send:send); return }
+                    current=refreshNow()
+                    guard current>=last else {
+                        retire(.faulted,fault:.clockRegression,send:send); return
+                    }
+                    last=current
+                    admittedElapsed=current-start
+                    let late=admittedElapsed-event.offsetNS
+                    maximumObservedLatenessNS=max(maximumObservedLatenessNS,late)
+                    guard late<=Self.maximumLatenessNS else {
+                        retire(.faulted,fault:.lateEvent,send:send); return
+                    }
+                }
+                guard let end=onsetEnds[next],end>admittedElapsed else {
                     retire(.faulted,fault:.expiredOnset,send:send); return
                 }
                 outstanding.insert(cmd.destination)

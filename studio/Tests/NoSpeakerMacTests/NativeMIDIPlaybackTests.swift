@@ -144,7 +144,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
             #expect(retry.cancelled && retry.cleanupConfirmed)
         } else {
             #expect(report.state=="finished" && !report.cancelled,
-                    "state=\(report.state), reason=\(report.faultReason ?? "none"), max lateness ns=\(report.maximumObservedLatenessNS)")
+                    "state=\(report.state), reason=\(report.faultReason ?? "none"), max lateness ns=\(report.maximumObservedLatenessNS), identity ns=\(report.maximumIdentityCheckNS), native send ns=\(report.maximumNativeSendNS)")
             // Deliberately broad hosted-runner tolerance, not physical latency.
             #expect((180_000_000...350_000_000).contains(gate))
         }
@@ -331,7 +331,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     try #require(MIDIPortConnectSource(port,source,nil)==noErr)
     let result=try await player.runAndClose()
     #expect(result.completed && result.sourceDisposed && !result.recoveryRequired,
-            "state=\(result.playback.state), reason=\(result.playback.faultReason ?? "none"), max lateness ns=\(result.playback.maximumObservedLatenessNS)")
+            "state=\(result.playback.state), reason=\(result.playback.faultReason ?? "none"), max lateness ns=\(result.playback.maximumObservedLatenessNS), identity ns=\(result.playback.maximumIdentityCheckNS), native send ns=\(result.playback.maximumNativeSendNS)")
     #expect(result.playback.state=="finished" && !result.playback.receiverConfirmed)
     #expect(result.playback.cleanupConfirmed && result.playback.outstandingNotes==0)
     let deadline=ContinuousClock().now.advanced(by:.milliseconds(250))

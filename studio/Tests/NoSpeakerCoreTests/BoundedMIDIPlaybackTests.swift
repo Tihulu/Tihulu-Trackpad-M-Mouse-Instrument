@@ -359,3 +359,47 @@ private func playbackClip() -> MIDIClip {
     #expect(player.state == .faulted && player.fault == .lateEvent)
     #expect(player.maximumObservedLatenessNS==50_000_001 && player.outstanding.isEmpty)
 }
+
+@Test func boundedPlaybackResamplesClockAfterSlowOnsetAuthorization() throws {
+    let plan=try BoundedMIDIPlayback(clip:playbackClip())
+    for scenario in 0..<4 {
+        var player=plan
+        _=try player.begin(now:100)
+        var now:UInt64=100
+        var stop=false
+        var sent:[SensorCommand]=[]
+        player.advance(now:now,refreshNow:{now},shouldStop:{stop},authorizeOnset:{
+            switch scenario {
+            case 0: now+=50_000_001
+            case 1: now=99
+            case 2: stop=true
+            default: return false
+            }
+            return true
+        }) { sent.append($0);return true }
+        #expect(sent.isEmpty && player.outstanding.isEmpty)
+        if scenario==0 {
+            #expect(player.fault == .lateEvent && player.maximumObservedLatenessNS==50_000_001)
+        } else if scenario==1 {
+            #expect(player.fault == .clockRegression)
+        } else if scenario==2 {
+            #expect(player.state == .stopped && player.fault==nil)
+        } else {
+            #expect(player.fault == .externalFailure)
+        }
+    }
+}
+
+@Test func boundedPlaybackOnsetAuthorizationFailureStillReleasesEarlierNote() throws {
+    let plan=try BoundedMIDIPlayback(clip:playbackClip())
+    var player=plan
+    _=try player.begin(now:0)
+    var admissions=0,commands:[SensorCommand]=[]
+    player.advance(now:0,refreshNow:{0},authorizeOnset:{
+        admissions+=1
+        return admissions==1
+    }) { commands.append($0);return true }
+    #expect(admissions==2 && player.state == .faulted && player.fault == .externalFailure)
+    #expect(commands.count==2 && commands.first?.value==90 && commands.last?.value==0)
+    #expect(commands.first?.destination==commands.last?.destination && player.outstanding.isEmpty)
+}
