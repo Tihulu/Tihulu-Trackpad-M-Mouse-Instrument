@@ -125,7 +125,7 @@ final class StudioController: ObservableObject {
         }
     }
     func setGamepadChoice(_ choice:UUID?,for source:SensorSource) {
-        guard !patchRunning else { return }
+        guard !patchRunning, !groupGamepadsRunning else { return }
         switch source {
         case .gamepad1: gamepadSlot1 = choice
         case .gamepad2: gamepadSlot2 = choice
@@ -140,7 +140,7 @@ final class StudioController: ObservableObject {
         return result
     }
     func refreshBuilderGamepads() {
-        guard !patchRunning else { return }
+        guard !patchRunning, !groupGamepadsRunning else { return }
         gamepadChoices = builderGamepads.refresh()
         for source in GamepadFrame.orderedSources {
             if let choice = gamepadChoice(for:source), !gamepadChoices.contains(where:{ $0.id == choice }) {
@@ -148,6 +148,157 @@ final class StudioController: ObservableObject {
             }
         }
     }
+    // Experimental group mode shares the one BuilderGamepadSource. No
+    // controller handlers or MIDI ports are acquired before explicit Start.
+    @Published private(set) var groupGamepadsRunning = false
+    @Published private(set) var groupGamepadStatus = "Group MIDI idle"
+    @Published private(set) var groupRegisteredIDs: Set<UUID> = []
+    @Published private(set) var groupCleanupIDs: Set<UUID> = []
+    @Published private(set) var groupDisposalCount = 0
+    @Published private(set) var groupFaultIDs: Set<UUID> = []
+    private var groupGamepadTokens: [SensorSource:UUID] = [:]
+    private var groupRunToken: UUID?
+    private var groupWatchdog: Task<Void,Never>?
+    private var groupHost: PerformanceGroupMIDIHost { .shared }
+
+    private func refreshGroupOutputState() {
+        let registered = groupHost.registeredIDs
+        let cleanup = groupHost.pendingCleanup
+        let disposal = groupHost.pendingDisposalCount
+        if registered != groupRegisteredIDs { groupRegisteredIDs = registered }
+        if cleanup != groupCleanupIDs { groupCleanupIDs = cleanup }
+        if disposal != groupDisposalCount { groupDisposalCount = disposal }
+    }
+
+    func startGroupGamepads(profile: PerformanceGroupProfile, allowLayering: Bool) {
+        guard !patchRunning, !groupGamepadsRunning, !midiRunning, !midiHelperRunning,
+              !touchRunning, !sequenceRunning, !chordArmed, !touchBarOutputArmed,
+              !isPlaying, !speakerBusy, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
+            groupGamepadStatus = "Stop other live performances and Builder before starting group MIDI."
+            return
+        }
+        guard groupCleanupIDs.isEmpty, groupDisposalCount == 0 else {
+            groupGamepadStatus = "Retry group cleanup before starting."
+            return
+        }
+        let routes = profile.groups.flatMap { $0.patch.routes }
+        let sources = Set(routes.map(\.source))
+        guard profile.isValid, !routes.isEmpty, sources.isSubset(of:GamepadFrame.sources),
+              (allowLayering || profile.layeredInputs.isEmpty) else {
+            groupGamepadStatus = "Use a valid saved gamepad-only profile and explicitly approve shared signals."
+            return
+        }
+        guard releaseBuilderOutput() else {
+            groupGamepadStatus = "Builder MIDI cleanup remains pending. Retry Builder Stop."
+            return
+        }
+        guard builderGamepads.bind(required:sources,choices:gamepadBindings) else {
+            groupGamepadStatus = "Select distinct connected controllers for every mapped slot."
+            return
+        }
+        do {
+            try groupHost.startGamepads(profile:profile,allowLayering:allowLayering)
+        } catch {
+            builderGamepads.stop()
+            refreshGroupOutputState()
+            groupGamepadStatus = "Group ports could not open: " + String(describing:error)
+            return
+        }
+        let token = UUID()
+        groupRunToken = token
+        groupGamepadsRunning = true
+        groupFaultIDs = []
+        refreshGroupOutputState()
+        do {
+            for source in GamepadFrame.orderedSources where sources.contains(source) {
+                groupGamepadTokens[source] = try groupHost.bindGamepad(source,now:ProcessInfo.processInfo.systemUptime)
+            }
+        } catch {
+            stopGroupGamepads()
+            groupGamepadStatus = "Controller binding failed; group output stopped. Check cleanup status."
+            return
+        }
+        groupGamepadStatus = "Group ports registered. Release all controller controls before playing."
+        for source in GamepadFrame.orderedSources where groupGamepadTokens[source] != nil {
+            receiveGroupGamepad(source:source,frame:builderGamepads.read(source),run:token)
+        }
+        guard groupRunToken == token else { return }
+        builderGamepads.beginEvents { [weak self] source,frame in
+            self?.receiveGroupGamepad(source:source,frame:frame,run:token)
+        }
+        groupWatchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for:.milliseconds(20)) } catch { return }
+                guard let self, self.groupRunToken == token else { return }
+                self.consumeGroupReports(self.groupHost.expireGamepads(now:ProcessInfo.processInfo.systemUptime))
+                for source in GamepadFrame.orderedSources where self.groupGamepadTokens[source] != nil {
+                    guard self.groupRunToken == token else { return }
+                    self.receiveGroupGamepad(source:source,frame:self.builderGamepads.read(source),run:token)
+                }
+            }
+        }
+    }
+
+    private func consumeGroupReports(_ reports: [PerformanceGroupDelivery.Report]) {
+        let failures = reports.reduce(into:Set<UUID>()) { $0.formUnion($1.failedGroups) }
+        if !failures.isEmpty {
+            groupFaultIDs.formUnion(failures)
+            groupGamepadStatus = "A group MIDI send failed. Affected groups stopped; inspect cleanup status."
+        }
+        refreshGroupOutputState()
+    }
+
+    private func receiveGroupGamepad(source:SensorSource,frame:GamepadFrame?,run:UUID) {
+        guard groupRunToken == run, let token = groupGamepadTokens[source] else { return }
+        guard let frame else {
+            groupGamepadTokens.removeValue(forKey:source)
+            consumeGroupReports(groupHost.unbindGamepad(source,token:token))
+            groupGamepadStatus = "Controller input lost. Stop and explicitly restart to bind a replacement."
+            if groupGamepadTokens.isEmpty { stopGroupGamepads() }
+            return
+        }
+        if let result = groupHost.receiveGamepad(source,token:token,frame:frame,now:ProcessInfo.processInfo.systemUptime) {
+            consumeGroupReports(result.reports)
+        }
+    }
+
+    func stopGroupGamepads() {
+        // Invalidate callbacks before stopping the existing adapter.
+        guard groupGamepadsRunning else { return }
+        groupRunToken = nil
+        groupWatchdog?.cancel()
+        groupWatchdog = nil
+        groupGamepadTokens.removeAll()
+        builderGamepads.stop()
+        groupGamepadsRunning = false
+        if let report = groupHost.panic() { consumeGroupReports([report]) }
+        groupGamepadStatus = groupCleanupIDs.isEmpty
+            ? "Group MIDI stopped. Registered ports retained for restart."
+            : "Group MIDI stopped; cleanup pending. Retry before restarting."
+    }
+
+    func stopPerformanceGroup(_ id:UUID) {
+        guard groupGamepadsRunning else { return }
+        if let report = groupHost.stopGroup(id) { consumeGroupReports([report]) }
+    }
+
+    func retryGroupCleanup() {
+        for id in groupHost.pendingCleanup {
+            if let report = groupHost.retryCleanup(id) { consumeGroupReports([report]) }
+        }
+        _ = groupHost.retryDisposal()
+        refreshGroupOutputState()
+        groupGamepadStatus = groupCleanupIDs.isEmpty && groupDisposalCount == 0
+            ? "No pending group cleanup." : "Group cleanup still pending. Check CoreMIDI and retry."
+    }
+
+    func closeGroupPorts() {
+        guard !groupGamepadsRunning else { return }
+        let closed = groupHost.close()
+        refreshGroupOutputState()
+        groupGamepadStatus = closed ? "Group MIDI ports closed." : "Group close refused or disposal failed; retry cleanup."
+    }
+
     private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
     private let airTunedMIDI = ChordMIDIOutput(name:"TIHULU Air Strings MPE")
     private var airTunedPlan:AirTunedOutput?
@@ -526,7 +677,10 @@ final class StudioController: ObservableObject {
                               remotePage: RemoteLoopbackPageServer? = nil,
                               synthetic:SensorSource? = nil,tunedAir:Bool = false, sendHaptics:Bool = false,
                               gamepadOutputSelection:GamepadOutputSelection? = nil) {
-        guard !patchRunning else { return }
+        guard !patchRunning, !groupGamepadsRunning else {
+            if groupGamepadsRunning { patchStatus = "Stop group MIDI before starting Builder." }
+            return
+        }
         var requestedPlan: GamepadOutputPlan?
         if let selection = gamepadOutputSelection {
             guard physical,synthetic == nil,remoteTransport == nil,!tunedAir,
@@ -1335,6 +1489,7 @@ final class StudioController: ObservableObject {
     }
 
     func stopInstrumentPatch() {
+        if groupGamepadsRunning { stopGroupGamepads() }
         flushPatchMonitor()
         gamepadHapticToken = nil
         gamepadHaptics?.stop()
@@ -2147,6 +2302,8 @@ final class StudioController: ObservableObject {
         retireCaptureMonitor()
         captureArmed = false
         captureHotkeyArmed = false
+        stopGroupGamepads()
+        retryGroupCleanup()
         stopInstrumentPatch()
         stopLiveSequence()
         engineGeneration &+= 1
@@ -3674,6 +3831,10 @@ final class StudioController: ObservableObject {
     }
 
     private func allowOtherPerformance() -> Bool {
+        guard !groupGamepadsRunning else {
+            lastError = "Stop group MIDI before starting another live performance."
+            return false
+        }
         guard !sequenceOwnsHaptics else {
             lastError = "Stop the sequencer's combined Trackpad/MIDI output first."
             return false
