@@ -74,3 +74,20 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     #expect(removed.groups[0].patch.routes == profile.groups[0].patch.routes)
     #expect(removed.groups[1] == profile.groups[1])
 }
+
+
+@Test func mobileDraftNoOpPreservesInterleavedLayoutAndRejectsConflictingWidget() throws {
+    var profile = mobileDraftFixture()
+    profile.groups[0].patch.performanceLayout = .init(widgets:[
+        .init(source:.phone2,signal:.contact,label:"Lead"),
+        .init(source:.gamepad1,signal:.padA,label:"Keep"),
+        .init(source:.phone2,signal:.x,label:"Dormant")
+    ])
+    var draft = try PerformanceGroupMobileDraft(profile:profile,groupID:profile.groups[0].id,source:.phone2)
+    #expect(try draft.applying(to:profile) == profile)
+    draft.widgets.swapAt(0,1)
+    let next = try draft.applying(to:profile)
+    #expect(next.groups[0].patch.performanceLayout?.widgets.map(\.label) == ["Dormant","Keep","Lead"])
+    draft.widgets.append(draft.widgets[0])
+    #expect(throws:PerformanceGroupMobileDraft.EditError.capacityOrConflict) { try draft.applying(to:profile) }
+}

@@ -96,9 +96,15 @@ public struct PerformanceGroupMobileDraft: Identifiable, Equatable, Sendable {
         }
         ordered += remaining
         next.groups[i].patch.routes = ordered
-        let others = patch.performanceLayout?.widgets.filter { $0.source != source } ?? []
         if patch.performanceLayout != nil || !widgets.isEmpty {
-            next.groups[i].patch.performanceLayout = .init(widgets:others+widgets)
+            var pending = widgets
+            var layout:[PerformanceWidget] = []
+            for old in patch.performanceLayout?.widgets ?? [] {
+                if old.source != source { layout.append(old) }
+                else if !pending.isEmpty { layout.append(pending.removeFirst()) }
+            }
+            layout += pending
+            next.groups[i].patch.performanceLayout = .init(widgets:layout)
         }
         guard next.isValid else { throw EditError.capacityOrConflict }
         let remote = Dictionary(grouping:next.groups.flatMap { $0.patch.routes }.filter { $0.source.isGroupRemote },by:{ $0.source })
