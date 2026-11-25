@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public enum LocalVoiceModel {
     public static func validName(_ name: String) -> Bool {
@@ -23,9 +28,18 @@ public enum LocalVoiceModel {
     }
 
     private static func regularFile(_ url:URL,maxBytes:Int) -> Bool {
-        guard let info = try? url.resourceValues(forKeys:[.isRegularFileKey,.isSymbolicLinkKey,.fileSizeKey]),
-              info.isRegularFile == true, info.isSymbolicLink != true,
-              let size = info.fileSize, size > 0, size <= maxBytes else { return false }
-        return true
+        // URL resource values may cache metadata on macOS. Inspect the
+        // current directory entry without following a final symlink.
+        #if canImport(Darwin) || canImport(Glibc)
+        var info = stat()
+        let result = url.path.withCString { lstat($0,&info) }
+        return result == 0 && (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) &&
+            info.st_size > 0 && info.st_size <= Int64(maxBytes)
+        #else
+        guard let info = try? FileManager.default.attributesOfItem(atPath:url.path),
+              info[.type] as? FileAttributeType == .typeRegular,
+              let size = info[.size] as? NSNumber else { return false }
+        return size.int64Value > 0 && size.int64Value <= Int64(maxBytes)
+        #endif
     }
 }
