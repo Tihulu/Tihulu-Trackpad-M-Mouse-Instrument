@@ -145,7 +145,7 @@ struct TihuluEngineCLI {
                 "schema":1, "hardware":false,
                 "commands":["capabilities","patch example","patch validate FILE","patch routes FILE",
                     "groups example","groups validate FILE","groups ports FILE",
-                    "groups simulate PROFILE FRAMES [--allow-layering]", "scale plan ROOT CENTS", "haptics mix FILE", "midi encode FILE", "midi melody FILE", "midi drums FILE", "sustain simulate FILE", "helper simulate FILE", "midi tuned FILE", "midi groove FILE", "voice analyze FILE", "gamepad normalize FILE", "gamepad patch SLOT ROLE CHANNEL", "camera helper-patch PRESET CHANNEL", "camera helper-simulate PATCH FRAMES"]
+                    "groups simulate PROFILE FRAMES [--allow-layering]", "scale plan ROOT CENTS", "haptics mix FILE", "midi encode FILE", "midi melody FILE", "midi drums FILE", "sustain simulate FILE", "helper simulate FILE", "midi tuned FILE", "midi groove FILE", "midi playback-plan FILE", "voice analyze FILE", "gamepad normalize FILE", "gamepad patch SLOT ROLE CHANNEL", "camera helper-patch PRESET CHANNEL", "camera helper-simulate PATCH FRAMES"]
             ]
         }
         if args == ["capabilities"] {
@@ -155,7 +155,7 @@ struct TihuluEngineCLI {
                 "maxRoutes":PerformanceGroupProfile.maximumRoutes,
                 "maxSessions":PerformanceGroupRouter.maxSessions,
                 "midiDelivery":"simulation only","mpePorts":"not implemented in CLI",
-                "scalePlanning":true,"hapticMixPreview":true,"standardMIDIFileExport":true,"sustainSimulation":true,"helperOwnershipSimulation":true,"tunedMIDIFileExport":true,"grooveExport":true,"voiceAnalysisPreview":true,"gamepadSnapshotNormalization":true,"cameraHelperReplay":true]
+                "scalePlanning":true,"hapticMixPreview":true,"standardMIDIFileExport":true,"sustainSimulation":true,"helperOwnershipSimulation":true,"tunedMIDIFileExport":true,"grooveExport":true,"boundedPlaybackPlanning":true,"voiceAnalysisPreview":true,"gamepadSnapshotNormalization":true,"cameraHelperReplay":true]
         }
         if let device = try deviceCommand(args) { return device }
         if args.count == 4, args[0] == "scale", args[1] == "plan" {
@@ -255,6 +255,20 @@ struct TihuluEngineCLI {
             let result = try JSONSerialization.jsonObject(with:JSONEncoder().encode(events))
             return ["schema":1,"hardware":false,"analysisOnly":true,"sampleRate":input.sampleRate,
                     "hopSeconds":HapticVoiceAnalyzer.hopSeconds,"frames":frames.count,"events":result]
+        }
+        if args.count == 3, args[0] == "midi", args[1] == "playback-plan" {
+            let data = try read(args[2])
+            try requireMIDIShape(data,fields:["bpm","length","notes"],list:"notes",
+                rowFields:["start","duration","channel","pitch","velocity"])
+            let plan = try BoundedMIDIPlayback(clip:JSONDecoder().decode(MIDIClip.self,from:data))
+            let events:[[String:Any]] = plan.events.map {
+                ["offsetNS":$0.offsetNS,"channel":$0.command.destination.channel,
+                 "pitch":$0.command.destination.number,"velocity":$0.command.value,
+                 "kind":$0.command.value == 0 ? "noteOff" : "noteOn"]
+            }
+            return ["schema":1,"hardware":false,"planned":true,"nominalPitchesOnly":true,
+                    "durationNS":plan.durationNS,"maximumLatenessNS":BoundedMIDIPlayback.maximumLatenessNS,
+                    "events":events]
         }
         if args.count == 3, args[0] == "midi" {
             let data = try read(args[2])
