@@ -261,7 +261,7 @@ struct GamepadMappingPanel: View {
                     }
                     Button("Cancel",role:.cancel) { xyBase = nil; pendingXY = nil }
                 } message: {
-                    Text("Left X bend, left Y vibrato, right X pan, right Y filter. Only joystick axes on the selected controller will be replaced.")
+                    Text("Left X bend, left Y vibrato, right X pan, right Y resonance (CC71). Only joystick axes on the selected controller will be replaced.")
                 }
                 Text("A/B/X/Y and RB: Toggle · LB: Hold · LT: Wah CC74 · RT: Sustain · sticks: Bend / Expression. Learn CC80–85 in your DAW; this preset does not select plug-ins automatically.")
                     .font(.caption).foregroundStyle(.secondary)
