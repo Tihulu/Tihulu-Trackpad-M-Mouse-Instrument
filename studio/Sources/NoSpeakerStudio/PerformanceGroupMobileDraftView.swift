@@ -9,6 +9,7 @@ struct PerformanceGroupMobileDraftView: View {
     @State private var signal:SensorSignal = .contact
     @State private var widgetSignal:SensorSignal = .contact
     @State private var message = ""
+    @State private var family:PerformanceGroupRemoteSurface = .xy
     let apply:(PerformanceGroupMobileDraft)->Bool
 
     init(draft:PerformanceGroupMobileDraft,apply:@escaping(PerformanceGroupMobileDraft)->Bool) {
@@ -23,7 +24,7 @@ struct PerformanceGroupMobileDraftView: View {
     var body:some View {
         VStack(alignment:.leading,spacing:12) {
             Text("Mobile mapping · " + draft.source.rawValue).font(.headline)
-            Text("Configure host MIDI targets for this group's slot. Browser controls remain fixed XY, drum, piano and pedal surfaces. Layout labels and order below are host-only metadata.")
+            Text("Configure host MIDI targets for this group's slot. Browser controls remain fixed XY, drum, piano and pedal surfaces. Valid unambiguous custom labels may be displayed on the paired phone; style and order remain host-side metadata.")
                 .font(.caption).foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment:.leading,spacing:8) {
@@ -35,6 +36,18 @@ struct PerformanceGroupMobileDraftView: View {
                             if !draft.append(signal) { message = "Already mapped or no room." }
                         }.disabled(!draft.availableSignals.contains(signal))
                     }
+                    HStack {
+                        Picker("Add surface",selection:$family) {
+                            ForEach(PerformanceGroupRemoteSurface.allCases,id:\.self) { item in
+                                Text(item.rawValue).tag(item)
+                            }
+                        }
+                        Button("Add missing controls") {
+                            message = draft.appendFamily(family)
+                                ? "Missing controls added; existing mappings kept."
+                                : "No missing controls, insufficient capacity or conflicting surface."
+                        }
+                    }
                     Text("Remaining MIDI targets across all groups: \(draft.remainingRouteCapacity)")
                         .font(.caption).foregroundStyle(.secondary)
                     ForEach($draft.routes) { $route in
@@ -42,7 +55,7 @@ struct PerformanceGroupMobileDraftView: View {
                             VStack(alignment:.leading,spacing:5) {
                                 Text(route.signal.rawValue).font(.headline)
                                 Picker("MIDI target",selection:$route.destination.kind) {
-                                    ForEach(SensorDestinationKind.allCases,id:\.self) { kind in Text(kind.rawValue).tag(kind) }
+                                    ForEach(PerformanceGroupMobileDraft.allowedTargetKinds(for:route.signal),id:\.self) { kind in Text(kind.rawValue).tag(kind) }
                                 }
                                 Stepper("Channel \(route.destination.channel+1)",value:$route.destination.channel,in:0...15)
                                 if route.destination.kind == .note || route.destination.kind == .controlChange {
@@ -55,6 +68,25 @@ struct PerformanceGroupMobileDraftView: View {
                                     Stepper("Velocity \(route.velocity)",value:$route.velocity,in:1...127)
                                 }
                                 Stepper("Priority \(route.priority)",value:$route.priority,in:-100...100)
+                                if route.destination.kind == .note || route.destination.kind == .sustain {
+                                    Slider(value:$route.threshold,in:0.05...1,step:0.01) { Text("Gate threshold") }
+                                    Text("Threshold: " + String(format:"%.2f",route.threshold)).font(.caption)
+                                    Slider(value:$route.hysteresis,in:0...0.5,step:0.01) { Text("Gate hysteresis") }
+                                    Text("Hysteresis: " + String(format:"%.2f",route.hysteresis)).font(.caption)
+                                }
+                                if route.signal != .pedalSwitch1 && route.signal != .pedalSwitch2 {
+                                    DisclosureGroup("Input calibration") {
+                                        Slider(value:$route.calibration.minimum,in:0...1,step:0.01) { Text("Minimum") }
+                                        Slider(value:$route.calibration.maximum,in:0...1,step:0.01) { Text("Maximum") }
+                                        Text(String(format:"Range %.2f – %.2f",route.calibration.minimum,route.calibration.maximum)).font(.caption)
+                                        Slider(value:$route.calibration.deadZone,in:0...0.45,step:0.01) { Text("Dead zone") }
+                                        Text(String(format:"Dead zone %.2f",route.calibration.deadZone)).font(.caption)
+                                        Slider(value:$route.calibration.exponent,in:0.25...4,step:0.25) { Text("Curve") }
+                                        Text(String(format:"Curve %.2f",route.calibration.exponent)).font(.caption)
+                                        Toggle("Invert",isOn:$route.calibration.inverted)
+                                        Button("Reset calibration") { route.calibration = .init() }
+                                    }
+                                }
                                 if ContinuousResponse.isContinuous(route.destination) {
                                     Text("Release: " + String(route.response?.releaseValue(for:route.destination) ?? ContinuousResponse.defaultRelease(route.destination)))
                                         .font(.caption)
@@ -89,7 +121,7 @@ struct PerformanceGroupMobileDraftView: View {
                         }
                     }
                     Divider()
-                    Text("Host layout metadata").font(.headline)
+                    Text("Control labels and host layout").font(.headline)
                     HStack {
                         Picker("Control label",selection:$widgetSignal) {
                             ForEach(PerformanceGroupMobileDraft.signals,id:\.self) { item in Text(item.rawValue).tag(item) }
@@ -101,7 +133,7 @@ struct PerformanceGroupMobileDraftView: View {
                     ForEach($draft.widgets) { $widget in
                         VStack(alignment:.leading,spacing:4) {
                             Text(widget.signal.rawValue).font(.caption)
-                            TextField("Host label",text:$widget.label)
+                            TextField("Custom label (may appear on phone)",text:$widget.label)
                             Picker("Host widget style",selection:$widget.kind) {
                                 ForEach(PerformanceControlKind.allCases) { kind in Text(kind.rawValue).tag(kind) }
                             }

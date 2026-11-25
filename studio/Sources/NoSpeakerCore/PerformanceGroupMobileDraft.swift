@@ -57,6 +57,34 @@ public struct PerformanceGroupMobileDraft: Identifiable, Equatable, Sendable {
         return true
     }
 
+    /// Only target kinds supported by the existing fixed browser surface.
+    /// The complete mapping is still checked when the draft is applied.
+    public static func allowedTargetKinds(for signal:SensorSignal) -> [SensorDestinationKind] {
+        if RemoteDrumPads.signals.contains(signal) || RemotePiano.keySignals.contains(signal) { return [.note] }
+        if signal == .pianoSustain || signal == .pedalSustain { return [.sustain] }
+        if signal == .pedalSwitch1 || signal == .pedalSwitch2 { return [.controlChange] }
+        if RemotePedalboard.signals.contains(signal) { return [.controlChange,.pitchBend] }
+        if [.x,.y,.contact].contains(signal) { return SensorDestinationKind.allCases }
+        return []
+    }
+
+    /// Add the unmapped controls of a family as one validated transaction.
+    /// Existing routes and widget metadata are never overwritten. Refuse
+    /// the entire operation if capacity or the two-family fence would fail.
+    @discardableResult
+    public mutating func appendFamily(_ family:PerformanceGroupRemoteSurface) -> Bool {
+        let mapped = Set(routes.map(\.signal))
+        let missing = Self.signals.filter { family.signals.contains($0) && !mapped.contains($0) }
+        guard !missing.isEmpty,missing.count <= remainingRouteCapacity else { return false }
+        var candidate = self
+        for signal in missing {
+            guard candidate.append(signal) else { return false }
+        }
+        guard (try? candidate.applying(to:baseline)) != nil else { return false }
+        routes = candidate.routes
+        return true
+    }
+
     /// Defaults are examples, not automatic changes to a DAW. No reserved
     /// selectors, and gain controls explicitly return to zero if chosen.
     public static func suggestedRoute(source:SensorSource,signal:SensorSignal,id:String = UUID().uuidString) -> SensorMapping? {

@@ -146,3 +146,63 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     draft.routes.removeLast()
     #expect(draft.remainingRouteCapacity==1)
 }
+
+@Test func mobileDraftFamilyFillIsAtomicAndPreservesExistingMapping() throws {
+    let group = PerformanceInstrumentGroup(name:"Combo",patch:.init(routes:[
+        .init(id:"custom",source:.phone,signal:.x,destination:.init(.controlChange,number:71))
+    ]))
+    let profile = PerformanceGroupProfile(groups:[group])
+    var draft = try PerformanceGroupMobileDraft(profile:profile,groupID:group.id,source:.phone)
+    #expect(draft.appendFamily(.xy))
+    #expect(draft.routes.count==3 && draft.routes[0]==group.patch.routes[0])
+    #expect(!draft.appendFamily(.xy))
+    #expect(draft.appendFamily(.drums))
+    let snapshot=draft.routes
+    #expect(!draft.appendFamily(.piano))
+    #expect(draft.routes==snapshot)
+    let next=try draft.applying(to:profile)
+    #expect(PerformanceGroupGamepadSession.supports(next,allowRemote:true))
+    #expect(try PerformanceGroupProfile.read(next.archive())==next)
+}
+
+@Test func mobileDraftFamilyFillRefusesPartialCapacityAndForeignFamilyConflict() throws {
+    let lead = PerformanceInstrumentGroup(name:"Lead",patch:.init(routes:[
+        .init(id:"x",source:.phone,signal:.x,destination:.init(.pitchBend))
+    ]))
+    let sibling = PerformanceInstrumentGroup(name:"Pedal",patch:.init(routes:[
+        .init(id:"pedal",source:.phone,signal:.pedalSustain,destination:.init(.sustain))
+    ]))
+    let profile=PerformanceGroupProfile(groups:[lead,sibling])
+    var draft=try PerformanceGroupMobileDraft(profile:profile,groupID:lead.id,source:.phone)
+    #expect(!draft.appendFamily(.drums))
+    #expect(draft.routes==lead.patch.routes)
+    var full=profile
+    for i in 0..<(PerformanceGroupProfile.maximumRoutes-3) {
+        full.groups[1].patch.routes.append(.init(id:"f-\(i)",source:.phone,signal:.pedalSustain,destination:.init(.sustain)))
+    }
+    #expect(full.isValid)
+    draft=try PerformanceGroupMobileDraft(profile:full,groupID:lead.id,source:.phone)
+    #expect(draft.remainingRouteCapacity==1)
+    #expect(!draft.appendFamily(.xy))
+    #expect(draft.routes==lead.patch.routes)
+}
+
+@Test func mobileDraftTargetKindChoicesRespectFixedSurfaceAndCalibration() throws {
+    #expect(PerformanceGroupMobileDraft.allowedTargetKinds(for:.drumPad1)==[.note])
+    #expect(PerformanceGroupMobileDraft.allowedTargetKinds(for:.pianoSustain)==[.sustain])
+    #expect(PerformanceGroupMobileDraft.allowedTargetKinds(for:.pedalSwitch1)==[.controlChange])
+    #expect(Set(PerformanceGroupMobileDraft.allowedTargetKinds(for:.pedalExpression))==[.controlChange,.pitchBend])
+    #expect(PerformanceGroupMobileDraft.allowedTargetKinds(for:.pressure).isEmpty)
+    let group=PerformanceInstrumentGroup(name:"Drum",patch:.init(routes:[
+        .init(id:"d",source:.phone,signal:.drumPad1,destination:.init(.note,channel:9,number:36))
+    ]))
+    let profile=PerformanceGroupProfile(groups:[group])
+    var draft=try PerformanceGroupMobileDraft(profile:profile,groupID:group.id,source:.phone)
+    draft.routes[0].calibration.inverted=true
+    #expect(throws:PerformanceGroupMobileDraft.EditError.invalidMapping) { try draft.applying(to:profile) }
+    draft.routes[0].calibration = .init(minimum:0.1,maximum:0.9,deadZone:0.1,exponent:2)
+    draft.routes[0].threshold=0.7
+    draft.routes[0].hysteresis=0.1
+    let result=try draft.applying(to:profile)
+    #expect(result.groups[0].patch.routes[0]==draft.routes[0])
+}
