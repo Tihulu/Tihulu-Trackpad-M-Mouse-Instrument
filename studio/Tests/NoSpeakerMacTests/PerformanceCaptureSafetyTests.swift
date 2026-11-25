@@ -91,7 +91,7 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
             let shortcut = PerformanceCaptureShortcut(keyCode:code,modifiers:0,displayName:"Invalid")
             XCTAssertFalse(shortcut.isValid)
             XCTAssertThrowsError(try monitor.start(shortcut:shortcut)) { error in
-                guard case PerformanceCaptureError.invalidShortcut = error else {
+                guard let failure=error as? PerformanceCaptureError, case .invalidShortcut=failure else {
                     XCTFail("Unexpected error: \(error)"); return
                 }
             }
@@ -101,6 +101,16 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
         for code in [Int64(0),36,49,96,105,122,126] {
             XCTAssertTrue(PerformanceCaptureShortcut.acceptsKeyCode(code))
         }
+    }
+
+    func testSpecialKeyDisplayFallbackPreservesHardwareCodeAndModifiers() {
+        for candidate in [nil,"","  ","\n","\u{0000}",String(repeating:"x",count:129)] as [String?] {
+            let name=PerformanceCaptureShortcut.displayLabel(keyCode:105,prefix:"⌃",candidate:candidate)
+            XCTAssertEqual(name,"⌃Key 105")
+            XCTAssertTrue(PerformanceCaptureShortcut(keyCode:105,
+                modifiers:CGEventFlags.maskControl.rawValue,displayName:name).isValid)
+        }
+        XCTAssertEqual(PerformanceCaptureShortcut.displayLabel(keyCode:36,prefix:"⇧",candidate:"Return"),"⇧Return")
     }
 
     func testPointerReleasePairingAcrossCaptureChanges() {
