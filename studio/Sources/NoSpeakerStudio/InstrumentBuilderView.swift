@@ -628,7 +628,8 @@ struct InstrumentBuilderView: View {
                 }
             }
             if gamepadHapticAvailable {
-                Text("Trackpad renders up to six folded tones; sustain, pitch bend (±2 semitones), CC7 and CC11 are supported. Other CCs are DAW controls, not local effects. Stop competing haptic sessions first.")
+                SharedNoteOutputSetting().disabled(studio.patchRunning)
+                Text("Trackpad renders up to six folded tones in total; sustain, pitch bend (±2 semitones), CC7 and CC11 are supported. Other CCs are DAW controls, not local effects. Shared mode allows Chord Pads and Touch Bar; other haptic engines remain exclusive.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -708,7 +709,7 @@ struct InstrumentBuilderView: View {
                         }
                         replaceDraft(with: patch, prepareNative: true)
                     }.buttonStyle(.borderedProminent)
-                    Text("Prepares an editable draft with native input selected and MIDI output off. Pair devices, enable MIDI and start explicitly in Play setup. Advanced routes remain editable below.")
+                    Text("Prepares an editable draft with native input selected and MIDI/Trackpad outputs off. Pair devices, enable MIDI and start explicitly in Play setup. Advanced routes remain editable below.")
                         .font(.caption).foregroundStyle(.secondary)
                     if !message.isEmpty { Text(message).font(.caption) }
                 }
@@ -849,8 +850,10 @@ struct InstrumentBuilderView: View {
         physical = true
         syntheticSource = nil
         sendMIDI = false
+        sendHaptics = false
+        splitGamepadOutputs = false
         tunedAir = false
-        message = "Ready for setup. MIDI output is off. Pair devices and start explicitly."
+        message = "Ready for setup. MIDI and Trackpad outputs are off. Pair devices and start explicitly."
     }
 
     private func applyReplacement(_ replacement: InstrumentPatch) {

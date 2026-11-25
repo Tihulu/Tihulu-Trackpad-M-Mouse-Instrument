@@ -2,7 +2,7 @@
 import Foundation
 import NoSpeakerCore
 
-/// Opt-in shared live-note path. One timer, one synchronous sink, at most two
+/// Opt-in shared live-note path. One timer, one synchronous sink, at most three
 /// armed sources. All held-note intents and timer callbacks are queue-confined.
 /// Only the controller may reserve the driver against legacy producers.
 public final class SharedLiveNoteOutput: @unchecked Sendable {
@@ -40,7 +40,7 @@ public final class SharedLiveNoteOutput: @unchecked Sendable {
     public func begin(_ source: HapticMixSource,
                       onFailure: @escaping @Sendable (String) -> Void) throws -> HapticMixLease {
         try queue.sync {
-            guard source == .chords || source == .touchBar else {
+            guard source == .chords || source == .touchBar || source == .gamepad else {
                 throw SharedLiveNoteError.unsupportedSource
             }
             guard inputs[source] == nil else { throw SharedLiveNoteError.alreadyArmed }

@@ -544,9 +544,9 @@ final class StudioController: ObservableObject {
                 patchStatus = "Trackpad output currently requires a native gamepad-only patch."
                 return
             }
-            guard allowOtherPerformance(), !touchRunning, !midiRunning, !midiHelperRunning,
+            guard permitsLiveNoteSharing, !touchRunning, !midiRunning, !midiHelperRunning,
                   !isPlaying, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
-                patchStatus = "Stop other haptic sessions and the MIDI bridge before gamepad Trackpad output."
+                patchStatus = "Stop competing haptic sessions and the MIDI bridge, or enable shared live notes before arming."
                 return
             }
             cancelStartupGreeting()
@@ -655,7 +655,7 @@ final class StudioController: ObservableObject {
             }
             if sendHaptics, let driver {
                 let token = UUID()
-                let output = LiveNoteHapticOutput(driver:driver)
+                let output = makeLiveNoteOutput(driver:driver,source:.gamepad)
                 gamepadHaptics = output
                 gamepadHapticToken = token
                 gamepadHapticVoices = GamepadHapticVoices()
@@ -1339,6 +1339,7 @@ final class StudioController: ObservableObject {
         gamepadHapticToken = nil
         gamepadHaptics?.stop()
         gamepadHaptics = nil
+        releaseSharedOutputIfIdle()
         gamepadHapticVoices = GamepadHapticVoices()
         lastGamepadHapticFrame = nil
         patchHapticEnabled = false
@@ -1433,6 +1434,10 @@ final class StudioController: ObservableObject {
         sharedNoteOutputEnabled = enabled
     }
 
+    private var permitsLiveNoteSharing: Bool {
+        !sequenceOwnsHaptics && !speakerBusy && (!liveNoteOwnsHaptics || sharedNoteOutputEnabled)
+    }
+
     private func makeLiveNoteOutput(driver: HapticTrackpadDriver, source: HapticMixSource) -> LiveNoteHapticOutput {
         if sharedNoteOutputEnabled {
             if sharedNoteOutput == nil { sharedNoteOutput = SharedLiveNoteOutput(driver: driver) }
@@ -1442,7 +1447,7 @@ final class StudioController: ObservableObject {
     }
 
     private func releaseSharedOutputIfIdle() {
-        guard chordHaptics == nil, touchBarHaptics == nil else { return }
+        guard chordHaptics == nil, touchBarHaptics == nil, gamepadHaptics == nil else { return }
         sharedNoteOutput?.retire()
         sharedNoteOutput = nil
     }
@@ -1460,7 +1465,8 @@ final class StudioController: ObservableObject {
             return
         }
         if selected.sendsHaptics {
-            guard gamepadHaptics == nil, (!touchBarOwnsHaptics || sharedNoteOutputEnabled), !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
+            guard (gamepadHaptics == nil && !touchBarOwnsHaptics) || sharedNoteOutputEnabled,
+                  !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
                   !isPlaying, !sequenceOwnsHaptics, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
                 chordStatus = "Stop other haptic performances and the MIDI bridge first, or choose MIDI only."
                 return
@@ -1504,12 +1510,12 @@ final class StudioController: ObservableObject {
                 chordStatus += " · MIDI 12-TET approximation"
             }
         } catch {
-            chordHapticToken = nil
-            chordHaptics?.stop()
-            chordHaptics = nil
-            releaseSharedOutputIfIdle()
-            chordStatus = chordMPESelectors.isEmpty ? error.localizedDescription
-                : "MPE selector cleanup failed. Reset the DAW and retry Release All."
+            // MIDI setup can succeed before acquiring a shared haptic lease.
+            // Roll back this source only, including partially sent selectors.
+            disarmChordPads()
+            chordStatus = chordOutstanding.isEmpty && chordMPESelectors.isEmpty
+                ? error.localizedDescription
+                : "MIDI cleanup failed. Reset the DAW and retry Release All."
         }
     }
 
@@ -1909,7 +1915,8 @@ final class StudioController: ObservableObject {
 
     func armTouchBarOutput() {
         guard touchBarProfile.effectiveOutput.sendsHaptics, !touchBarOutputArmed else { return }
-        guard gamepadHaptics == nil, (!chordOwnsHaptics || sharedNoteOutputEnabled), !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
+        guard (gamepadHaptics == nil && !chordOwnsHaptics) || sharedNoteOutputEnabled,
+              !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
               !isPlaying, !sequenceOwnsHaptics, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
             touchBarOutputStatus = "Stop other haptic sessions and the MIDI bridge first."
             return
@@ -1953,11 +1960,11 @@ final class StudioController: ObservableObject {
             touchBarOutputArmed = true
             touchBarOutputStatus = touchBarProfile.effectiveOutput.rawValue + (sharedNoteOutputEnabled ? " ready (shared experimental)" : " ready")
         } catch {
-            touchBarOutputToken = nil
-            touchBarHaptics?.stop()
-            touchBarHaptics = nil
-            releaseSharedOutputIfIdle()
-            touchBarOutputStatus = error.localizedDescription
+            // A failed haptic lease must not leave dedicated MIDI setup armed.
+            disarmTouchBarOutput()
+            touchBarOutputStatus = touchBarOutputLedger.isEmpty
+                ? error.localizedDescription
+                : "MIDI cleanup failed. Reset the DAW and retry."
         }
     }
 
