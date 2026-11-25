@@ -34,6 +34,19 @@ public struct PerformanceGroupGamepadSession: Sendable {
     private let smoothed: Set<SensorSource>
     private var bindings: [SensorSource:Binding] = [:]
     private var clock = 0.0
+    public enum SourceState: String, Equatable, Sendable {
+        case waitingForNeutral, armed, leased
+    }
+    /// Local ownership state only. Does not assert a connected physical
+    /// device, a successful wire transmission or a sounding DAW track.
+    public var sourceStates: [SensorSource:SourceState] {
+        bindings.mapValues { binding in
+            if let lease = binding.lease {
+                return delivery.hasLease(lease) ? .leased : .waitingForNeutral
+            }
+            return binding.armed ? .armed : .waitingForNeutral
+        }
+    }
     public var boundSources: Set<SensorSource> { Set(bindings.keys) }
     public var activeSessions: Int { delivery.sessionCount }
     public var pendingCleanup: Set<UUID> { delivery.pendingCleanup }
