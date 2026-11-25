@@ -10,12 +10,13 @@ import NoSpeakerCore
 @MainActor
 public final class NativeMIDIPlayback {
     public enum Failure: LocalizedError {
-        case invalidLifecycle, native(String,Int32), cleanupPending
+        case invalidLifecycle, native(String,Int32), cleanupPending, sourceIdentityLost
         public var errorDescription:String? {
             switch self {
             case .invalidLifecycle: return "Playback is not in the required lifecycle state."
             case .native(let action,let code): return "MIDI "+action+" failed ("+String(code)+")."
             case .cleanupPending: return "MIDI note cleanup is unconfirmed; retain the source and retry."
+            case .sourceIdentityLost: return "Original MIDI source identity is unconfirmed; never send to or dispose a replacement."
             }
         }
     }
@@ -29,6 +30,9 @@ public final class NativeMIDIPlayback {
 
     public let sourceName = "TIHULU SDK Playback "+UUID().uuidString
     private var endpoint=MIDIEndpointRef()
+    private var sourceID:Int32=0
+    private var identityRetired=false
+    private var wasCancelled=false
     private var player:BoundedMIDIPlayback
     private var opened=false
     private var running=false
@@ -50,14 +54,22 @@ public final class NativeMIDIPlayback {
         guard status==noErr,source != 0 else {
             throw Failure.native("source",status)
         }
+        var uid:Int32=0
+        let identified=MIDIObjectGetIntegerProperty(source,kMIDIPropertyUniqueID,&uid)
+        guard identified==noErr,uid != 0,Self.matches(source:source,id:uid,name:sourceName) else {
+            let disposed=MIDIEndpointDispose(source)
+            guard disposed==noErr else { throw Failure.native("unidentified source disposal",disposed) }
+            throw Failure.sourceIdentityLost
+        }
         endpoint=source
+        sourceID=uid
         opened=true
         MIDIProcessClient.shared.registerIsolatedSource(source)
     }
 
     /// A concurrent stop request is observed before the next onset, with
     /// at most a 20 ms planned sleep. Native calls can themselves block.
-    public func requestStop() { stopRequested=true }
+    public func requestStop() { if player.state == .ready || player.state == .playing { stopRequested=true } }
 
     public func run() async throws -> Report {
         guard opened,endpoint != 0,!running,player.state == .ready else {
@@ -65,28 +77,31 @@ public final class NativeMIDIPlayback {
         }
         running=true
         defer { running=false }
-        let source=endpoint
+        let source=endpoint,id=sourceID,name=sourceName
+        // Capture the identity gate separately from the mutable playback ledger.
+        let gate=IdentityGate(source:source,id:id,name:name,retired:identityRetired)
+        defer { identityRetired=gate.retired;wasCancelled=wasCancelled || stopRequested || Task.isCancelled }
         if stopRequested || Task.isCancelled {
-            player.stop { Self.send($0,source:source) }
+            player.stop { gate.send($0) }
             return report(cancelled:true)
         }
         _=try player.begin(now:Self.now())
         while player.state == .playing {
             if stopRequested || Task.isCancelled {
-                player.stop { Self.send($0,source:source) }
+                player.stop { gate.send($0) }
                 break
             }
             let cancelled=stopRequested
             player.advance(now:Self.now(),refreshNow:{ Self.now() }) { command in
                 if command.value > 0 && (cancelled || Task.isCancelled) { return false }
-                return Self.send(command,source:source)
+                return gate.send(command)
             }
             guard let deadline=player.nextDeadline else { break }
             let current=Self.now()
             if deadline>current {
                 do { try await Task.sleep(nanoseconds:min(deadline-current,20_000_000)) }
                 catch {
-                    player.stop { Self.send($0,source:source) }
+                    player.stop { gate.send($0) }
                     break
                 }
             } else {
@@ -100,9 +115,10 @@ public final class NativeMIDIPlayback {
     public func retryCleanup() throws -> Report {
         guard opened,endpoint != 0,!running,player.state != .ready,
               player.state != .playing else { throw Failure.invalidLifecycle }
-        let source=endpoint
-        player.retryCleanup { Self.send($0,source:source) }
-        return report(cancelled:stopRequested)
+        let gate=IdentityGate(source:endpoint,id:sourceID,name:sourceName,retired:identityRetired)
+        defer { identityRetired=gate.retired }
+        player.retryCleanup { gate.send($0) }
+        return report(cancelled:wasCancelled)
     }
 
     /// Never silently discard note debt or a failed endpoint disposal.
@@ -110,6 +126,10 @@ public final class NativeMIDIPlayback {
         guard opened,endpoint != 0,!running else { throw Failure.invalidLifecycle }
         guard player.outstanding.isEmpty else { throw Failure.cleanupPending }
         let source=endpoint
+        guard !identityRetired,Self.matches(source:source,id:sourceID,name:sourceName) else {
+            identityRetired=true
+            throw Failure.sourceIdentityLost
+        }
         if player.state == .ready { player.stop { _ in false } }
         let status=MIDIEndpointDispose(source)
         guard status==noErr else { throw Failure.native("source disposal",status) }
@@ -125,6 +145,32 @@ public final class NativeMIDIPlayback {
 
     private nonisolated static func now() -> UInt64 {
         DispatchTime.now().uptimeNanoseconds
+    }
+
+    private static func matches(source:MIDIEndpointRef,id:Int32,name:String) -> Bool {
+        var actual:Int32=0
+        guard source != 0,id != 0,
+              MIDIObjectGetIntegerProperty(source,kMIDIPropertyUniqueID,&actual)==noErr,actual==id else { return false }
+        var label:Unmanaged<CFString>?
+        guard MIDIObjectGetStringProperty(source,kMIDIPropertyName,&label)==noErr,let label else { return false }
+        return label.takeRetainedValue() as String == name
+    }
+
+    @MainActor private final class IdentityGate {
+        let source:MIDIEndpointRef
+        let id:Int32
+        let name:String
+        private(set) var retired:Bool
+        init(source:MIDIEndpointRef,id:Int32,name:String,retired:Bool) {
+            self.source=source;self.id=id;self.name=name;self.retired=retired
+        }
+        func send(_ command:SensorCommand)->Bool {
+            guard !retired,NativeMIDIPlayback.matches(source:source,id:id,name:name) else {
+                retired=true
+                return false
+            }
+            return NativeMIDIPlayback.send(command,source:source)
+        }
     }
 
     private static func send(_ command:SensorCommand,source:MIDIEndpointRef) -> Bool {
