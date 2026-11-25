@@ -26,20 +26,30 @@ public struct NativeSurfaceInventoryGuard: Sendable {
         case healthy, suspect, lost(Set<UInt64>), unavailable
     }
     private var misses:[UInt64:Int] = [:]
+    private var unverified:[UInt64:Int] = [:]
     private var unknown = 0
     public init() {}
     public mutating func observe(expected:Set<UInt64>,available:Set<UInt64>?) -> Verdict {
-        guard !expected.isEmpty else { misses.removeAll(); unknown = 0; return .healthy }
+        guard !expected.isEmpty else {
+            misses.removeAll();unverified.removeAll();unknown=0;return .healthy
+        }
+        // Mixed missing/nil observations must not keep a disappeared device
+        // alive indefinitely by resetting each other's consecutive counters.
+        // Only positive inventory evidence clears this per-device budget.
+        let unconfirmed=expected.subtracting(available ?? [])
+        unverified=Dictionary(uniqueKeysWithValues:unconfirmed.map { ($0,min(4,(unverified[$0] ?? 0)+1)) })
+        let mixedExpired=unverified.values.contains { $0>=4 }
         guard let available else {
             misses.removeAll()
             unknown = min(3,unknown+1)
-            return unknown >= 3 ? .unavailable : .suspect
+            return unknown >= 3 || mixedExpired ? .unavailable : .suspect
         }
         unknown = 0
         let missing = expected.subtracting(available)
         misses = Dictionary(uniqueKeysWithValues:missing.map { ($0,min(2,(misses[$0] ?? 0)+1)) })
         let lost = Set(misses.filter { $0.value >= 2 }.keys)
         if !lost.isEmpty { return .lost(lost) }
+        if mixedExpired { return .unavailable }
         return missing.isEmpty ? .healthy : .suspect
     }
 }
