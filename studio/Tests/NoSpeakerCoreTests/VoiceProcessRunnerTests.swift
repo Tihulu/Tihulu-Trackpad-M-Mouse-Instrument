@@ -27,9 +27,16 @@ private func voiceTestSleeper(_ duration: String) -> Process {
 @Test func voiceProcessCancellationStopsRunningChild() {
     let token = VoiceRenderCancellation()
     let process = voiceTestSleeper("10")
-    DispatchQueue.global().asyncAfter(deadline:.now()+0.1) { token.cancel() }
+    // Schedule cancellation only after launch, on a dedicated thread rather
+    // than the shared test executor that also hosts blocking process tests.
     #expect(throws: CancellationError.self) {
-        try VoiceProcessRunner.run(process,cancellation:token,timeout:5)
+        try VoiceProcessRunner.run(process,cancellation:token,timeout:5,onStarted:{
+            #expect(process.isRunning)
+            Thread.detachNewThread {
+                Thread.sleep(forTimeInterval:0.1)
+                token.cancel()
+            }
+        })
     }
     #expect(!process.isRunning)
 }
