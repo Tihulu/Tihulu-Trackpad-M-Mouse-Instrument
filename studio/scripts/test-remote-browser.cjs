@@ -1028,3 +1028,29 @@ test("custom panel family release uses existing owners and ignores inactive fami
   assert.deepEqual(a.socket.frames.filter(f=>f.kind==="drumPads").map(f=>f.mask),[4,0]);
   assert.deepEqual(a.socket.frames.filter(f=>f.kind==="pedalboard").map(f=>f.mask),[16,0]);
 });
+
+test("dormant custom controls can be removed from a full saved panel",()=>{
+  const saved=["d1","d2","d3","d4","d5","d6","d7","p4"];
+  const stored=new Map([["tihulu.remote.panel-details.v1",JSON.stringify({version:1,sizes:{},columns:{},custom:saved})]]);
+  const a=setup("granted",{...fullManifest,drums:1,pedals:0},false,true,false,stored);
+  a.elements.navSetup.emit("click");
+  assert.equal(a.elements.customAdd.disabled,true);
+  assert.equal(a.elements.customChoice.children.length,8);
+  a.elements.customChoice.value="p4";a.elements.customChoice.emit("change");
+  a.elements.customRemove.emit("click");
+  a.elements.customAddChoice.value="d0";a.elements.customAdd.emit("click");
+  a.elements.layoutSave.emit("click");
+  assert.deepEqual(JSON.parse(stored.get("tihulu.remote.panel-details.v1")).custom,[...saved.slice(0,7),"d0"]);
+  assert.deepEqual(a.elements.customGrid.children,[a.elements.drum0]);
+  assert.equal(a.socket.frames.length,0);
+});
+test("dormant custom reorder preserves saved identities and emits no frames",()=>{
+  const stored=new Map([["tihulu.remote.panel-details.v1",JSON.stringify({version:1,sizes:{},columns:{},custom:["d1","d0"]})]]);
+  const a=setup("granted",{...fullManifest,drums:1,pedals:0},false,true,false,stored);
+  a.elements.navSetup.emit("click");
+  a.elements.customChoice.value="d1";a.elements.customDown.emit("click");
+  a.elements.layoutSave.emit("click");
+  assert.deepEqual(JSON.parse(stored.get("tihulu.remote.panel-details.v1")).custom,["d0","d1"]);
+  assert.deepEqual(a.elements.customGrid.children,[a.elements.drum0]);
+  assert.equal(a.socket.frames.length,0);
+});
