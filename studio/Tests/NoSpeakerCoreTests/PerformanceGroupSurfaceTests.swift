@@ -106,3 +106,21 @@ private func surfaceGamepad(pressed:Bool = false) throws -> GamepadFrame {
         }
     }
 }
+
+
+@Test func groupSurfaceCannotArmFromBeforeItsBindingEpoch() throws {
+    let group = PerformanceInstrumentGroup(name:"Touch",patch:.init(routes:[
+        .init(id:"note",source:.trackpad,signal:.contact,destination:.init(.note,number:60))
+    ]))
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowSurfaces:true)
+    let token = try session.bind(.trackpad,now:1)
+    var sent:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { sent.append($0); return true }
+    let before = session.receiveSurface(.trackpad,token:token,x:nil,y:nil,size:nil,hostTime:0.99,now:1.01,send:sink)
+    #expect(before.status == .lost)
+    let held = session.receiveSurface(.trackpad,token:token,x:0.5,y:0.5,size:0.5,hostTime:1.02,now:1.02,send:sink)
+    #expect(held.status == .waitingForNeutral && sent.isEmpty)
+    _ = session.receiveSurface(.trackpad,token:token,x:nil,y:nil,size:nil,hostTime:1.03,now:1.03,send:sink)
+    _ = session.receiveSurface(.trackpad,token:token,x:0.5,y:0.5,size:0.5,hostTime:1.04,now:1.04,send:sink)
+    #expect(sent.count == 1 && sent.first?.command.value == 100)
+}

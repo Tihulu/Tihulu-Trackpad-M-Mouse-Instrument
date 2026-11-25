@@ -15,7 +15,7 @@ public final class RemoteLoopbackPageServer: @unchecked Sendable {
     private func setStatus(_ value: Status) { lock.lock(); state = value; lock.unlock() }
     private let parameters: NWParameters
     public let endpoint: RemoteEndpoint
-    private let groupNeutralHandshake: Bool
+    public let groupNeutralHandshake: Bool
     private var attemptStart = 0.0
     private var attempts = 0
     private var listener: NWListener?

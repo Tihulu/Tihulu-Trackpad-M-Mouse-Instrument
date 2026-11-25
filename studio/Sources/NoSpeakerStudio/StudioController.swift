@@ -226,7 +226,7 @@ final class StudioController: ObservableObject {
             return
         }
         if let transport = remoteTransport, let page = remotePage {
-            guard transport.endpoint == page.endpoint,
+            guard page.groupNeutralHandshake,transport.endpoint == page.endpoint,
                   transport.endpoint.isLoopback ||
                     (confirmedLAN && remoteLoopbackVerified &&
                      RemoteLANChoice.available().contains(where:{ $0.endpoint == transport.endpoint })) else {

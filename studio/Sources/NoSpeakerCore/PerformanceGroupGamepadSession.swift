@@ -45,6 +45,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     }
     private struct Binding: Sendable {
         let token: UUID
+        let boundAt: Double
         var armed = false
         var lease: UUID?
         var lastSeen: Double?
@@ -212,7 +213,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         guard now.isFinite, now >= clock else { throw AdmissionError.invalidTime }
         clock = now
         let token = UUID()
-        var binding = Binding(token:token)
+        var binding = Binding(token:token,boundAt:now)
         // Explicitly selected scalar adapters have no startup note gate.
         // They only admit continuous controls, never notes or pedals.
         binding.armed = source == .lid || source == .touchBar
@@ -309,7 +310,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         clock = now
         var reports = reset(staleSources(now:now),send:send)
         guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
-        guard hostTime.isFinite, hostTime >= 0, hostTime <= now,
+        guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now,
               now-hostTime < Self.timeout,
               binding.lastSurfaceReceipt.map({ hostTime >= $0 }) ?? true else {
             reports += reset([source],send:send)
@@ -372,7 +373,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         clock = now
         var reports = reset(staleSources(now:now),send:send)
         guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
-        guard hostTime.isFinite, hostTime >= 0, hostTime <= now, now-hostTime < Self.timeout,
+        guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now, now-hostTime < Self.timeout,
               binding.lastSurfaceReceipt.map({ hostTime >= $0 }) ?? true else {
             reports += reset([source],send:send)
             return .init(status:.lost,reports:reports)
@@ -431,7 +432,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         clock = now
         var reports = reset(staleSources(now:now),send:send)
         guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
-        guard hostTime.isFinite, hostTime >= 0, hostTime <= now, now-hostTime < Self.timeout,
+        guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now, now-hostTime < Self.timeout,
               binding.lastSurfaceReceipt.map({ hostTime > $0 }) ?? true else {
             reports += reset([source],send:send)
             return .init(status:.lost,reports:reports)
