@@ -69,9 +69,33 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
     func testDirectCaptureRequiresActiveTap() {
         let monitor = PerformanceCaptureMonitor()
         monitor.setCaptureHotkeyEnabled(true)
+        XCTAssertFalse(monitor.diagnosticSnapshot().shortcutArmed)
+        XCTAssertFalse(monitor.diagnosticSnapshot().readyForGlobalCapture)
         XCTAssertFalse(monitor.setPointerCaptured(true))
         XCTAssertFalse(monitor.isCaptured)
         XCTAssertTrue(monitor.setPointerCaptured(false))
+    }
+
+    func testCaptureReadinessRequiresLiveDedicatedAuthorizedTap() {
+        func snapshot(ax:Bool=true,listenPermission:Bool=true,created:Bool=true,
+                      enabled:Bool=true,thread:Bool=true,listening:Bool=true,armed:Bool=true)
+            -> PerformanceCaptureDiagnosticSnapshot {
+            .init(accessibilityGranted:ax,inputMonitoringGranted:listenPermission,
+                  eventTapCreated:created,eventTapEnabled:enabled,dedicatedInputThread:thread,
+                  listening:listening,shortcutArmed:armed,pointerCaptured:false,
+                  keyDownEvents:0,pointerEvents:0,shortcutMatches:0,tapTimeouts:0,
+                  tapDisabledByUserInput:0,lastEventTapStatus:"fixture",
+                  coalescedPressureSamples:0,physicalMailboxOverflows:0)
+        }
+        XCTAssertTrue(snapshot().readyForGlobalCapture)
+        XCTAssertTrue(snapshot(listenPermission:false).readyForGlobalCapture)
+        XCTAssertTrue(snapshot(armed:false).operational)
+        XCTAssertFalse(snapshot(armed:false).readyForGlobalCapture)
+        for invalid in [snapshot(ax:false),snapshot(created:false),snapshot(enabled:false),
+                        snapshot(thread:false),snapshot(listening:false)] {
+            XCTAssertFalse(invalid.operational)
+            XCTAssertFalse(invalid.readyForGlobalCapture)
+        }
     }
 
     func testEscapeCannotBeRecordedAsCaptureShortcut() {

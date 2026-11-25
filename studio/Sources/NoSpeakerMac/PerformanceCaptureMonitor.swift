@@ -260,6 +260,14 @@ public struct PerformanceCaptureDiagnosticSnapshot: Sendable {
     public let lastEventTapStatus: String
     public let coalescedPressureSamples:UInt64
     public let physicalMailboxOverflows:UInt64
+
+    /// Input Monitoring preflight is informative: macOS versions can
+    /// authorize a filtering tap through Accessibility. Actual tap
+    /// operation is required in addition to Accessibility permission.
+    public var operational:Bool {
+        accessibilityGranted && eventTapCreated && eventTapEnabled && dedicatedInputThread && listening
+    }
+    public var readyForGlobalCapture:Bool { operational && shortcutArmed }
 }
 
 /// Optional event filtering for MIDI performance. Monitoring is OFF by default.
@@ -370,10 +378,11 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
     public func setCaptureHotkeyEnabled(_ enabled: Bool) {
         lock.lock()
-        captureHotkeyEnabled = enabled && !stopped && !panicLatched
-        if !captureHotkeyEnabled { captured = false }
+        captureHotkeyEnabled = enabled && listening && !stopped && !panicLatched && eventTap != nil
+        let armed=captureHotkeyEnabled
+        if !armed { captured = false }
         lock.unlock()
-        if !enabled { onCaptureChanged?(false) }
+        if !armed { onCaptureChanged?(false) }
     }
 
     public func setShortcut(_ shortcut: PerformanceCaptureShortcut) {
@@ -387,15 +396,16 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         guard shortcut.isValid else { throw PerformanceCaptureError.invalidShortcut }
         setShortcut(shortcut)
         lock.lock()
+        guard !stopped,!panicLatched else { lock.unlock(); throw PerformanceCaptureError.tapUnavailable }
         let existingPort = eventTap
-        let existingListening = listening
+        let existingListening = listening && inputRunLoop != nil
         if existingPort == nil {
-            guard !startClaimed,!stopped else { lock.unlock(); throw PerformanceCaptureError.tapUnavailable }
+            guard !startClaimed else { lock.unlock(); throw PerformanceCaptureError.tapUnavailable }
             startClaimed = true
         }
         lock.unlock()
         if let existingPort {
-            if existingListening && CGEvent.tapIsEnabled(tap: existingPort) { return }
+            if existingListening && AXIsProcessTrusted() && CGEvent.tapIsEnabled(tap: existingPort) { return }
             // Never recycle a disabled instance while old callbacks may be
             // draining. The controller can create a fresh monitor explicitly.
             stop()

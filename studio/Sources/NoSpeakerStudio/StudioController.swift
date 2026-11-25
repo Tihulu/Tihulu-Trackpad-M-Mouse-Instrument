@@ -4397,10 +4397,17 @@ final class StudioController: ObservableObject {
         capture.onMonitorRecovered = { [weak self] in
             Task { @MainActor in
                 guard let self, self.captureGeneration == generation else { return }
-                self.pointerCaptured = self.captureMonitor?.isCaptured ?? false
-                // The ordered physical mailbox invalidates old click edges
-                // on recovery, independently of this UI status notification.
-                self.captureStatus = "Input monitor recovered after timeout · cursor released · press the capture shortcut to resume"
+                guard let monitor=self.captureMonitor else { return }
+                let health=monitor.diagnosticSnapshot()
+                guard health.operational else { return }
+                self.pointerCaptured = health.pointerCaptured
+                // This callback may arrive after a fresh capture shortcut.
+                // Show the current state, not the historical timeout state.
+                self.captureStatus = health.pointerCaptured
+                    ? "Cursor captured · press the shortcut again or Esc"
+                    : (health.readyForGlobalCapture
+                        ? "Input monitor recovered · cursor free · press the capture shortcut to resume"
+                        : "Input monitor recovered · cursor free · physical-click monitor active")
             }
         }
         capture.onMonitorFailed = { [weak self] in
@@ -4454,10 +4461,17 @@ final class StudioController: ObservableObject {
         do {
             try monitor.start(shortcut: captureShortcut, requestPermissions: captureHotkeyArmed)
             monitor.setCaptureHotkeyEnabled(captureHotkeyArmed)
+            let health=monitor.diagnosticSnapshot()
+            guard health.operational, !captureHotkeyArmed || health.readyForGlobalCapture else {
+                throw PerformanceCaptureError.tapUnavailable
+            }
+            pointerCaptured=health.pointerCaptured
             startCaptureHealthCheck()
-            captureStatus = captureHotkeyArmed
-                ? "Ready globally · \(captureShortcut.displayName) toggles capture · Esc stops all"
-                : "Cursor free · physical-click monitor active"
+            captureStatus = pointerCaptured
+                ? "Cursor captured · press the shortcut again or Esc"
+                : (captureHotkeyArmed
+                    ? "Ready globally · \(captureShortcut.displayName) toggles capture · Esc stops all"
+                    : "Cursor free · physical-click monitor active")
         } catch {
             retireCaptureMonitor()
             invalidatePhysicalClickState()
@@ -4480,7 +4494,7 @@ final class StudioController: ObservableObject {
                 guard let self,self.captureGeneration == generation,
                       let monitor = self.captureMonitor else { return }
                 let health = monitor.diagnosticSnapshot()
-                guard health.accessibilityGranted,health.listening,health.eventTapEnabled else {
+                guard health.operational, !self.captureHotkeyArmed || health.readyForGlobalCapture else {
                     self.retireCaptureMonitor()
                     self.invalidatePhysicalClickState()
                     self.captureArmed = false
