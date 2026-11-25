@@ -164,6 +164,9 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     var bridge = PerformanceGroupRemoteBridge()
     let sink:(PerformanceGroupCommand)->Bool = {_ in true}
     _ = bridge.process([.ready],now:1,session:&session,send:sink)
+    #expect(session.remoteLabelPreview(.phone2) == ["drumPad1 · Kick <safe>"])
+    #expect(session.remoteLabelPreview(.tablet2) == ["pianoKey0 · Keys"])
+    #expect(session.remoteLabelPreview(.gamepad1).isEmpty)
     for (i,consent) in [false,true].enumerated() {
         let time = 1+Double(i)
         let peer = UUID(), secret = Data(repeating:UInt8(i+1),count:32)

@@ -109,6 +109,14 @@ public struct PerformanceGroupGamepadSession: Sendable {
         remoteLabels[source] ?? []
     }
 
+    /// Local consent preview; this is not a wire payload or permission.
+    public func remoteLabelPreview(_ source:SensorSource) -> [String] {
+        guard !retired,remoteModes[source] != nil else { return [] }
+        return groupRemoteLabels(source).map {
+            RemoteMappingProjection.signals[$0.signal].rawValue + " · " + $0.text
+        }
+    }
+
     /// Retire multiple remote owners atomically, never a local source or a
     /// replacement token. Avoid briefly restoring another departing control.
     public mutating func unbindRemoteBatch(_ tokens:[SensorSource:UUID],

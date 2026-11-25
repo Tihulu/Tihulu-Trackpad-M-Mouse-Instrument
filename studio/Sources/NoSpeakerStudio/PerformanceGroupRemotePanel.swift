@@ -64,7 +64,7 @@ struct PerformanceGroupRemotePanel: View {
                 guard invitationGeneration == generation else { return }
                 clearInvitation()
             }
-            message = "One-time invitation created."
+            message = shareLabels ? "One-time invitation created with label consent." : "One-time invitation created; labels hidden."
         } catch { message = "Invitation refused: slot is unavailable or already bound." }
     }
 
@@ -178,6 +178,18 @@ struct PerformanceGroupRemotePanel: View {
                             .onChange(of:shareLabels) { _ in clearInvitation() }
                         Text("Labels may contain personal text. Off by default; changing consent requires a new invitation. Existing peers must disconnect and pair again.")
                             .font(.caption)
+                        if shareLabels {
+                            let labels = studio.groupRemoteLabelPreview(source:source)
+                            DisclosureGroup("Review " + String(labels.count) + " labels before sharing") {
+                                if labels.isEmpty {
+                                    Text("No valid unambiguous custom labels are available.").font(.caption)
+                                } else {
+                                    ForEach(Array(labels.enumerated()),id:\.offset) { item in
+                                        Text(item.element).font(.caption).textSelection(.enabled)
+                                    }
+                                }
+                            }
+                        }
                         Button("Create one-time invitation") { issue() }
                             .disabled(!sources.contains(source) || studio.groupRemoteSlots.values.contains(source))
                         if !invitation.isEmpty {
@@ -205,10 +217,10 @@ struct PerformanceGroupRemotePanel: View {
         }
         .onAppear { if !sources.contains(source),let first = sources.first { source = first } }
         .onChange(of:studio.groupRemoteSlots) { slots in
-            if let invitationSource,slots.values.contains(invitationSource) { clearInvitation() }
+            if let invitationSource,slots.values.contains(invitationSource) { clearInvitation(); shareLabels = false }
         }
-        .onChange(of:studio.groupRemoteReady) { ready in if !ready { clearInvitation() } }
-        .onDisappear { clearInvitation(); pendingStart = nil; confirmStart = false }
+        .onChange(of:studio.groupRemoteReady) { ready in if !ready { clearInvitation(); shareLabels = false } }
+        .onDisappear { clearInvitation(); shareLabels = false; pendingStart = nil; confirmStart = false }
         .confirmationDialog("Start MPE with mobile controllers?",isPresented:$confirmStart,titleVisibility:.visible) {
             Button("Confirm MPE + mobile Start") {
                 guard let snapshot = pendingStart else { return }

@@ -548,6 +548,11 @@ final class StudioController: ObservableObject {
         }
     }
 
+    func groupRemoteLabelPreview(source:SensorSource) -> [String] {
+        guard groupGamepadsRunning,groupRemoteReady,let run = groupRemoteRunID else { return [] }
+        return groupHost.remoteGroupLabelPreview(run:run,source:source)
+    }
+
     func issueGroupRemoteInvitation(source:SensorSource,shareLabels:Bool = false) throws -> Data {
         guard groupGamepadsRunning,groupRemoteReady,let run = groupRemoteRunID else {
             throw RemoteTouchError.unavailable

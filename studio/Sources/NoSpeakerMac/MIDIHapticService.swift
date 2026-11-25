@@ -1242,6 +1242,11 @@ public final class PerformanceGroupMIDIHost {
         return remoteBridge?.connectionSlots ?? [:]
     }
 
+    public func remoteGroupLabelPreview(run:UUID,source:SensorSource) -> [String] {
+        guard run == remoteRunID,remoteBridge?.ready == true,let state = gamepads else { return [] }
+        return state.remoteLabelPreview(source)
+    }
+
     public func remoteGroupReady(run:UUID) -> Bool {
         run == remoteRunID && remoteBridge?.ready == true
     }
