@@ -120,6 +120,14 @@ public struct PatchSimulation: Sendable {
         return router.releaseSignal(session: id, signal: input.signal)
     }
 
+    /// Simulate an actual gamepad button lift, not forced owner cleanup.
+    /// A latched toggle survives this edge just as it does on hardware.
+    public mutating func liftGamepadControl(_ input: Input, now: Double) -> [SensorCommand] {
+        guard GamepadFrame.sources.contains(input.source),
+              inputs.contains(input), let id = sessions[input.source] else { return [] }
+        return router.ingestFrame(session:id,releasing:[input.signal],events:[],now:now)
+    }
+
     public mutating func receiveHelperHands(left:AirHandSample?,right:AirHandSample?,
                                             time:Double,now:Double) -> [SensorCommand] {
         guard hasHelperHands, !hasDualCamera else { return [] }
