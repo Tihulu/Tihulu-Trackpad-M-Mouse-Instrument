@@ -1237,6 +1237,11 @@ public final class PerformanceGroupMIDIHost {
         return remoteBridge?.connectionIDs ?? []
     }
 
+    public func remoteGroupSlots(run:UUID) -> [UUID:SensorSource] {
+        guard run == remoteRunID else { return [:] }
+        return remoteBridge?.connectionSlots ?? [:]
+    }
+
     public func remoteGroupReady(run:UUID) -> Bool {
         run == remoteRunID && remoteBridge?.ready == true
     }

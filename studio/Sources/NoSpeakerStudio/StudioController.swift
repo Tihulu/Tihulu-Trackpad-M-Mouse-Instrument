@@ -175,7 +175,7 @@ final class StudioController: ObservableObject {
     private var groupRemotePage: RemoteLoopbackPageServer?
     private var groupRemoteRunID: UUID?
     @Published private(set) var groupRemoteReady = false
-    @Published private(set) var groupRemotePeers: Set<UUID> = []
+    @Published private(set) var groupRemoteSlots: [UUID:SensorSource] = [:]
     @Published private(set) var groupRemoteEndpoint: RemoteEndpoint?
     @Published private(set) var groupRemoteStatus = "Mobile listener off"
 
@@ -373,7 +373,7 @@ final class StudioController: ObservableObject {
                 groupRemotePage = page
                 groupRemoteEndpoint = transport.endpoint
                 groupRemoteReady = false
-                groupRemotePeers = []
+                groupRemoteSlots = [:]
                 groupRemoteStatus = "Starting TLS controller"
                 transport.start()
                 page.start()
@@ -566,7 +566,7 @@ final class StudioController: ObservableObject {
         guard let run = groupRemoteRunID,let transport = groupRemoteTransport else { return }
         let result = groupHost.revokeRemoteGroupConnection(run:run,connection:connection)
         transport.revoke(connection)
-        groupRemotePeers = groupHost.remoteGroupConnections(run:run)
+        groupRemoteSlots = groupHost.remoteGroupSlots(run:run)
         consumeGroupReports(result.reports)
     }
 
@@ -577,7 +577,7 @@ final class StudioController: ObservableObject {
         groupRemoteTransport = nil
         groupRemotePage = nil
         groupRemoteReady = false
-        groupRemotePeers = []
+        groupRemoteSlots = [:]
         groupRemoteEndpoint = nil
         groupRemoteStatus = reason
         transport?.stop()
@@ -622,9 +622,9 @@ final class StudioController: ObservableObject {
             }
         }
         let ready = groupHost.remoteGroupReady(run:listener) && page.status == .ready
-        let peers = groupHost.remoteGroupConnections(run:listener)
+        let peers = groupHost.remoteGroupSlots(run:listener)
         if groupRemoteReady != ready { groupRemoteReady = ready }
-        if groupRemotePeers != peers { groupRemotePeers = peers }
+        if groupRemoteSlots != peers { groupRemoteSlots = peers }
         let status = ready ? "TLS controller ready; receiver not verified." : "Waiting for TLS controller"
         if groupRemoteStatus != status { groupRemoteStatus = status }
     }

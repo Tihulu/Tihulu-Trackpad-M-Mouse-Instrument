@@ -24,6 +24,8 @@ public struct PerformanceGroupRemoteBridge: Sendable {
     public private(set) var ready = false
     public private(set) var stopped = false
     public var connectionIDs:Set<UUID> { Set(bindings.keys) }
+    /// Host-only slot association; never serialized to paired devices.
+    public var connectionSlots:[UUID:SensorSource] { bindings.mapValues { $0.source } }
     public init() {}
 
     public mutating func issue(secret:Data,source:SensorSource,now:Double,

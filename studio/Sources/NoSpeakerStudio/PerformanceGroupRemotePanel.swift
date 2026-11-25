@@ -1,6 +1,7 @@
 #if os(macOS)
 import SwiftUI
 import AppKit
+import CoreImage.CIFilterBuiltins
 import NoSpeakerCore
 import NoSpeakerMac
 
@@ -30,6 +31,7 @@ struct PerformanceGroupRemotePanel: View {
     @State private var confirmedLAN = false
     @State private var source:SensorSource = .phone
     @State private var invitation = ""
+    @State private var invitationSource:SensorSource?
     @State private var invitationTask:Task<Void,Never>?
     @State private var invitationGeneration:UUID?
     @State private var message = ""
@@ -43,15 +45,17 @@ struct PerformanceGroupRemotePanel: View {
         invitationTask?.cancel()
         invitationTask = nil
         invitation = ""
+        invitationSource = nil
         studio.cancelGroupRemoteInvitation()
     }
 
     private func issue() {
         clearInvitation()
-        guard studio.groupRemoteReady,sources.contains(source) else { return }
+        guard studio.groupRemoteReady,sources.contains(source),!studio.groupRemoteSlots.values.contains(source) else { return }
         do {
             invitation = try studio.issueGroupRemoteInvitation(source:source)
                 .map { String(format:"%02x",$0) }.joined()
+            invitationSource = source
             let generation = UUID()
             invitationGeneration = generation
             invitationTask = Task {
@@ -94,6 +98,15 @@ struct PerformanceGroupRemotePanel: View {
             let page = try identity.makeLoopbackPageServer(endpoint:endpoint,groupNeutralHandshake:true)
             start(transport,page,confirmedLAN,snapshot?.tuning)
         } catch { message = "TLS setup failed. No trust bypass. " + error.localizedDescription }
+    }
+
+    private func pageQR(_ address:String) -> NSImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(address.utf8)
+        guard let output = filter.outputImage else { return nil }
+        let scaled = output.transformed(by:CGAffineTransform(scaleX:8,y:8))
+        guard let cg = CIContext().createCGImage(scaled,from:scaled.extent) else { return nil }
+        return NSImage(cgImage:cg,size:NSSize(width:scaled.extent.width,height:scaled.extent.height))
     }
 
     var body: some View {
@@ -148,10 +161,20 @@ struct PerformanceGroupRemotePanel: View {
                         Button("Open controller page") {
                             if let url = URL(string:endpoint.pageURL) { NSWorkspace.shared.open(url) }
                         }
+                        if !endpoint.isLoopback,let qr = pageQR(endpoint.pageURL) {
+                            Image(nsImage:qr).interpolation(.none).resizable()
+                                .frame(width:144,height:144)
+                                .accessibilityLabel("Controller page address QR code")
+                            Text("Scan the address, then enter the separate one-time secret. QR contains no invitation.")
+                                .font(.caption)
+                        }
                         Picker("Remote slot",selection:$source) {
-                            ForEach(sources,id:\.self) { slot in Text(slot.rawValue).tag(slot) }
+                            ForEach(sources,id:\.self) { slot in
+                                Text(slot.rawValue + (studio.groupRemoteSlots.values.contains(slot) ? " · connected" : " · available")).tag(slot)
+                            }
                         }.onChange(of:source) { _ in clearInvitation() }
-                        Button("Create one-time invitation") { issue() }.disabled(!sources.contains(source))
+                        Button("Create one-time invitation") { issue() }
+                            .disabled(!sources.contains(source) || studio.groupRemoteSlots.values.contains(source))
                         if !invitation.isEmpty {
                             Text(invitation).font(.system(.caption,design:.monospaced)).textSelection(.enabled)
                             Text("Enter the secret on the controller within 60 seconds. Treat it as a password. The browser arms all mapped surfaces before playing.")
@@ -159,9 +182,11 @@ struct PerformanceGroupRemotePanel: View {
                             Button("Cancel invitation") { clearInvitation() }
                         }
                     }
-                    ForEach(studio.groupRemotePeers.sorted(by:{ $0.uuidString < $1.uuidString }),id:\.self) { id in
+                    Text("\(studio.groupRemoteSlots.count) / \(sources.count) mapped mobile slots connected")
+                        .font(.caption)
+                    ForEach(studio.groupRemoteSlots.keys.sorted(by:{ $0.uuidString < $1.uuidString }),id:\.self) { id in
                         HStack {
-                            Text("Peer " + String(id.uuidString.prefix(8))).font(.caption)
+                            Text((studio.groupRemoteSlots[id]?.rawValue ?? "Unknown") + " · " + String(id.uuidString.prefix(8))).font(.caption)
                             Button("Disconnect") { studio.revokeGroupRemote(id) }
                         }
                     }
@@ -174,7 +199,9 @@ struct PerformanceGroupRemotePanel: View {
             }.padding(4)
         }
         .onAppear { if !sources.contains(source),let first = sources.first { source = first } }
-        .onChange(of:studio.groupRemotePeers) { _ in if !invitation.isEmpty { clearInvitation() } }
+        .onChange(of:studio.groupRemoteSlots) { slots in
+            if let invitationSource,slots.values.contains(invitationSource) { clearInvitation() }
+        }
         .onChange(of:studio.groupRemoteReady) { ready in if !ready { clearInvitation() } }
         .onDisappear { clearInvitation(); pendingStart = nil; confirmStart = false }
         .confirmationDialog("Start MPE with mobile controllers?",isPresented:$confirmStart,titleVisibility:.visible) {
