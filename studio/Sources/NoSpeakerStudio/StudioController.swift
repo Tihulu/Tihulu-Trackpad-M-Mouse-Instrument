@@ -2956,6 +2956,7 @@ final class StudioController: ObservableObject {
         midiHelperRunning = false
         helperSustainState.reset()
         touchSustainState.reset()
+        touchSustainRearmGate.reset()
         touchInstrumentSustainActive = false
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
@@ -3855,8 +3856,9 @@ final class StudioController: ObservableObject {
         }
         if !midiHelperRunning || transition.pedalChanged || transition.effectsChanged {
             touch?.invalidatePendingSamples()
-            liveHelperStates = []
         }
+        // An effects-only edit must not clear an independent held pedal.
+        if !midiHelperRunning || transition.pedalChanged { liveHelperStates = [] }
         if midiHelperRunning {
             if transition.effectsChanged {
                 if helperSendToDAW {
