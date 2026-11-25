@@ -2363,14 +2363,8 @@ private struct PerformanceShortcutRecorder: View {
             ]
             guard PerformanceCaptureShortcut.acceptsKeyCode(Int64(event.keyCode)) else { return nil }
             let candidateName = namedKeys[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased()
-            let fallback = "Key \(event.keyCode)"
-            let name = candidateName.flatMap { value -> String? in
-                guard !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
-                      !value.unicodeScalars.contains(where:{ CharacterSet.controlCharacters.contains($0) }),
-                      (prefix+value).utf8.count<=128 else { return nil }
-                return value
-            } ?? fallback
-            let shortcut=PerformanceCaptureShortcut(keyCode:Int64(event.keyCode),modifiers:mask,displayName:prefix+name)
+            let name=PerformanceCaptureShortcut.displayLabel(keyCode:Int64(event.keyCode),prefix:prefix,candidate:candidateName)
+            let shortcut=PerformanceCaptureShortcut(keyCode:Int64(event.keyCode),modifiers:mask,displayName:name)
             // Do not terminate recording or forget the previous armed
             // state if a key cannot be represented by a valid shortcut.
             guard shortcut.isValid else { return nil }
