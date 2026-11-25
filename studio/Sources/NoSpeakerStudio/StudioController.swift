@@ -4355,11 +4355,18 @@ final class StudioController: ObservableObject {
         capture.onCaptureChanged = { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.captureGeneration == generation else { return }
-                self.pointerCaptured = self.captureMonitor?.isCaptured ?? false
+                guard let monitor=self.captureMonitor else { return }
+                let health=monitor.diagnosticSnapshot()
+                self.pointerCaptured = health.pointerCaptured
+                // A queued change from an already disabled tap must not
+                // overwrite the error/recovery status with false readiness.
+                guard health.operational else { return }
                 if self.captureArmed || self.touchRunning || self.midiHelperRunning {
                     self.captureStatus = self.pointerCaptured
                         ? "Cursor captured · press the shortcut again or Esc"
-                        : "Cursor free · event monitor active"
+                        : (health.readyForGlobalCapture
+                            ? "Cursor free · global shortcut ready"
+                            : "Cursor free · physical-click monitor active")
                 }
             }
         }
@@ -4507,18 +4514,27 @@ final class StudioController: ObservableObject {
     }
 
     func togglePointerCaptureNow() {
-        if pointerCaptured || captureMonitor?.isCaptured == true {
-            captureMonitor?.releasePointer()
-            pointerCaptured = false
-            captureStatus = "Cursor free"
+        guard let monitor=captureMonitor else {
+            pointerCaptured=false
+            captureStatus="Capture unavailable · enable Global Capture and check permissions"
             return
         }
-        guard captureArmed, let monitor = captureMonitor, monitor.setPointerCaptured(true) else {
-            captureStatus = "Capture unavailable · enable Global Capture and check permissions"
+        if !captureArmed {
+            monitor.releasePointer()
+            pointerCaptured=false
+            captureStatus="Cursor free · Global Capture OFF"
             return
         }
-        pointerCaptured = true
-        captureStatus = "Cursor captured · shortcut or Esc releases"
+        // Never toggle based on a stale SwiftUI flag. Native lock serializes
+        // the explicit button with the global shortcut and timeout handler.
+        _=monitor.togglePointerCapture()
+        let health=monitor.diagnosticSnapshot()
+        pointerCaptured=health.pointerCaptured
+        captureStatus = pointerCaptured
+            ? "Cursor captured · shortcut or Esc releases"
+            : (health.readyForGlobalCapture
+                ? "Cursor free"
+                : "Capture unavailable · enable Global Capture and check permissions")
     }
 
     private func stopCaptureMonitorIfIdle() {

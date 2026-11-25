@@ -617,6 +617,29 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         return true
     }
 
+    /// Atomically choose release versus capture from the actual tap state.
+    /// Releasing remains available even when permission has been revoked.
+    public func togglePointerCapture() -> Bool {
+        let authorized=AXIsProcessTrusted()
+        lock.lock()
+        if captured {
+            captured=false
+            lock.unlock()
+            onCaptureChanged?(false)
+            return false
+        }
+        guard authorized,listening,!stopped,!panicLatched,captureHotkeyEnabled,
+              let port=eventTap,CGEvent.tapIsEnabled(tap:port) else {
+            lock.unlock()
+            onCaptureChanged?(false)
+            return false
+        }
+        captured=true
+        lock.unlock()
+        onCaptureChanged?(true)
+        return true
+    }
+
     public func releasePointer() {
         lock.lock()
         captured = false

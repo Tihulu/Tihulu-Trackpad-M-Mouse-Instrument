@@ -74,6 +74,8 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
         XCTAssertFalse(monitor.setPointerCaptured(true))
         XCTAssertFalse(monitor.isCaptured)
         XCTAssertTrue(monitor.setPointerCaptured(false))
+        XCTAssertFalse(monitor.togglePointerCapture())
+        XCTAssertFalse(monitor.isCaptured)
     }
 
     func testCaptureReadinessRequiresLiveDedicatedAuthorizedTap() {
