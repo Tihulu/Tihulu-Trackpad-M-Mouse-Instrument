@@ -1135,6 +1135,8 @@ public final class PerformanceGroupMIDIHost {
     private var delivery: PerformanceGroupDelivery?
     private var gamepads: PerformanceGroupGamepadSession?
     private var retainedTunedPorts = false
+    private var remoteBridge: PerformanceGroupRemoteBridge?
+    private var remoteRunID: UUID?
     private init() {}
 
     public var registeredIDs: Set<UUID> { ports.registeredIDs }
@@ -1156,6 +1158,8 @@ public final class PerformanceGroupMIDIHost {
         let next = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
         try openPorts(profile)
         gamepads = nil
+        remoteBridge = nil
+        remoteRunID = nil
         delivery = next
     }
 
@@ -1164,7 +1168,7 @@ public final class PerformanceGroupMIDIHost {
     /// No automatic activation, device polling or handler installation here.
     public func startGamepads(profile: PerformanceGroupProfile, allowLayering: Bool = false,
                               allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false,
-                              tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:]) throws {
+                              tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:], allowRemote:Bool = false) throws {
         guard canStart else { throw HostError.activeOrCleanupRequired }
         // Never retune retained ports during another session's release tails
         // or silently switch a previously configured receiver to standard mode.
@@ -1172,9 +1176,11 @@ public final class PerformanceGroupMIDIHost {
             throw HostError.closeRequiredForTuning
         }
         var next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering,
-            allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera,tuning:tuning)
+            allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera,tuning:tuning,allowRemote:allowRemote)
         try openPorts(profile)
         delivery = nil
+        remoteBridge = nil
+        remoteRunID = nil
         retainedTunedPorts = !tuning.isEmpty
         let prepared = next.prepare(send:send)
         // Publish even on failure, preserving the original selector debt.
@@ -1214,7 +1220,58 @@ public final class PerformanceGroupMIDIHost {
         return ChordMIDIOutput.send(item.command,endpoint:endpoint)
     }
 
+    /// Explicit listener ownership token; caller must start the established
+    /// transport separately and drain it at the existing watchdog cadence.
+    /// No socket, pairing secret generation or implicit Start here.
+    public func beginRemoteGroupBridge() throws -> UUID {
+        guard let state = gamepads,!state.retired,!state.remoteSlots.isEmpty,
+              remoteBridge == nil else { throw RemoteTouchError.unavailable }
+        let id = UUID()
+        remoteRunID = id
+        remoteBridge = PerformanceGroupRemoteBridge()
+        return id
+    }
+
+    public func issueRemoteGroupInvitation(run:UUID,secret:Data,source:SensorSource,now:Double) throws {
+        guard run == remoteRunID,var bridge = remoteBridge,let state = gamepads else {
+            throw RemoteTouchError.unavailable
+        }
+        try bridge.issue(secret:secret,source:source,now:now,session:state)
+        remoteBridge = bridge
+    }
+
+    public func processRemoteGroupEvents(run:UUID,events:[RemoteHostEvent],now:Double) -> PerformanceGroupRemoteBatch {
+        guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else {
+            var result = PerformanceGroupRemoteBatch()
+            result.actions = [.stop]
+            return result
+        }
+        let result = bridge.process(events,now:now,session:&state,send:send)
+        gamepads = state
+        remoteBridge = bridge.stopped ? nil : bridge
+        if bridge.stopped { remoteRunID = nil }
+        return result
+    }
+
+    public func revokeRemoteGroupConnection(run:UUID,connection:UUID) -> PerformanceGroupRemoteBatch {
+        guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else { return .init() }
+        let result = bridge.revoke(connection,session:&state,send:send)
+        remoteBridge = bridge
+        gamepads = state
+        return result
+    }
+
+    public func stopRemoteGroupBridge(run:UUID) -> PerformanceGroupRemoteBatch {
+        guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else { return .init() }
+        let result = bridge.stop(session:&state,send:send)
+        gamepads = state
+        remoteBridge = nil
+        remoteRunID = nil
+        return result
+    }
+
     public func bindGamepad(_ source: SensorSource, now: Double) throws -> UUID {
+        guard source != .phone,source != .tablet else { throw RemoteTouchError.unavailable }
         guard var state = gamepads else { throw HostError.notStarted }
         let token = try state.bind(source,now:now)
         gamepads = state
@@ -1310,6 +1367,9 @@ public final class PerformanceGroupMIDIHost {
     }
 
     public func panic() -> PerformanceGroupDelivery.Report? {
+        // Retire the callback generation before releasing all owners.
+        remoteBridge = nil
+        remoteRunID = nil
         if var state = gamepads {
             let result = state.panic(send:send)
             gamepads = state
@@ -1341,6 +1401,8 @@ public final class PerformanceGroupMIDIHost {
         let closed = ports.close(cleanupComplete:true,dispose:Self.dispose)
         delivery = nil
         gamepads = nil
+        remoteBridge = nil
+        remoteRunID = nil
         if closed { retainedTunedPorts = false }
         return closed
     }
