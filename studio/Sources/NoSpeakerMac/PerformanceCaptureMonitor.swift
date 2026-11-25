@@ -129,15 +129,19 @@ struct CapturePhysicalMailbox {
     private var events:[CapturePhysicalInput] = []
     private var invalidated = false
     private var pending = false
+    private(set) var coalesced:UInt64 = 0
+    private(set) var overflows:UInt64 = 0
     mutating func append(_ event:CapturePhysicalInput) -> Bool {
         if !invalidated {
             if case .pressure = event, case .pressure? = events.last {
                 events[events.count-1] = event
+                if coalesced < UInt64.max { coalesced += 1 }
             } else if events.count < Self.capacity {
                 events.append(event)
             } else {
                 events.removeAll(keepingCapacity:true)
                 invalidated = true
+                if overflows < UInt64.max { overflows += 1 }
             }
         }
         return notify()
@@ -192,6 +196,8 @@ public struct PerformanceCaptureDiagnosticSnapshot: Sendable {
     public let tapTimeouts: UInt64
     public let tapDisabledByUserInput: UInt64
     public let lastEventTapStatus: String
+    public let coalescedPressureSamples:UInt64
+    public let physicalMailboxOverflows:UInt64
 }
 
 /// Optional event filtering for MIDI performance. Monitoring is OFF by default.
@@ -240,7 +246,9 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             shortcutMatches: shortcutMatches,
             tapTimeouts: tapTimeouts,
             tapDisabledByUserInput: tapDisabledByUserInput,
-            lastEventTapStatus: lastEventTapStatus
+            lastEventTapStatus: lastEventTapStatus,
+            coalescedPressureSamples:physicalMailbox.coalesced,
+            physicalMailboxOverflows:physicalMailbox.overflows
         )
         lock.unlock()
         return PerformanceCaptureDiagnosticSnapshot(
@@ -257,7 +265,9 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             shortcutMatches: result.shortcutMatches,
             tapTimeouts: result.tapTimeouts,
             tapDisabledByUserInput: result.tapDisabledByUserInput,
-            lastEventTapStatus: result.lastEventTapStatus
+            lastEventTapStatus: result.lastEventTapStatus,
+            coalescedPressureSamples:result.coalescedPressureSamples,
+            physicalMailboxOverflows:result.physicalMailboxOverflows
         )
     }
 
@@ -458,6 +468,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         CFMachPortInvalidate(port)
         lock.lock()
         if generation == inputGeneration {
+            let unexpectedExit = listening
             inputRunLoop = nil
             inputThread = nil
             eventTap = nil
@@ -467,7 +478,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             captureHotkeyEnabled = false
             keyEdges.reset()
             pointerEdges.reset()
-            lastEventTapStatus = "Dedicated event loop exited"
+            if unexpectedExit { lastEventTapStatus = "Dedicated event loop exited" }
         }
         lock.unlock()
     }

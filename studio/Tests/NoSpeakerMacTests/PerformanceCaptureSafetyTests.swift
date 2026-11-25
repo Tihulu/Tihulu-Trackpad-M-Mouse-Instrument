@@ -115,6 +115,7 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
         XCTAssertFalse(mailbox.append(.click(false,0)))
         let batch = mailbox.drain()
         XCTAssertEqual(batch.events,[.click(true,0.2),.pressure(0.999),.click(false,0)])
+        XCTAssertEqual(mailbox.coalesced,999)
         XCTAssertFalse(batch.invalidated)
         XCTAssertTrue(mailbox.append(.click(true,0.3)))
     }
@@ -125,11 +126,20 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
             XCTAssertEqual(mailbox.append(.click(i%2 == 0,0.5)),i == 0)
         }
         XCTAssertFalse(mailbox.append(.click(true,1)))
+        XCTAssertEqual(mailbox.overflows,1)
         let batch = mailbox.drain()
         XCTAssertTrue(batch.invalidated)
         XCTAssertTrue(batch.events.isEmpty)
         XCTAssertTrue(mailbox.append(.click(true,0.5)))
         XCTAssertFalse(mailbox.drain().invalidated)
+    }
+
+    func testStoppedCaptureMonitorCannotRestartOrCapture() {
+        let monitor = PerformanceCaptureMonitor()
+        monitor.stop()
+        XCTAssertThrowsError(try monitor.start(shortcut:.defaultShortcut))
+        XCTAssertFalse(monitor.setPointerCaptured(true))
+        XCTAssertFalse(monitor.diagnosticSnapshot().eventTapCreated)
     }
 
     func testCapturePhysicalMailboxTimeoutDiscardsAlreadyQueuedEdges() {

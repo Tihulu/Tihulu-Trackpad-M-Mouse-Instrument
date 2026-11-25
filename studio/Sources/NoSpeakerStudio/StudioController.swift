@@ -1227,6 +1227,7 @@ final class StudioController: ObservableObject {
     private var captureHealthTask: Task<Void,Never>?
     private var captureGeneration: UInt64 = 0
     private var lastRetiredCaptureStatus: String?
+    private var lastRetiredCaptureSnapshot:PerformanceCaptureDiagnosticSnapshot?
     private var captureHotkeyArmed = false
     private var instrumentPreviewRequested = false
     private var helperPreviewRequested = false
@@ -4005,7 +4006,7 @@ final class StudioController: ObservableObject {
         let os = ProcessInfo.processInfo.operatingSystemVersionString
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development"
         let build = Bundle.main.infoDictionary?["NoSpeakerBuildSHA"] as? String ?? "unknown"
-        let snapshot = ensureCaptureMonitor().diagnosticSnapshot()
+        let snapshot = (captureMonitor ?? PerformanceCaptureMonitor()).diagnosticSnapshot()
 
         func yesNo(_ yes: Bool) -> String { yes ? "YES" : "NO" }
 
@@ -4047,6 +4048,10 @@ final class StudioController: ObservableObject {
         Matched shortcuts: \(snapshot.shortcutMatches)
         Event tap timeouts: \(snapshot.tapTimeouts)
         Event tap disabled by system/user: \(snapshot.tapDisabledByUserInput)
+        Coalesced pressure samples: \(snapshot.coalescedPressureSamples)
+        Physical input mailbox overflows: \(snapshot.physicalMailboxOverflows)
+        Previous monitor timeouts: \(lastRetiredCaptureSnapshot?.tapTimeouts ?? 0)
+        Previous monitor mailbox overflows: \(lastRetiredCaptureSnapshot?.physicalMailboxOverflows ?? 0)
         Last event tap status: \(snapshot.lastEventTapStatus)
         Previous monitor status: \(lastRetiredCaptureStatus ?? "None")
         Current capture status: \(captureStatus)
@@ -4165,7 +4170,11 @@ final class StudioController: ObservableObject {
         captureHealthTask = nil
         captureGeneration &+= 1
         let old = captureMonitor
-        if let old { lastRetiredCaptureStatus = old.diagnosticSnapshot().lastEventTapStatus }
+        if let old {
+            let snapshot = old.diagnosticSnapshot()
+            lastRetiredCaptureSnapshot = snapshot
+            lastRetiredCaptureStatus = snapshot.lastEventTapStatus
+        }
         captureMonitor = nil
         old?.setCaptureHotkeyEnabled(false)
         old?.stop()
