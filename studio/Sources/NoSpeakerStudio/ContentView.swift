@@ -2896,6 +2896,7 @@ private struct DiagnosticsView: View {
     @EnvironmentObject private var studio: StudioController
     @State private var frequency = 1_000.0
     @State private var captureReport = ""
+    @State private var touchTimingReport = ""
 
     var body: some View {
         ScrollView {
@@ -2932,6 +2933,29 @@ private struct DiagnosticsView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 9))
                     }
                     .padding(8)
+                }
+                GroupBox("Touch performance · native timing") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Reset, play quickly in Touch Instrument, then return and refresh. Live playback may continue while viewing this page. Compare preview, MIDI-only and haptic output separately.")
+                            .font(.callout)
+                        HStack {
+                            Button("Reset timing") {
+                                studio.resetTouchDispatchMetrics()
+                                touchTimingReport = studio.touchDispatchDiagnosticReport()
+                            }
+                            Button("Refresh timing") { touchTimingReport = studio.touchDispatchDiagnosticReport() }
+                                .buttonStyle(.borderedProminent)
+                            Button("Copy timing") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(touchTimingReport, forType: .string)
+                            }.disabled(touchTimingReport.isEmpty)
+                        }
+                        Text(touchTimingReport.isEmpty ? "No timing snapshot requested." : touchTimingReport)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                        Text("Aggregate timing only. No touch positions or MIDI content stored. Queue timing is not DAW/audio latency.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(8)
                 }
                 GroupBox("Haptic motor diagnostics") {
                     VStack(alignment: .leading, spacing: 12) {
