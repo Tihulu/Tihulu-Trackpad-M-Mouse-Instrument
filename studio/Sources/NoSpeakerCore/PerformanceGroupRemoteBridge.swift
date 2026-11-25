@@ -21,6 +21,15 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         var nextLabelPage = 0
         var labelsComplete = false
         var metadataStartedAt:Double?
+
+        // A partial negotiation cannot be kept alive beyond its original
+        // budget by heartbeat or additional label pages. Optional metadata
+        // omitted by a client that has started performance is not pending.
+        func metadataExpired(now:Double)->Bool {
+            guard let started=metadataStartedAt,!performanceStarted else { return false }
+            let incomplete = !mappingComplete || (nextLabelPage>0 && !labelsComplete)
+            return incomplete && now-started>=10
+        }
     }
     private var pairing = RemotePairingGate()
     private var invitationIssuedAt:Double?
@@ -83,16 +92,22 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         let disconnected = Set(events.compactMap { event -> UUID? in
             if case .disconnected(let id) = event { return id }; return nil
         })
+        // Retire timed-out negotiations even on an empty watchdog tick,
+        // atomically with known disconnects and existing source expiry.
+        let metadataExpired=Set(bindings.compactMap { id,binding in
+            binding.metadataExpired(now:now) ? id : nil
+        })
         var departing:[SensorSource:UUID] = [:]
-        for id in disconnected {
+        for id in disconnected.union(metadataExpired) {
             if let binding = bindings.removeValue(forKey:id) { departing[binding.source] = binding.token }
         }
         result.reports += session.expire(now:now,removingRemote:departing,send:send)
         let expired = Set(bindings.compactMap { id,binding in
             session.matchesRemoteBinding(binding.source,token:binding.token) ? nil : id
         })
-        var rejected = expired.union(disconnected)
-        for id in expired.sorted(by:{ $0.uuidString < $1.uuidString }) {
+        let revoked=expired.union(metadataExpired.subtracting(disconnected))
+        var rejected = revoked.union(disconnected)
+        for id in revoked.sorted(by:{ $0.uuidString < $1.uuidString }) {
             bindings.removeValue(forKey:id)
             result.actions.append(.revoke(id))
         }

@@ -290,3 +290,51 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
         #expect(direct.boundSources.isEmpty && session.boundSources.isEmpty && bridge.connectionIDs.isEmpty)
     }
 }
+
+@Test func groupRemoteIncompleteMetadataExpiresOnEmptyWatchdogTick() throws {
+    let phone=groupRemoteFixture(.phone,.contact,60)
+    let tablet=groupRemoteFixture(.tablet,.pianoKey0,64)
+    var session=try PerformanceGroupGamepadSession(profile:.init(groups:[phone,tablet]),allowRemote:true)
+    var bridge=PerformanceGroupRemoteBridge()
+    let a=UUID(),b=UUID(),secretA=Data(repeating:1,count:32),secretB=Data(repeating:2,count:32)
+    let sink:(PerformanceGroupCommand)->Bool={ _ in Issue.record("Unexpected MIDI during metadata");return true }
+    _=bridge.process([.ready],now:0,session:&session,send:sink)
+    try bridge.issue(secret:secretA,source:.phone,now:0,session:session)
+    _=bridge.process([.invitation(a,secretA,0)],now:0,session:&session,send:sink)
+    try bridge.issue(secret:secretB,source:.tablet,now:0,session:session)
+    _=bridge.process([.invitation(b,secretB,0)],now:0,session:&session,send:sink)
+    _=bridge.process([.frame(a,groupRemoteWire("capabilities",7,1),0.25)],now:0.25,session:&session,send:sink)
+    // Both connections remain below the two-second idle deadline.
+    for i in 1...10 {
+        let now=Double(i)
+        let batch=bridge.process([.frame(a,groupRemoteWire("heartbeat",1,i+1),now),
+                                  .frame(b,groupRemoteWire("heartbeat",1,i),now)],now:now,session:&session,send:sink)
+        #expect(batch.actions==[.acknowledge(a,true),.acknowledge(b,true)])
+    }
+    let before=bridge.process([],now:10.249,session:&session,send:sink)
+    #expect(before.actions.isEmpty && bridge.connectionIDs==[a,b])
+    let boundary=bridge.process([],now:10.25,session:&session,send:sink)
+    #expect(boundary.actions==[.revoke(a)] && bridge.connectionIDs==[b])
+    #expect(session.boundSources==[.tablet])
+    let replay=bridge.process([.frame(a,groupRemoteWire("mapping",8,12,",\"page\":0"),10.26)],now:10.26,session:&session,send:sink)
+    #expect(replay.actions==[.acknowledge(a,false)] && session.boundSources==[.tablet])
+}
+
+@Test func groupRemoteOptionalMetadataDoesNotExpireAfterPerformanceStarts() throws {
+    let group=groupRemoteFixture(.phone,.contact,60)
+    var session=try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowRemote:true)
+    var bridge=PerformanceGroupRemoteBridge()
+    let peer=UUID(),secret=Data(repeating:3,count:32)
+    let sink:(PerformanceGroupCommand)->Bool={ _ in Issue.record("Unexpected MIDI");return true }
+    _=bridge.process([.ready],now:0,session:&session,send:sink)
+    try bridge.issue(secret:secret,source:.phone,now:0,session:session)
+    _=bridge.process([.invitation(peer,secret,0)],now:0,session:&session,send:sink)
+    _=bridge.process([.frame(peer,groupRemoteWire("capabilities",7,1),0.25)],now:0.25,session:&session,send:sink)
+    _=bridge.process([.frame(peer,groupRemoteWire("release",1,2),0.5)],now:0.5,session:&session,send:sink)
+    for i in 1...11 {
+        let now=Double(i)
+        let batch=bridge.process([.frame(peer,groupRemoteWire("heartbeat",1,i+2),now)],now:now,session:&session,send:sink)
+        #expect(batch.actions==[.acknowledge(peer,true)])
+    }
+    #expect(bridge.connectionIDs==[peer] && session.boundSources==[.phone])
+}
