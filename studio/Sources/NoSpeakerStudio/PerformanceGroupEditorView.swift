@@ -133,7 +133,7 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var supportedLocalProfile: Bool {
-        PerformanceGroupGamepadSession.supports(saved,allowSurfaces:true)
+        PerformanceGroupGamepadSession.supports(saved,allowSurfaces:true,allowScalars:true)
     }
 
     private var editingLocked: Bool {
@@ -192,12 +192,18 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var liveControls: some View {
-        GroupBox("Experimental group MIDI - local controllers and touch surfaces") {
+        GroupBox("Experimental group MIDI - local controllers and Helpers") {
             VStack(alignment:.leading,spacing:8) {
-                Text("Standard MIDI only. Xbox, Trackpad and Magic Mouse may share groups. Touch uses one primary contact; lift each surface to arm. No local haptics, pressure, multi-touch, or independent MPE in this preview.")
+                Text("Standard MIDI only. Xbox, Trackpad and Magic Mouse may share groups. Touch uses one primary contact; lift each surface to arm. Touch Bar ribbon and compatible lid-angle sensor support continuous CC and pitch bend only. No local haptics, pressure, multi-touch, or independent MPE in this preview.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !supportedLocalProfile {
                     Text("Save a supported local group profile to enable Start.").font(.caption)
+                }
+                if saved.groups.contains(where:{ $0.patch.routes.contains(where:{ $0.source == .lid }) }) {
+                    Text("Lid input needs a compatible sensor. Start may fail on unsupported Macs; the actual sensor is opened only on Start.").font(.caption)
+                }
+                if saved.groups.contains(where:{ $0.patch.routes.contains(where:{ $0.source == .touchBar }) }) {
+                    Text("Use the native Builder ribbon on a Touch Bar. Registration does not verify that the hardware is present. Release the ribbon after a stall before playing again.").font(.caption)
                 }
                 Button("Refresh controllers") { studio.refreshBuilderGamepads() }
                     .disabled(studio.groupGamepadsRunning)
@@ -245,7 +251,7 @@ struct PerformanceGroupEditorView: View {
     var body: some View {
         DisclosureGroup("Performance Studio - Instrument Groups (experimental)") {
             VStack(alignment:.leading,spacing:10) {
-                Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox, Trackpad and Magic Mouse profiles. Other sources still use the existing Builder.")
+                Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox, Trackpad, Magic Mouse, Touch Bar ribbon and lid Helper profiles. Other sources still use the existing Builder.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Add empty group") { add(patch:.init()) }
