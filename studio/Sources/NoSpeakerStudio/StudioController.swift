@@ -723,8 +723,7 @@ final class StudioController: ObservableObject {
         for sample in batch.samples {
             let source:SensorSource = sample.frame.surface == .trackpad ? .trackpad : .magicMouse
             guard groupGamepadTokens[source] != nil else { continue }
-            if !sample.time.isFinite || sample.time < 0 || sample.time > now ||
-               now-sample.time >= PhysicalPatchRuntime.timeout ||
+            if !PhysicalPatchRuntime.admitsPhysicalReceipt(sample.time,now:now) ||
                sample.frame.contacts.contains(where:{ $0.isDown && (!$0.x.isFinite || !$0.y.isFinite || !$0.size.isFinite) }) {
                 bad.insert(source)
             }
@@ -736,6 +735,13 @@ final class StudioController: ObservableObject {
             guard groupRunToken == run else { return }
             let source: SensorSource = sample.frame.surface == .trackpad ? .trackpad : .magicMouse
             guard let token = groupGamepadTokens[source] else { continue }
+            // The earlier group sends may have blocked. Retire only this
+            // expired surface; other devices and owners remain active.
+            let admissionNow=ProcessInfo.processInfo.systemUptime
+            guard PhysicalPatchRuntime.admitsPhysicalReceipt(sample.time,now:admissionNow) else {
+                retireGroupSurfaces([source],reason:"Surface input expired during processing; restart affected surface explicitly.",run:run)
+                continue
+            }
             let contact = sample.frame.contacts.lazy.filter { $0.isDown }.min { $0.id < $1.id }
             var x: Double?
             var y: Double?
@@ -747,7 +753,7 @@ final class StudioController: ObservableObject {
                 x = point.0; y = point.1; size = min(1,max(0,Double(contact.size)))
             }
             if let result = groupHost.receiveSurface(source,token:token,x:x,y:y,size:size,
-                                                    hostTime:sample.time,now:ProcessInfo.processInfo.systemUptime) {
+                                                    hostTime:sample.time,now:admissionNow) {
                 consumeGroupReports(result.reports)
             }
         }
@@ -3536,7 +3542,7 @@ final class StudioController: ObservableObject {
                 continue
             }
             // Never replay a late musical onset after a blocked main actor.
-            if startedAt - sample.queuedAt >= 0.150 {
+            if !TouchPublicationAdmission.permits(queuedAt:sample.queuedAt,now:startedAt) {
                 touchDispatchMetrics.reject()
                 if touchRunning || midiHelperRunning {
                     handleTouchInputBacklog()

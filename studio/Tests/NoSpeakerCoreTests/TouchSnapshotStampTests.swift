@@ -133,3 +133,21 @@ import Testing
     cache.reset()
     #expect(cache.singleTouchObservation == nil)
 }
+
+@Test func touchPublicationAdmissionPreservesExactLegacyBacklogBoundary() {
+    #expect(TouchPublicationAdmission.permits(queuedAt:0,now:0))
+    #expect(TouchPublicationAdmission.permits(queuedAt:0,now:0.149999))
+    #expect(!TouchPublicationAdmission.permits(queuedAt:0,now:0.150))
+    #expect(!TouchPublicationAdmission.permits(queuedAt:0,now:0.151))
+    #expect(!TouchPublicationAdmission.permits(queuedAt:0.001,now:0))
+    #expect(!TouchPublicationAdmission.permits(queuedAt:-0.001,now:0))
+    #expect(!TouchPublicationAdmission.permits(queuedAt:.nan,now:0))
+    #expect(!TouchPublicationAdmission.permits(queuedAt:0,now:.infinity))
+}
+
+@Test func touchPublicationMustBeRecheckedAfterEarlierFrameConsumesBudget() {
+    let queued:[Double]=[0,0.01]
+    #expect(queued.allSatisfy { TouchPublicationAdmission.permits(queuedAt:$0,now:0.14) })
+    #expect(!TouchPublicationAdmission.permits(queuedAt:queued[1],now:0.17))
+    #expect(TouchPublicationAdmission.permits(queuedAt:0.16,now:0.17))
+}
