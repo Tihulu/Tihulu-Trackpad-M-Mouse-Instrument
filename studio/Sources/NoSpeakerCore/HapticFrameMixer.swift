@@ -1,7 +1,7 @@
 import Foundation
 
 public enum HapticMixSource: String, CaseIterable, Hashable, Sendable {
-    case touch, midi, chords, touchBar, sequencer, speech
+    case touch, midi, chords, touchBar, sequencer, speech, gamepad
 }
 
 public enum HapticMixMode: Sendable {
