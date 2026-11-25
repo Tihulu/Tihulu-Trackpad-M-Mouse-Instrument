@@ -16,12 +16,13 @@ python3 ../tools/test_repo_index.py
 index_dir="$(mktemp -d)"
 trap 'rm -rf "$index_dir"' EXIT HUP INT TERM
 python3 ../tools/repo_index.py build --repo .. --ref HEAD --out "$index_dir/repo.json"
-python3 ../tools/repo_index.py search --index "$index_dir/repo.json" --query "SensorRouter sustain" --limit 3 > "$index_dir/results.json"
+python3 ../tools/repo_index.py verify --repo .. --index "$index_dir/repo.json"
+python3 ../tools/repo_index.py search --repo .. --index "$index_dir/repo.json" --query "SensorRouter sustain" --limit 3 > "$index_dir/results.json"
 python3 - "$index_dir/results.json" <<'PY'
 import json, sys
 with open(sys.argv[1]) as stream:
     result = json.load(stream)
-assert result["mode"] == "lexical" and result["results"]
+assert result["mode"] == "lexical" and result["source_verified"] and result["results"]
 assert all(row["blob"] and row["start"] > 0 for row in result["results"])
 PY
 
