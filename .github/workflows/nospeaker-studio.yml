@@ -68,6 +68,32 @@ jobs:
         env:
           TIHULU_NATIVE_OBSERVER_FIXTURE: "1"
         run: |
+          # A separate client keeps the on-demand MIDI server alive during
+          # the gaps between isolated test processes. No ports/endpoints,
+          # messages, daemon restart or retries. Preserve every failure.
+          scratch="$(mktemp -d)"
+          keeper=""
+          cleanup() {
+            if [ -n "$keeper" ]; then
+              kill "$keeper" 2>/dev/null || true
+              wait "$keeper" 2>/dev/null || true
+            fi
+            rm -rf "$scratch"
+          }
+          trap cleanup EXIT
+          swiftc ../tools/fixtures/native_midi_ci_keepalive.swift -o "$scratch/keeper"
+          "$scratch/keeper" >"$scratch/keeper.log" 2>&1 &
+          keeper=$!
+          for attempt in {1..100}; do
+            if ! kill -0 "$keeper" 2>/dev/null; then break; fi
+            if grep -Fxq "CoreMIDI CI keepalive ready" "$scratch/keeper.log"; then break; fi
+            sleep 0.1
+          done
+          cat "$scratch/keeper.log"
+          if ! kill -0 "$keeper" 2>/dev/null || ! grep -Fxq "CoreMIDI CI keepalive ready" "$scratch/keeper.log"; then
+            echo "CoreMIDI keepalive did not start; native acceptance failed."
+            exit 1
+          fi
           # Keep each fixture in a separate process. Collect every result
           # even if an early timing test fails; the step still fails.
           status=0
@@ -100,6 +126,10 @@ jobs:
             fi
             cat "$log"
             rm -f "$log"
+            if ! kill -0 "$keeper" 2>/dev/null; then
+              echo "CoreMIDI keepalive exited during $fixture; native acceptance failed."
+              status=1
+            fi
           done
           exit "$status"
       - name: Build Studio
