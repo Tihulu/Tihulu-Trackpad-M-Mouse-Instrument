@@ -36,8 +36,8 @@ public enum MIDIHapticError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .client(let status):
-            if status == -2 {
-                return "CoreMIDI lost its MIDIServer connection (OSStatus -2). Restart the instrument app. The MIDI client will now be kept alive across mode switches to prevent recurrence."
+            if status == -2 || status == -304 {
+                return "CoreMIDI client creation failed (OSStatus \(status)). The MIDI session was not started. If the error persists, quit and relaunch the app; check Audio MIDI Setup. No automatic reconnect is attempted."
             }
             return "CoreMIDI client creation failed (OSStatus \(status))."
         case .destination(let status): return "CoreMIDI virtual input creation failed (OSStatus \(status))."
