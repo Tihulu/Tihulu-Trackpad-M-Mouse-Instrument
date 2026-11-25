@@ -28,6 +28,22 @@ public final class NativeMIDIPlayback {
         public let receiverConfirmed:Bool
     }
 
+    public struct Lifecycle: Encodable, Sendable {
+        public let state:String
+        public let sourceOpen:Bool
+        public let running:Bool
+        public let identityRetired:Bool
+        public let outstandingNotes:Int
+        public let recoveryRequired:Bool
+    }
+
+    /// Local ledger state, not proof that the remote receiver is silent.
+    public var lifecycle:Lifecycle {
+        .init(state:player.state.rawValue,sourceOpen:endpoint != 0,running:running,
+              identityRetired:identityRetired,outstandingNotes:player.outstanding.count,
+              recoveryRequired:identityRetired || (player.state != .playing && !player.outstanding.isEmpty))
+    }
+
     public let sourceName = "TIHULU SDK Playback "+UUID().uuidString
     private var endpoint=MIDIEndpointRef()
     private var sourceID:Int32=0
@@ -85,9 +101,17 @@ public final class NativeMIDIPlayback {
             player.stop { gate.send($0) }
             return report(cancelled:true)
         }
-        guard gate.validate() else { throw Failure.sourceIdentityLost }
+        guard gate.validate() else {
+            player.abort { gate.send($0) }
+            throw Failure.sourceIdentityLost
+        }
         _=try player.begin(now:Self.now())
         while player.state == .playing {
+            // Check the bound source even during initial/trailing rests.
+            guard gate.validate() else {
+                player.abort { gate.send($0) }
+                break
+            }
             if stopRequested || Task.isCancelled {
                 player.stop { gate.send($0) }
                 break
@@ -109,6 +133,7 @@ public final class NativeMIDIPlayback {
                 await Task.yield()
             }
         }
+        identityRetired=gate.retired
         return report(cancelled:stopRequested || Task.isCancelled)
     }
 
