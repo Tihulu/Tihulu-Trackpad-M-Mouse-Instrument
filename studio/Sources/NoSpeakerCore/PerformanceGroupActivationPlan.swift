@@ -10,12 +10,13 @@ public struct PerformanceGroupActivationPlan: Sendable {
     }
     public enum AdmissionError: Error, Equatable {
         case unsupportedProfile, layeringNotApproved, cleanupRequired
-        case tuningNotConfirmed, tuningRequiresClosedPorts
+        case tuningNotConfirmed, tuningRequiresClosedPorts, remoteModeMismatch
     }
 
     public let profile: PerformanceGroupProfile
     public let mode: Mode
     public let allowLayering: Bool
+    public let allowRemote: Bool
     public var tuning: [UUID:PerformanceGroupTuningPlan.Specification] {
         switch mode {
         case .standard: return [:]
@@ -26,12 +27,16 @@ public struct PerformanceGroupActivationPlan: Sendable {
     public init(profile:PerformanceGroupProfile,mode:Mode,
                 allowLayering:Bool,confirmedTuning:Bool,
                 registeredIDs:Set<UUID>,cleanupIDs:Set<UUID>,
-                pendingDisposalCount:Int) throws {
+                pendingDisposalCount:Int, allowRemote:Bool = false) throws {
         guard cleanupIDs.isEmpty, pendingDisposalCount == 0 else {
             throw AdmissionError.cleanupRequired
         }
+        let hasRemote = profile.groups.contains { group in
+            group.patch.routes.contains { $0.source == .phone || $0.source == .tablet }
+        }
+        guard hasRemote == allowRemote else { throw AdmissionError.remoteModeMismatch }
         guard PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true,
-                                                       allowScalars:true,allowCamera:true)
+                                                       allowScalars:true,allowCamera:true,allowRemote:allowRemote)
         else { throw AdmissionError.unsupportedProfile }
         guard allowLayering || profile.layeredInputs.isEmpty else {
             throw AdmissionError.layeringNotApproved
@@ -44,5 +49,6 @@ public struct PerformanceGroupActivationPlan: Sendable {
         self.profile = profile
         self.mode = mode
         self.allowLayering = allowLayering
+        self.allowRemote = allowRemote
     }
 }
