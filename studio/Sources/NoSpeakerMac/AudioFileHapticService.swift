@@ -37,14 +37,18 @@ public enum AudioFileHapticService {
             throw AudioFileHapticError.unsupportedChannels
         }
         var mono:[Float] = []
-        mono.reserveCapacity(Int(file.length))
-        while true {
+        let declaredFrames = Int(file.length)
+        mono.reserveCapacity(declaredFrames)
+        // Avoid a read after EOF (some native decoders return an error
+        // instead of an empty buffer). Do not request beyond known frames.
+        while mono.count < declaredFrames {
             try cancellation.check()
+            let requested = min(Int(chunk),declaredFrames-mono.count)
             buffer.frameLength = 0
-            try file.read(into:buffer,frameCount:chunk)
+            try file.read(into:buffer,frameCount:AVAudioFrameCount(requested))
             let frames = Int(buffer.frameLength)
-            if frames == 0 { break }
-            guard frames <= Int(chunk),frames <= limit-mono.count else { throw AudioFileHapticError.fileTooLarge }
+            guard frames > 0,frames <= requested else { throw AudioFileHapticError.unsupportedChannels }
+            guard frames <= limit-mono.count else { throw AudioFileHapticError.fileTooLarge }
             guard let data = buffer.floatChannelData else { throw AudioFileHapticError.unsupportedChannels }
             for i in 0..<frames {
                 var value:Double = 0
