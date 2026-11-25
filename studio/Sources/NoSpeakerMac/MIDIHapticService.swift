@@ -1130,10 +1130,11 @@ public final class ChordMIDIOutput {
 @MainActor
 public final class PerformanceGroupMIDIHost {
     public static let shared = PerformanceGroupMIDIHost()
-    public enum HostError: Error { case activeOrCleanupRequired, notStarted }
+    public enum HostError: Error { case activeOrCleanupRequired, notStarted, closeRequiredForTuning, tuningSetupFailed }
     private var ports = PerformanceGroupPortRegistry()
     private var delivery: PerformanceGroupDelivery?
     private var gamepads: PerformanceGroupGamepadSession?
+    private var retainedTunedPorts = false
     private init() {}
 
     public var registeredIDs: Set<UUID> { ports.registeredIDs }
@@ -1151,6 +1152,7 @@ public final class PerformanceGroupMIDIHost {
     /// A different endpoint plan requires an explicit clean close first.
     public func start(profile: PerformanceGroupProfile, allowLayering: Bool = false) throws {
         guard canStart else { throw HostError.activeOrCleanupRequired }
+        guard !retainedTunedPorts else { throw HostError.closeRequiredForTuning }
         let next = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
         try openPorts(profile)
         gamepads = nil
@@ -1161,13 +1163,23 @@ public final class PerformanceGroupMIDIHost {
     /// this entry point. The caller must provide the existing watchdog cadence.
     /// No automatic activation, device polling or handler installation here.
     public func startGamepads(profile: PerformanceGroupProfile, allowLayering: Bool = false,
-                              allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false) throws {
+                              allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false,
+                              tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:]) throws {
         guard canStart else { throw HostError.activeOrCleanupRequired }
-        let next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering,
-                                                       allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera)
+        // Never retune retained ports during another session's release tails
+        // or silently switch a previously configured receiver to standard mode.
+        guard !retainedTunedPorts, tuning.isEmpty || registeredIDs.isEmpty else {
+            throw HostError.closeRequiredForTuning
+        }
+        var next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering,
+            allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera,tuning:tuning)
         try openPorts(profile)
         delivery = nil
+        retainedTunedPorts = !tuning.isEmpty
+        let prepared = next.prepare(send:send)
+        // Publish even on failure, preserving the original selector debt.
         gamepads = next
+        guard prepared else { throw HostError.tuningSetupFailed }
     }
 
     private func openPorts(_ profile: PerformanceGroupProfile) throws {
@@ -1329,12 +1341,15 @@ public final class PerformanceGroupMIDIHost {
         let closed = ports.close(cleanupComplete:true,dispose:Self.dispose)
         delivery = nil
         gamepads = nil
+        if closed { retainedTunedPorts = false }
         return closed
     }
 
     @discardableResult
     public func retryDisposal() -> Bool {
-        ports.retryDisposal(Self.dispose)
+        let clean = ports.retryDisposal(Self.dispose)
+        if clean, ports.registeredIDs.isEmpty { retainedTunedPorts = false }
+        return clean
     }
 }
 #endif
