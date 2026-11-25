@@ -19,6 +19,7 @@ struct PerformanceGroupEditorView: View {
         let controllers:[SensorSource:UUID]
         let haptics:Set<UUID>
         let layering:Bool
+        let deviceConsent:DynamicMPEStartConsent
     }
     @State private var pendingTunedStart:TunedStartSnapshot?
     @State private var confirmTunedStart = false
@@ -275,7 +276,7 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var canStartTunedRemoteGroups:Bool {
-        guard canStartRemoteGroups,StudioController.groupMPEStartEnabled,hapticSelection.isEmpty,
+        guard canStartRemoteGroups,StudioController.groupMPEStartEnabled,hapticSelection.isEmpty,currentTunedConsent != nil,
               studio.groupRegisteredIDs.isEmpty,let tuningPreview else { return false }
         return (try? tuningPreview.plan(matching:saved)) != nil
     }
@@ -288,9 +289,9 @@ struct PerformanceGroupEditorView: View {
     }
 
     private func requestTunedStart() {
-        guard canStartTunedGroups, let tuningPreview else { return }
+        guard canStartTunedGroups, let tuningPreview,let deviceConsent = currentTunedConsent else { return }
         pendingTunedStart = .init(tuning:tuningPreview,profile:saved,storedData:storedData,
-            controllers:studio.gamepadBindings,haptics:hapticSelection,layering:allowLayering)
+            controllers:studio.gamepadBindings,haptics:hapticSelection,layering:allowLayering,deviceConsent:deviceConsent)
         confirmTunedStart = true
     }
 
@@ -301,9 +302,19 @@ struct PerformanceGroupEditorView: View {
         return storedData != nil && UserDefaults.standard.data(forKey:key) == storedData
     }
 
+    private var currentTunedConsent:DynamicMPEStartConsent? {
+        guard let tuningPreview else { return nil }
+        return startConsent(tuning:tuningPreview.tuning)
+    }
+
     private var dynamicConsent:DynamicMPEStartConsent? {
-        guard canStartDynamic,let dynamicPreview,let storedData else { return nil }
-        return .init(profile:saved,tuning:dynamicPreview.tuning,archive:storedData,
+        guard canStartDynamic,let dynamicPreview else { return nil }
+        return startConsent(tuning:dynamicPreview.tuning)
+    }
+
+    private func startConsent(tuning:[UUID:PerformanceGroupTuningPlan.Specification]) -> DynamicMPEStartConsent? {
+        guard let storedData,profile == saved,UserDefaults.standard.data(forKey:key) == storedData else { return nil }
+        return .init(profile:saved,tuning:tuning,archive:storedData,
             controllers:studio.gamepadBindings,allowLayering:allowLayering,
             cameraID:studio.patchCameraDeviceID,cameraOrientation:studio.patchCameraOrientation,
             cameraMirror:studio.patchCameraMirrorX,mouseOrientation:studio.magicMouseOrientation)
@@ -345,8 +356,9 @@ struct PerformanceGroupEditorView: View {
                     Text("Use the full lower MPE zone (master CH1, members CH2–16). The allocated note channel varies. Setup and receiver reception are not confirmed by this display.")
                     if let planned = dynamic.groups.first(where:{ $0.id == group.id }) {
                         ForEach(planned.routes,id:\.mappingID) { route in
-                            Text(route.source.rawValue + " / " + route.signal.rawValue + " → possible CH " +
-                                 route.possibleChannels.map { String($0) }.joined(separator:", "))
+                            let input = route.source.rawValue + " / " + route.signal.rawValue
+                            let channels = route.possibleChannels.map { String($0) }.joined(separator:", ")
+                            Text(input + " → possible CH " + channels)
                         }
                     } else {
                         Text("No prepared dynamic mapping for this group.").foregroundStyle(.orange)
@@ -471,7 +483,11 @@ struct PerformanceGroupEditorView: View {
                 groupHapticControls
                 if supportedRemoteProfile && StudioController.groupRemoteStartEnabled {
                     PerformanceGroupRemotePanel(sources:remoteSources,canStart:canStartRemoteGroups,
-                        tuning:tuningPreview,canStartTuned:canStartTunedRemoteGroups) { transport,page,confirmed,tuning in
+                        tuning:tuningPreview,canStartTuned:canStartTunedRemoteGroups,tunedConsent:currentTunedConsent) { transport,page,confirmed,tuning,consent in
+                        guard tuning == nil || (consent != nil && consent == currentTunedConsent && hapticSelection.isEmpty) else {
+                            message = "Remote MPE confirmation expired. Review profile and device settings."
+                            return
+                        }
                         startSavedGroups(tuning:tuning,remoteTransport:transport,remotePage:page,confirmedLAN:confirmed)
                     }
                 }
@@ -668,7 +684,8 @@ struct PerformanceGroupEditorView: View {
                 pendingTunedStart = nil
                 guard canStartTunedGroups,snapshot.profile == saved,snapshot.storedData == storedData,
                       snapshot.controllers == studio.gamepadBindings,snapshot.haptics == hapticSelection,
-                      snapshot.layering == allowLayering,snapshot.tuning == tuningPreview else {
+                      snapshot.layering == allowLayering,snapshot.tuning == tuningPreview,
+                      snapshot.deviceConsent == currentTunedConsent else {
                     message = "MPE Start confirmation expired. Review the current profile and selections."
                     return
                 }

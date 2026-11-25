@@ -13,13 +13,15 @@ struct PerformanceGroupRemotePanel: View {
     let canStart:Bool
     let tuning:PerformanceGroupTuningConfiguration?
     let canStartTuned:Bool
-    let start:(RemoteLoopbackTransport,RemoteLoopbackPageServer,Bool,PerformanceGroupTuningConfiguration?)->Void
+    let tunedConsent:DynamicMPEStartConsent?
+    let start:(RemoteLoopbackTransport,RemoteLoopbackPageServer,Bool,PerformanceGroupTuningConfiguration?,DynamicMPEStartConsent?)->Void
     private struct StartSnapshot {
         let identityID:UUID
         let endpoint:RemoteEndpoint
         let lanID:String?
         let confirmedLAN:Bool
         let tuning:PerformanceGroupTuningConfiguration
+        let consent:DynamicMPEStartConsent
     }
     @State private var pendingStart:StartSnapshot?
     @State private var confirmStart = false
@@ -69,15 +71,15 @@ struct PerformanceGroupRemotePanel: View {
     }
 
     private func requestTunedStart() {
-        guard canStartTuned,let tuning,let identityID,let endpoint else { return }
+        guard canStartTuned,let tuning,let tunedConsent,let identityID,let endpoint else { return }
         pendingStart = .init(identityID:identityID,endpoint:endpoint,lanID:selectedLAN,
-                             confirmedLAN:confirmedLAN,tuning:tuning)
+                             confirmedLAN:confirmedLAN,tuning:tuning,consent:tunedConsent)
         confirmStart = true
     }
 
     private func begin(tuned snapshot:StartSnapshot? = nil) {
         if let snapshot {
-            guard canStartTuned,tuning == snapshot.tuning,identityID == snapshot.identityID,
+            guard canStartTuned,tuning == snapshot.tuning,tunedConsent == snapshot.consent,identityID == snapshot.identityID,
                   endpoint == snapshot.endpoint,selectedLAN == snapshot.lanID,
                   confirmedLAN == snapshot.confirmedLAN else {
                 message = "MPE setup changed; review and confirm again."
@@ -97,7 +99,7 @@ struct PerformanceGroupRemotePanel: View {
         do {
             let transport = try identity.makeLoopbackTransport(endpoint:endpoint)
             let page = try identity.makeLoopbackPageServer(endpoint:endpoint,groupNeutralHandshake:true)
-            start(transport,page,confirmedLAN,snapshot?.tuning)
+            start(transport,page,confirmedLAN,snapshot?.tuning,snapshot?.consent)
         } catch { message = "TLS setup failed. No trust bypass. " + error.localizedDescription }
     }
 
