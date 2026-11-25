@@ -22,13 +22,13 @@ For a local SwiftPM consumer, use a dependency on the cloned repository's `studi
 
 ```sh
 cd studio
-swift build --product tihulu-engine
-swift run --skip-build tihulu-engine capabilities
-swift run --skip-build tihulu-engine patch example > patch.json
-swift run --skip-build tihulu-engine patch validate patch.json
-swift run --skip-build tihulu-engine patch routes patch.json
-swift run --skip-build tihulu-engine groups example > groups.json
-swift run --skip-build tihulu-engine groups ports groups.json
+swift build --product tihulu-mac-instrument-engine
+swift run --skip-build tihulu-mac-instrument-engine capabilities
+swift run --skip-build tihulu-mac-instrument-engine patch example > patch.json
+swift run --skip-build tihulu-mac-instrument-engine patch validate patch.json
+swift run --skip-build tihulu-mac-instrument-engine patch routes patch.json
+swift run --skip-build tihulu-mac-instrument-engine groups example > groups.json
+swift run --skip-build tihulu-mac-instrument-engine groups ports groups.json
 ```
 
 These commands return JSON on stdout, diagnostics on stderr and nonzero exit on invalid input. Examples include fresh UUIDs; save them to preserve identities. Port output is planned, never registered. Shell redirection may overwrite the named output file: choose new filenames. No hardware, microphone, camera, pointer capture, live MIDI or haptic output is activated.
@@ -42,7 +42,7 @@ cat > frames.json <<'JSON'
   {"source":"trackpad","sequence":2,"time":1.1,"values":{},"releasing":["contact"]}
 ]
 JSON
-swift run --skip-build tihulu-engine groups simulate groups.json frames.json
+swift run --skip-build tihulu-mac-instrument-engine groups simulate groups.json frames.json
 ```
 
 Replay is bounded, uses one logical lease per source kind, rejects invalid frames and sequences, and emits final cleanup. It is not real-time timing, hardware discovery, remote authentication, watchdog or MPE acceptance. Intentional shared signals require `--allow-layering`. There is no live-start CLI command in this slice.
@@ -50,7 +50,7 @@ Replay is bounded, uses one logical lease per source kind, rejects invalid frame
 ### Additional offline engine commands
 
 ```sh
-swift run --skip-build tihulu-engine scale plan 60 "0, 180, 400, 700, 1200"
+swift run --skip-build tihulu-mac-instrument-engine scale plan 60 "0, 180, 400, 700, 1200"
 ```
 
 Returns MIDI anchors, pitch bend values, bend range and tuned frequencies using the existing CustomScale model. Unsupported quarter-tone ties or out-of-model degree layouts are rejected, not approximated. This is pitch planning, not a live MPE session.
@@ -62,7 +62,7 @@ cat > mix.json <<'JSON'
   {"source":"gamepad","frame":{"tones":[{"frequencyHz":330,"amplitude":1}],"durationMS":18,"level":0.4}}
 ]
 JSON
-swift run --skip-build tihulu-engine haptics mix mix.json
+swift run --skip-build tihulu-mac-instrument-engine haptics mix mix.json
 ```
 
 Returns a bounded mixed haptic frame as data, using the existing HapticFrameMixer. No motor activation or physical vibration claim.
@@ -75,7 +75,7 @@ The offline MIDI commands reuse the production MIDIClip and MIDIClipWriter. Inpu
 cat > clip.json <<'JSON'
 {"bpm":120,"length":960,"notes":[{"start":0,"duration":480,"channel":0,"pitch":60,"velocity":90}]}
 JSON
-swift run --skip-build tihulu-engine midi encode clip.json > clip-result.json
+swift run --skip-build tihulu-mac-instrument-engine midi encode clip.json > clip-result.json
 python3 -c 'import json,base64; d=json.load(open("clip-result.json")); open("clip.mid","xb").write(base64.b64decode(d["data"],validate=True))'
 ```
 
@@ -92,7 +92,7 @@ cat > pedal.json <<'JSON'
   {"owner":"helper","channels":[]}
 ]
 JSON
-swift run --skip-build tihulu-engine sustain simulate pedal.json
+swift run --skip-build tihulu-mac-instrument-engine sustain simulate pedal.json
 ```
 
 This uses LegacySustainOwners and emits only CC64 transitions, with final cleanup. Owner channels are zero-based in input, one-based in output. The first owner engages a pedal and the final owner releases it. No expressive CC, velocity or audio is generated.
@@ -110,7 +110,7 @@ cat > helper.json <<'JSON'
   {"owner":"helper","controls":[]}
 ]
 JSON
-swift run --skip-build tihulu-engine helper simulate helper.json
+swift run --skip-build tihulu-mac-instrument-engine helper simulate helper.json
 ```
 
 Each step replaces one owner's complete continuous-control snapshot. Allowed owners are touch, legacyTouch, helper and touchBar. Input channels are zero-based; output channels are one-based. CC and pitch-bend targets use the production LegacyContinuousOwners validator. Duplicate targets and reserved CCs fail; sustain uses the separate sustain command. A preserved gain value is not forcibly reset when the final owner leaves. Output contains simulated transitions, not MIDI delivery or RPN wire bytes.
