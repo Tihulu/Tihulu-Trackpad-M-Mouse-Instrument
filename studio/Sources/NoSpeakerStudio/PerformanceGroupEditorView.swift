@@ -558,6 +558,9 @@ struct PerformanceGroupEditorView: View {
                 liveControls
             }.padding(6)
         }.onAppear { load() }
+        .onChange(of:studio.groupGamepadsRunning) { running in
+            if !running { hapticSelection = [] }
+        }
         .sheet(item:$mobileDraft) { draft in
             PerformanceGroupMobileDraftView(draft:draft,apply:applyMobileDraft)
         }

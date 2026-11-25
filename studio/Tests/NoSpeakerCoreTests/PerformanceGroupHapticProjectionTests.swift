@@ -79,3 +79,32 @@ private func hapticCommand(_ group:PerformanceInstrumentGroup,_ target:SensorDes
     #expect(frame.tones.filter { $0.frequencyHz > 500 }.count == 3)
     #expect(abs(frame.tones.reduce(0.0) { $0+$1.amplitude }-1) < 0.0001)
 }
+
+@Test func groupHapticProjectionFollowsActualDeliveryFailureAndNeverRevivesOnCleanup() throws {
+    let a = hapticGroup(.gamepad1,notes:[60]), b = hapticGroup(.gamepad2,notes:[64])
+    let profile = PerformanceGroupProfile(groups:[a,b])
+    var output = try PerformanceGroupDelivery(profile:profile)
+    var haptic = try PerformanceGroupHapticProjection(profile:profile,selected:[a.id,b.id])
+    let first = try output.connect(.gamepad1,now:1)
+    let second = try output.connect(.gamepad2,now:1)
+    let accept:(PerformanceGroupCommand)->Bool = { item in
+        haptic.observe(item,accepted:true)
+        return true
+    }
+    _ = output.frame(lease:first,sequence:1,now:1.01,values:[.padA:1],send:accept)
+    _ = output.frame(lease:second,sequence:1,now:1.02,values:[.padA:1],send:accept)
+    #expect(haptic.frame()?.tones.count == 2)
+    let failed = output.frame(lease:first,sequence:2,now:1.03,values:[:],releasing:[.padA]) { item in
+        haptic.observe(item,accepted:false)
+        return false
+    }
+    #expect(failed.failedGroups == [a.id] && failed.pendingCleanup == [a.id])
+    #expect(haptic.activeGroups == [b.id] && haptic.frame()?.tones.count == 1)
+    let cleanup = output.retryCleanup(a.id,send:accept)
+    #expect(cleanup.pendingCleanup.isEmpty && haptic.activeGroups == [b.id])
+    _ = output.frame(lease:second,sequence:2,now:1.04,values:[:],releasing:[.padA],send:accept)
+    #expect(haptic.frame() == nil)
+    haptic.stop()
+    _ = output.panic(send:accept)
+    #expect(haptic.activeGroups.isEmpty && haptic.frame() == nil)
+}
