@@ -31,6 +31,11 @@ private struct ComplexValue {
     }
 }
 
+public enum VoiceAnalysisError: Error, LocalizedError {
+    case invalidSample
+    public var errorDescription: String? { "Voice audio contains an invalid sample." }
+}
+
 public enum HapticVoiceAnalyzer {
     public static let hopSeconds = 0.010
     public static let sampleRate = 16_000.0
@@ -88,7 +93,7 @@ public enum HapticVoiceAnalyzer {
     }
 
     public static func analyze(_ input: [Float]) -> [HapticVoiceFrame] {
-        // With no cancellation token the implementation cannot throw.
+        // Non-throwing compatibility path rejects invalid PCM without emitting events.
         (try? analyzeImpl(input,cancellation:nil)) ?? []
     }
 
@@ -117,7 +122,11 @@ public enum HapticVoiceAnalyzer {
 
         while offset + windowSize <= input.count {
             try cancellation?.check()
-            for index in 0..<windowSize { segment[index] = Double(input[offset+index]) }
+            for index in 0..<windowSize {
+                let sample = input[offset+index]
+                guard sample.isFinite else { throw VoiceAnalysisError.invalidSample }
+                segment[index] = Double(sample)
+            }
             rmsValues.append(sqrt(segment.reduce(0) { $0 + $1 * $1 } / Double(windowSize)))
             var frame = previous
 
