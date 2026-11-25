@@ -1226,6 +1226,7 @@ final class StudioController: ObservableObject {
     private var helperEffectsRearmGate = HelperRearmGate()
     private var touchSustainSettings = MIDIHelperSustainSettings()
     private var touchSustainState = MIDIHelperSustainState()
+    private var touchSustainRearmGate = HelperRearmGate()
     private var captureMonitor: PerformanceCaptureMonitor?
     private var captureHealthTask: Task<Void,Never>?
     private var captureGeneration: UInt64 = 0
@@ -3498,6 +3499,8 @@ final class StudioController: ObservableObject {
         if touchRunning && configuration.surfaceSelection != currentTouchConfiguration.surfaceSelection {
             touch?.invalidatePendingSamples()
             touchClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
+            liveTouchStates = []
+            touchSustainRearmGate.invalidate()
             touchSustainState.reset()
             midi?.releaseTouchSustain()
             touch?.setSustainActive(false)
@@ -3572,6 +3575,8 @@ final class StudioController: ObservableObject {
         touchIndependentDAWSustain = separateChannels != nil && independentDAWSustain
         touchSustainSettings = sustainSettings
         touch.invalidatePendingSamples()
+        liveTouchStates = []
+        touchSustainRearmGate.reset()
         touchSustainState.reset()
 
         if !instrumentPreviewRequested {
@@ -3613,6 +3618,7 @@ final class StudioController: ObservableObject {
 
     func stopTouch() {
         touchClickFence.end()
+        touchSustainRearmGate.reset()
         touchSeparateChannels = nil
         touchIndependentDAWSustain = false
         midi?.releaseTouchSustain()
@@ -3650,7 +3656,7 @@ final class StudioController: ObservableObject {
             // Fixed independent pedals are committed before note edges in
             // this same snapshot; legacy/MPE ordering remains unchanged.
             let earlySustain = touchMIDIOutEnabled && touchIndependentDAWSustain
-            if earlySustain { updateTouchSustain(states) }
+            if earlySustain { updateTouchSustain(states,freshFrame:true) }
             if touchMIDIOutEnabled {
                 midi?.sendTouchStates(
                     states,
@@ -3661,7 +3667,7 @@ final class StudioController: ObservableObject {
                     separateChannels: touchSeparateChannels
                 )
             }
-            if !earlySustain { updateTouchSustain(states) }
+            if !earlySustain { updateTouchSustain(states,freshFrame:true) }
         }
         guard instrumentPreviewRequested, states != touchStates,
               touchPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
@@ -3780,6 +3786,7 @@ final class StudioController: ObservableObject {
         if midiHelperRunning && surfaceSelection != helperSurfaceSelection {
             touch?.invalidatePendingSamples()
             helperClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
+            liveHelperStates = []
             helperSustainState.reset()
             helperRearmGate.invalidate()
             helperEffectsRearmGate.invalidate()
@@ -3846,7 +3853,10 @@ final class StudioController: ObservableObject {
         if !midiHelperRunning || transition.pedalChanged {
             helperClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
         }
-        if !midiHelperRunning || transition.pedalChanged || transition.effectsChanged { touch?.invalidatePendingSamples() }
+        if !midiHelperRunning || transition.pedalChanged || transition.effectsChanged {
+            touch?.invalidatePendingSamples()
+            liveHelperStates = []
+        }
         if midiHelperRunning {
             if transition.effectsChanged {
                 if helperSendToDAW {
@@ -3947,10 +3957,10 @@ final class StudioController: ObservableObject {
 
         let selectedClick = helperClickFence.permits(receipt:physicalClickReceipt,
             now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false)
-        let touching = states.contains(where: { $0.isTouching })
+        let touching = states.contains { $0.isTouching && helperSurfaceSelection.accepts($0.surface) }
         let pedalReady = helperRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame)
         let effectsReady = helperEffectsRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame)
-        let active = states.filter { $0.isTouching && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
+        let active = states.filter { $0.isTouching && helperSurfaceSelection.accepts($0.surface) && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
         if pedalReady {
         let snapshot = helperSustainState.update(
             trackpadContactSizes: active
@@ -3972,7 +3982,9 @@ final class StudioController: ObservableObject {
         if helperSendToDAW { midi?.setHelperSustain(snapshot.isActive,channel:helperTargetChannel) }
         else { midi?.releaseHelperSustain() }
         }
-        guard helperSendToDAW,effectsReady else { return }
+        // Physical click/pressure callbacks update sustain only; expressive
+        // output is driven exclusively by accepted multitouch frames.
+        guard freshFrame,helperSendToDAW,effectsReady else { return }
         // Sustain-only is a strict gate path. No pitch, CC7/11, pressure,
         // note or RPN generation from these contacts.
         guard helperAssignments.hasEffects else { return }
@@ -4340,10 +4352,13 @@ final class StudioController: ObservableObject {
         if touchRunning { updateTouchSustain(liveTouchStates) }
     }
 
-    private func updateTouchSustain(_ states: [TouchPerformanceState]) {
-        let active = states.filter { $0.isTouching && currentTouchConfiguration.surfaceSelection.accepts($0.surface) }
+    private func updateTouchSustain(_ states: [TouchPerformanceState],freshFrame:Bool = false) {
+        let selected = states.filter { currentTouchConfiguration.surfaceSelection.accepts($0.surface) }
+        let active = selected.filter { $0.isTouching && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
         let selectedClick = touchClickFence.permits(receipt:physicalClickReceipt,
             now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { currentTouchConfiguration.surfaceSelection.accepts($0) } ?? false)
+        guard touchSustainRearmGate.permits(touching:selected.contains(where: { $0.isTouching }),
+            clicking:selectedClick,freshFrame:freshFrame) else { return }
         let snapshot = touchSustainState.update(
             trackpadContactSizes: active
                 .filter { $0.surface == .trackpad }
