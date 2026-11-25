@@ -13,6 +13,7 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.tihulu.live-note-haptics", qos: .userInitiated)
     private var timer: DispatchSourceTimer?
     private var frame: HapticFrame?
+    private var attacks = HapticAttackBuffer<HapticFrame>()
     private var masterLevel = 0.75
     private var failure: (@Sendable (String) -> Void)?
 
@@ -39,15 +40,21 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
         }
     }
 
-    public func update(frame: HapticFrame?, masterLevel: Double) {
+    public func update(frame: HapticFrame?, masterLevel: Double,
+                       attack: Bool = false, discardPendingAttacks: Bool = false) {
         queue.sync {
             if let shared, let lease {
-                shared.update(lease, frame: frame, level: masterLevel)
+                shared.update(lease, frame: frame, level: masterLevel,
+                              attack: attack, discardPendingAttacks: discardPendingAttacks)
                 return
             }
             guard timer != nil else { return }
-            self.frame = frame
             self.masterLevel = masterLevel.isFinite ? min(1, max(0, masterLevel)) : 0
+            if discardPendingAttacks || self.masterLevel == 0 { attacks.removeAll() }
+            self.frame = frame
+            if attack, self.masterLevel > 0, let frame, frame.level > 0 {
+                attacks.offer(frame, now: ProcessInfo.processInfo.systemUptime)
+            }
         }
     }
 
@@ -61,13 +68,15 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
 
     private func clear() {
         frame = nil
+        attacks.removeAll()
         timer?.cancel()
         timer = nil
         failure = nil
     }
 
     private func tick() {
-        guard let frame else { return }
+        guard masterLevel > 0,
+              let frame = attacks.take(now: ProcessInfo.processInfo.systemUptime) ?? frame else { return }
         do { try driver.play(frame, masterLevel: masterLevel) }
         catch {
             let handler = failure

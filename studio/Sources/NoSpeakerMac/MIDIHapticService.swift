@@ -128,6 +128,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var callback: (@Sendable (LiveMIDIMessage) -> Void)?
 
     private var incomingNotes = LegacyIncomingNotes()
+    private var incomingHapticAttacks = HapticAttackBuffer<SensorCommand>()
     private var pitchBendByChannel: [Int: Int] = [:]
     private var incomingBendRanges: [Int:LegacyBendRangeState] = [:]
     private var modulationByChannel: [Int: Int] = [:]
@@ -220,6 +221,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         receiveEpoch.begin()
         enabled = true
         incomingNotes = LegacyIncomingNotes()
+        incomingHapticAttacks.removeAll()
         pitchBendByChannel.removeAll()
         incomingBendRanges.removeAll()
         modulationByChannel.removeAll()
@@ -308,6 +310,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         enabled = false
         incomingNotes = LegacyIncomingNotes()
+        incomingHapticAttacks.removeAll()
         pitchBendByChannel.removeAll()
         incomingBendRanges.removeAll()
         modulationByChannel.removeAll()
@@ -336,6 +339,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     public func setInputHapticsEnabled(_ enabled: Bool) {
         lock.lock()
         inputHapticsEnabled = enabled
+        if !enabled { incomingHapticAttacks.removeAll() }
         lock.unlock()
         if !enabled { renderFence.drain() }
     }
@@ -826,7 +830,14 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         let active = enabled
         let hapticsEnabled = inputHapticsEnabled
-        let notes = Array(incomingNotes.notes.prefix(6))
+        var notes = incomingNotes.notes.prefix(6).map { (key:$0.key,velocity:$0.value.velocity) }
+        let now = ProcessInfo.processInfo.systemUptime
+        let attacks = incomingHapticAttacks.drain(now:now)
+        var keys = Set(notes.map(\.key))
+        for attack in attacks where notes.count < 6 {
+            let key = LegacyIncomingNotes.Key(channel:attack.destination.channel,note:attack.destination.number)
+            if keys.insert(key).inserted { notes.append((key:key,velocity:attack.value)) }
+        }
         let bends = pitchBendByChannel
         let bendRanges = incomingBendRanges
         let modulation = modulationByChannel
@@ -837,11 +848,10 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.unlock()
         guard active, hapticsEnabled, !notes.isEmpty else { return }
 
-        let now = ProcessInfo.processInfo.systemUptime
         var tones: [HapticTone] = []
         var combinedLevel = 0.0
 
-        for (key, state) in notes {
+        for (key, velocity) in notes {
             guard let frequency = try? MusicTheory.frequency(midi: key.note) else { continue }
 
             let bend14 = bends[key.channel] ?? 8192
@@ -857,7 +867,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             let bentFrequency = frequency * pow(2.0, (bendSemitones + vibrato) / 12.0)
             tones.append(.init(frequencyHz: bentFrequency))
 
-            let velocityLevel = Double(state.velocity) / 127.0
+            let velocityLevel = Double(velocity) / 127.0
             let channelVolume = Double(volumes[key.channel] ?? 127) / 127.0
             let expression = Double(expressions[key.channel] ?? 127) / 127.0
             combinedLevel = max(combinedLevel, velocityLevel * channelVolume * expression)
@@ -933,6 +943,12 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         guard receiveEpoch.accepts(token) else { lock.unlock(); return }
         let commands = incomingNotes.noteOn(channel:channel,note:note,velocity:velocity)
+        if inputHapticsEnabled {
+            let now = ProcessInfo.processInfo.systemUptime
+            for command in commands where command.destination.kind == .note && command.value > 0 {
+                incomingHapticAttacks.offer(command,now:now)
+            }
+        }
         let notify = callback
         lock.unlock()
         notifyIncoming(commands,using:notify)
@@ -952,6 +968,8 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         guard receiveEpoch.accepts(token) else { lock.unlock(); return }
         let commands = incomingNotes.control(channel:channel,controller:controller,value:safeValue)
+        // Explicit channel reset must not replay queued attacks.
+        if [120,121,123].contains(controller) { incomingHapticAttacks.removeAll() }
         switch controller {
         case 1: modulationByChannel[channel] = safeValue
         case 7: volumeByChannel[channel] = safeValue

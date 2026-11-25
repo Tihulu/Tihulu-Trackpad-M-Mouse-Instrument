@@ -315,6 +315,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var gridDrumNotes: [TouchSurfaceKind: [Int: Int]] = [:]
     private var chordSlots: [TouchSurfaceKind: [Int: Int]] = [:]
     private var pendingDrumHits: [HapticFrame] = []
+    private var pendingMelodicAttacks = HapticAttackBuffer<[TouchPerformanceState]>()
     // Accessed only on the serial render queue.
     private var drumPriorityUntil = 0.0
     private var drumRenderToken: UUID?
@@ -436,6 +437,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
 
     private func invalidateSamplesLocked() {
         sampleRevision &+= 1
+        pendingMelodicAttacks.removeAll()
         latestStatesBySurface.removeAll()
         lastFrameBySurface.removeAll()
     }
@@ -481,7 +483,10 @@ public final class TouchInstrumentService: @unchecked Sendable {
     public func setSustainActive(_ isOn: Bool) {
         lock.lock()
         let changed = sustainActive != isOn
-        if changed { renderRevision &+= 1 }
+        if changed {
+            renderRevision &+= 1
+            pendingMelodicAttacks.removeAll()
+        }
         sustainActive = isOn
         if isOn {
             for state in liveHapticStates where configuration.output(for: state.surface).sendsHaptics && configuration.instrument(for: state.surface) != .drums {
@@ -661,7 +666,17 @@ public final class TouchInstrumentService: @unchecked Sendable {
             return
         }
         let liveConfig = configuration
+        let previousIDs = Set(liveHapticStates.map(\.id))
         liveHapticStates = combined.filter { $0.isDown }
+        if liveConfig.localHapticSound {
+            let attacks = liveHapticStates.filter {
+                !previousIDs.contains($0.id) && liveConfig.output(for:$0.surface).sendsHaptics &&
+                    liveConfig.instrument(for:$0.surface) != .drums
+            }
+            if !attacks.isEmpty {
+                pendingMelodicAttacks.offer(attacks,now:ProcessInfo.processInfo.systemUptime)
+            }
+        }
         let drums = liveHapticStates.filter {
             liveConfig.localHapticSound &&
             liveConfig.output(for: $0.surface).sendsHaptics &&
@@ -695,7 +710,17 @@ public final class TouchInstrumentService: @unchecked Sendable {
             lock.lock()
             defer { lock.unlock() }
             guard active && configuration.localHapticSound else { return }
-            snapshot = (configuration, liveHapticStates, sustainedHapticStates,
+            // A released attack that occurred entirely between ticks gets
+            // one bounded local pulse. Current contact state always wins.
+            var current = liveHapticStates
+            if pendingDrumHits.isEmpty {
+                let now = ProcessInfo.processInfo.systemUptime
+                var liveIDs = Set(current.map(\.id))
+                for attacks in pendingMelodicAttacks.drain(now:now) {
+                    current += attacks.filter { liveIDs.insert($0.id).inserted }
+                }
+            }
+            snapshot = (configuration, current, sustainedHapticStates,
                         sustainActive, pendingDrumHits, renderRevision)
             pendingDrumHits.removeAll(keepingCapacity: true)
         }
