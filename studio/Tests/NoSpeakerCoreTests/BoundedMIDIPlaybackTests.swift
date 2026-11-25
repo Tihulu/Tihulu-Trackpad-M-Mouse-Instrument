@@ -97,3 +97,18 @@ private func playbackClip() -> MIDIClip {
     }
     #expect(player.state == .faulted)
 }
+
+@Test func boundedPlaybackResamplesClockAfterEverySend() throws {
+    var player=try BoundedMIDIPlayback(clip:playbackClip())
+    _=try player.begin(now:0)
+    var now:UInt64=0
+    var commands:[SensorCommand]=[]
+    player.advance(now:now,refreshNow:{ now }) { command in
+        commands.append(command)
+        if command.value>0 { now=51_000_000 }
+        return true
+    }
+    #expect(player.state == .faulted)
+    #expect(commands.map(\.value)==[90,0])
+    #expect(player.outstanding.isEmpty)
+}
