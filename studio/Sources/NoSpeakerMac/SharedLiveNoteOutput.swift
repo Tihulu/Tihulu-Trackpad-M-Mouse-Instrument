@@ -117,7 +117,7 @@ public final class SharedLiveNoteOutput: @unchecked Sendable {
         let now = clock()
         for source in Array(inputs.keys) {
             guard var input = inputs[source] else { continue }
-            let frame = input.attacks.take(now:now) ?? input.frame
+            let frame = LiveHapticFrameSelection.select(held:input.frame,attack:input.attacks.take(now:now))
             inputs[source] = input
             guard coordinator.submit(frame, from:input.lease, masterLevel:input.level) else {
                 failLocked("Invalid or expired shared haptic source.")

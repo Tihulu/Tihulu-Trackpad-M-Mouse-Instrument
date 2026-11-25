@@ -76,7 +76,8 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
 
     private func tick() {
         guard masterLevel > 0,
-              let frame = attacks.take(now: ProcessInfo.processInfo.systemUptime) ?? frame else { return }
+              let frame = LiveHapticFrameSelection.select(held:frame,
+                  attack:attacks.take(now:ProcessInfo.processInfo.systemUptime)) else { return }
         do { try driver.play(frame, masterLevel: masterLevel) }
         catch {
             let handler = failure
