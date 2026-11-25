@@ -183,24 +183,47 @@ final class StudioController: ObservableObject {
         if states != groupSourceStates { groupSourceStates = states }
     }
 
-    func startGroupGamepads(profile: PerformanceGroupProfile, allowLayering: Bool) {
+    // Native and physical acceptance must explicitly enable this experimental
+    // compile-time switch. Default and stable builds never activate tuned MIDI.
+    static var groupMPEStartEnabled: Bool {
+        #if TIHULU_GROUP_MPE_LIVE
+        true
+        #else
+        false
+        #endif
+    }
+
+    @Published private(set) var groupTunedConfiguration: PerformanceGroupTuningConfiguration?
+
+    func startGroupGamepads(profile: PerformanceGroupProfile, allowLayering: Bool,
+                            tuning: PerformanceGroupTuningConfiguration? = nil,
+                            confirmedTuning: Bool = false) {
+        guard tuning == nil || Self.groupMPEStartEnabled else {
+            groupGamepadStatus = "Live MPE is disabled in this build; use the offline preview."
+            return
+        }
+        guard groupTunedConfiguration == nil else {
+            groupGamepadStatus = "Close the retained tuned ports before any new group performance."
+            return
+        }
         guard !patchRunning, !groupGamepadsRunning, !midiRunning, !midiHelperRunning,
               !touchRunning, !sequenceRunning, !chordArmed, !touchBarOutputArmed,
               !isPlaying, !speakerBusy, !liveHingeEnabled, !captureArmed, !pointerCaptured else {
             groupGamepadStatus = "Stop other live performances and Builder before starting group MIDI."
             return
         }
-        guard groupCleanupIDs.isEmpty, groupDisposalCount == 0 else {
-            groupGamepadStatus = "Retry group cleanup before starting."
+        let activation: PerformanceGroupActivationPlan
+        do {
+            activation = try .init(profile:profile,mode:tuning.map { .tuned($0) } ?? .standard,
+                allowLayering:allowLayering,confirmedTuning:confirmedTuning,
+                registeredIDs:groupHost.registeredIDs,cleanupIDs:groupHost.pendingCleanup,
+                pendingDisposalCount:groupHost.pendingDisposalCount)
+        } catch {
+            groupGamepadStatus = "Group Start rejected: " + String(describing:error)
             return
         }
         let routes = profile.groups.flatMap { $0.patch.routes }
         let sources = Set(routes.map(\.source))
-        guard PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true,allowScalars:true,allowCamera:true),
-              (allowLayering || profile.layeredInputs.isEmpty) else {
-            groupGamepadStatus = "Use a valid saved local group profile and explicitly approve shared signals."
-            return
-        }
         if sources.contains(.camera) {
             if let retiringPatchCamera, !retiringPatchCamera.isStopped {
                 groupGamepadStatus = "Previous camera is stopping. Restart after release."
@@ -235,11 +258,18 @@ final class StudioController: ObservableObject {
             return
         }
         do {
-            try groupHost.startGamepads(profile:profile,allowLayering:allowLayering,allowSurfaces:true,allowScalars:true,allowCamera:true)
+            try groupHost.startGamepads(profile:activation.profile,allowLayering:activation.allowLayering,
+                allowSurfaces:true,allowScalars:true,allowCamera:true,tuning:activation.tuning)
+            groupTunedConfiguration = tuning
         } catch {
             builderGamepads.stop()
             refreshGroupOutputState()
-            groupGamepadStatus = "Group ports could not open: " + String(describing:error)
+            // Preserve the requested mode while any partially opened endpoints
+            // or cleanup debt remain. Do not advertise successful MPE setup.
+            if tuning != nil, !groupRegisteredIDs.isEmpty || !groupCleanupIDs.isEmpty || groupDisposalCount != 0 {
+                groupTunedConfiguration = tuning
+            }
+            groupGamepadStatus = "Group setup failed: " + String(describing:error) + ". No fallback; check cleanup and close ports."
             return
         }
         let token = UUID()
@@ -304,7 +334,9 @@ final class StudioController: ObservableObject {
             camera.start(deviceID:patchCameraDeviceID)
         }
         refreshGroupOutputState()
-        groupGamepadStatus = "Group ports registered. Release controller controls and lift each touch surface before playing."
+        groupGamepadStatus = tuning == nil
+            ? "Standard group ports registered. Release controller controls and lift each touch surface before playing."
+            : "MPE setup sent; receiver not verified. Release controller controls and lift each touch surface before playing."
         for source in GamepadFrame.orderedSources where groupGamepadTokens[source] != nil {
             receiveGroupGamepad(source:source,frame:builderGamepads.read(source),run:token)
         }
@@ -492,7 +524,7 @@ final class StudioController: ObservableObject {
             refreshSharedSurfaceMonitoring()
         }
         groupGamepadStatus = groupCleanupIDs.isEmpty
-            ? "Group MIDI stopped. Registered ports retained for restart."
+            ? (groupTunedConfiguration == nil ? "Group MIDI stopped. Registered ports retained for restart." : "MPE stopped. Close retained ports before another Start.")
             : "Group MIDI stopped; cleanup pending. Retry before restarting."
     }
 
@@ -511,6 +543,9 @@ final class StudioController: ObservableObject {
         }
         _ = groupHost.retryDisposal()
         refreshGroupOutputState()
+        if groupRegisteredIDs.isEmpty && groupCleanupIDs.isEmpty && groupDisposalCount == 0 && !groupGamepadsRunning {
+            groupTunedConfiguration = nil
+        }
         groupGamepadStatus = groupCleanupIDs.isEmpty && groupDisposalCount == 0
             ? "No pending group cleanup." : "Group cleanup still pending. Check CoreMIDI and retry."
     }
@@ -519,6 +554,7 @@ final class StudioController: ObservableObject {
         guard !groupGamepadsRunning else { return }
         let closed = groupHost.close()
         refreshGroupOutputState()
+        if closed { groupTunedConfiguration = nil }
         groupGamepadStatus = closed ? "Group MIDI ports closed." : "Group close refused or disposal failed; retry cleanup."
     }
 
