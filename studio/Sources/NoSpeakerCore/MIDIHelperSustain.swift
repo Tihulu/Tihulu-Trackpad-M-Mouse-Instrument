@@ -131,16 +131,19 @@ public struct MIDIHelperSustainState: Sendable {
         trackpadClickDown: Bool = false,
         magicMouseClickDown: Bool = false,
         trackpadClickPressure: Double? = nil,
-        magicMouseContactSizes: [Double] = []
+        magicMouseContactSizes: [Double] = [],
+        freshContacts: Bool = true
     ) -> MIDIHelperSustainSnapshot {
         let threshold = settings.trackpadContactThreshold
         let validSizes = trackpadContactSizes.filter { $0.isFinite && (0...1).contains($0) }
         let contactSize = validSizes.max() ?? 0
         let trackpadTouching = !validSizes.isEmpty
-        if previousTrackpadGesture != settings.trackpadGesture || previousTrackpadSensor != settings.trackpadSensor {
+        let trackpadModeChanged = previousTrackpadGesture != settings.trackpadGesture || previousTrackpadSensor != settings.trackpadSensor
+        let mouseModeChanged = previousMouseGesture != settings.magicMouseGesture
+        if trackpadModeChanged {
             trackpadHeld = false; trackpadLatched = false
         }
-        if previousMouseGesture != settings.magicMouseGesture { mouseLatched = false }
+        if mouseModeChanged { mouseLatched = false }
         previousTrackpadGesture = settings.trackpadGesture
         previousTrackpadSensor = settings.trackpadSensor
         previousMouseGesture = settings.magicMouseGesture
@@ -150,6 +153,14 @@ public struct MIDIHelperSustainState: Sendable {
             trackpadHeld = false
             trackpadLatched = false
             trackpadActive = false
+        } else if !freshContacts && (
+            settings.trackpadGesture == .touchHold || settings.trackpadGesture == .tapToggle ||
+            (settings.trackpadGesture == .contactThreshold && settings.trackpadSensor == .contactSize)
+        ) {
+            // A physical mouse-button callback is not a multitouch sample.
+            // Preserve the last admitted contact result, never synthesize a
+            // lift or onset from missing, stale or reset contact caches.
+            trackpadActive = !trackpadModeChanged && snapshot.trackpadActive
         } else {
             switch settings.trackpadGesture {
             case .contactThreshold:
@@ -196,6 +207,8 @@ public struct MIDIHelperSustainState: Sendable {
         if !settings.magicMouseEnabled {
             mouseLatched = false
             mouseActive = false
+        } else if !freshContacts && (settings.magicMouseGesture == .touchHold || settings.magicMouseGesture == .tapToggle) {
+            mouseActive = !mouseModeChanged && snapshot.magicMouseActive
         } else {
             switch settings.magicMouseGesture {
             case .touchHold:
@@ -224,9 +237,11 @@ public struct MIDIHelperSustainState: Sendable {
             }
         }
 
-        trackpadWasTouching = trackpadTouching
+        if freshContacts {
+            trackpadWasTouching = trackpadTouching
+            mouseWasTouching = magicMouseTouching
+        }
         trackpadWasClicking = trackpadClickDown
-        mouseWasTouching = magicMouseTouching
         mouseWasClicking = magicMouseClickDown
         snapshot = .init(trackpadActive: trackpadActive, magicMouseActive: mouseActive)
         return snapshot

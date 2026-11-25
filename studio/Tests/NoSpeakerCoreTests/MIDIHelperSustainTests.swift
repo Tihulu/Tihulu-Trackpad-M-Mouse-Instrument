@@ -552,3 +552,72 @@ import Testing
     #expect(targets == [1,2,9])
     #expect(LegacyTouchSustainTargets.routed(active:false,previous:targets,current:[2],fixed:[9]).isEmpty)
 }
+
+@Test func clickOnlyUpdatesCannotReplayOrInventContactTapEdges() {
+    var engine = MIDIHelperSustainState()
+    let settings = MIDIHelperSustainSettings(trackpadEnabled:true,magicMouseEnabled:true,
+        magicMouseGesture:.tapToggle,trackpadGesture:.tapToggle)
+    let stale = engine.update(trackpadContactSizes:[0.9],magicMouseTouching:true,
+        settings:settings,magicMouseContactSizes:[0.9],freshContacts:false)
+    #expect(!stale.isActive)
+    let onset = engine.update(trackpadContactSizes:[0.9],magicMouseTouching:true,settings:settings)
+    #expect(onset.trackpadActive && onset.magicMouseActive)
+    let missing = engine.update(trackpadContactSizes:[],magicMouseTouching:false,
+        settings:settings,trackpadClickDown:true,freshContacts:false)
+    #expect(missing == onset)
+    let held = engine.update(trackpadContactSizes:[0.8],magicMouseTouching:true,settings:settings)
+    #expect(held == onset)
+    _ = engine.update(trackpadContactSizes:[],magicMouseTouching:false,settings:settings)
+    let newTap = engine.update(trackpadContactSizes:[0.8],magicMouseTouching:true,settings:settings)
+    #expect(!newTap.isActive)
+}
+
+@Test func clickOnlyUpdatesPreserveContactSizeHysteresisAndTouchHold() {
+    var engine = MIDIHelperSustainState()
+    let settings = MIDIHelperSustainSettings(trackpadEnabled:true,trackpadContactThreshold:0.55,
+        magicMouseEnabled:true,magicMouseGesture:.touchHold)
+    let active = engine.update(trackpadContactSizes:[0.8],magicMouseTouching:true,settings:settings)
+    #expect(active.trackpadActive && active.magicMouseActive)
+    let callback = engine.update(trackpadContactSizes:[0.01],magicMouseTouching:false,
+        settings:settings,freshContacts:false)
+    #expect(callback == active)
+    let hysteresis = engine.update(trackpadContactSizes:[0.5],magicMouseTouching:true,settings:settings)
+    #expect(hysteresis == active)
+    let lift = engine.update(trackpadContactSizes:[],magicMouseTouching:false,settings:settings)
+    #expect(!lift.isActive)
+}
+
+@Test func clickPressureRemainsLiveWhileIndependentContactHoldIsPreserved() {
+    var engine = MIDIHelperSustainState()
+    let settings = MIDIHelperSustainSettings(trackpadEnabled:true,trackpadContactThreshold:0.55,
+        magicMouseEnabled:true,magicMouseGesture:.touchHold,trackpadSensor:.clickPressure)
+    let contact = engine.update(trackpadContactSizes:[],magicMouseTouching:true,settings:settings)
+    #expect(!contact.trackpadActive && contact.magicMouseActive)
+    let press = engine.update(trackpadContactSizes:[],magicMouseTouching:false,settings:settings,
+        trackpadClickDown:true,trackpadClickPressure:0.8,freshContacts:false)
+    #expect(press.trackpadActive && press.magicMouseActive)
+    engine.invalidatePhysicalClicks(settings:settings)
+    let recovered = engine.update(trackpadContactSizes:[],magicMouseTouching:false,
+        settings:settings,freshContacts:false)
+    #expect(!recovered.trackpadActive && recovered.magicMouseActive)
+    let lift = engine.update(trackpadContactSizes:[],magicMouseTouching:false,settings:settings)
+    #expect(!lift.isActive)
+}
+
+@Test func clickOnlyModeChangeCannotCarryOverPriorContactResult() {
+    var engine = MIDIHelperSustainState()
+    var settings = MIDIHelperSustainSettings(trackpadEnabled:true,magicMouseEnabled:true,
+        magicMouseGesture:.touchHold,trackpadGesture:.touchHold)
+    let active = engine.update(trackpadContactSizes:[0.9],magicMouseTouching:true,settings:settings)
+    #expect(active.isActive)
+    settings.trackpadGesture = .tapToggle
+    settings.magicMouseGesture = .tapToggle
+    let changed = engine.update(trackpadContactSizes:[0.9],magicMouseTouching:true,
+        settings:settings,freshContacts:false)
+    #expect(!changed.isActive)
+    let held = engine.update(trackpadContactSizes:[0.9],magicMouseTouching:true,settings:settings)
+    #expect(!held.isActive)
+    _ = engine.update(trackpadContactSizes:[],magicMouseTouching:false,settings:settings)
+    let next = engine.update(trackpadContactSizes:[0.9],magicMouseTouching:true,settings:settings)
+    #expect(next.trackpadActive && next.magicMouseActive)
+}

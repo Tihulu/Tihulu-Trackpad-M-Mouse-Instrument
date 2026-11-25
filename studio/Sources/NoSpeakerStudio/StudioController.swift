@@ -3964,7 +3964,8 @@ final class StudioController: ObservableObject {
             trackpadClickDown: selectedClick && clickedSurface == .trackpad,
             magicMouseClickDown: selectedClick && clickedSurface == .magicMouse,
             trackpadClickPressure: trackpadClickPressure,
-            magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure)
+            magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure),
+            freshContacts:freshFrame
         )
         if midiHelperTrackpadSustainActive != snapshot.trackpadActive { midiHelperTrackpadSustainActive = snapshot.trackpadActive }
         if midiHelperMagicMouseSustainActive != snapshot.magicMouseActive { midiHelperMagicMouseSustainActive = snapshot.magicMouseActive }
@@ -4397,7 +4398,8 @@ final class StudioController: ObservableObject {
             trackpadClickDown: selectedClick && clickedSurface == .trackpad,
             magicMouseClickDown: selectedClick && clickedSurface == .magicMouse,
             trackpadClickPressure: trackpadClickPressure,
-            magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure)
+            magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure),
+            freshContacts:freshFrame
         )
         let hapticsEnabled = currentTouchConfiguration.localHapticSound &&
             currentTouchConfiguration.selectedSurfaces.contains {
