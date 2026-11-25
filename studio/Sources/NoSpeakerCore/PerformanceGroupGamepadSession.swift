@@ -52,6 +52,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
         var lastSurfaceReceipt: Double?
         var sequence: UInt64 = 0
         var lastActive: [SensorSignal:Double]?
+        var remoteFence = PerformanceGroupRemoteFence()
+        var remoteLastReceipt: Double?
         mutating func reset() {
             armed = false; lease = nil; lastSeen = nil; sequence = 0; lastActive = nil
         }
@@ -61,6 +63,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     private var delivery: any LocalGroupOutput
     private let mapped: [SensorSource:Set<SensorSignal>]
     private let smoothed: Set<SensorSource>
+    private let remoteModes: [SensorSource:PerformanceGroupRemoteSurface]
     private var bindings: [SensorSource:Binding] = [:]
     private var cameraTracking = AirTrackingGate()
     private var clock = 0.0
@@ -95,11 +98,15 @@ public struct PerformanceGroupGamepadSession: Sendable {
     }
 
     public static func supports(_ profile:PerformanceGroupProfile, allowSurfaces:Bool = false,
-                                allowScalars:Bool = false, allowCamera:Bool = false) -> Bool {
+                                allowScalars:Bool = false, allowCamera:Bool = false,
+                                allowRemote:Bool = false) -> Bool {
         let routes = profile.groups.flatMap { $0.patch.routes }
+        let remote = Dictionary(grouping:routes.filter { $0.source == .phone || $0.source == .tablet },by:{ $0.source })
+        guard remote.isEmpty || (allowRemote && remote.values.allSatisfy({ PerformanceGroupRemoteSurface.mode(for:$0) != nil })) else { return false }
         return profile.isValid && !routes.isEmpty && routes.allSatisfy {
             guard permitsLiveControl($0) else { return false }
             if GamepadFrame.sources.contains($0.source) { return GamepadFrame.permits($0) }
+            if $0.source == .phone || $0.source == .tablet { return allowRemote }
             if allowCamera, $0.source == .camera {
                 return [.x,.y,.gesture].contains($0.signal) &&
                     ContinuousResponse.isContinuous($0.destination)
@@ -114,12 +121,14 @@ public struct PerformanceGroupGamepadSession: Sendable {
 
     public init(profile: PerformanceGroupProfile, allowLayering: Bool = false,
                 allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false,
-                tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:]) throws {
-        guard Self.supports(profile,allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera) else {
+                tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:], allowRemote:Bool = false) throws {
+        guard Self.supports(profile,allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera,allowRemote:allowRemote) else {
             throw AdmissionError.unsupportedProfile
         }
         let routes = profile.groups.flatMap { $0.patch.routes }
         mapped = Dictionary(grouping:routes,by:{ $0.source }).mapValues { Set($0.map(\.signal)) }
+        remoteModes = Dictionary(grouping:routes.filter { $0.source == .phone || $0.source == .tablet },by:{ $0.source })
+            .compactMapValues { PerformanceGroupRemoteSurface.mode(for:$0) }
         smoothed = Set(routes.filter { ($0.response?.smoothingMS ?? 0) > 0 }.map(\.source))
         if tuning.isEmpty {
             delivery = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
@@ -146,6 +155,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         // Explicitly selected scalar adapters have no startup note gate.
         // They only admit continuous controls, never notes or pedals.
         binding.armed = source == .lid || source == .touchBar
+        if remoteModes[source] != nil { binding.remoteLastReceipt = now }
         bindings[source] = binding
         return token
     }
@@ -409,6 +419,80 @@ public struct PerformanceGroupGamepadSession: Sendable {
         return .init(status:.delivered,reports:reports)
     }
 
+    /// Only a trusted, authenticated host adapter may bind a remote slot and
+    /// supply its token and monotonic receipt. No listener is opened here.
+    /// One selected surface per slot; an explicit neutral snapshot arms it.
+    /// Idle heartbeats never renew a held note, pad or control.
+    public mutating func receiveRemote(_ source:SensorSource,token:UUID,bytes:Data,
+                                       hostTime:Double,now:Double,
+                                       send:(PerformanceGroupCommand)->Bool) -> Result {
+        guard !retired, let mode = remoteModes[source], bindings[source]?.token == token else {
+            return .init(status:.ignored,reports:[])
+        }
+        guard now.isFinite, now >= clock else {
+            return .init(status:.lost,reports:reset(Set(bindings.keys),send:send))
+        }
+        clock = now
+        var reports = reset(staleSources(now:now),send:send)
+        guard var binding = bindings[source] else { return .init(status:.lost,reports:reports) }
+        guard let frame = binding.remoteFence.accept(bytes,receipt:hostTime,now:now) else {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        binding.remoteLastReceipt = hostTime
+        if frame.kind == .heartbeat {
+            guard binding.lease == nil else {
+                reports += reset([source],send:send)
+                return .init(status:.lost,reports:reports)
+            }
+            bindings[source] = binding
+            return .init(status:binding.armed ? .ready : .waitingForNeutral,reports:reports)
+        }
+        let signals = mapped[source] ?? []
+        guard let values = mode.snapshot(frame,mapped:signals) else {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        if let lease = binding.lease, !delivery.hasLease(lease) {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        if !binding.armed {
+            binding.armed = values.isEmpty
+            bindings[source] = binding
+            return .init(status:binding.armed ? .ready : .waitingForNeutral,reports:reports)
+        }
+        if values.isEmpty {
+            if let lease = binding.lease { reports.append(delivery.disconnect(lease,send:send)) }
+            binding.reset()
+            binding.armed = true
+            bindings[source] = binding
+            return .init(status:.ready,reports:reports)
+        }
+        binding.lastSeen = hostTime
+        if binding.lease == nil {
+            do { binding.lease = try delivery.connect(source,now:now) }
+            catch {
+                reports += reset([source],send:send)
+                return .init(status:.admissionRejected,reports:reports)
+            }
+        }
+        let stride = UInt64(SensorSignal.allCases.count+1)
+        guard let lease = binding.lease, binding.sequence < (UInt64.max-stride)/stride else {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        binding.sequence += 1
+        bindings[source] = binding
+        reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,
+            values:values,releasing:signals.subtracting(values.keys),send:send))
+        if !delivery.hasLease(lease) {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        return .init(status:.delivered,reports:reports)
+    }
+
     /// Host must call at the existing watchdog cadence. No change to the
     /// physical deadline, and no timeout renewal by unrelated controllers.
     public mutating func expire(now: Double, send: (PerformanceGroupCommand) -> Bool) -> [PerformanceGroupDelivery.Report] {
@@ -442,8 +526,9 @@ public struct PerformanceGroupGamepadSession: Sendable {
 
     private func staleSources(now: Double) -> Set<SensorSource> {
         Set(bindings.compactMap { source,binding in
-            guard let last = binding.lastSeen, now-last >= Self.timeout else { return nil }
-            return source
+            if let last = binding.lastSeen, now-last >= Self.timeout { return source }
+            if let last = binding.remoteLastReceipt, now-last >= 2 { return source }
+            return nil
         })
     }
 
@@ -454,8 +539,13 @@ public struct PerformanceGroupGamepadSession: Sendable {
         for source in sources {
             guard var binding = bindings[source] else { continue }
             if let lease = binding.lease { leases.insert(lease) }
-            binding.reset()
-            bindings[source] = binding
+            // Remote loss retires the authenticated slot token. A late packet
+            // may not rearm it; the transport must pair/bind explicitly again.
+            if remoteModes[source] != nil { bindings.removeValue(forKey:source) }
+            else {
+                binding.reset()
+                bindings[source] = binding
+            }
         }
         guard !leases.isEmpty else { return [] }
         return [delivery.disconnectBatch(leases,send:send)]
