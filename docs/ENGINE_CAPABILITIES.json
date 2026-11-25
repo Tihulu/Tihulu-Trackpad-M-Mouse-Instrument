@@ -1,0 +1,152 @@
+{
+  "schema": 1,
+  "status": "experimental",
+  "scope": "candidate source capabilities, not runtime or release acceptance",
+  "products": [
+    {
+      "name": "NoSpeakerCore",
+      "kind": "swift-library",
+      "platform": "portable core",
+      "path": "studio/Sources/NoSpeakerCore"
+    },
+    {
+      "name": "NoSpeakerMac",
+      "kind": "swift-library",
+      "platform": "macOS native only",
+      "path": "studio/Sources/NoSpeakerMac"
+    },
+    {
+      "name": "tihulu-engine",
+      "kind": "json-cli",
+      "platform": "SwiftPM offline",
+      "path": "studio/Sources/TihuluEngineCLI/CLI.swift"
+    }
+  ],
+  "features": [
+    {
+      "id": "sensor-routing",
+      "api": [
+        "SensorRouter",
+        "InstrumentPatch",
+        "PatchSimulation"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/SensorRouter.swift",
+        "studio/Sources/NoSpeakerCore/InstrumentPatch.swift"
+      ],
+      "cli": [
+        "patch example",
+        "patch validate",
+        "patch routes"
+      ],
+      "status": "offline-core"
+    },
+    {
+      "id": "group-routing",
+      "api": [
+        "PerformanceGroupProfile",
+        "PerformanceGroupRouter",
+        "PerformanceGroupDelivery",
+        "PerformanceGroupEndpointPlan"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/PerformanceGroupProfile.swift",
+        "studio/Sources/NoSpeakerCore/PerformanceGroupRouter.swift",
+        "studio/Sources/NoSpeakerCore/PerformanceGroupDelivery.swift",
+        "studio/Sources/NoSpeakerCore/PerformanceGroupEndpointPlan.swift"
+      ],
+      "cli": [
+        "groups example",
+        "groups validate",
+        "groups ports",
+        "groups simulate"
+      ],
+      "status": "offline-core; no native group registration in this branch"
+    },
+    {
+      "id": "sustain-helper",
+      "api": [
+        "LegacySustainOwners",
+        "LegacyContinuousOwners",
+        "HelperRoutingSnapshot"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/LegacySustainOwners.swift",
+        "studio/Sources/NoSpeakerCore/LegacyContinuousOwners.swift",
+        "studio/Sources/NoSpeakerCore/HelperRoutingSnapshot.swift"
+      ],
+      "cli": [],
+      "status": "library; dedicated CLI planned"
+    },
+    {
+      "id": "tuning-mpe",
+      "api": [
+        "AirTunedOutput"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/AirTunedOutput.swift"
+      ],
+      "cli": [],
+      "status": "library; separate group MPE not implemented"
+    },
+    {
+      "id": "haptic-mixing",
+      "api": [
+        "HapticFrameMixer"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/HapticFrameMixer.swift"
+      ],
+      "cli": [],
+      "status": "library; hardware CLI planned"
+    },
+    {
+      "id": "native-midi-touch",
+      "api": [
+        "MIDIHapticService",
+        "ChordMIDIOutput"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerMac/MIDIHapticService.swift",
+        "studio/Sources/NoSpeakerMac/TouchInstrumentService.swift"
+      ],
+      "cli": [],
+      "status": "native-library; requires permissions and lifecycle acceptance"
+    },
+    {
+      "id": "daw-setup",
+      "api": [
+        "DAWSetupProjection"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/DAWSetupProjection.swift",
+        "studio/Sources/NoSpeakerStudio/DAWSetupAssistantView.swift"
+      ],
+      "cli": [
+        "patch routes",
+        "groups ports"
+      ],
+      "status": "read-only logical setup; no receiver confirmation"
+    },
+    {
+      "id": "source-retrieval",
+      "api": [],
+      "source": [
+        "tools/repo_index.py"
+      ],
+      "cli": [
+        "build",
+        "search"
+      ],
+      "status": "lexical offline; semantic requires trusted local embedding model"
+    }
+  ],
+  "constraints": {
+    "automaticHardwareActivation": false,
+    "defaultNetworkAccess": false,
+    "stableAPI": false,
+    "receiverConfirmation": false,
+    "physicalAcceptance": "separate",
+    "license": "MIT with upstream attribution; additional dependency and model licenses may differ"
+  }
+}
