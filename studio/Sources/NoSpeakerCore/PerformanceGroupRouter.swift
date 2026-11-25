@@ -113,7 +113,9 @@ public struct PerformanceGroupRouter: Sendable {
         return disconnectBatch(stale)
     }
 
-    private mutating func disconnectBatch(_ ids: Set<UUID>) -> [PerformanceGroupCommand] {
+    public func hasLease(_ id: UUID) -> Bool { leases[id] != nil }
+
+    public mutating func disconnectBatch(_ ids: Set<UUID>) -> [PerformanceGroupCommand] {
         var members: [UUID: Set<UUID>] = [:]
         for id in ids {
             guard let lease = leases.removeValue(forKey:id) else { continue }
