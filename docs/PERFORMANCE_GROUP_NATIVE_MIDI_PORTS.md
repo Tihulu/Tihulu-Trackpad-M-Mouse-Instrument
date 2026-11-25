@@ -1,0 +1,13 @@
+# Experimental native group MIDI port host
+
+Base: corrected #164 head 4068d89580bc4e6f96167fd440d3a819122e8993. Previous #164 core job 139123658938 passed 479 tests. #162/#163 native build failed in the inherited SwiftUI group editor expression at line 99; identical typed-row extraction applied to #162, #163 and #164. Corrected CI pending.
+
+This slice supplies real CoreMIDI source registration code, not a user-accessible live performance. The main-actor process-lifetime group host shares the existing retained MIDI client and existing ChordMIDIOutput packet encoder. No automatic source creation, new device polling, input tap, timer or background service. No UI invokes start, frame or connect. A future adapter must be explicitly armed, enforce current source-specific deadlines and neutral rearm, and keep frame processing bounded. Host frame copying and multi-group throughput still require profiling.
+
+Registration preflights every planned Int32 ID using MIDIObjectFindByUniqueID; only kMIDIObjectNotFound permits creation. It rechecks before assignment, sets kMIDIPropertyUniqueID and verifies lookup returns the newly owned handle. Never take over an existing endpoint or silently change the ID. Publish group handles only after all sources succeed. Any partial failure rolls back newly created handles in reverse order; failed disposal is quarantined and blocks a new open. The isolated-source registry excludes group ports from the legacy bridge at source enumeration; successful disposal removes the owned handle from that registry. Concurrent external CoreMIDI changes and system restart need physical tests.
+
+Soft panic retains the endpoint plan for a subsequent explicit start with the same IDs; a different plan requires clean close. Delivery debt blocks restart or close; cleanup is retried per group. Disposal debt blocks reopen. Local CoreMIDI status is not receiver or audio confirmation. Process termination or an unavailable MIDIServer may require manual receiver recovery. No independent MPE transformation, live source adapters, persistent endpoint user alias, or DAW assistant integration yet. No stable activation, merge, release, or install.
+
+Five injected-registry regression tests cover reuse, preflight conflict, unknown registry status, partial create, failed rollback, guarded close and retry. Native wrapper compilation and physical registration/send are separate gates. No test touches a real user's MIDI ports.
+
+Apple API contracts: https://developer.apple.com/documentation/coremidi/midiobjectfindbyuniqueid(_:_:_:) ; https://developer.apple.com/documentation/coremidi/kmidipropertyuniqueid .
