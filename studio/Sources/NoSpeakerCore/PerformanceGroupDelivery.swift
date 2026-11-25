@@ -53,6 +53,13 @@ public struct PerformanceGroupDelivery: Sendable {
         return deliver(commands,send:send)
     }
 
+    public func hasLease(_ id: UUID) -> Bool { router.hasLease(id) }
+
+    public mutating func disconnectBatch(_ leases: Set<UUID>, send: (PerformanceGroupCommand) -> Bool) -> Report {
+        let commands = router.disconnectBatch(leases)
+        return deliver(commands,send:send)
+    }
+
     public mutating func expire(now: Double, timeout: Double, send: (PerformanceGroupCommand) -> Bool) -> Report {
         let commands = router.expire(now:now,timeout:timeout)
         return deliver(commands,send:send)
