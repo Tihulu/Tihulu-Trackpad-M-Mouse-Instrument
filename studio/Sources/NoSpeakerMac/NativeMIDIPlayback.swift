@@ -92,7 +92,7 @@ public final class NativeMIDIPlayback {
                 break
             }
             let cancelled=stopRequested
-            player.advance(now:Self.now(),refreshNow:{ Self.now() }) { command in
+            player.advance(now:Self.now(),refreshNow:{ Self.now() },shouldStop:{ cancelled || Task.isCancelled }) { command in
                 if command.value > 0 && (cancelled || Task.isCancelled) { return false }
                 return gate.send(command)
             }
