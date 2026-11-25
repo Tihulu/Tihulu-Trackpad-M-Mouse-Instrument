@@ -8,6 +8,7 @@ struct PerformanceGroupEditorView: View {
     let currentPatch: InstrumentPatch
     @State private var profile = PerformanceGroupProfile()
     @State private var saved = PerformanceGroupProfile()
+    @State private var storedData: Data?
     @State private var didLoad = false
     @State private var readFailed = false
     @State private var message = ""
@@ -25,13 +26,21 @@ struct PerformanceGroupEditorView: View {
         }
         profile = decoded
         saved = decoded
+        storedData = data
     }
 
     private func save() {
         guard didLoad, !readFailed else { return }
+        let current = UserDefaults.standard.object(forKey:key)
+        guard (current == nil && storedData == nil) ||
+              (current is Data && (current as? Data) == storedData) else {
+            message = "Saved profile changed elsewhere. Reopen this editor before saving. Your draft was not written."
+            return
+        }
         do {
             let data = try profile.archive()
             UserDefaults.standard.set(data,forKey:key)
+            storedData = data
             saved = profile
             message = "Group configuration saved. No MIDI endpoints created."
         } catch {
