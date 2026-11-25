@@ -269,6 +269,22 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
         XCTAssertTrue(mailbox.drain(now:.nan).invalidated)
     }
 
+    func testUnstartedOrStoppedMonitorCannotAdmitPhysicalInput() {
+        let monitor=PerformanceCaptureMonitor()
+        monitor.setCaptureHotkeyEnabled(true)
+        let first=monitor.drainPhysicalInput()
+        XCTAssertTrue(first.invalidated)
+        XCTAssertTrue(first.events.isEmpty)
+        XCTAssertFalse(monitor.acceptsPhysicalInput(first))
+        XCTAssertFalse(monitor.diagnosticSnapshot().shortcutArmed)
+        monitor.stop()
+        let stopped=monitor.drainPhysicalInput()
+        XCTAssertTrue(stopped.invalidated)
+        XCTAssertFalse(monitor.acceptsPhysicalInput(stopped))
+        monitor.setCaptureHotkeyEnabled(true)
+        XCTAssertFalse(monitor.diagnosticSnapshot().shortcutArmed)
+    }
+
     func testCapturePhysicalMailboxTimeoutDiscardsAlreadyQueuedEdges() {
         var mailbox = CapturePhysicalMailbox()
         XCTAssertTrue(mailbox.append(.click(true,0.5),now:4))

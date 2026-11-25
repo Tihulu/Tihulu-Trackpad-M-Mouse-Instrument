@@ -356,12 +356,24 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     /// individual click/pressure callbacks for this monitor.
     public var onPhysicalInputAvailable:(@Sendable () -> Void)?
     public func drainPhysicalInput() -> CapturePhysicalInputBatch {
+        // Permission IPC stays outside the native event lock. A disabled
+        // tap cannot lend queued click edges to a sustain consumer.
+        let authorized=AXIsProcessTrusted()
         lock.lock(); defer { lock.unlock() }
+        if !authorized || !physicalInputOperationalLocked {
+            _=physicalMailbox.invalidate()
+        }
         return physicalMailbox.drain()
+    }
+    private var physicalInputOperationalLocked:Bool {
+        listening && !stopped && !panicLatched && inputRunLoop != nil &&
+            (eventTap.map { CGEvent.tapIsEnabled(tap:$0) } ?? false)
     }
     public func acceptsPhysicalInput(_ batch:CapturePhysicalInputBatch) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return listening && !stopped && !panicLatched && physicalMailbox.accepts(batch,now:ProcessInfo.processInfo.systemUptime)
+        // Recheck the actual port at each edge, not only the listening
+        // flag; the OS may disable it before the timeout callback arrives.
+        return physicalInputOperationalLocked && physicalMailbox.accepts(batch,now:ProcessInfo.processInfo.systemUptime)
     }
     public var onMonitorFailed: (@Sendable () -> Void)?
     public var onMonitorRecovered: (@Sendable () -> Void)?
@@ -378,7 +390,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
     public func setCaptureHotkeyEnabled(_ enabled: Bool) {
         lock.lock()
-        captureHotkeyEnabled = enabled && listening && !stopped && !panicLatched && eventTap != nil
+        captureHotkeyEnabled = enabled && physicalInputOperationalLocked
         let armed=captureHotkeyEnabled
         if !armed { captured = false }
         lock.unlock()
