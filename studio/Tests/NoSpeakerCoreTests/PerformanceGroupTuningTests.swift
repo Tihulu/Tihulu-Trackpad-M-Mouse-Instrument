@@ -402,11 +402,13 @@ private func groupTunedSnapshot(_ down:Bool = false) throws -> GamepadFrame {
     let profile = PerformanceGroupProfile(groups:[a,b])
     let configuration = try PerformanceGroupTuningConfiguration(profile:profile,tuning:[a.id:groupTuning(-20)])
     var draft = PerformanceGroupTuningDraft()
-    #expect(draft.select(a.id,configuration:configuration))
+    let selectedA = draft.select(a.id,configuration:configuration)
+    #expect(selectedA)
     #expect(!draft.isDirty)
     draft.degrees = "0, 210, 400, 500, 700, 900, 1100"
     #expect(draft.isDirty)
-    #expect(!draft.select(b.id,configuration:configuration))
+    let blockedSelection = draft.select(b.id,configuration:configuration)
+    #expect(!blockedSelection)
     #expect(draft.selectedID == a.id)
     #expect(draft.degrees.contains("210"))
     let updated = try draft.applying(to:profile,configuration:configuration)
@@ -415,7 +417,8 @@ private func groupTunedSnapshot(_ down:Bool = false) throws -> GamepadFrame {
     #expect(draft.isDirty)
     draft.load(a.id,configuration:updated)
     #expect(!draft.isDirty)
-    #expect(draft.select(b.id,configuration:updated))
+    let selectedB = draft.select(b.id,configuration:updated)
+    #expect(selectedB)
     #expect(!draft.isDirty && draft.selectedID == b.id)
 }
 
