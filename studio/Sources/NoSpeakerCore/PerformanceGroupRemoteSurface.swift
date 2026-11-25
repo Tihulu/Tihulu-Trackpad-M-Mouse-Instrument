@@ -1,6 +1,6 @@
 import Foundation
 
-/// A single host-selected remote surface per logical slot. The existing
+/// Host-selected remote surface families per logical slot. The existing
 /// wire schema remains authoritative; the peer never supplies MIDI targets.
 public enum PerformanceGroupRemoteSurface: String, CaseIterable, Sendable {
     case xy, drums, piano, pedalboard
@@ -14,19 +14,42 @@ public enum PerformanceGroupRemoteSurface: String, CaseIterable, Sendable {
         }
     }
 
-    public static func mode(for routes:[SensorMapping]) -> Self? {
+    /// Initial mixed-surface candidate: at most two mapped families per
+    /// connection. The shared rate budget is not multiplied by family count.
+    public static let maximumFamilies = 2
+
+    public static func modes(for routes:[SensorMapping]) -> Set<Self>? {
         guard !routes.isEmpty, routes.allSatisfy({
             ($0.source == .phone || $0.source == .tablet) &&
             PerformanceGroupGamepadSession.permitsLiveControl($0) &&
             $0.pedalMode == nil
         }) else { return nil }
-        let mapped = Set(routes.map(\.signal))
-        guard let mode = allCases.first(where:{ mapped.isSubset(of:$0.signals) }) else { return nil }
-        switch mode {
-        case .xy: return mode
-        case .drums: return routes.allSatisfy(RemoteDrumPads.permits) ? mode : nil
-        case .piano: return routes.allSatisfy(RemotePiano.permits) ? mode : nil
-        case .pedalboard: return routes.allSatisfy(RemotePedalboard.permits) ? mode : nil
+        var result:Set<Self> = []
+        for route in routes {
+            guard let family = allCases.first(where:{ $0.signals.contains(route.signal) }) else { return nil }
+            switch family {
+            case .xy: break
+            case .drums: guard RemoteDrumPads.permits(route) else { return nil }
+            case .piano: guard RemotePiano.permits(route) else { return nil }
+            case .pedalboard: guard RemotePedalboard.permits(route) else { return nil }
+            }
+            result.insert(family)
+        }
+        return result.count <= maximumFamilies ? result : nil
+    }
+
+    public static func mode(for routes:[SensorMapping]) -> Self? {
+        guard let families = modes(for:routes), families.count == 1 else { return nil }
+        return families.first
+    }
+
+    static func family(for frame:RemoteTouchFrame) -> Self? {
+        switch frame.kind {
+        case .touch,.release: return .xy
+        case .drumPads: return .drums
+        case .pianoKeys: return .piano
+        case .pedalboard: return .pedalboard
+        default: return nil
         }
     }
 
