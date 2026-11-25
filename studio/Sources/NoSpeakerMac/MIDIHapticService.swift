@@ -1133,19 +1133,41 @@ public final class PerformanceGroupMIDIHost {
     public enum HostError: Error { case activeOrCleanupRequired, notStarted }
     private var ports = PerformanceGroupPortRegistry()
     private var delivery: PerformanceGroupDelivery?
+    private var gamepads: PerformanceGroupGamepadSession?
     private init() {}
 
     public var registeredIDs: Set<UUID> { ports.registeredIDs }
-    public var pendingCleanup: Set<UUID> { delivery?.pendingCleanup ?? [] }
+    public var pendingCleanup: Set<UUID> {
+        (delivery?.pendingCleanup ?? []).union(gamepads?.pendingCleanup ?? [])
+    }
     public var pendingDisposalCount: Int { ports.pendingDisposalCount }
+
+    private var canStart: Bool {
+        (delivery?.retired ?? true) && (gamepads?.retired ?? true) && pendingCleanup.isEmpty
+    }
 
     /// Call only after deliberate user activation and adapter readiness.
     /// A different endpoint plan requires an explicit clean close first.
     public func start(profile: PerformanceGroupProfile, allowLayering: Bool = false) throws {
-        if let delivery, !delivery.retired || !delivery.pendingCleanup.isEmpty {
-            throw HostError.activeOrCleanupRequired
-        }
+        guard canStart else { throw HostError.activeOrCleanupRequired }
         let next = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
+        try openPorts(profile)
+        gamepads = nil
+        delivery = next
+    }
+
+    /// Only a caller owning the frozen physical controller bindings may use
+    /// this entry point. The caller must provide the existing watchdog cadence.
+    /// No automatic activation, device polling or handler installation here.
+    public func startGamepads(profile: PerformanceGroupProfile, allowLayering: Bool = false) throws {
+        guard canStart else { throw HostError.activeOrCleanupRequired }
+        let next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering)
+        try openPorts(profile)
+        delivery = nil
+        gamepads = next
+    }
+
+    private func openPorts(_ profile: PerformanceGroupProfile) throws {
         let plan = try PerformanceGroupEndpointPlan(profile:profile)
         let client = try MIDIProcessClient.shared.acquire()
         try ports.open(plan,lookup:Self.lookup,create:{ entry in
@@ -1156,7 +1178,6 @@ public final class PerformanceGroupMIDIHost {
         },assign:{ endpoint,id in
             MIDIObjectSetIntegerProperty(endpoint,kMIDIPropertyUniqueID,id) == noErr
         },dispose:Self.dispose)
-        delivery = next
     }
 
     private static func lookup(_ id: Int32) -> PerformanceGroupPortRegistry.Lookup {
@@ -1176,6 +1197,35 @@ public final class PerformanceGroupMIDIHost {
     private func send(_ item: PerformanceGroupCommand) -> Bool {
         guard let endpoint = ports.handle(for:item.groupID) else { return false }
         return ChordMIDIOutput.send(item.command,endpoint:endpoint)
+    }
+
+    public func bindGamepad(_ source: SensorSource, now: Double) throws -> UUID {
+        guard var state = gamepads else { throw HostError.notStarted }
+        let token = try state.bind(source,now:now)
+        gamepads = state
+        return token
+    }
+
+    public func receiveGamepad(_ source: SensorSource, token: UUID, frame: GamepadFrame?, now: Double)
+        -> PerformanceGroupGamepadSession.Result? {
+        guard var state = gamepads else { return nil }
+        let result = state.receive(source,token:token,frame:frame,now:now,send:send)
+        gamepads = state
+        return result
+    }
+
+    public func expireGamepads(now: Double) -> [PerformanceGroupDelivery.Report] {
+        guard var state = gamepads else { return [] }
+        let result = state.expire(now:now,send:send)
+        gamepads = state
+        return result
+    }
+
+    public func unbindGamepad(_ source: SensorSource, token: UUID) -> [PerformanceGroupDelivery.Report] {
+        guard var state = gamepads else { return [] }
+        let result = state.unbind(source,token:token,send:send)
+        gamepads = state
+        return result
     }
 
     public func connect(_ source: SensorSource, now: Double) throws -> UUID {
@@ -1208,6 +1258,11 @@ public final class PerformanceGroupMIDIHost {
     }
 
     public func stopGroup(_ id: UUID) -> PerformanceGroupDelivery.Report? {
+        if var state = gamepads {
+            let result = state.stopGroup(id,send:send)
+            gamepads = state
+            return result
+        }
         guard var state = delivery else { return nil }
         let result = state.stopGroup(id,send:send)
         delivery = state
@@ -1215,6 +1270,11 @@ public final class PerformanceGroupMIDIHost {
     }
 
     public func panic() -> PerformanceGroupDelivery.Report? {
+        if var state = gamepads {
+            let result = state.panic(send:send)
+            gamepads = state
+            return result
+        }
         guard var state = delivery else { return nil }
         let result = state.panic(send:send)
         delivery = state
@@ -1222,6 +1282,11 @@ public final class PerformanceGroupMIDIHost {
     }
 
     public func retryCleanup(_ id: UUID) -> PerformanceGroupDelivery.Report? {
+        if var state = gamepads {
+            let result = state.retryCleanup(id,send:send)
+            gamepads = state
+            return result
+        }
         guard var state = delivery else { return nil }
         let result = state.retryCleanup(id,send:send)
         delivery = state
@@ -1232,9 +1297,10 @@ public final class PerformanceGroupMIDIHost {
     /// debt-free session. Never dispose the only route for a pending note-off.
     @discardableResult
     public func close() -> Bool {
-        if let delivery, !delivery.retired || !delivery.pendingCleanup.isEmpty { return false }
+        guard canStart else { return false }
         let closed = ports.close(cleanupComplete:true,dispose:Self.dispose)
         delivery = nil
+        gamepads = nil
         return closed
     }
 
