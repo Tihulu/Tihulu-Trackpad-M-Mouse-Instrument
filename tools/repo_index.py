@@ -17,7 +17,7 @@ MAX_SOURCE = 32 * 1024 * 1024
 MAX_CHUNKS = 12000
 MAX_INDEX = 256 * 1024 * 1024
 EXTENSIONS = {".swift", ".md", ".py", ".sh", ".js", ".ts", ".html", ".css", ".json", ".yml", ".yaml", ".toml", ".c", ".h", ".m", ".mm"}
-ROOTS = {"studio", "docs", "scripts", "tools", "web", "remote", "Sources", "Tests", "src"}
+ROOTS = {"studio", "docs", "scripts", "tools", "web", "remote", "Sources", "Tests", "src", "examples"}
 ROOT_FILES = {"README.md", "LICENSE", "NOTICE", "ATTRIBUTION.md", "CONTRIBUTING.md", "AGENTS.md", "Package.swift", "install-studio.sh", "uninstall-studio.sh"}
 EXCLUDED = {".git", ".build", "node_modules", "vendor", "models", "recordings", "captures", "secrets", "private", "credentials", "fixtures-private", "__pycache__"}
 
