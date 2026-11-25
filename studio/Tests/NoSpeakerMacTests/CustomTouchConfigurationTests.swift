@@ -167,4 +167,88 @@ import NoSpeakerCore
     next.zoneWidth = 1.5
     #expect(next.requiresSampleInvalidation(comparedTo:initial))
 }
+
+@Test func activeTouchControlsCannotRewriteArmedMIDIRoutes() {
+    let armed = TouchInstrumentConfiguration(baseMIDINote:48,scale:.chromatic,
+        surfaceSelection:.both,trackpadInstrument:.guitar,magicMouseInstrument:.drums,
+        trackpadOutput:.both,magicMouseOutput:.midiInstrument)
+    var proposal = TouchInstrumentConfiguration()
+    proposal.masterLevel = 0.4
+    proposal.pressureToExpression = false
+    proposal.localHapticSound = false
+    let live = armed.applyingLiveControls(from:proposal)
+    #expect(live.baseMIDINote == armed.baseMIDINote)
+    #expect(live.scale == armed.scale)
+    #expect(live.surfaceSelection == armed.surfaceSelection)
+    #expect(live.trackpadInstrument == armed.trackpadInstrument)
+    #expect(live.magicMouseInstrument == armed.magicMouseInstrument)
+    #expect(live.trackpadOutput == armed.trackpadOutput)
+    #expect(live.magicMouseOutput == armed.magicMouseOutput)
+    #expect(live.stringLayout == armed.stringLayout)
+    #expect(live.masterLevel == 0.4)
+    #expect(!live.pressureToExpression)
+    #expect(!live.localHapticSound)
+    #expect(live.requiresSampleInvalidation(comparedTo:armed))
+}
+
+@Test func activeTouchGainOnlyDoesNotInvalidateArmedMapping() {
+    let armed = TouchInstrumentConfiguration(baseMIDINote:48,scale:.chromatic,
+        surfaceSelection:.both,trackpadOutput:.both)
+    var proposal = armed
+    proposal.masterLevel = 0.2
+    proposal.baseMIDINote = 72
+    proposal.trackpadOutput = .midiInstrument
+    let live = armed.applyingLiveControls(from:proposal)
+    #expect(live.baseMIDINote == 48)
+    #expect(live.trackpadOutput == .both)
+    #expect(live.masterLevel == 0.2)
+    #expect(!live.requiresSampleInvalidation(comparedTo:armed))
+}
+
+@Test func activeTouchInvalidControlsCannotPassDomainValidation() {
+    let armed = TouchInstrumentConfiguration()
+    var proposal = armed
+    proposal.pressThreshold = .nan
+    let invalid = armed.applyingLiveControls(from:proposal)
+    #expect(!invalid.hasValidSampleDomain)
+    #expect(invalid.requiresSampleInvalidation(comparedTo:armed))
+    proposal = armed
+    proposal.masterLevel = .infinity
+    #expect(!armed.applyingLiveControls(from:proposal).hasValidSampleDomain)
+}
+
+@Test func activeTouchControlsKeepExplicitTriggerAndVelocityChanges() {
+    let armed = TouchInstrumentConfiguration()
+    var proposed = armed
+    proposed.triggerMode = .press
+    proposed.pressThreshold = 0.65
+    proposed.velocityFromPressure = false
+    proposed.fixedVelocity = 81
+    let live = armed.applyingLiveControls(from:proposed)
+    #expect(live.triggerMode == .press)
+    #expect(live.pressThreshold == 0.65)
+    #expect(!live.velocityFromPressure)
+    #expect(live.fixedVelocity == 81)
+    #expect(live.requiresSampleInvalidation(comparedTo:armed))
+}
+
+@Test func helperPhysicalContactIsIndependentOfMusicalMapping() throws {
+    let mouse = try #require(HelperSurfaceContact(contactID:7,surface:.magicMouse,x:0.25,y:0.75,pressure:0.6))
+    let vertical = mouse.oriented(.vertical)
+    #expect(vertical.id == mouse.id)
+    #expect(vertical.x == 0.75 && vertical.y == 0.75 && vertical.pressure == 0.6)
+    let pad = try #require(HelperSurfaceContact(contactID:7,surface:.trackpad,x:0.25,y:0.75,pressure:0.6))
+    #expect(pad.oriented(.vertical) == pad)
+    #expect(pad.id != mouse.id)
+    #expect(HelperSurfaceContact(contactID:8,surface:.magicMouse,x:.nan,y:0.5,pressure:0.5) == nil)
+}
+@Test func coreMIDIClientFailureDoesNotClaimAnEstablishedSessionOrReconnect() {
+    for status in [Int32(-2),Int32(-304)] {
+        let text=MIDIHapticError.client(status).errorDescription ?? ""
+        #expect(text.contains("OSStatus \(status)"))
+        #expect(text.contains("session was not started"))
+        #expect(text.contains("No automatic reconnect"))
+    }
+    #expect(MIDIHapticError.client(-1).errorDescription?.contains("OSStatus -1")==true)
+}
 #endif

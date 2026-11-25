@@ -15,6 +15,8 @@ final class PerformanceCaptureDiagnosticsTests: XCTestCase {
         XCTAssertEqual(snapshot.pointerEvents, 0)
         XCTAssertEqual(snapshot.shortcutMatches, 0)
         XCTAssertEqual(snapshot.tapTimeouts, 0)
+        XCTAssertEqual(snapshot.coalescedPressureSamples,0)
+        XCTAssertEqual(snapshot.physicalMailboxOverflows,0)
         XCTAssertEqual(snapshot.tapDisabledByUserInput, 0)
         XCTAssertEqual(snapshot.lastEventTapStatus, "Not started")
     }

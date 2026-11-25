@@ -8,11 +8,18 @@ public struct LegacySustainOwners: Sendable {
     public var active: Set<Int> { owners.values.reduce(into:Set<Int>()) { $0.formUnion($1) } }
 
     public mutating func replace(_ owner: Owner, channels: Set<Int>) -> [SensorCommand] {
-        let valid = channels.filter { (0...15).contains($0) }
-        guard self.channels(for:owner) != valid else { return [] }
+        replaceFrame([owner:channels])
+    }
+
+    /// Commit all admitted owners of one input frame before calculating
+    /// wire transitions. An omitted owner is unchanged, not released.
+    public mutating func replaceFrame(_ updates: [Owner:Set<Int>]) -> [SensorCommand] {
         let before = active
-        if valid.isEmpty { owners.removeValue(forKey:owner) }
-        else { owners[owner] = valid }
+        for (owner,channels) in updates {
+            let valid = channels.filter { (0...15).contains($0) }
+            if valid.isEmpty { owners.removeValue(forKey:owner) }
+            else { owners[owner] = valid }
+        }
         let after = active
         return before.subtracting(after).sorted().map { .init(.init(.sustain,channel:$0),value:0) }
             + after.subtracting(before).sorted().map { .init(.init(.sustain,channel:$0),value:127) }
@@ -21,5 +28,35 @@ public struct LegacySustainOwners: Sendable {
         let before = active
         owners.removeAll()
         return before.sorted().map { .init(.init(.sustain,channel:$0),value:0) }
+    }
+}
+
+/// Shared legacy Touch pedal targets. Before note edges only already
+/// allocated channels are eligible; after allocation the normal idle
+/// fallback remains available. Existing sustained voices retain ownership.
+public enum LegacyTouchSustainTargets {
+    /// Standard destinations are known even before a note exists. MPE
+    /// members are dynamic: never send CC64 to a guessed idle member
+    /// or the zone master. GM drums remain on their fixed channel.
+    public static func fixedChannels(baseChannel:Int,hasMelody:Bool,hasDrums:Bool,isMPE:Bool) -> Set<Int> {
+        var channels: Set<Int> = []
+        if hasDrums { channels.insert(GMDrumPads.midiChannel) }
+        if hasMelody && !isMPE {
+            channels.insert(SurfaceMIDIChannel.melodic(base:baseChannel,hasMIDIDrums:hasDrums))
+        }
+        return channels
+    }
+
+    public static func routed(active:Bool,previous:Set<Int>,current:Set<Int>,fixed:Set<Int>) -> Set<Int> {
+        guard active else { return [] }
+        return previous.union(current).union(fixed).filter { (0...15).contains($0) }
+    }
+
+    public static func resolve(active:Bool,previous:Set<Int>,current:Set<Int>,
+                               baseChannel:Int,allowIdleFallback:Bool) -> Set<Int> {
+        guard active else { return [] }
+        let targets = previous.union(current).filter { (0...15).contains($0) }
+        if targets.isEmpty && allowIdleFallback { return [max(0,min(15,baseChannel))] }
+        return targets
     }
 }

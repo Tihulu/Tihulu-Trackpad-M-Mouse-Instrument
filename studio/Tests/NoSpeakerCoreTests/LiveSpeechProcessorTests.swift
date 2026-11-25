@@ -55,3 +55,42 @@ private func clip(_ hz: Double, count: Int = 3_200) -> [Float] {
     #expect(timeline.pending <= 60)
     #expect(timeline.dropped == 40)
 }
+
+
+@Test func liveSpeechRejectsConstantDCAsSilenceInEveryProfile() {
+    for profile in AudioHapticProfile.allCases {
+        var processor = LiveSpeechProcessor(sampleRate:16_000,profile:profile)
+        let result = processor.append(Array(repeating:0.3,count:3200))
+        #expect(result.count == 18)
+        #expect(result.allSatisfy { $0 == nil })
+    }
+}
+
+@Test func liveSpeechDCOffsetPreservesToneAndGain() {
+    let input = clip(220)
+    var baseline = LiveSpeechProcessor(sampleRate:16_000)
+    var offset = LiveSpeechProcessor(sampleRate:16_000)
+    let a = baseline.append(input).compactMap { $0 }
+    let b = offset.append(input.map { $0+0.4 }).compactMap { $0 }
+    #expect(a.count == b.count && !a.isEmpty)
+    for (left,right) in zip(a,b) {
+        #expect(abs(left.level-right.level) < 0.00001)
+        #expect(left.tones.map(\.frequencyHz) == right.tones.map(\.frequencyHz))
+    }
+}
+
+@Test func speakerTimelineInvalidOrReversedClockDiscardsQueuedAudio() {
+    let frame = HapticFrame(tones:[.init(frequencyHz:440)],durationMS:8,level:0.5)
+    var timeline = LiveHapticTimeline(bufferSeconds:0.1)
+    timeline.enqueue([frame,frame],now:2)
+    let reversed = timeline.takeDue(now:1.9)
+    #expect(reversed == nil && timeline.pending == 0 && timeline.dropped == 2)
+    timeline.enqueue([frame],now:1.95)
+    #expect(timeline.pending == 0)
+    timeline.enqueue([frame],now:2.2)
+    let invalid = timeline.takeDue(now:.nan)
+    #expect(invalid == nil && timeline.pending == 0 && timeline.dropped == 3)
+    timeline.enqueue([frame],now:2.3)
+    let recovered = timeline.takeDue(now:2.401)
+    #expect(recovered == frame)
+}

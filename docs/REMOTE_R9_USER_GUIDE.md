@@ -38,3 +38,21 @@ Use Release my controls to cancel unsent inputs and release sent owners. Wait fo
 
 ## Report acceptance
 Use P01-P14 in [acceptance matrix](REMOTE_R9_ACCEPTANCE_MATRIX.md). Record exact artifact head/checkout, system/browser versions, control modes and observed MIDI commands. Redact secrets, addresses and private mapping text. No public release or stable replacement is authorized.
+
+### Local performance layout (experimental)
+
+In Setup, choose a mapped panel, move it earlier/later, toggle tablet full width, or select compact/normal/large playing surfaces. Release and disable controls before editing. Save stores only a versioned fixed-panel presentation preference in this browser; Reset restores the default and removes it. It never stores pairing codes, host mappings, device labels or active state. Unsupported/malformed stored data falls back to default. A different browser has its own layout. This is panel arrangement, not arbitrary new MIDI mapping or a freeform pixel editor.
+
+Panel handles also accept touch/pointer drag to reorder mapped sections; move buttons remain a keyboard-accessible alternative. Reordering happens only on a completed idle drag. Cancellation, disconnect or leaving Setup discards the gesture. This does not create new controls or change their host assignments.
+
+In Setup, panel-specific size and drum/pedal grid column preferences can override the overall size. Existing saved panel arrangements remain compatible. These are presentation-only; narrow screens retain a two-column fallback. Save/Reset includes the additional preferences. No new MIDI mappings, controls or wire messages are created.
+
+Sustain and the two FX switches now have separate Hold/Toggle preferences in Setup (only mapped switches may be edited). Hold supports pointer and keyboard release, including cancellation and multiple fingers on one switch. Release All and disconnection clear local hold ownership. This is input behavior, not a change to the Mac mapping. The existing pedal snapshot protocol and safety deadlines are unchanged. Default remains Toggle.
+
+Mapped drum pads and pedal controls can now be individually reordered within their existing panel. Dormant/unmapped identities keep their stored positions; unmapped pedal cells are hidden. Reordering actual control nodes does not create aliases or change the host bit positions, labels or assignments. Preferences persist locally alongside panel geometry and Hold/Toggle.
+
+### Custom performance panel
+
+Combine up to eight already mapped drum/pedal controls, including the existing expression/volume/wah sliders, into a personal mixed panel. Setup supports add, remove and reordering. The actual control node is moved, never cloned; original stream ownership, MIDI bit identity, enable/release rules and conservative workload limits remain unchanged. Unavailable saved selections stay dormant and never activate automatically. Layout editing requires an idle session. This is composition of existing host-mapped controls, not arbitrary new MIDI endpoints or freely assigned CCs.
+
+Mapped expression, volume and wah sliders support horizontal or vertical native range controls and independent initial levels from 0–100%. Settings only change the local presentation and inactive value; the host receives nothing until the user explicitly enables and activates the mapped pedal. Custom panel placement follows the actual DOM/keyboard order. Moved controls are omitted from their original panel's individual reorder editor.

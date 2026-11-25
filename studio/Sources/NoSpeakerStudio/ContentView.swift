@@ -1365,7 +1365,6 @@ private struct TouchInstrumentView: View {
         .onChange(of: drumLayout) { _ in syncConfiguration() }
         .onChange(of: stringLayout) { _ in syncConfiguration() }
         .onChange(of: mouseStringLayout) { _ in syncConfiguration() }
-        .onChange(of: studio.masterLevel) { _ in syncConfiguration() }
     }
 
     @ViewBuilder
@@ -2105,7 +2104,7 @@ private struct MIDIHelperView: View {
                                 magicMouseEnabled: $magicMouseSustainEnabled,
                                 magicMouseGesture: $magicMouseSustainGesture,
                                 magicMouseTapThreshold: $magicMouseTapThreshold,
-                                mouseContactSize: studio.midiHelperStates.filter { $0.surface == .magicMouse && $0.isTouching }.map(\.pressure).max()
+                                mouseContactSize: studio.midiHelperStates.filter { $0.surface == .magicMouse }.map(\.pressure).max()
                             )
                         }
 
@@ -2362,15 +2361,14 @@ private struct PerformanceShortcutRecorder: View {
                 96:"F5",97:"F6",98:"F7",100:"F8",
                 101:"F9",109:"F10",103:"F11",111:"F12"
             ]
-            let name = namedKeys[event.keyCode] ??
-                event.charactersIgnoringModifiers?.uppercased() ?? "Key \(event.keyCode)"
-            studio.configurePerformanceCapture(
-                armed: previouslyArmed,
-                shortcut: PerformanceCaptureShortcut(
-                    keyCode: Int64(event.keyCode), modifiers: mask,
-                    displayName: prefix + name
-                )
-            )
+            guard PerformanceCaptureShortcut.acceptsKeyCode(Int64(event.keyCode)) else { return nil }
+            let candidateName = namedKeys[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased()
+            let name=PerformanceCaptureShortcut.displayLabel(keyCode:Int64(event.keyCode),prefix:prefix,candidate:candidateName)
+            let shortcut=PerformanceCaptureShortcut(keyCode:Int64(event.keyCode),modifiers:mask,displayName:name)
+            // Do not terminate recording or forget the previous armed
+            // state if a key cannot be represented by a valid shortcut.
+            guard shortcut.isValid else { return nil }
+            studio.configurePerformanceCapture(armed:previouslyArmed,shortcut:shortcut)
             stopRecording(restoreCapture: false)
             return nil
         }
@@ -2422,7 +2420,7 @@ private struct CaptureSettingsPanel: View {
 }
 
 private struct HelperSurfaceMap: View {
-    let states: [TouchPerformanceState]
+    let states: [HelperSurfaceContact]
     let assignments: MIDIHelperAssignments
     let surfaceSelection: TouchSurfaceSelection
     let active: Bool

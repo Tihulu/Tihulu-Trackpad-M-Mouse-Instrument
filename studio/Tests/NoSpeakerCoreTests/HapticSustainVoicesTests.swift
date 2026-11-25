@@ -28,3 +28,30 @@ import Testing
     let live = (0..<10).reversed().map { (id:String($0),value:$0) }
     #expect(voices.sounding(live:live,includeSustained:true) == [0,1,2,3,4,5])
 }
+
+
+@Test func transientTouchAttacksCannotEvictHeldOrSustainedVoices() {
+    var voices = HapticSustainVoices<Int>()
+    for i in 0..<5 { voices.remember(id:"s"+String(i),value:i) }
+    let live = [(id:"z",value:99)]
+    let attacks = [(id:"a",value:88)]
+    #expect(voices.sounding(live:live,includeSustained:true,transient:attacks) == [99,4,3,2,1,0])
+    #expect(voices.sounding(live:live,includeSustained:false,transient:attacks) == [99,88])
+}
+
+@Test func transientTouchAttacksUseOnlyRemainingUniqueSlots() {
+    let voices = HapticSustainVoices<Int>()
+    let live = [(id:"z",value:1)]
+    let attacks = [(id:"z",value:2),(id:"a",value:3),(id:"a",value:4)]
+    #expect(voices.sounding(live:live,includeSustained:false,transient:attacks) == [1,3])
+}
+
+@Test func hapticSustainRequiresEveryLiveOutputAdmissionCondition() {
+    for mask in 0..<32 {
+        let permitted=HapticSustainVoices<Int>.permitsSustain(
+            requested:mask & 1 != 0,active:mask & 2 != 0,
+            localSound:mask & 4 != 0,hasValidMapping:mask & 8 != 0,
+            outputHealthy:mask & 16 != 0)
+        #expect(permitted == (mask==31))
+    }
+}

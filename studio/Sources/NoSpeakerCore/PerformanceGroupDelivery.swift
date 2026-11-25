@@ -5,9 +5,27 @@ import Foundation
 public struct PerformanceGroupDelivery: Sendable {
     public struct Report: Equatable, Sendable {
         public fileprivate(set) var accepted = 0
+        public fileprivate(set) var capacityRefused = 0
         public fileprivate(set) var failedGroups: Set<UUID> = []
         public fileprivate(set) var pendingCleanup: Set<UUID> = []
         public init() {}
+
+        // Dynamic pool reports retain capacity refusal separately from
+        // transport failure. Accepted counts reconciled logical deliveries.
+        init(dynamic:DynamicMPEGroupDelivery.Report) {
+            accepted = dynamic.delivered
+            capacityRefused = dynamic.capacityRefused
+            failedGroups = dynamic.failedGroups
+            pendingCleanup = dynamic.pendingCleanup
+        }
+
+        // Merge setup-selector debt without exposing mutable report fields.
+        func includingSetupCleanup(_ pending:Set<UUID>,failedGroup:UUID?) -> Self {
+            var result = self
+            result.pendingCleanup.formUnion(pending)
+            if let failedGroup { result.failedGroups.insert(failedGroup) }
+            return result
+        }
     }
 
     private struct Output: Sendable {
@@ -50,6 +68,13 @@ public struct PerformanceGroupDelivery: Sendable {
 
     public mutating func disconnect(_ lease: UUID, send: (PerformanceGroupCommand) -> Bool) -> Report {
         let commands = router.disconnect(lease)
+        return deliver(commands,send:send)
+    }
+
+    public func hasLease(_ id: UUID) -> Bool { router.hasLease(id) }
+
+    public mutating func disconnectBatch(_ leases: Set<UUID>, send: (PerformanceGroupCommand) -> Bool) -> Report {
+        let commands = router.disconnectBatch(leases)
         return deliver(commands,send:send)
     }
 

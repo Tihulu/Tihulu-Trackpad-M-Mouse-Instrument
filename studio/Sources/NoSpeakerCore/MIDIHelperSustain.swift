@@ -59,6 +59,15 @@ public struct MIDIHelperSustainSettings: Sendable, Equatable {
         self.magicMouseTapThreshold = magicMouseTapThreshold
     }
 
+    /// The user's pedal settings remain stored; only selected surfaces
+    /// may participate in the current consumer's sustain ownership.
+    public func restricted(trackpad:Bool,magicMouse:Bool) -> Self {
+        var result = self
+        result.trackpadEnabled = trackpadEnabled && trackpad
+        result.magicMouseEnabled = magicMouseEnabled && magicMouse
+        return result
+    }
+
     public var needsPhysicalClicks: Bool {
         (trackpadEnabled &&
             (trackpadGesture == .physicalClickHold || trackpadGesture == .physicalClickToggle ||
@@ -122,25 +131,40 @@ public struct MIDIHelperSustainState: Sendable {
         trackpadClickDown: Bool = false,
         magicMouseClickDown: Bool = false,
         trackpadClickPressure: Double? = nil,
-        magicMouseContactSizes: [Double] = []
+        magicMouseContactSizes: [Double] = [],
+        freshContacts: Bool = true
     ) -> MIDIHelperSustainSnapshot {
         let threshold = settings.trackpadContactThreshold
         let validSizes = trackpadContactSizes.filter { $0.isFinite && (0...1).contains($0) }
         let contactSize = validSizes.max() ?? 0
         let trackpadTouching = !validSizes.isEmpty
-        if previousTrackpadGesture != settings.trackpadGesture || previousTrackpadSensor != settings.trackpadSensor {
+        let trackpadModeChanged = previousTrackpadGesture != settings.trackpadGesture || previousTrackpadSensor != settings.trackpadSensor
+        let mouseModeChanged = previousMouseGesture != settings.magicMouseGesture
+        if trackpadModeChanged {
             trackpadHeld = false; trackpadLatched = false
         }
-        if previousMouseGesture != settings.magicMouseGesture { mouseLatched = false }
+        if mouseModeChanged { mouseLatched = false }
         previousTrackpadGesture = settings.trackpadGesture
         previousTrackpadSensor = settings.trackpadSensor
         previousMouseGesture = settings.magicMouseGesture
 
         let trackpadActive: Bool
-        if !settings.trackpadEnabled {
+        if !settings.trackpadEnabled ||
+            (settings.trackpadGesture == .contactThreshold &&
+             (!threshold.isFinite || !(0.05...1).contains(threshold))) {
+            // Invalid configuration must release even on a click-only
+            // callback carrying no fresh contact sample.
             trackpadHeld = false
             trackpadLatched = false
             trackpadActive = false
+        } else if !freshContacts && (
+            settings.trackpadGesture == .touchHold || settings.trackpadGesture == .tapToggle ||
+            (settings.trackpadGesture == .contactThreshold && settings.trackpadSensor == .contactSize)
+        ) {
+            // A physical mouse-button callback is not a multitouch sample.
+            // Preserve the last admitted contact result, never synthesize a
+            // lift or onset from missing, stale or reset contact caches.
+            trackpadActive = !trackpadModeChanged && snapshot.trackpadActive
         } else {
             switch settings.trackpadGesture {
             case .contactThreshold:
@@ -184,9 +208,14 @@ public struct MIDIHelperSustainState: Sendable {
         }
 
         let mouseActive: Bool
-        if !settings.magicMouseEnabled {
+        if !settings.magicMouseEnabled ||
+            (settings.magicMouseGesture == .tapToggle &&
+             (!settings.magicMouseTapThreshold.isFinite || !(0...1).contains(settings.magicMouseTapThreshold))) {
+            // Never preserve an old toggle under an invalid sensitivity.
             mouseLatched = false
             mouseActive = false
+        } else if !freshContacts && (settings.magicMouseGesture == .touchHold || settings.magicMouseGesture == .tapToggle) {
+            mouseActive = !mouseModeChanged && snapshot.magicMouseActive
         } else {
             switch settings.magicMouseGesture {
             case .touchHold:
@@ -215,9 +244,11 @@ public struct MIDIHelperSustainState: Sendable {
             }
         }
 
-        trackpadWasTouching = trackpadTouching
+        if freshContacts {
+            trackpadWasTouching = trackpadTouching
+            mouseWasTouching = magicMouseTouching
+        }
         trackpadWasClicking = trackpadClickDown
-        mouseWasTouching = magicMouseTouching
         mouseWasClicking = magicMouseClickDown
         snapshot = .init(trackpadActive: trackpadActive, magicMouseActive: mouseActive)
         return snapshot
@@ -256,14 +287,42 @@ public struct MIDIHelperSustainState: Sendable {
     }
 }
 
+/// Per-consumer boundary for physical click ownership. Long holds remain
+/// valid after admission, but cannot cross a new Start/routing epoch.
+public struct PhysicalClickSessionFence:Sendable {
+    private var startedAt:Double?
+    public init() {}
+    public mutating func begin(now:Double) {
+        startedAt = now.isFinite && now >= 0 ? now : nil
+    }
+    public mutating func end() { startedAt = nil }
+    public func permits(receipt:Double?,now:Double,selected:Bool) -> Bool {
+        guard selected,let startedAt,let receipt,receipt.isFinite,now.isFinite else { return false }
+        return receipt >= startedAt && now >= receipt
+    }
+}
+
 /// Conservative attribution from the current shared snapshot, not from
 /// independent consumer caches. The OS click itself has no device identity.
 public enum PhysicalClickAttribution {
     public static func resolve<Surface:Hashable>(_ touching:Set<Surface>,
-        snapshotRevision:UInt64?,currentRevision:UInt64?,receivedAt:Double?,now:Double) -> Surface? {
+        snapshotRevision:UInt64?,currentRevision:UInt64?,receivedAt:Double?,now:Double,
+        clickReceipt:Double? = nil,notBefore:Double? = nil) -> Surface? {
         guard let snapshotRevision, let currentRevision, snapshotRevision == currentRevision,
-              let receivedAt, receivedAt.isFinite, now.isFinite, now >= receivedAt,
+              let receivedAt, receivedAt.isFinite, receivedAt>=0,now.isFinite,now>=receivedAt,
               now-receivedAt < 0.35, touching.count == 1 else { return nil }
+        if let notBefore {
+            // An event-monitor invalidation retires all earlier contact
+            // observations, including samples still queued for delivery.
+            guard notBefore.isFinite,notBefore>=0,receivedAt>=notBefore,
+                  let clickReceipt,clickReceipt>=notBefore else { return nil }
+        }
+        if let clickReceipt {
+            // Never attribute an earlier click to a later surface snapshot.
+            // Also reject clicks before the monotonic epoch or in the future.
+            guard clickReceipt.isFinite,clickReceipt >= 0,receivedAt >= 0,
+                  receivedAt <= clickReceipt,clickReceipt <= now else { return nil }
+        }
         return touching.first
     }
 }

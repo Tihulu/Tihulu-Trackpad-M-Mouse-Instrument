@@ -31,7 +31,12 @@ public struct LiveSpeechProcessor: Sendable {
         var frames: [HapticFrame?] = []
         var offset = 0
         while offset + window <= samples.count {
-            let slice = samples[offset..<(offset + window)]
+            let raw = samples[offset..<(offset + window)]
+            // Remove DC before gain/gate and spectral analysis. A constant
+            // offset is not a voiced sound or a high-frequency consonant.
+            let mean = raw.reduce(0.0) { $0 + Double($1) } / Double(window)
+            let centered = raw.map { Float(Double($0)-mean) }
+            let slice = centered[...]
             let rms = HapticSignalProcessor.rms(slice)
             levelReference = max(0.025, rms, levelReference * 0.992)
             let threshold = noiseGate ? 0.003 : 0.00015
@@ -157,6 +162,7 @@ public struct LiveHapticTimeline: Sendable {
     public let bufferSeconds: Double
     private var entries: [(Double, HapticFrame?)] = []
     private var nextDeadline: Double?
+    private var lastClock: Double?
     public private(set) var dropped = 0
     public var pending: Int { entries.count }
 
@@ -164,8 +170,21 @@ public struct LiveHapticTimeline: Sendable {
         self.bufferSeconds = bufferSeconds.isFinite ? min(0.35, max(0.05, bufferSeconds)) : 0.15
     }
 
+    private mutating func admitClock(_ now:Double) -> Bool {
+        guard now.isFinite,now >= 0,lastClock.map({ now >= $0 }) ?? true else {
+            dropped += entries.count
+            entries.removeAll(keepingCapacity:true)
+            nextDeadline = nil
+            // Keep the prior watermark; a backwards reading cannot admit
+            // older frames into the current playout session.
+            return false
+        }
+        lastClock = now
+        return true
+    }
+
     public mutating func enqueue(_ frames: [HapticFrame?], now: Double) {
-        guard now.isFinite, !frames.isEmpty else { return }
+        guard admitClock(now), !frames.isEmpty else { return }
         if let nextDeadline, nextDeadline < now - 0.025 {
             dropped += entries.count
             entries.removeAll(keepingCapacity: true)
@@ -191,7 +210,7 @@ public struct LiveHapticTimeline: Sendable {
     }
 
     public mutating func takeDue(now: Double) -> HapticFrame? {
-        guard now.isFinite else { return nil }
+        guard admitClock(now) else { return nil }
         var latest: (Double, HapticFrame?)?
         while let first = entries.first, first.0 <= now {
             if latest != nil { dropped += 1 }

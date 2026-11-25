@@ -6,7 +6,7 @@ public enum RemoteDrumPads {
     public static let defaults: [AirDrumPreset] = [.kick,.snare,.closedHiHat,.openHiHat,.lowTom,.highTom,.crash,.ride]
     public static func permits(_ route: SensorMapping) -> Bool {
         guard signals.contains(route.signal) else { return true }
-        return (route.source == .phone || route.source == .tablet) &&
+        return route.source.isGroupRemote &&
             route.destination.kind == .note &&
             (route.calibration.apply(1) ?? -1) >= route.threshold
     }

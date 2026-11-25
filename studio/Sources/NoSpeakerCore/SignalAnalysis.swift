@@ -38,28 +38,42 @@ public enum HapticSignalProcessor {
         peakCount: Int = 4,
         frequencyStep: Double = 24
     ) -> [SpectralPeak] {
-        guard samples.count >= 16, sampleRate > 0, peakCount > 0 else { return [] }
-        let values = Array(samples)
-        let count = values.count
-        let center = Double(count - 1) / 2
-        var candidates: [SpectralPeak] = []
-        var frequency = max(minFrequency, frequencyStep)
-
-        while frequency <= min(maxFrequency, sampleRate / 2 - 1) {
-            var re = 0.0
-            var im = 0.0
-            for i in 0..<count {
-                let phase = 2 * Double.pi * frequency * Double(i) / sampleRate
-                let window = 0.54 - 0.46 * cos(2 * Double.pi * (Double(i) - center) / Double(max(1, count - 1)))
-                let value = Double(values[i]) * window
-                re += value * cos(phase)
-                im -= value * sin(phase)
+        guard (16...65_536).contains(samples.count),
+              sampleRate.isFinite,(1...192_000).contains(sampleRate),
+              minFrequency.isFinite,maxFrequency.isFinite,frequencyStep.isFinite,
+              minFrequency > 0,maxFrequency >= minFrequency,frequencyStep >= 1,
+              (1...64).contains(peakCount),samples.allSatisfy(\.isFinite) else { return [] }
+        let lower = max(minFrequency,frequencyStep)
+        let upper = min(maxFrequency,sampleRate/2-1)
+        guard lower <= upper,(upper-lower)/frequencyStep <= 2047 else { return [] }
+        let count = samples.count
+        let mean = samples.reduce(0.0) { $0+Double($1) } / Double(count)
+        // Correct Hamming orientation: low at edges, high in the center.
+        // Precompute once; arbitrary-frequency Goertzel recurrence avoids
+        // two trigonometric evaluations per sample per spectral candidate.
+        let values = samples.enumerated().map { i,value in
+            (Double(value)-mean)*(0.54-0.46*cos(2*Double.pi*Double(i)/Double(count-1)))
+        }
+        var candidates:[SpectralPeak] = []
+        let binCount = Int((upper-lower)/frequencyStep)+1
+        candidates.reserveCapacity(binCount)
+        for bin in 0..<binCount {
+            let frequency = lower+Double(bin)*frequencyStep
+            let coefficient = 2*cos(2*Double.pi*frequency/sampleRate)
+            var previous = 0.0, prior = 0.0
+            for value in values {
+                let next = value+coefficient*previous-prior
+                prior=previous;previous=next
             }
-            candidates.append(SpectralPeak(frequencyHz: frequency, magnitude: sqrt(re * re + im * im)))
-            frequency += frequencyStep
+            let power = max(0,previous*previous+prior*prior-coefficient*previous*prior)
+            if power.isFinite && power > 1e-18 {
+                candidates.append(.init(frequencyHz:frequency,magnitude:sqrt(power)))
+            }
         }
 
-        let sorted = candidates.sorted { $0.magnitude > $1.magnitude }
+        let sorted = candidates.sorted {
+            $0.magnitude == $1.magnitude ? $0.frequencyHz < $1.frequencyHz : $0.magnitude > $1.magnitude
+        }
         var selected: [SpectralPeak] = []
         for peak in sorted {
             let separated = selected.allSatisfy { abs($0.frequencyHz - peak.frequencyHz) >= max(70, frequencyStep * 2) }
@@ -76,7 +90,26 @@ public enum HapticSignalProcessor {
         frameDuration: Double = 0.012,
         safety: HapticSafetyPolicy = .init()
     ) -> [ScheduledHapticEvent] {
-        guard sampleRate > 0, !samples.isEmpty else { return [] }
+        (try? render(samples:samples,sampleRate:sampleRate,profile:profile,
+                     frameDuration:frameDuration,safety:safety,cancellation:nil)) ?? []
+    }
+
+    public static func hapticEvents(
+        samples:[Float],sampleRate:Double,profile:AudioHapticProfile,
+        frameDuration:Double = 0.012,safety:HapticSafetyPolicy = .init(),
+        cancellation:VoiceRenderCancellation
+    ) throws -> [ScheduledHapticEvent] {
+        try render(samples:samples,sampleRate:sampleRate,profile:profile,
+                   frameDuration:frameDuration,safety:safety,cancellation:cancellation)
+    }
+
+    private static func render(samples:[Float],sampleRate:Double,profile:AudioHapticProfile,
+                               frameDuration:Double,safety:HapticSafetyPolicy,
+                               cancellation:VoiceRenderCancellation?) throws -> [ScheduledHapticEvent] {
+        try cancellation?.check()
+        guard sampleRate.isFinite,(1...192_000).contains(sampleRate),
+              frameDuration.isFinite,(0.0005...0.12).contains(frameDuration),
+              !samples.isEmpty else { return [] }
         let frameSize = max(64, Int(sampleRate * frameDuration))
         let hopSize = frameSize
         var events: [ScheduledHapticEvent] = []
@@ -86,7 +119,14 @@ public enum HapticSignalProcessor {
         var rmsValues: [Double] = []
         while index < samples.count {
             let end = min(samples.count, index + frameSize)
-            let value = rms(samples[index..<end])
+            try cancellation?.check()
+            let slice = samples[index..<end]
+            guard slice.allSatisfy(\.isFinite) else { return [] }
+            let mean = slice.reduce(0.0) { $0+Double($1) }/Double(slice.count)
+            let value = sqrt(slice.reduce(0.0) {
+                let centered = Double($1)-mean
+                return $0+centered*centered
+            }/Double(slice.count))
             rmsValues.append(value)
             maxRMS = max(maxRMS, value)
             index += hopSize
@@ -96,7 +136,11 @@ public enum HapticSignalProcessor {
         var frameIndex = 0
         while index < samples.count {
             let end = min(samples.count, index + frameSize)
-            let slice = samples[index..<end]
+            try cancellation?.check()
+            let raw = samples[index..<end]
+            let mean = raw.reduce(0.0) { $0+Double($1) }/Double(raw.count)
+            let centered = raw.map { Float(Double($0)-mean) }
+            let slice = centered[...]
             let normalizedLevel = min(1, max(0, rmsValues[frameIndex] / maxRMS))
             if normalizedLevel > 0.015 {
                 let peaks: [SpectralPeak]
@@ -127,6 +171,7 @@ public enum HapticSignalProcessor {
             index += hopSize
             frameIndex += 1
         }
+        try cancellation?.check()
         return events
     }
 }

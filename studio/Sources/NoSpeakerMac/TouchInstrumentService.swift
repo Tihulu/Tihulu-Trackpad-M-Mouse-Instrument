@@ -156,6 +156,22 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) }
     }
 
+    /// Project the controls explicitly editable during an active session.
+    /// A view refresh, preference reload or stale binding cannot silently
+    /// change the frozen MIDI surface, scale, output or string mapping.
+    public func applyingLiveControls(from proposed:Self) -> Self {
+        var result = self
+        result.masterLevel = proposed.masterLevel
+        result.triggerMode = proposed.triggerMode
+        result.pressThreshold = proposed.pressThreshold
+        result.velocityFromPressure = proposed.velocityFromPressure
+        result.fixedVelocity = proposed.fixedVelocity
+        result.pressureToExpression = proposed.pressureToExpression
+        result.localHapticSound = proposed.localHapticSound
+        result.magicMouseOrientation = proposed.magicMouseOrientation
+        return result
+    }
+
     // Volume-only changes do not discard held voices. All other changes
     // conservatively invalidate old mapped states and pending percussion.
     func requiresHapticReset(comparedTo previous: Self) -> Bool {
@@ -166,7 +182,7 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
 
     /// A valid gain adjustment must not retire queued musical snapshots.
     /// Invalid gain still fails closed and recovery rebuilds the note cache.
-    func requiresSampleInvalidation(comparedTo previous: Self) -> Bool {
+    public func requiresSampleInvalidation(comparedTo previous: Self) -> Bool {
         requiresHapticReset(comparedTo:previous) ||
             !hasValidSampleDomain || !previous.hasValidSampleDomain
     }
@@ -263,6 +279,7 @@ public struct TouchHapticMetrics: Sendable {
     public fileprivate(set) var drainedDrumStrikes = 0
     public fileprivate(set) var motorSubmissions = 0
     public fileprivate(set) var motorErrors = 0
+    public fileprivate(set) var outputFaulted = false
 }
 
 public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
@@ -310,9 +327,34 @@ public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
     }
 }
 
+/// A physical Helper contact has no note, trigger, chord or scale identity.
+public struct HelperSurfaceContact: Sendable, Equatable, Identifiable {
+    public let contactID:Int
+    public let surface:TouchSurfaceKind
+    public let x,y,pressure:Double
+    public var id:String { "\(surface.rawValue)-\(contactID)" }
+    public init?(contactID:Int,surface:TouchSurfaceKind,x:Double,y:Double,pressure:Double) {
+        guard let sample = TouchSampleDomain.normalize(x:x,y:y,pressure:pressure) else { return nil }
+        self.contactID = contactID; self.surface = surface
+        self.x = sample.x; self.y = sample.y; self.pressure = sample.pressure
+    }
+    private init(contactID:Int,surface:TouchSurfaceKind,orientedX:Double,orientedY:Double,pressure:Double) {
+        self.contactID = contactID; self.surface = surface
+        self.x = orientedX; self.y = orientedY; self.pressure = pressure
+    }
+    public func oriented(_ orientation:SurfaceOrientation) -> Self {
+        guard surface == .magicMouse else { return self }
+        let (x,y) = orientation.transformed(x:self.x,y:self.y)
+        return .init(contactID:contactID,surface:surface,orientedX:x,orientedY:y,pressure:pressure)
+    }
+}
+
 public struct QueuedTouchSnapshot: Sendable {
     public let states: [TouchPerformanceState]
+    public let helperContacts: [HelperSurfaceContact]
+    public let clickObservation: PhysicalSurfaceObservation?
     public let stamp: TouchSnapshotStamp
+    public let sourceSurface: TouchSurfaceKind
     public let queuedAt: Double
 }
 
@@ -336,15 +378,20 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var queuedInbox: OrderedTouchInbox<QueuedTouchSnapshot>?
     private var queuedReady: (@Sendable () -> Void)?
     private var latestStatesBySurface: [TouchSurfaceKind: [TouchPerformanceState]] = [:]
+    private var helperContactCache = PhysicalSurfaceSnapshotCache<TouchSurfaceKind,HelperSurfaceContact>()
     private var liveHapticStates: [TouchPerformanceState] = []
     private var sustainedHapticStates = HapticSustainVoices<TouchPerformanceState>()
     private var sustainActive = false
     private var drumStrikes = DrumHapticStrikeBuffer()
     private var hapticMetrics = TouchHapticMetrics()
+    private var hapticFailureGate = HapticConsecutiveFailureGate()
+    private let onHapticFault: (@Sendable (String) -> Void)?
 
     public func hapticDiagnosticSnapshot() -> TouchHapticMetrics {
         lock.lock(); defer { lock.unlock() }
-        return hapticMetrics
+        var result = hapticMetrics
+        result.outputFaulted = hapticFailureGate.retired
+        return result
     }
 
     public func resetHapticDiagnostics() {
@@ -367,8 +414,9 @@ public final class TouchInstrumentService: @unchecked Sendable {
         qos: .userInteractive
     )
 
-    public init(driver: HapticTrackpadDriver) {
+    public init(driver: HapticTrackpadDriver,onHapticFault:(@Sendable (String) -> Void)? = nil) {
         self.driver = driver
+        self.onHapticFault = onHapticFault
     }
 
     public func startPreview(
@@ -420,6 +468,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 queuedInbox = nil
                 queuedReady = nil
                 latestStatesBySurface.removeAll()
+                helperContactCache.reset()
             }
             lock.unlock()
             throw error
@@ -472,9 +521,29 @@ public final class TouchInstrumentService: @unchecked Sendable {
         return sampleRevision
     }
 
-    public func invalidatePendingSamples() {
+    /// Sample the publication watermark and observed held surfaces under
+    /// the same lock as publication. No global revision/cache invalidation.
+    public func consumerPublicationBoundary() -> (sequence:UInt64,touching:Set<TouchSurfaceKind>) {
         lock.lock(); defer { lock.unlock() }
+        return (publicationSequence,helperContactCache.touchingSurfaces)
+    }
+
+    /// Explicit publication invalidation also retires the corresponding
+    /// motor state. This is not a Helper-only consumer boundary.
+    public func invalidatePendingSamples() {
+        lock.lock()
         invalidateSamplesLocked()
+        renderRevision &+= 1
+        liveHapticStates.removeAll()
+        sustainedHapticStates.removeAll()
+        sustainActive = false
+        drumStrikes.reset()
+        gridDrumNotes.removeAll()
+        chordSlots.removeAll()
+        lock.unlock()
+        // Wait for an already admitted motor submission without holding
+        // the state lock. Old render snapshots cannot submit again.
+        renderFence.drain()
     }
 
     private func invalidateSamplesLocked() {
@@ -490,6 +559,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.lock()
         if self.active != active {
             invalidateSamplesLocked()
+            hapticFailureGate.reset()
             gridDrumNotes.removeAll()
             chordSlots.removeAll()
             renderRevision &+= 1
@@ -524,13 +594,16 @@ public final class TouchInstrumentService: @unchecked Sendable {
     /// the last finger lifts. No playback is performed while Preview is idle.
     public func setSustainActive(_ isOn: Bool) {
         lock.lock()
-        let changed = sustainActive != isOn
+        let admitted=HapticSustainVoices<TouchPerformanceState>.permitsSustain(
+            requested:isOn,active:active,localSound:configuration.localHapticSound,
+            hasValidMapping:!cachedMIDINotes.isEmpty,outputHealthy:!hapticFailureGate.retired)
+        let changed = sustainActive != admitted
         if changed {
             renderRevision &+= 1
             pendingMelodicAttacks.removeAll()
         }
-        sustainActive = isOn
-        if isOn {
+        sustainActive = admitted
+        if admitted {
             for state in liveHapticStates where configuration.output(for: state.surface).sendsHaptics && configuration.instrument(for: state.surface) != .drums {
                 sustainedHapticStates.remember(id:state.id,value:state)
             }
@@ -538,7 +611,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             sustainedHapticStates.removeAll()
         }
         lock.unlock()
-        if changed && !isOn { renderFence.drain() }
+        if changed && !admitted { renderFence.drain() }
     }
 
     public func stopPreview() {
@@ -550,6 +623,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         queuedInbox = nil
         queuedReady = nil
         latestStatesBySurface.removeAll()
+        helperContactCache.reset()
         lock.unlock()
         driver.stopSurfaceMonitoring()
     }
@@ -667,6 +741,16 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lastFrameBySurface[frame.surface] = frameID
         publicationSequence &+= 1
         let stamp = TouchSnapshotStamp(revision:revision,sequence:publicationSequence)
+        let physical = frame.contacts.compactMap { contact -> HelperSurfaceContact? in
+            guard contact.surface == frame.surface,contact.isDown else { return nil }
+            return HelperSurfaceContact(contactID:contact.id,surface:contact.surface,
+                x:Double(contact.x),y:Double(contact.y),pressure:Double(contact.size))
+        }
+        let receivedAt = ProcessInfo.processInfo.systemUptime
+        helperContactCache.replace(frame.surface,contacts:physical,
+            observation:.init(stamp:stamp,receivedAt:receivedAt))
+        let helperContacts = helperContactCache.combined(order:TouchSurfaceKind.allCases)
+        let clickObservation = helperContactCache.singleTouchObservation
         if instrument == .drums && config.drumLayout.isGrid {
             let previous = gridDrumNotes[frame.surface] ?? [:]
             var next: [Int: Int] = [:]
@@ -702,7 +786,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         // A preview is never a percussion trigger.
         guard isActive && active else {
             let inbox = queuedInbox, notify = queuedReady
-            let ready = inbox?.submit(.init(states:combined,stamp:stamp,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
+            let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,clickObservation:clickObservation,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
             lock.unlock()
             if inbox != nil { if ready { notify?() } }
             else { callback?(combined,stamp) }
@@ -746,33 +830,34 @@ public final class TouchInstrumentService: @unchecked Sendable {
             }
         }
         let inbox = queuedInbox, notify = queuedReady
-        let ready = inbox?.submit(.init(states:combined,stamp:stamp,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
+        let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,clickObservation:clickObservation,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
         lock.unlock()
         if inbox != nil { if ready { notify?() } }
         else { callback?(combined,stamp) }
     }
 
     private func renderHapticFrame(token: UUID) {
-        var snapshot: (TouchInstrumentConfiguration, [TouchPerformanceState],
+        var snapshot: (TouchInstrumentConfiguration, [TouchPerformanceState], [TouchPerformanceState],
                         HapticSustainVoices<TouchPerformanceState>, Bool, [HapticFrame], UInt64)?
         renderFence.submit(token) {
             lock.lock()
             defer { lock.unlock() }
-            guard active && configuration.localHapticSound else { return }
+            guard active && configuration.localHapticSound && !hapticFailureGate.retired else { return }
             // A released attack that occurred entirely between ticks gets
             // one bounded local pulse. Current contact state always wins.
             let now = ProcessInfo.processInfo.systemUptime
             let hits = drumStrikes.drain(now:now)
             hapticMetrics.drainedDrumStrikes &+= hits.count
-            var current = liveHapticStates
-            var liveIDs = Set(current.map(\.id))
-            for attacks in pendingMelodicAttacks.drain(now:now) {
-                current += attacks.filter { liveIDs.insert($0.id).inserted }
+            let current = liveHapticStates
+            var seen = Set(current.map(\.id))
+            var transients:[TouchPerformanceState] = []
+            for attacks in pendingMelodicAttacks.drain(now:now).reversed() {
+                transients += attacks.filter { seen.insert($0.id).inserted }
             }
-            snapshot = (configuration, current, sustainedHapticStates,
+            snapshot = (configuration, current, transients, sustainedHapticStates,
                         sustainActive, hits, renderRevision)
         }
-        guard let (config, current, sustained, isSustained, hits, revision) = snapshot else { return }
+        guard let (config, current, transients, sustained, isSustained, hits, revision) = snapshot else { return }
         if drumRenderToken != token || drumRenderRevision != revision {
             drumRenderToken = token
             drumRenderRevision = revision
@@ -780,27 +865,24 @@ public final class TouchInstrumentService: @unchecked Sendable {
         }
 
         let now = ProcessInfo.processInfo.systemUptime
-         let sounding = sustained.sounding(
+        let sounding = sustained.sounding(
             live:current.map { (id:$0.id,value:$0) },
-            includeSustained:isSustained
+            includeSustained:isSustained,
+            transient:transients.map { (id:$0.id,value:$0) }
         ) { state in
             config.output(for:state.surface).sendsHaptics &&
             config.instrument(for:state.surface) != .drums
         }
-        var tones: [HapticTone] = []
-        var chordFrequencies = Set<Double>()
-        var level = 0.0
+        var voices:[TouchHapticVoicing.Voice] = []
         for state in sounding {
+            let gain = Double(state.velocity)/127
             if config.instrument(for:state.surface) == .chords {
                 guard let slot = state.chordSlot, let bank = config.physicalChordBank,
                       let pad = bank.pad(at:slot) else { continue }
-                for note in pad.notes {
-                    let frequency = bank.customScale?.tunedFrequency(midi:note,root:bank.root) ?? (try? MusicTheory.frequency(midi:note))
-                    if let frequency, chordFrequencies.insert(frequency).inserted {
-                        tones.append(.init(frequencyHz:frequency))
-                    }
+                let pitches = pad.notes.compactMap { note in
+                    bank.customScale?.tunedFrequency(midi:note,root:bank.root) ?? (try? MusicTheory.frequency(midi:note))
                 }
-                level = max(level,Double(state.velocity)/127)
+                voices.append(.init(frequencies:pitches,gain:gain))
                 continue
             }
             let baseFrequency: Double
@@ -819,12 +901,10 @@ public final class TouchInstrumentService: @unchecked Sendable {
             }
             // Y selects the string; it must not simultaneously add vibrato.
             let vibrato = config.instrument(for:state.surface).isStringSurface ? 0 : 0.5 * state.vibrato * sin(now * 6 * 2 * Double.pi)
-            tones.append(.init(frequencyHz: baseFrequency * pow(2, vibrato / 12)))
-            level = max(level, Double(state.velocity) / 127)
+            voices.append(.init(frequencies:[baseFrequency * pow(2,vibrato/12)],gain:gain))
         }
 
-        let melody: HapticFrame? = tones.isEmpty ? nil : .init(
-            tones: tones,durationMS:28,level:min(1,max(0.15,level)))
+        let melody = TouchHapticVoicing.frame(voices)
         if let frame = mixedHapticPlan.next(hits:hits,melody:melody,now:now) {
             submitFrame(frame,level:config.masterLevel,token:token,revision:revision)
         }
@@ -835,7 +915,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         var submitted = false
         renderFence.submit(token) {
             lock.lock()
-            let allowed = active && configuration.localHapticSound && renderRevision == revision
+            let allowed = active && configuration.localHapticSound && !hapticFailureGate.retired && renderRevision == revision
             lock.unlock()
             guard allowed else { return }
             do {
@@ -843,11 +923,20 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 submitted = true
                 lock.lock()
                 hapticMetrics.motorSubmissions &+= 1
+                if active && renderRevision == revision { hapticFailureGate.recordSuccess() }
                 lock.unlock()
             } catch {
                 lock.lock()
                 hapticMetrics.motorErrors &+= 1
+                let faulted = active && renderRevision == revision && hapticFailureGate.recordFailure()
+                if faulted {
+                    pendingMelodicAttacks.removeAll()
+                    drumStrikes.discardPending()
+                    sustainedHapticStates.removeAll()
+                    sustainActive=false
+                }
                 lock.unlock()
+                if faulted { onHapticFault?(error.localizedDescription) }
             }
         }
         return submitted

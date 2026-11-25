@@ -90,8 +90,8 @@ struct RemotePairingGate: Sendable {
     private var issuedAt = 0.0
     private var mappingDetails = false
     private var mappingLabels = false
-    mutating func issue(secret: Data, source: SensorSource, now: Double, mappingDetails: Bool = false, mappingLabels: Bool = false) throws {
-        guard secret.count == 32, source == .phone || source == .tablet,
+    mutating func issue(secret: Data, source: SensorSource, now: Double, mappingDetails: Bool = false, mappingLabels: Bool = false, allowGroupSlots:Bool = false) throws {
+        guard secret.count == 32, (source == .phone || source == .tablet || (allowGroupSlots && source.isGroupOnlyRemote)),
               now.isFinite, now >= 0 else { throw RemoteTouchError.invalidPairing }
         pending = secret
         self.source = source

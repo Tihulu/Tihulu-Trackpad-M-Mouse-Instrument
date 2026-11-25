@@ -15,7 +15,9 @@ NAME=$(basename "$DMG")
 EXPECTED=$(awk -v name="$NAME" 'NF == 2 && $2 == name {print $1}' "$SUM")
 ACTUAL=$(shasum -a 256 "$DMG" | awk '{print $1}')
 [ "$EXPECTED" = "$ACTUAL" ] || fail "checksum mismatch"
-hdiutil verify "$DMG" >/dev/null
+# Verify once after the checksum, with narrowly scoped transient retries.
+. "$(dirname "$0")/diskimage-retry.sh"
+diskimage_retry hdiutil verify "$DMG"
 MOUNT=$(mktemp -d "${TMPDIR:-/tmp}/tihulu-preview-check.XXXXXX")
 cleanup() {
     if [ "$MOUNTED" = yes ]; then

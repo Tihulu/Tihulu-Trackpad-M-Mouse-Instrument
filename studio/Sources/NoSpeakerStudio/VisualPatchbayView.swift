@@ -54,7 +54,7 @@ struct VisualPatchbayView: View {
                 GroupBox(inputLabel(id)) {
                     VStack(alignment: .leading, spacing: 5) {
                         Picker("Source", selection: $node.source) {
-                            ForEach(SensorSource.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                            ForEach(SensorSource.legacyBuilderSources, id: \.self) { Text($0.rawValue).tag($0) }
                         }
                         Picker("Signal", selection: $node.signal) {
                             ForEach(SensorSignal.allCases, id: \.self) { Text($0.rawValue).tag($0) }

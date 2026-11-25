@@ -235,7 +235,7 @@ struct InstrumentBuilderView: View {
                         HStack {
                             Picker("Source filter", selection: $routeSource) {
                                 Text("All sources").tag(nil as SensorSource?)
-                                ForEach(SensorSource.allCases, id: \.self) { source in
+                                ForEach(SensorSource.legacyBuilderSources, id: \.self) { source in
                                     Text(source.rawValue).tag(Optional(source))
                                 }
                             }
@@ -733,7 +733,7 @@ struct InstrumentBuilderView: View {
             } else {
             HStack {
                 Picker("Source", selection: route.source) {
-                    ForEach(SensorSource.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    ForEach(SensorSource.legacyBuilderSources, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 Picker("Signal", selection: route.signal) {
                     ForEach(SensorSignal.allCases, id: \.self) { Text($0.rawValue).tag($0) }

@@ -39,8 +39,8 @@ public struct RemoteTLSIdentityChoice: Identifiable {
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    public func makeLoopbackPageServer(endpoint: RemoteEndpoint = .loopback) throws -> RemoteLoopbackPageServer {
-        try RemoteLoopbackPageServer(identity: identity, endpoint: endpoint)
+    public func makeLoopbackPageServer(endpoint: RemoteEndpoint = .loopback, groupNeutralHandshake:Bool = false) throws -> RemoteLoopbackPageServer {
+        try RemoteLoopbackPageServer(identity: identity, endpoint: endpoint,groupNeutralHandshake:groupNeutralHandshake)
     }
 
     public func makeLoopbackTransport(endpoint: RemoteEndpoint = .loopback) throws -> RemoteLoopbackTransport {

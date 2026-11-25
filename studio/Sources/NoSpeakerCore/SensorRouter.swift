@@ -2,6 +2,12 @@ import Foundation
 
 public enum SensorSource: String, Codable, CaseIterable, Sendable {
     case trackpad, magicMouse, touchBar, lid, camera, microphone, phone, tablet, external, gamepad1, gamepad2, gamepad3, gamepad4
+    // New values are group-only. Existing archive raw values stay unchanged.
+    case phone2, tablet2
+    public static let groupRemoteSources:[Self] = [.phone,.tablet,.phone2,.tablet2]
+    public var isGroupRemote:Bool { Self.groupRemoteSources.contains(self) }
+    public var isGroupOnlyRemote:Bool { self == .phone2 || self == .tablet2 }
+    public static var legacyBuilderSources:[Self] { allCases.filter { !$0.isGroupOnlyRemote } }
 }
 
 /// Adapters normalize physical units and assign the host's monotonic time.

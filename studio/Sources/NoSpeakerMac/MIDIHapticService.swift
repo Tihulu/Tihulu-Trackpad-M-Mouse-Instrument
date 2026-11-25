@@ -36,8 +36,8 @@ public enum MIDIHapticError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .client(let status):
-            if status == -2 {
-                return "CoreMIDI lost its MIDIServer connection (OSStatus -2). Restart the instrument app. The MIDI client will now be kept alive across mode switches to prevent recurrence."
+            if status == -2 || status == -304 {
+                return "CoreMIDI client creation failed (OSStatus \(status)). The MIDI session was not started. If the error persists, quit and relaunch the app; check Audio MIDI Setup. No automatic reconnect is attempted."
             }
             return "CoreMIDI client creation failed (OSStatus \(status))."
         case .destination(let status): return "CoreMIDI virtual input creation failed (OSStatus \(status))."
@@ -80,8 +80,12 @@ private final class MIDIProcessClient: @unchecked Sendable {
         var newClient = MIDIClientRef()
         let status = MIDIClientCreateWithBlock(
             "Tihulu Trackpad & M. Mouse Instrument" as CFString, &newClient
-        ) { _ in }
-        guard status == noErr else { throw MIDIHapticError.client(status) }
+        ) { @Sendable _ in }
+        guard status == noErr,newClient != 0 else {
+            // A successful status with a null handle is not an admitted
+            // client. Do not cache it or attempt to use it.
+            throw MIDIHapticError.client(status == noErr ? -1 : status)
+        }
         retainedClient = newClient
         return newClient
     }
@@ -364,15 +368,15 @@ public final class MIDIHapticService: @unchecked Sendable {
         midiMode: TouchMIDIMode,
         baseChannel: Int = 0,
         multiTouchEnabled: Bool = true,
-        separateChannels: DAWSurfaceChannels? = nil
+        separateChannels: DAWSurfaceChannels? = nil,
+        sustainNewVoices: Bool = false
     ) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         lock.unlock()
         guard canSend else { return }
-        guard configuration.pitchSpanSemitones.isFinite,
-              (0...127).contains(configuration.baseMIDINote),
-              (1...96).contains(configuration.pitchSpanSemitones) else {
+        guard configuration.hasValidSampleDomain else {
+            releaseTouchSustain()
             endAllTouchOutput()
             return
         }
@@ -386,6 +390,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
         let safeMelodicChannel = SurfaceMIDIChannel.melodic(base: baseChannel, hasMIDIDrums: anyDrums)
         if separateChannels != nil && (midiMode != .standard || !configuration.permitsSeparateDAWSurfaceChannels) {
+            releaseTouchSustain()
             endAllTouchOutput()
             return
         }
@@ -397,25 +402,30 @@ public final class MIDIHapticService: @unchecked Sendable {
         let stringRouteAllowed = configuration.permitsStringMIDI(isMPE:midiMode == .mpe)
         let melodicRouteAllowed = configuration.permitsMelodicMIDI(isMPE:midiMode == .mpe)
         var desired = states.filter {
-            $0.isDown && $0.continuousMIDI.isFinite && $0.vibrato.isFinite &&
+            $0.isDown && $0.isTouching && $0.continuousMIDI.isFinite && $0.vibrato.isFinite &&
+            HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) &&
             configuration.surfaceSelection.accepts($0.surface) && configuration.output(for: $0.surface).sendsMIDI &&
             (!configuration.instrument(for:$0.surface).isStringSurface || stringRouteAllowed) &&
             (configuration.instrument(for:$0.surface) != .melodic || melodicRouteAllowed) &&
             (configuration.instrument(for:$0.surface) != .fretlessStrings || configuration.strings(for:$0.surface).continuousCell(x:$0.x,y:$0.y) != nil)
         }
+        func key(for state:TouchPerformanceState) -> TouchKey {
+            TouchKey(surface:state.surface,id:state.contactID)
+        }
+        let heldKeys = Set(outgoingTouches.keys).union(physicalChordGates.contacts)
         if !multiTouchEnabled {
-            desired = Array(desired.prefix(1))
+            if let index = LegacyTouchAdmission.preferredIndex(keys:desired.map { key(for:$0) },held:heldKeys) {
+                desired = [desired[index]]
+            }
         }
         if configuration.fretless, midiMode == .standard {
-            // Melodic fretless pitch bend is channel-wide in Standard MIDI.
-            // Keep every percussion contact, but only one continuous-pitch
-            // melodic finger; they are routed to separate channels.
-            var keptMelodic = false
-            desired = desired.filter { state in
-                if configuration.instrument(for: state.surface) != .melodic { return true }
-                if keptMelodic { return false }
-                keptMelodic = true
-                return true
+            // Keep nonmelodic routes independent. Do not move a channel-wide
+            // bend to a different finger merely because native order changed.
+            let melodic = desired.filter { configuration.instrument(for:$0.surface) == .melodic }
+            let chosen = LegacyTouchAdmission.preferredIndex(keys:melodic.map { key(for:$0) },held:heldKeys)
+                .map { key(for:melodic[$0]) }
+            desired = desired.filter {
+                configuration.instrument(for:$0.surface) != .melodic || key(for:$0) == chosen
             }
         }
 
@@ -493,6 +503,13 @@ public final class MIDIHapticService: @unchecked Sendable {
                 channel = free
             } else {
                 channel = standardChannel
+            }
+
+            // A newly allocated MPE member must receive this frame's
+            // admitted pedal before expression and Note On, not afterwards.
+            // Do not mark unused members sustained before allocation.
+            if isMPE && sustainNewVoices && outgoingTouches[key] == nil {
+                extendTouchSustain(to:channel)
             }
 
             // Onsets must not inherit a retired member's expression/pressure.
@@ -625,6 +642,43 @@ public final class MIDIHapticService: @unchecked Sendable {
         if canSend { sendSustainTransitions(commands) }
     }
 
+    /// One accepted physical frame may change both pedal owners. Emit
+    /// only the final union transition, never an intermediate OFF/ON.
+    public func setPhysicalSustainFrame(touch: MIDIHelperSustainSnapshot?,
+                                        separateChannels: DAWSurfaceChannels?,
+                                        independent:Bool,fixedTouchChannels:Set<Int>,
+                                        helper:Bool?,helperChannel:Int) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        var updates: [LegacySustainOwners.Owner:Set<Int>] = [:]
+        if let touch {
+            if !canSend {
+                updates[.touch] = []
+            } else if let separateChannels {
+                updates[.touch] = separateChannels.sustainTargets(touch,independent:independent)
+            } else {
+                let current = Set(outgoingTouches.values.map(\.channel)).union(physicalChordGates.channels)
+                updates[.touch] = LegacyTouchSustainTargets.routed(active:touch.isActive,
+                    previous:sustainOwners.channels(for:.touch),current:current,fixed:fixedTouchChannels)
+            }
+        }
+        if let helper {
+            updates[.helper] = helper && canSend ? [max(0,min(15,helperChannel))] : []
+        }
+        let commands = sustainOwners.replaceFrame(updates)
+        lock.unlock()
+        if canSend { sendSustainTransitions(commands) }
+    }
+
+    private func extendTouchSustain(to channel:Int) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        let targets = sustainOwners.channels(for:.touch).union([channel])
+        let commands = sustainOwners.replace(.touch,channels:canSend ? targets : [])
+        lock.unlock()
+        if canSend { sendSustainTransitions(commands) }
+    }
+
     public func setHelperSustain(_ active: Bool, channel: Int) {
         replaceSustain(.helper,channels:active ? [max(0,min(15,channel))] : [])
     }
@@ -636,15 +690,15 @@ public final class MIDIHapticService: @unchecked Sendable {
     public func releaseTouchBarSustain() { replaceSustain(.touchBar,channels:[]) }
 
     /// Retains previously held MPE channels until this owner releases.
-    public func setTouchSustain(_ active: Bool, baseChannel: Int, separateChannels: DAWSurfaceChannels? = nil) {
+    public func setTouchSustain(_ active: Bool, baseChannel: Int, separateChannels: DAWSurfaceChannels? = nil,
+                                allowIdleFallback:Bool = true) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         let previous = sustainOwners.channels(for:.touch)
         let currentNoteChannels = Set(outgoingTouches.values.map(\.channel)).union(physicalChordGates.channels)
-        let fallback = max(0,min(15,baseChannel))
-        let targets = active && canSend
-            ? previous.union(separateChannels?.all ?? (currentNoteChannels.isEmpty && previous.isEmpty ? [fallback] : currentNoteChannels))
-            : Set<Int>()
+        let targets = LegacyTouchSustainTargets.resolve(active:active && canSend,
+            previous:previous,current:separateChannels?.all ?? currentNoteChannels,
+            baseChannel:baseChannel,allowIdleFallback:allowIdleFallback)
         let commands = sustainOwners.replace(.touch,channels:targets)
         lock.unlock()
         if canSend { sendSustainTransitions(commands) }
@@ -1130,22 +1184,112 @@ public final class ChordMIDIOutput {
 @MainActor
 public final class PerformanceGroupMIDIHost {
     public static let shared = PerformanceGroupMIDIHost()
-    public enum HostError: Error { case activeOrCleanupRequired, notStarted }
+    public enum HostError: Error { case activeOrCleanupRequired, notStarted, closeRequiredForTuning, tuningSetupFailed }
     private var ports = PerformanceGroupPortRegistry()
     private var delivery: PerformanceGroupDelivery?
+    private var gamepads: PerformanceGroupGamepadSession?
+    private var retainedTunedPorts = false
+    private var groupHapticProjection:PerformanceGroupHapticProjection?
+    public func groupHapticSnapshot(now:Double) -> GroupHapticSnapshot? { groupHapticProjection?.snapshot(now:now) }
+    public func discardGroupHapticAttacks() { groupHapticProjection?.discardAttacks() }
+    public func disableGroupHaptics() { groupHapticProjection = nil }
+    private var remoteBridge: PerformanceGroupRemoteBridge?
+    private var remoteRunID: UUID?
     private init() {}
 
     public var registeredIDs: Set<UUID> { ports.registeredIDs }
-    public var pendingCleanup: Set<UUID> { delivery?.pendingCleanup ?? [] }
+    public var localSourceStates: [SensorSource:PerformanceGroupGamepadSession.SourceState] { gamepads?.sourceStates ?? [:] }
+    public var pendingCleanup: Set<UUID> {
+        (delivery?.pendingCleanup ?? []).union(gamepads?.pendingCleanup ?? [])
+    }
     public var pendingDisposalCount: Int { ports.pendingDisposalCount }
+
+    private var canStart: Bool {
+        (delivery?.retired ?? true) && (gamepads?.retired ?? true) && pendingCleanup.isEmpty
+    }
 
     /// Call only after deliberate user activation and adapter readiness.
     /// A different endpoint plan requires an explicit clean close first.
     public func start(profile: PerformanceGroupProfile, allowLayering: Bool = false) throws {
-        if let delivery, !delivery.retired || !delivery.pendingCleanup.isEmpty {
-            throw HostError.activeOrCleanupRequired
-        }
+        guard canStart else { throw HostError.activeOrCleanupRequired }
+        guard !retainedTunedPorts else { throw HostError.closeRequiredForTuning }
         let next = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
+        try openPorts(profile)
+        gamepads = nil
+        remoteBridge = nil
+        remoteRunID = nil
+        delivery = next
+        groupHapticProjection = nil
+    }
+
+    public static var dynamicMPEEnabled:Bool {
+        #if TIHULU_GROUP_DYNAMIC_MPE_LIVE
+        true
+        #else
+        false
+        #endif
+    }
+
+    public static var dynamicMPEHapticsEnabled:Bool {
+        #if TIHULU_GROUP_DYNAMIC_MPE_HAPTIC_LIVE && TIHULU_GROUP_HAPTIC_LIVE
+        return dynamicMPEEnabled
+        #else
+        return false
+        #endif
+    }
+
+    /// Only a caller owning the frozen physical controller bindings may use
+    /// this entry point. The caller must provide the existing watchdog cadence.
+    /// No automatic activation, device polling or handler installation here.
+    public func startGamepads(profile: PerformanceGroupProfile, allowLayering: Bool = false,
+                              allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false,
+                              tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:], allowRemote:Bool = false,
+                              hapticGroups:Set<UUID> = [],allowTunedHaptics:Bool = false,
+                              dynamicMPE:Bool = false,confirmedDynamicMPE:Bool = false) throws {
+        guard canStart else { throw HostError.activeOrCleanupRequired }
+        // Never retune retained ports during another session's release tails
+        // or silently switch a previously configured receiver to standard mode.
+        guard !retainedTunedPorts, tuning.isEmpty || registeredIDs.isEmpty else {
+            throw HostError.closeRequiredForTuning
+        }
+        let dynamicPlan:DynamicMPEActivationPlan?
+        if dynamicMPE {
+            guard Self.dynamicMPEEnabled else { throw DynamicMPEActivationPlan.AdmissionError.incompatibleMode }
+            dynamicPlan = try DynamicMPEActivationPlan(profile:profile,tuning:tuning,confirmed:confirmedDynamicMPE,
+                allowLayering:allowLayering,registeredIDs:registeredIDs,cleanupIDs:pendingCleanup,
+                pendingDisposalCount:pendingDisposalCount,allowSurfaces:allowSurfaces,
+                allowScalars:allowScalars,allowCamera:allowCamera,allowRemote:allowRemote,hapticGroups:hapticGroups,
+                allowDynamicHaptics:Self.dynamicMPEHapticsEnabled)
+        } else {
+            guard !confirmedDynamicMPE else { throw DynamicMPEActivationPlan.AdmissionError.incompatibleMode }
+            dynamicPlan = nil
+        }
+        var next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering,
+            allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera,tuning:tuning,allowRemote:allowRemote,dynamicMPE:dynamicMPE)
+        let projection:PerformanceGroupHapticProjection?
+        if hapticGroups.isEmpty { projection = nil }
+        else if let dynamicPlan {
+            projection = try .init(preparedDynamic:dynamicPlan.preview,selected:hapticGroups)
+        } else if tuning.isEmpty {
+            projection = try .init(profile:profile,selected:hapticGroups)
+        } else {
+            guard allowTunedHaptics,!allowRemote else { throw PerformanceGroupHapticProjection.AdmissionError.invalidSelection }
+            projection = try .init(profile:profile,selected:hapticGroups,preparedTuning:tuning)
+        }
+        try openPorts(profile)
+        groupHapticProjection = nil
+        delivery = nil
+        remoteBridge = nil
+        remoteRunID = nil
+        retainedTunedPorts = !tuning.isEmpty
+        let prepared = next.prepare(send:send)
+        // Publish even on failure, preserving the original selector debt.
+        gamepads = next
+        guard prepared else { throw HostError.tuningSetupFailed }
+        groupHapticProjection = projection
+    }
+
+    private func openPorts(_ profile: PerformanceGroupProfile) throws {
         let plan = try PerformanceGroupEndpointPlan(profile:profile)
         let client = try MIDIProcessClient.shared.acquire()
         try ports.open(plan,lookup:Self.lookup,create:{ entry in
@@ -1156,7 +1300,6 @@ public final class PerformanceGroupMIDIHost {
         },assign:{ endpoint,id in
             MIDIObjectSetIntegerProperty(endpoint,kMIDIPropertyUniqueID,id) == noErr
         },dispose:Self.dispose)
-        delivery = next
     }
 
     private static func lookup(_ id: Int32) -> PerformanceGroupPortRegistry.Lookup {
@@ -1174,8 +1317,155 @@ public final class PerformanceGroupMIDIHost {
     }
 
     private func send(_ item: PerformanceGroupCommand) -> Bool {
-        guard let endpoint = ports.handle(for:item.groupID) else { return false }
-        return ChordMIDIOutput.send(item.command,endpoint:endpoint)
+        let accepted:Bool
+        if let endpoint = ports.handle(for:item.groupID) { accepted = ChordMIDIOutput.send(item.command,endpoint:endpoint) }
+        else { accepted = false }
+        groupHapticProjection?.observe(item,accepted:accepted,now:ProcessInfo.processInfo.systemUptime)
+        return accepted
+    }
+
+    /// Explicit listener ownership token; caller must start the established
+    /// transport separately and drain it at the existing watchdog cadence.
+    /// No socket, pairing secret generation or implicit Start here.
+    public func beginRemoteGroupBridge() throws -> UUID {
+        guard let state = gamepads,!state.retired,!state.remoteSlots.isEmpty,
+              remoteBridge == nil else { throw RemoteTouchError.unavailable }
+        let id = UUID()
+        remoteRunID = id
+        remoteBridge = PerformanceGroupRemoteBridge()
+        return id
+    }
+
+    public func remoteGroupConnections(run:UUID) -> Set<UUID> {
+        guard run == remoteRunID else { return [] }
+        return remoteBridge?.connectionIDs ?? []
+    }
+
+    public func remoteGroupSlots(run:UUID) -> [UUID:SensorSource] {
+        guard run == remoteRunID else { return [:] }
+        return remoteBridge?.connectionSlots ?? [:]
+    }
+
+    public func remoteGroupLabelPreview(run:UUID,source:SensorSource) -> [String] {
+        guard run == remoteRunID,remoteBridge?.ready == true,let state = gamepads else { return [] }
+        return state.remoteLabelPreview(source)
+    }
+
+    public func remoteGroupReady(run:UUID) -> Bool {
+        run == remoteRunID && remoteBridge?.ready == true
+    }
+
+    public func cancelRemoteGroupInvitation(run:UUID) {
+        guard run == remoteRunID else { return }
+        remoteBridge?.cancelInvitation()
+    }
+
+    public func issueRemoteGroupInvitation(run:UUID,secret:Data,source:SensorSource,now:Double,shareLabels:Bool = false) throws {
+        guard run == remoteRunID,var bridge = remoteBridge,let state = gamepads else {
+            throw RemoteTouchError.unavailable
+        }
+        try bridge.issue(secret:secret,source:source,now:now,session:state,shareLabels:shareLabels)
+        remoteBridge = bridge
+    }
+
+    public func processRemoteGroupEvents(run:UUID,events:[RemoteHostEvent],now:Double) -> PerformanceGroupRemoteBatch {
+        guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else {
+            var result = PerformanceGroupRemoteBatch()
+            result.actions = [.stop]
+            return result
+        }
+        let peers = bridge.connectionIDs
+        let result = bridge.process(events,now:now,session:&state,send:send)
+        if result.fault || !peers.isSubset(of:bridge.connectionIDs) { discardGroupHapticAttacks() }
+        gamepads = state
+        remoteBridge = bridge.stopped ? nil : bridge
+        if bridge.stopped { remoteRunID = nil }
+        return result
+    }
+
+    public func revokeRemoteGroupConnection(run:UUID,connection:UUID) -> PerformanceGroupRemoteBatch {
+        guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else { return .init() }
+        discardGroupHapticAttacks()
+        let result = bridge.revoke(connection,session:&state,send:send)
+        remoteBridge = bridge
+        gamepads = state
+        return result
+    }
+
+    public func stopRemoteGroupBridge(run:UUID) -> PerformanceGroupRemoteBatch {
+        guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else { return .init() }
+        discardGroupHapticAttacks()
+        let result = bridge.stop(session:&state,send:send)
+        gamepads = state
+        remoteBridge = nil
+        remoteRunID = nil
+        return result
+    }
+
+    public func bindGamepad(_ source: SensorSource, now: Double) throws -> UUID {
+        guard !source.isGroupRemote else { throw RemoteTouchError.unavailable }
+        guard var state = gamepads else { throw HostError.notStarted }
+        let token = try state.bind(source,now:now)
+        gamepads = state
+        return token
+    }
+
+    public func receiveGamepad(_ source: SensorSource, token: UUID, frame: GamepadFrame?, now: Double)
+        -> PerformanceGroupGamepadSession.Result? {
+        guard var state = gamepads else { return nil }
+        let result = state.receive(source,token:token,frame:frame,now:now,send:send)
+        if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
+        gamepads = state
+        return result
+    }
+
+    public func receiveSurface(_ source:SensorSource, token:UUID, x:Double?, y:Double?, size:Double?,
+                               hostTime:Double, now:Double) -> PerformanceGroupGamepadSession.Result? {
+        guard var state = gamepads else { return nil }
+        let result = state.receiveSurface(source,token:token,x:x,y:y,size:size,
+                                          hostTime:hostTime,now:now,send:send)
+        if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
+        gamepads = state
+        return result
+    }
+
+    public func receiveScalar(_ source:SensorSource, token:UUID, value:Double?,
+                              hostTime:Double, now:Double) -> PerformanceGroupGamepadSession.Result? {
+        guard var state = gamepads else { return nil }
+        let result = state.receiveScalar(source,token:token,value:value,hostTime:hostTime,now:now,send:send)
+        if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
+        gamepads = state
+        return result
+    }
+
+    public func receiveCamera(token:UUID,hand:AirHandSample?,hostTime:Double,now:Double)
+        -> PerformanceGroupGamepadSession.Result? {
+        guard var state = gamepads else { return nil }
+        let result = state.receiveCamera(token:token,hand:hand,hostTime:hostTime,now:now,send:send)
+        if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
+        gamepads = state
+        return result
+    }
+
+    public func expireGamepads(now: Double) -> [PerformanceGroupDelivery.Report] {
+        guard var state = gamepads else { return [] }
+        let before = state.sourceStates
+        let result = state.expire(now:now,send:send)
+        if before != state.sourceStates { discardGroupHapticAttacks() }
+        gamepads = state
+        return result
+    }
+
+    public func unbindGamepad(_ source: SensorSource, token: UUID) -> [PerformanceGroupDelivery.Report] {
+        unbindGroupSources([source:token])
+    }
+
+    public func unbindGroupSources(_ tokens:[SensorSource:UUID]) -> [PerformanceGroupDelivery.Report] {
+        guard var state = gamepads else { return [] }
+        discardGroupHapticAttacks()
+        let result = state.unbindBatch(tokens,send:send)
+        gamepads = state
+        return result
     }
 
     public func connect(_ source: SensorSource, now: Double) throws -> UUID {
@@ -1208,6 +1498,12 @@ public final class PerformanceGroupMIDIHost {
     }
 
     public func stopGroup(_ id: UUID) -> PerformanceGroupDelivery.Report? {
+        groupHapticProjection?.retire(id)
+        if var state = gamepads {
+            let result = state.stopGroup(id,send:send)
+            gamepads = state
+            return result
+        }
         guard var state = delivery else { return nil }
         let result = state.stopGroup(id,send:send)
         delivery = state
@@ -1215,6 +1511,15 @@ public final class PerformanceGroupMIDIHost {
     }
 
     public func panic() -> PerformanceGroupDelivery.Report? {
+        // Retire the callback generation before releasing all owners.
+        groupHapticProjection = nil
+        remoteBridge = nil
+        remoteRunID = nil
+        if var state = gamepads {
+            let result = state.panic(send:send)
+            gamepads = state
+            return result
+        }
         guard var state = delivery else { return nil }
         let result = state.panic(send:send)
         delivery = state
@@ -1222,6 +1527,11 @@ public final class PerformanceGroupMIDIHost {
     }
 
     public func retryCleanup(_ id: UUID) -> PerformanceGroupDelivery.Report? {
+        if var state = gamepads {
+            let result = state.retryCleanup(id,send:send)
+            gamepads = state
+            return result
+        }
         guard var state = delivery else { return nil }
         let result = state.retryCleanup(id,send:send)
         delivery = state
@@ -1232,15 +1542,22 @@ public final class PerformanceGroupMIDIHost {
     /// debt-free session. Never dispose the only route for a pending note-off.
     @discardableResult
     public func close() -> Bool {
-        if let delivery, !delivery.retired || !delivery.pendingCleanup.isEmpty { return false }
+        guard canStart else { return false }
         let closed = ports.close(cleanupComplete:true,dispose:Self.dispose)
+        groupHapticProjection = nil
         delivery = nil
+        gamepads = nil
+        remoteBridge = nil
+        remoteRunID = nil
+        if closed { retainedTunedPorts = false }
         return closed
     }
 
     @discardableResult
     public func retryDisposal() -> Bool {
-        ports.retryDisposal(Self.dispose)
+        let clean = ports.retryDisposal(Self.dispose)
+        if clean, ports.registeredIDs.isEmpty { retainedTunedPorts = false }
+        return clean
     }
 }
 #endif

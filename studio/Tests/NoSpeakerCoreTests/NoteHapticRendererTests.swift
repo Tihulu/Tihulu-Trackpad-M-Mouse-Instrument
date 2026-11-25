@@ -48,3 +48,46 @@ import Testing
     _ = state.releaseAll()
     #expect(NoteHapticRenderer.frame(notes: state.activeNotes, velocity: 100) == nil)
 }
+
+
+@Test func touchHapticVoicingFoldsBassRatherThanFlatteningPitch() throws {
+    let a = try #require(TouchHapticVoicing.foldedFrequency(55))
+    let b = try #require(TouchHapticVoicing.foldedFrequency(65))
+    #expect(a == 110 && b == 130)
+    #expect(TouchHapticVoicing.foldedFrequency(4000) == 2000)
+    #expect(TouchHapticVoicing.foldedFrequency(.nan) == nil)
+    #expect(TouchHapticVoicing.foldedFrequency(0) == nil)
+    #expect(TouchHapticVoicing.foldedFrequency(Double.greatestFiniteMagnitude) == nil)
+}
+
+@Test func touchHapticVoicingPreservesRelativeFingerVelocity() throws {
+    let frame = try #require(TouchHapticVoicing.frame([
+        .init(frequencies:[220],gain:0.2),.init(frequencies:[440],gain:0.6)
+    ]))
+    #expect(abs(frame.level-0.8) < 0.000001)
+    #expect(abs(frame.tones[0].amplitude-0.25) < 0.000001)
+    #expect(abs(frame.tones[1].amplitude-0.75) < 0.000001)
+    let soft = try #require(TouchHapticVoicing.frame([.init(frequencies:[220],gain:0.02)]))
+    #expect(soft.level == 0.02)
+}
+
+@Test func touchHapticVoicingSharesBudgetAcrossChordAndMelodicContacts() throws {
+    let frame = try #require(TouchHapticVoicing.frame([
+        .init(frequencies:[110,220,330,440,550,660],gain:1),
+        .init(frequencies:[261.6],gain:0.5),.init(frequencies:[392],gain:0.5)
+    ]))
+    #expect(frame.tones.count == 6)
+    #expect(frame.tones.map(\.frequencyHz).prefix(3) == [110,261.6,392])
+    #expect(frame.level <= 1)
+}
+
+@Test func touchHapticVoicingDeduplicatesFoldedNotesWithoutGainBoost() throws {
+    let frame = try #require(TouchHapticVoicing.frame([
+        .init(frequencies:[55,110],gain:0.3),.init(frequencies:[110],gain:0.4)
+    ]))
+    #expect(frame.tones.count == 1)
+    #expect(frame.tones.first?.frequencyHz == 110)
+    #expect(frame.level == 0.4)
+    #expect(TouchHapticVoicing.frame([.init(frequencies:[440],gain:.nan)]) == nil)
+    #expect(TouchHapticVoicing.frame([.init(frequencies:[440],gain:0)]) == nil)
+}

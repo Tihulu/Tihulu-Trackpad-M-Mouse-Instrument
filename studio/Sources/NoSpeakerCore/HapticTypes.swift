@@ -95,3 +95,59 @@ public enum AudioHapticProfile: String, CaseIterable, Identifiable, Sendable, Co
 
     public var id: String { rawValue }
 }
+
+
+/// Last software boundary before constructing private actuator waveforms.
+/// User-defined safety may be stricter, never looser than the default.
+public enum HapticActuationAdmission: Equatable, Sendable {
+    case invalid
+    case silent
+    case frame(HapticFrame)
+
+    public static func prepare(_ input:HapticFrame,masterLevel:Double,
+                               safety:HapticSafetyPolicy = .init()) -> Self {
+        let hard = HapticSafetyPolicy()
+        guard safety.maxLevel.isFinite,(0...hard.maxLevel).contains(safety.maxLevel),
+              safety.minFrequencyHz.isFinite,safety.maxFrequencyHz.isFinite,
+              safety.minFrequencyHz >= hard.minFrequencyHz,
+              safety.maxFrequencyHz <= hard.maxFrequencyHz,
+              safety.maxFrequencyHz >= safety.minFrequencyHz,
+              (1...hard.maxTonesPerFrame).contains(safety.maxTonesPerFrame),
+              safety.maxFrameDurationMS.isFinite,
+              (0.5...hard.maxFrameDurationMS).contains(safety.maxFrameDurationMS),
+              masterLevel.isFinite,(0...1).contains(masterLevel),
+              input.level.isFinite,input.level >= 0,
+              input.durationMS.isFinite,input.durationMS > 0 else { return .invalid }
+        // Only the admitted bounded prefix can reach the actuator.
+        let prefix = input.tones.prefix(safety.maxTonesPerFrame)
+        guard prefix.allSatisfy({ $0.frequencyHz.isFinite && $0.frequencyHz > 0 &&
+                                  $0.amplitude.isFinite && $0.amplitude >= 0 }) else { return .invalid }
+        var result = safety.clamp(.init(tones:Array(prefix),durationMS:input.durationMS,level:input.level))
+        result.level *= masterLevel
+        result.tones.removeAll { $0.amplitude == 0 }
+        guard result.level > 0,!result.tones.isEmpty else { return .silent }
+        let sum = result.tones.reduce(0.0) { $0+$1.amplitude }
+        guard sum.isFinite,sum > 0 else { return .invalid }
+        result.tones = result.tones.map { .init(frequencyHz:$0.frequencyHz,amplitude:$0.amplitude/sum) }
+        return .frame(result)
+    }
+}
+
+/// Three consecutive failed submissions retire this local render session.
+/// Success clears a transient streak; only an explicit new session rearms.
+public struct HapticConsecutiveFailureGate: Sendable {
+    public private(set) var consecutive = 0
+    public private(set) var retired = false
+    public init() {}
+    @discardableResult
+    public mutating func recordFailure() -> Bool {
+        guard !retired else { return false }
+        consecutive = min(3,consecutive+1)
+        if consecutive == 3 { retired = true; return true }
+        return false
+    }
+    public mutating func recordSuccess() {
+        if !retired { consecutive = 0 }
+    }
+    public mutating func reset() { consecutive = 0; retired = false }
+}

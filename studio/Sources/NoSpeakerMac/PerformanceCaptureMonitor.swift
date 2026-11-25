@@ -30,14 +30,31 @@ public struct PerformanceCaptureShortcut: Codable, Hashable, Sendable {
         displayName: "⌃⌥M"
     )
 
+    public static func acceptsKeyCode(_ code:Int64)->Bool {
+        // Escape is reserved; modifier-only keys produce flagsChanged, not
+        // the keyDown/keyUp events observed by this filtering tap.
+        (0...255).contains(code) && ![53,54,55,56,57,58,59,60,61,62,63].contains(code)
+    }
+
+    /// AppKit can return blank/control-character names for special keys.
+    /// Retain the hardware code and use a printable fallback for display.
+    public static func displayLabel(keyCode:Int64,prefix:String,candidate:String?)->String {
+        let fallback=prefix+"Key "+String(keyCode)
+        guard let candidate,
+              !candidate.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
+              !candidate.unicodeScalars.contains(where:{ CharacterSet.controlCharacters.contains($0) }),
+              (prefix+candidate).utf8.count<=128 else { return fallback }
+        return prefix+candidate
+    }
+
     public var isValid: Bool {
-        keyCode != 53 && (0...255).contains(keyCode) && modifiers & ~Self.allowedModifiers == 0 &&
+        Self.acceptsKeyCode(keyCode) && modifiers & ~Self.allowedModifiers == 0 &&
         !displayName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && displayName.utf8.count <= 128 &&
         !displayName.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
     }
 
     public func matches(_ event: CGEvent) -> Bool {
-        event.getIntegerValueField(.keyboardEventKeycode) == keyCode &&
+        Self.acceptsKeyCode(keyCode) && event.getIntegerValueField(.keyboardEventKeycode) == keyCode &&
         (event.flags.rawValue & Self.allowedModifiers) == modifiers
     }
 }
@@ -51,6 +68,12 @@ public enum PerformanceCaptureSafety {
     ) -> Bool {
         isCaptured && keyCode == 53 && !isRepeat
     }
+
+    /// An accepted emergency edge belongs to the performance engine, not
+    /// the replaceable event tap. A new engine must never receive an old panic.
+    public static func acceptsEmergencyRequest(engineAtCapture:UInt64,currentEngine:UInt64) -> Bool {
+        engineAtCapture == currentEngine
+    }
 }
 
 /// Pair swallowed downs/ups by hardware keycode, not changing modifiers.
@@ -63,18 +86,153 @@ struct CaptureKeyEdges {
         if !down { return swallowed.remove(key) != nil ? .swallow : .pass }
         if swallowed.contains(key) { return .swallow }
         if repeatKey { return .pass }
-        if captured && key == 53 { swallowed.insert(key); return .panic }
+        if PerformanceCaptureSafety.shouldPanicOnGlobalEscape(isCaptured:captured,keyCode:key,isRepeat:repeatKey) {
+            swallowed.insert(key); return .panic
+        }
         if armed && matches { swallowed.insert(key); return .toggle }
         return .pass
     }
 }
 
+/// Pair pointer edges across capture toggles. A click that began outside
+/// capture must still deliver its release. A swallowed down must not leak
+/// its drag/up to the foreground app when capture ends.
+struct CapturePointerEdges {
+    enum Edge { case down,up,drag,other }
+    private var swallowed:Set<Int64> = []
+    private var passed:Set<Int64> = []
+    mutating func reset() { swallowed.removeAll(); passed.removeAll() }
+    mutating func suppress(button:Int64,edge:Edge,captured:Bool) -> Bool {
+        guard (0...31).contains(button) else { return captured }
+        switch edge {
+        case .down:
+            swallowed.remove(button); passed.remove(button)
+            if captured { swallowed.insert(button) } else { passed.insert(button) }
+            return captured
+        case .up:
+            if swallowed.remove(button) != nil { return true }
+            if passed.remove(button) != nil { return false }
+            // Unknown down may have happened before the tap was installed
+            // or during a disabled interval. Never trap its release.
+            return false
+        case .drag: return captured || swallowed.contains(button)
+        case .other: return captured
+        }
+    }
+}
+
+/// Permit isolated transient timeout recovery but disarm a repeatedly
+/// failing filter. The clock is monotonic; invalid time fails open.
+struct CaptureRecoveryBudget {
+    static let window:Double = 10
+    static let maximum = 3
+    private var attempts:[Double] = []
+    mutating func allow(now:Double) -> Bool {
+        guard now.isFinite,now >= 0,attempts.last.map({ now >= $0 }) ?? true else { return false }
+        attempts.removeAll { now-$0 >= Self.window }
+        guard attempts.count < Self.maximum else { return false }
+        attempts.append(now)
+        return true
+    }
+}
+
+public enum CapturePhysicalInput:Equatable,Sendable {
+    case click(Bool,Double)
+    case pressure(Double)
+}
+
+public struct CapturePhysicalInputBatch:Sendable {
+    public let events:[CapturePhysicalInput]
+    public let receipts:[Double]
+    public let invalidated:Bool
+    public let epoch:UInt64
+    public let oldestReceipt:Double?
+}
+
+/// One notification until drained. Edge order is preserved; consecutive
+/// pressure samples replace each other. Overflow drops the entire batch
+/// and disarms physical sustain until a fresh click after the drain.
+struct CapturePhysicalMailbox {
+    static let capacity = 32
+    static let maximumAge:Double = 0.1
+    private var oldestReceipt:Double?
+    private var lastReceipt:Double?
+    private(set) var epoch:UInt64 = 0
+    private var events:[CapturePhysicalInput] = []
+    private var receipts:[Double] = []
+    private var invalidated = false
+    private var pending = false
+    private(set) var coalesced:UInt64 = 0
+    private(set) var overflows:UInt64 = 0
+    mutating func append(_ event:CapturePhysicalInput,now:Double = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard now.isFinite,now >= 0,lastReceipt.map({ now >= $0 }) ?? true else { return invalidate() }
+        lastReceipt = now
+        if !invalidated {
+            if oldestReceipt == nil { oldestReceipt = now }
+            if case .pressure = event, case .pressure? = events.last {
+                events[events.count-1] = event
+                receipts[receipts.count-1] = now
+                if coalesced < UInt64.max { coalesced += 1 }
+            } else if events.count < Self.capacity {
+                events.append(event)
+                receipts.append(now)
+            } else {
+                events.removeAll(keepingCapacity:true)
+                receipts.removeAll(keepingCapacity:true)
+                invalidated = true
+                epoch &+= 1
+                if overflows < UInt64.max { overflows += 1 }
+            }
+        }
+        return notify()
+    }
+    mutating func invalidate() -> Bool {
+        events.removeAll(keepingCapacity:true)
+        receipts.removeAll(keepingCapacity:true)
+        invalidated = true
+        epoch &+= 1
+        oldestReceipt = nil
+        return notify()
+    }
+    private mutating func notify() -> Bool {
+        guard !pending else { return false }
+        pending = true
+        return true
+    }
+    mutating func drain(now:Double = ProcessInfo.processInfo.systemUptime) -> CapturePhysicalInputBatch {
+        if !now.isFinite || now < 0 || lastReceipt.map({ now < $0 }) == true ||
+            oldestReceipt.map({ now-$0 >= Self.maximumAge }) == true {
+            _ = invalidate()
+        }
+        // Each drain retires the previous delivered batch, even without an
+        // overflow or timeout. A delayed consumer cannot replay old edges.
+        epoch &+= 1
+        let batch = CapturePhysicalInputBatch(events:events,receipts:receipts,invalidated:invalidated,epoch:epoch,oldestReceipt:oldestReceipt)
+        events.removeAll(keepingCapacity:true)
+        receipts.removeAll(keepingCapacity:true)
+        oldestReceipt = nil
+        invalidated = false
+        pending = false
+        return batch
+    }
+    func accepts(_ batch:CapturePhysicalInputBatch,now:Double) -> Bool {
+        guard !invalidated,!batch.invalidated,batch.epoch == epoch,now.isFinite,now >= 0,
+              let receipt = batch.oldestReceipt,let latest = batch.receipts.last,
+              batch.events.count == batch.receipts.count else { return false }
+        // Reject clocks before the most recent edge, not just the first.
+        return now >= latest && now >= receipt && now-receipt < Self.maximumAge
+    }
+}
+
 public enum PerformanceCaptureError: LocalizedError {
+    case invalidShortcut
     case permissionDenied
     case tapUnavailable
 
     public var errorDescription: String? {
         switch self {
+        case .invalidShortcut:
+            return "Choose a non-modifier key or key combination. Escape is reserved for Panic Stop."
         case .permissionDenied:
             return "Global capture requires Accessibility access for Tihulu Trackpad & M. Mouse Instrument. Enable it in System Settings → Privacy & Security → Accessibility, then restart the app."
         case .tapUnavailable:
@@ -100,6 +258,16 @@ public struct PerformanceCaptureDiagnosticSnapshot: Sendable {
     public let tapTimeouts: UInt64
     public let tapDisabledByUserInput: UInt64
     public let lastEventTapStatus: String
+    public let coalescedPressureSamples:UInt64
+    public let physicalMailboxOverflows:UInt64
+
+    /// Input Monitoring preflight is informative: macOS versions can
+    /// authorize a filtering tap through Accessibility. Actual tap
+    /// operation is required in addition to Accessibility permission.
+    public var operational:Bool {
+        accessibilityGranted && eventTapCreated && eventTapEnabled && dedicatedInputThread && listening
+    }
+    public var readyForGlobalCapture:Bool { operational && shortcutArmed }
 }
 
 /// Optional event filtering for MIDI performance. Monitoring is OFF by default.
@@ -122,6 +290,12 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     private var shortcut: PerformanceCaptureShortcut = .defaultShortcut
     private var captureHotkeyEnabled = false
     private var keyEdges = CaptureKeyEdges()
+    private var pointerEdges = CapturePointerEdges()
+    private var recoveryBudget = CaptureRecoveryBudget()
+    private var physicalMailbox = CapturePhysicalMailbox()
+    private var startClaimed = false
+    private var stopped = false
+    private var panicLatched = false
     private var keyDownEvents: UInt64 = 0
     private var pointerEvents: UInt64 = 0
     private var shortcutMatches: UInt64 = 0
@@ -143,7 +317,9 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             shortcutMatches: shortcutMatches,
             tapTimeouts: tapTimeouts,
             tapDisabledByUserInput: tapDisabledByUserInput,
-            lastEventTapStatus: lastEventTapStatus
+            lastEventTapStatus: lastEventTapStatus,
+            coalescedPressureSamples:physicalMailbox.coalesced,
+            physicalMailboxOverflows:physicalMailbox.overflows
         )
         lock.unlock()
         return PerformanceCaptureDiagnosticSnapshot(
@@ -160,7 +336,9 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             shortcutMatches: result.shortcutMatches,
             tapTimeouts: result.tapTimeouts,
             tapDisabledByUserInput: result.tapDisabledByUserInput,
-            lastEventTapStatus: result.lastEventTapStatus
+            lastEventTapStatus: result.lastEventTapStatus,
+            coalescedPressureSamples:result.coalescedPressureSamples,
+            physicalMailboxOverflows:result.physicalMailboxOverflows
         )
     }
 
@@ -174,6 +352,29 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     public var onPanic: (@Sendable () -> Void)?
     public var onPhysicalClick: (@Sendable (Bool, Double) -> Void)?
     public var onPhysicalPressure: (@Sendable (Double) -> Void)?
+    /// Optional bounded delivery path. When installed, supersedes the
+    /// individual click/pressure callbacks for this monitor.
+    public var onPhysicalInputAvailable:(@Sendable () -> Void)?
+    public func drainPhysicalInput() -> CapturePhysicalInputBatch {
+        // Permission IPC stays outside the native event lock. A disabled
+        // tap cannot lend queued click edges to a sustain consumer.
+        let authorized=AXIsProcessTrusted()
+        lock.lock(); defer { lock.unlock() }
+        if !authorized || !physicalInputOperationalLocked {
+            _=physicalMailbox.invalidate()
+        }
+        return physicalMailbox.drain()
+    }
+    private var physicalInputOperationalLocked:Bool {
+        listening && !stopped && !panicLatched && inputRunLoop != nil &&
+            (eventTap.map { CGEvent.tapIsEnabled(tap:$0) } ?? false)
+    }
+    public func acceptsPhysicalInput(_ batch:CapturePhysicalInputBatch) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        // Recheck the actual port at each edge, not only the listening
+        // flag; the OS may disable it before the timeout callback arrives.
+        return physicalInputOperationalLocked && physicalMailbox.accepts(batch,now:ProcessInfo.processInfo.systemUptime)
+    }
     public var onMonitorFailed: (@Sendable () -> Void)?
     public var onMonitorRecovered: (@Sendable () -> Void)?
 
@@ -189,10 +390,11 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
     public func setCaptureHotkeyEnabled(_ enabled: Bool) {
         lock.lock()
-        captureHotkeyEnabled = enabled
-        if !enabled { captured = false }
+        captureHotkeyEnabled = enabled && physicalInputOperationalLocked
+        let armed=captureHotkeyEnabled
+        if !armed { captured = false }
         lock.unlock()
-        if !enabled { onCaptureChanged?(false) }
+        if !armed { onCaptureChanged?(false) }
     }
 
     public func setShortcut(_ shortcut: PerformanceCaptureShortcut) {
@@ -203,13 +405,23 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     }
 
     public func start(shortcut: PerformanceCaptureShortcut, requestPermissions: Bool = false) throws {
+        guard shortcut.isValid else { throw PerformanceCaptureError.invalidShortcut }
         setShortcut(shortcut)
         lock.lock()
-        let existingPort = listening ? eventTap : nil
+        guard !stopped,!panicLatched else { lock.unlock(); throw PerformanceCaptureError.tapUnavailable }
+        let existingPort = eventTap
+        let existingListening = listening && inputRunLoop != nil
+        if existingPort == nil {
+            guard !startClaimed else { lock.unlock(); throw PerformanceCaptureError.tapUnavailable }
+            startClaimed = true
+        }
         lock.unlock()
         if let existingPort {
-            if CGEvent.tapIsEnabled(tap: existingPort) { return }
+            if existingListening && AXIsProcessTrusted() && CGEvent.tapIsEnabled(tap: existingPort) { return }
+            // Never recycle a disabled instance while old callbacks may be
+            // draining. The controller can create a fresh monitor explicitly.
             stop()
+            throw PerformanceCaptureError.tapUnavailable
         }
 
         guard AXIsProcessTrusted() else {
@@ -267,12 +479,18 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         // callbacks are dispatched asynchronously by the StudioController.
         let gate = StartGate()
         lock.lock()
+        guard !stopped else {
+            lock.unlock(); CFMachPortInvalidate(port); throw PerformanceCaptureError.tapUnavailable
+        }
         inputGeneration &+= 1
         let generation = inputGeneration
         eventTap = port
         runLoopSource = source
         listening = false
         captured = false
+        keyEdges.reset()
+        pointerEdges.reset()
+        recoveryBudget = .init()
         let thread = Thread { [self] in
             runEventTapLoop(generation: generation, gate: gate)
         }
@@ -312,33 +530,53 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
         let loop = CFRunLoopGetCurrent()
         CFRunLoopAddSource(loop, source, CFRunLoopMode.commonModes)
-        CGEvent.tapEnable(tap: port, enable: true)
         lock.lock()
         let shouldRun = generation == inputGeneration
         if shouldRun {
+            CGEvent.tapEnable(tap: port, enable: true)
             inputRunLoop = loop
             listening = true
             lastEventTapStatus = "Started on dedicated event thread"
         }
         lock.unlock()
         gate.ready.signal()
-        if shouldRun { CFRunLoopRun() }
+        if shouldRun {
+            // A Stop between the handshake and the first Run must not
+            // leave a thread parked forever on a retired source.
+            while true {
+                lock.lock()
+                let current = generation == inputGeneration && listening
+                lock.unlock()
+                if !current { break }
+                let result = CFRunLoopRunInMode(CFRunLoopMode.defaultMode,0.25,false)
+                if result == .finished || result == .stopped { break }
+            }
+        }
 
         CGEvent.tapEnable(tap: port, enable: false)
         CFRunLoopRemoveSource(loop, source, CFRunLoopMode.commonModes)
         CFMachPortInvalidate(port)
         lock.lock()
+        var notifyExit = false
+        var notifyPhysical = false
         if generation == inputGeneration {
+            let unexpectedExit = listening
+            notifyExit = unexpectedExit
+            notifyPhysical = physicalMailbox.invalidate()
             inputRunLoop = nil
             inputThread = nil
             eventTap = nil
             runLoopSource = nil
             listening = false
             captured = false
+            captureHotkeyEnabled = false
             keyEdges.reset()
-            lastEventTapStatus = "Dedicated event loop exited"
+            pointerEdges.reset()
+            if unexpectedExit { lastEventTapStatus = "Dedicated event loop exited" }
         }
         lock.unlock()
+        if notifyPhysical { onPhysicalInputAvailable?() }
+        if notifyExit { onCaptureChanged?(false); onMonitorFailed?() }
     }
 
     public func stop() {
@@ -346,7 +584,8 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         inputGeneration &+= 1
         let port = eventTap
         let loop = inputRunLoop
-        let pendingThread = inputThread != nil
+        stopped = true
+        _ = physicalMailbox.invalidate()
         eventTap = nil
         runLoopSource = nil
         inputRunLoop = nil
@@ -355,6 +594,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         captured = false
         captureHotkeyEnabled = false
         keyEdges.reset()
+        pointerEdges.reset()
         // Retain the last failure reason for diagnosis; do not erase it.
         lock.unlock()
 
@@ -362,7 +602,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         if let loop {
             CFRunLoopStop(loop)
             CFRunLoopWakeUp(loop)
-        } else if !pendingThread, let port {
+        } else if let port {
             CFMachPortInvalidate(port)
         }
         onCaptureChanged?(false)
@@ -373,15 +613,40 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     @discardableResult
     public func setPointerCaptured(_ value:Bool) -> Bool {
         if !value { releasePointer(); return true }
+        // Permission IPC must not run while holding the native input lock.
+        let authorized = AXIsProcessTrusted()
         lock.lock()
-        guard listening,captureHotkeyEnabled,let port = eventTap,
-              CGEvent.tapIsEnabled(tap:port),AXIsProcessTrusted() else {
+        guard authorized,listening,!stopped,!panicLatched,captureHotkeyEnabled,let port = eventTap,
+              CGEvent.tapIsEnabled(tap:port) else {
             captured = false
             lock.unlock()
             onCaptureChanged?(false)
             return false
         }
         captured = true
+        lock.unlock()
+        onCaptureChanged?(true)
+        return true
+    }
+
+    /// Atomically choose release versus capture from the actual tap state.
+    /// Releasing remains available even when permission has been revoked.
+    public func togglePointerCapture() -> Bool {
+        let authorized=AXIsProcessTrusted()
+        lock.lock()
+        if captured {
+            captured=false
+            lock.unlock()
+            onCaptureChanged?(false)
+            return false
+        }
+        guard authorized,listening,!stopped,!panicLatched,captureHotkeyEnabled,
+              let port=eventTap,CGEvent.tapIsEnabled(tap:port) else {
+            lock.unlock()
+            onCaptureChanged?(false)
+            return false
+        }
+        captured=true
         lock.unlock()
         onCaptureChanged?(true)
         return true
@@ -399,35 +664,37 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             lock.lock()
+            guard listening,let port = eventTap else { lock.unlock(); return passthrough }
+            captured = false
+            // An up may be missing. Forget edge ownership and permit unknown
+            // pointer releases so recovery cannot trap a foreground drag.
+            keyEdges.reset()
+            pointerEdges.reset()
+            let signal = physicalMailbox.invalidate()
+            var recovered = false
             if type == .tapDisabledByTimeout {
                 tapTimeouts &+= 1
                 lastEventTapStatus = "Disabled by macOS timeout"
+                if recoveryBudget.allow(now:ProcessInfo.processInfo.systemUptime) {
+                    // Serialize enable with Stop's state transition; do not
+                    // enable a port that Stop has already retired.
+                    CGEvent.tapEnable(tap:port,enable:true)
+                    recovered = CGEvent.tapIsEnabled(tap:port)
+                    if recovered { lastEventTapStatus = "Recovered after timeout" }
+                } else { lastEventTapStatus = "Repeated timeouts; explicit re-enable required" }
             } else {
                 tapDisabledByUserInput &+= 1
                 lastEventTapStatus = "Disabled by macOS/user input"
             }
-            lock.unlock()
-            // Fail open immediately: never leave the pointer captured after the
-            // system disables this event tap. A timeout can be transient when the
-            // macOS or other system services temporarily delay event delivery.
-            releasePointer()
-            if type == .tapDisabledByTimeout {
-                lock.lock()
-                let port = eventTap
-                let wasListening = listening
-                lock.unlock()
-                if wasListening, let port {
-                    CGEvent.tapEnable(tap: port, enable: true)
-                    if CGEvent.tapIsEnabled(tap: port) {
-                        markEventTapStatus("Recovered after timeout")
-                        onMonitorRecovered?()
-                        return passthrough
-                    }
-                }
+            if !recovered {
+                listening = false
+                captureHotkeyEnabled = false
             }
-            // A user/system-disabled tap must not be overridden automatically.
-            // The controller disarms monitoring without closing the haptic driver.
-            onMonitorFailed?()
+            lock.unlock()
+            onCaptureChanged?(false)
+            if signal { onPhysicalInputAvailable?() }
+            if recovered { onMonitorRecovered?() }
+            else { onMonitorFailed?() }
             return passthrough
         }
 
@@ -441,38 +708,72 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             }
 
             lock.lock()
+            guard listening else { lock.unlock(); return passthrough }
             let action = keyEdges.handle(key:keyCode,down:type == .keyDown,repeatKey:repeatKey,
                                          matches:shortcut.matches(event),armed:listening && captureHotkeyEnabled,
                                          captured:captured)
             var changed: Bool?
+            var invalidateSignal = false
             if action == .toggle {
                 shortcutMatches &+= 1
                 captured.toggle()
                 changed = captured
             } else if action == .panic {
                 captured = false
+                captureHotkeyEnabled = false
+                panicLatched = true
+                invalidateSignal = physicalMailbox.invalidate()
                 changed = false
             }
             lock.unlock()
-            if let changed { onCaptureChanged?(changed) }
+            // Deliver the emergency intent before ordinary physical/UI
+            // notifications. It has already synchronously freed the pointer.
             if action == .panic { onPanic?() }
+            if invalidateSignal { onPhysicalInputAvailable?() }
+            if let changed { onCaptureChanged?(changed) }
             if action != .pass { return nil }
             return passthrough
         }
 
-        if type == .leftMouseDown || type == .leftMouseUp {
+        lock.lock()
+        guard listening else { lock.unlock(); return passthrough }
+        pointerEvents &+= 1
+        let edge:CapturePointerEdges.Edge
+        let button:Int64
+        switch type {
+        case .leftMouseDown,.leftMouseUp,.leftMouseDragged: button = 0
+        case .rightMouseDown,.rightMouseUp,.rightMouseDragged: button = 1
+        default: button = event.getIntegerValueField(.mouseEventButtonNumber)
+        }
+        switch type {
+        case .leftMouseDown,.rightMouseDown,.otherMouseDown: edge = .down
+        case .leftMouseUp,.rightMouseUp,.otherMouseUp: edge = .up
+        case .leftMouseDragged,.rightMouseDragged,.otherMouseDragged: edge = .drag
+        default: edge = .other
+        }
+        let suppress = pointerEdges.suppress(button:button,edge:edge,captured:captured)
+        let bounded = onPhysicalInputAvailable
+        var signal = false
+        let physicalAllowed = !panicLatched
+        if physicalAllowed && bounded != nil {
+            if type == .leftMouseDown || type == .leftMouseUp {
+                signal = physicalMailbox.append(.click(type == .leftMouseDown,event.getDoubleValueField(.mouseEventPressure)))
+            } else if type == .leftMouseDragged {
+                signal = physicalMailbox.append(.pressure(event.getDoubleValueField(.mouseEventPressure)))
+            }
+        }
+        lock.unlock()
+        if signal { bounded?() }
+
+        if physicalAllowed && bounded == nil && (type == .leftMouseDown || type == .leftMouseUp) {
             onPhysicalClick?(
                 type == .leftMouseDown,
                 event.getDoubleValueField(.mouseEventPressure)
             )
-        } else if type == .leftMouseDragged {
+        } else if physicalAllowed && bounded == nil && type == .leftMouseDragged {
             onPhysicalPressure?(event.getDoubleValueField(.mouseEventPressure))
         }
 
-        lock.lock()
-        pointerEvents &+= 1
-        let suppress = captured
-        lock.unlock()
         // Capture cannot distinguish mouse and trackpad at CGEvent level;
         // suppress all OS pointer movement/clicks while the mode is enabled.
         // Escape and the assigned keyboard shortcut always remain available.

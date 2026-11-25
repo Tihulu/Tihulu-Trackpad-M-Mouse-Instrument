@@ -21,7 +21,8 @@ function clock(){
   return {get now(){return now},add,run,clear:n=>tasks.delete(n)};
 }
 function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
-  setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
+  children:[],setAttribute(){},replaceChildren(...children){this.children=children},
+  appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
   emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
 const ptr=(id)=>({pointerId:id,button:0,clientX:25,clientY:25,preventDefault(){}});
 const kindOf=k=>({orientationArm:"orientation",motionRelease:"orientation",accelerationArm:"acceleration",accelerationRelease:"acceleration",rotationArm:"rotation",rotationRelease:"rotation",release:"touch"}[k]||k);
@@ -45,7 +46,7 @@ function hostPolicy(start){
 }
 function setup(script,execute,{rtt=10,jitter=0,drop=()=>false,hostDelay=0,experimental=true}={}){
   const c=clock(), elements=new Map(), el=id=>{if(!elements.has(id))elements.set(id,target());return elements.get(id)};
-  const document=Object.assign(target(),{hidden:false,getElementById:el});
+  const document=Object.assign(target(),{hidden:false,getElementById:el,createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>"granted"},DeviceMotionEvent:{requestPermission:async()=>"granted"},screen:{orientation:target()}});
   let socket, closed=null, inFlight=0, maxFlight=0, admittedAt=null, hostReason=null;
   const sent=[],received=[],ack=[],releaseEvents=[],host=hostPolicy(c.now);

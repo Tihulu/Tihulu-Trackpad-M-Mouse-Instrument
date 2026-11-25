@@ -24,7 +24,18 @@ final class StudioController: ObservableObject {
     @Published var lastError: String?
     @Published var isPlaying = false
     @Published var masterLevel = 0.75 {
-        didSet { updateChordHaptics(); updateTouchBarHaptics(); updateGamepadHaptics(force:true) }
+        didSet {
+            updateChordHaptics(); updateTouchBarHaptics(); updateGamepadHaptics(force:true)
+            // Gain must also follow the master slider while the Touch view
+            // is not mounted. Keep the armed mapping and note ownership.
+            if touchRunning || instrumentPreviewRequested {
+                var updated = currentTouchConfiguration
+                updated.masterLevel = masterLevel
+                updateTouchConfiguration(updated)
+            }
+            groupHost.discardGroupHapticAttacks()
+            updateGroupHaptics()
+        }
     }
     @Published var bpm = 120.0
     @Published private(set) var instrumentPatch = StudioController.readInstrumentPatch()
@@ -125,7 +136,7 @@ final class StudioController: ObservableObject {
         }
     }
     func setGamepadChoice(_ choice:UUID?,for source:SensorSource) {
-        guard !patchRunning else { return }
+        guard !patchRunning, !groupGamepadsRunning else { return }
         switch source {
         case .gamepad1: gamepadSlot1 = choice
         case .gamepad2: gamepadSlot2 = choice
@@ -140,7 +151,7 @@ final class StudioController: ObservableObject {
         return result
     }
     func refreshBuilderGamepads() {
-        guard !patchRunning else { return }
+        guard !patchRunning, !groupGamepadsRunning else { return }
         gamepadChoices = builderGamepads.refresh()
         for source in GamepadFrame.orderedSources {
             if let choice = gamepadChoice(for:source), !gamepadChoices.contains(where:{ $0.id == choice }) {
@@ -148,6 +159,763 @@ final class StudioController: ObservableObject {
             }
         }
     }
+    // Experimental group mode shares the one BuilderGamepadSource. No
+    // controller handlers or MIDI ports are acquired before explicit Start.
+    @Published private(set) var groupGamepadsRunning = false
+    @Published private(set) var groupGamepadStatus = "Group MIDI idle"
+    @Published private(set) var groupRegisteredIDs: Set<UUID> = []
+    @Published private(set) var groupCleanupIDs: Set<UUID> = []
+    @Published private(set) var groupDisposalCount = 0
+    @Published private(set) var groupFaultIDs: Set<UUID> = []
+    @Published private(set) var groupStoppedIDs: Set<UUID> = []
+    @Published private(set) var groupSourceStates: [SensorSource:PerformanceGroupGamepadSession.SourceState] = [:]
+    private var groupGamepadTokens: [SensorSource:UUID] = [:]
+    private var groupSurfaceMailbox: PatchSurfaceMailbox?
+    private var groupHinge: MacBookHingeAngleSource?
+    private var groupCamera: BuilderCameraSource?
+    private var groupCameraLastFrame = 0.0
+    private var groupCameraReceivedFrame = false
+    private var groupCameraOrientation: AirControlOrientation = .upright
+    private var groupCameraMirrorX = false
+    private var groupNativeBar = false
+    private var groupSurfaceOrientation: SurfaceOrientation = .horizontal
+    private var groupRunToken: UUID?
+    private var groupWatchdog: Task<Void,Never>?
+    private var groupHaptics:LiveNoteHapticOutput?
+    private var groupHapticToken:UUID?
+    @Published private(set) var groupHapticStatus = "Group Trackpad output off"
+    @Published private(set) var groupHapticRunning = false
+    private var groupTimingAccumulator = PerformanceGroupTimingDiagnostics()
+    private var groupTimingLastPublished = 0.0
+    @Published private(set) var groupTiming = PerformanceGroupTimingDiagnostics()
+    private var groupHost: PerformanceGroupMIDIHost { .shared }
+    private var groupRemoteTransport: RemoteLoopbackTransport?
+    private var groupRemotePage: RemoteLoopbackPageServer?
+    private var groupRemoteRunID: UUID?
+    @Published private(set) var groupRemoteReady = false
+    @Published private(set) var groupRemoteSlots: [UUID:SensorSource] = [:]
+    @Published private(set) var groupRemoteEndpoint: RemoteEndpoint?
+    @Published private(set) var groupRemoteStatus = "Mobile listener off"
+
+    static var groupRemoteStartEnabled: Bool {
+        #if TIHULU_GROUP_REMOTE_LIVE
+        true
+        #else
+        false
+        #endif
+    }
+
+    private func refreshGroupOutputState() {
+        let registered = groupHost.registeredIDs
+        let cleanup = groupHost.pendingCleanup
+        let disposal = groupHost.pendingDisposalCount
+        if registered != groupRegisteredIDs { groupRegisteredIDs = registered }
+        if cleanup != groupCleanupIDs { groupCleanupIDs = cleanup }
+        if disposal != groupDisposalCount { groupDisposalCount = disposal }
+        let states = groupHost.localSourceStates
+        if states != groupSourceStates { groupSourceStates = states }
+    }
+
+    // Native and physical acceptance must explicitly enable this experimental
+    // compile-time switch. Default and stable builds never activate tuned MIDI.
+    static var groupMPEStartEnabled: Bool {
+        #if TIHULU_GROUP_MPE_LIVE
+        true
+        #else
+        false
+        #endif
+    }
+
+    static var groupHapticStartEnabled:Bool {
+        #if TIHULU_GROUP_HAPTIC_LIVE
+        true
+        #else
+        false
+        #endif
+    }
+
+    static var groupTunedHapticStartEnabled:Bool {
+        #if TIHULU_GROUP_MPE_HAPTIC_LIVE
+        return groupHapticStartEnabled && groupMPEStartEnabled
+        #else
+        return false
+        #endif
+    }
+
+    @Published private(set) var groupTunedConfiguration: PerformanceGroupTuningConfiguration?
+    @Published private(set) var groupDynamicPreview:DynamicMPEPreview?
+    @Published private(set) var groupCapacityRefusals = 0
+    var groupRetainsTuning:Bool { groupTunedConfiguration != nil || groupDynamicPreview != nil }
+
+    func startGroupGamepads(profile: PerformanceGroupProfile, allowLayering: Bool,
+                            tuning: PerformanceGroupTuningConfiguration? = nil,
+                            confirmedTuning: Bool = false,
+                            remoteTransport:RemoteLoopbackTransport? = nil,
+                            remotePage:RemoteLoopbackPageServer? = nil,
+                            confirmedLAN:Bool = false,hapticGroups:Set<UUID> = [],
+                            dynamicPreview:DynamicMPEPreview? = nil,confirmedDynamic:Bool = false) {
+        guard (dynamicPreview != nil) == confirmedDynamic,
+              dynamicPreview == nil || (PerformanceGroupMIDIHost.dynamicMPEEnabled && tuning == nil &&
+                remoteTransport == nil && remotePage == nil &&
+                (hapticGroups.isEmpty || PerformanceGroupMIDIHost.dynamicMPEHapticsEnabled) && !confirmedTuning && !confirmedLAN) else {
+            groupGamepadStatus = "Dynamic MPE requires a separately enabled, confirmed local start."
+            return
+        }
+        guard hapticGroups.isEmpty || (Self.groupHapticStartEnabled &&
+                (tuning == nil || (Self.groupTunedHapticStartEnabled && confirmedTuning && remoteTransport == nil))) else {
+            groupGamepadStatus = "Group Trackpad output requires an enabled standard or explicitly confirmed local MPE start."
+            return
+        }
+        let remoteEnabled = remoteTransport != nil
+        guard remoteEnabled == (remotePage != nil),
+              !remoteEnabled || Self.groupRemoteStartEnabled else {
+            groupGamepadStatus = "Mobile group transport is disabled or incomplete."
+            return
+        }
+        if let transport = remoteTransport, let page = remotePage {
+            guard page.groupNeutralHandshake,transport.endpoint == page.endpoint,
+                  transport.endpoint.isLoopback ||
+                    (confirmedLAN && remoteLoopbackVerified &&
+                     RemoteLANChoice.available().contains(where:{ $0.endpoint == transport.endpoint })) else {
+                groupGamepadStatus = "Remote endpoint or trusted LAN confirmation is invalid."
+                return
+            }
+        }
+        guard tuning == nil || Self.groupMPEStartEnabled else {
+            groupGamepadStatus = "Live MPE is disabled in this build; use the offline preview."
+            return
+        }
+        guard !groupRetainsTuning else {
+            groupGamepadStatus = "Close the retained tuned ports before any new group performance."
+            return
+        }
+        guard !patchRunning, !groupGamepadsRunning, !midiRunning, !midiHelperRunning,
+              !touchRunning, !sequenceRunning, !chordArmed, !touchBarOutputArmed,
+              !isPlaying, !speakerBusy, !liveHingeEnabled, !captureArmed, !pointerCaptured,
+              !liveNoteOwnsHaptics,!sequenceOwnsHaptics else {
+            groupGamepadStatus = "Stop other live performances and Builder before starting group MIDI."
+            return
+        }
+        let specifications:[UUID:PerformanceGroupTuningPlan.Specification]
+        do {
+            if let dynamicPreview {
+                guard dynamicPreview.profile == profile else { throw DynamicMPEActivationPlan.AdmissionError.unsupportedProfile }
+                let plan = try DynamicMPEActivationPlan(profile:profile,tuning:dynamicPreview.tuning,
+                    confirmed:confirmedDynamic,allowLayering:allowLayering,registeredIDs:groupHost.registeredIDs,
+                    cleanupIDs:groupHost.pendingCleanup,pendingDisposalCount:groupHost.pendingDisposalCount,
+                    allowSurfaces:true,allowScalars:true,allowCamera:true,hapticGroups:hapticGroups,
+                    allowDynamicHaptics:PerformanceGroupMIDIHost.dynamicMPEHapticsEnabled)
+                specifications = plan.preview.tuning
+            } else {
+                let activation = try PerformanceGroupActivationPlan(profile:profile,mode:tuning.map { .tuned($0) } ?? .standard,
+                    allowLayering:allowLayering,confirmedTuning:confirmedTuning,
+                    registeredIDs:groupHost.registeredIDs,cleanupIDs:groupHost.pendingCleanup,
+                    pendingDisposalCount:groupHost.pendingDisposalCount,allowRemote:remoteEnabled)
+                specifications = activation.tuning
+            }
+        } catch {
+            groupGamepadStatus = "Group Start rejected: " + String(describing:error)
+            return
+        }
+        let routes = profile.groups.flatMap { $0.patch.routes }
+        let sources = Set(routes.map(\.source))
+        if sources.contains(.camera) {
+            if let retiringPatchCamera, !retiringPatchCamera.isStopped {
+                groupGamepadStatus = "Previous camera is stopping. Restart after release."
+                return
+            }
+            retiringPatchCamera = nil
+            switch BuilderCameraSource.authorization {
+            case .authorized: break
+            case .notDetermined:
+                groupGamepadStatus = "Grant camera permission, then explicitly Start again."
+                AVCaptureDevice.requestAccess(for:.video) { _ in }
+                return
+            default:
+                groupGamepadStatus = "Camera permission denied or restricted. Check System Settings."
+                return
+            }
+        }
+        cancelStartupGreeting()
+        let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
+        if !hapticGroups.isEmpty {
+            let projection:PerformanceGroupHapticProjection?
+            if let dynamicPreview {
+                projection = try? .init(preparedDynamic:dynamicPreview,selected:hapticGroups)
+            } else if specifications.isEmpty {
+                projection = try? .init(profile:profile,selected:hapticGroups)
+            } else {
+                projection = try? .init(profile:profile,selected:hapticGroups,preparedTuning:specifications)
+            }
+            guard projection != nil,requireEngine(),driver != nil else {
+                groupGamepadStatus = "Selected group Trackpad output unavailable; Start refused."
+                return
+            }
+            renderGeneration &+= 1
+            playback?.stop(closeDriver:false)
+        }
+        if needsSurface {
+            guard requireEngine(), touch != nil else {
+                groupGamepadStatus = "Native surface monitoring unavailable on this Mac."
+                return
+            }
+        }
+        guard releaseBuilderOutput() else {
+            groupGamepadStatus = "Builder MIDI cleanup remains pending. Retry Builder Stop."
+            return
+        }
+        guard builderGamepads.bind(required:sources,choices:gamepadBindings) else {
+            groupGamepadStatus = "Select distinct connected controllers for every mapped slot."
+            return
+        }
+        do {
+            try groupHost.startGamepads(profile:profile,allowLayering:allowLayering,
+                allowSurfaces:true,allowScalars:true,allowCamera:true,tuning:specifications,allowRemote:remoteEnabled,hapticGroups:hapticGroups,
+                allowTunedHaptics:Self.groupTunedHapticStartEnabled && confirmedTuning,
+                dynamicMPE:dynamicPreview != nil,confirmedDynamicMPE:confirmedDynamic)
+            groupTunedConfiguration = tuning
+            groupDynamicPreview = dynamicPreview
+        } catch {
+            builderGamepads.stop()
+            refreshGroupOutputState()
+            // Preserve the requested mode while any partially opened endpoints
+            // or cleanup debt remain. Do not advertise successful MPE setup.
+            if !specifications.isEmpty, !groupRegisteredIDs.isEmpty || !groupCleanupIDs.isEmpty || groupDisposalCount != 0 {
+                groupTunedConfiguration = tuning
+                groupDynamicPreview = dynamicPreview
+            }
+            groupGamepadStatus = "Group setup failed: " + String(describing:error) + ". No fallback; check cleanup and close ports."
+            return
+        }
+        let token = UUID()
+        groupRunToken = token
+        groupTimingAccumulator = .init()
+        groupTiming = .init()
+        groupTimingLastPublished = ProcessInfo.processInfo.systemUptime
+        groupGamepadsRunning = true
+        groupFaultIDs = []
+        groupStoppedIDs = []
+        groupCapacityRefusals = 0
+        refreshGroupOutputState()
+        do {
+            for source in sources.subtracting(Set(SensorSource.groupRemoteSources)).sorted(by:{ $0.rawValue < $1.rawValue }) {
+                groupGamepadTokens[source] = try groupHost.bindGamepad(source,now:ProcessInfo.processInfo.systemUptime)
+            }
+        } catch {
+            stopGroupGamepads()
+            groupGamepadStatus = "Controller binding failed; group output stopped. Check cleanup status."
+            return
+        }
+        if needsSurface {
+            let mailbox = PatchSurfaceMailbox(excludedSurface:nil)
+            groupSurfaceOrientation = magicMouseOrientation
+            groupSurfaceMailbox = mailbox
+            touch?.setPatchMailbox(mailbox)
+            refreshSharedSurfaceMonitoring()
+            guard touchPreviewRunning else {
+                stopGroupGamepads()
+                groupGamepadStatus = "Surface monitoring could not start; group output stopped."
+                return
+            }
+            if let message = missingNativeSurfaceMessage(nativeSurfaces(for:Set(sources))) {
+                stopGroupGamepads()
+                groupGamepadStatus = message
+                return
+            }
+        }
+        if sources.contains(.touchBar) {
+            groupNativeBar = true
+            installTouchBar()
+        }
+        if sources.contains(.lid) {
+            let sensor = MacBookHingeAngleSource()
+            groupHinge = sensor
+            sensor.onAngle = { [weak self, weak sensor] degrees in
+                guard let self, let sensor, self.groupHinge === sensor, self.groupRunToken == token else { return }
+                self.receiveGroupScalar(.lid,value:PhysicalPatchRuntime.normalizedLid(degrees),run:token)
+            }
+            sensor.onLoss = { [weak self, weak sensor] reason in
+                guard let self, let sensor, self.groupHinge === sensor, self.groupRunToken == token else { return }
+                self.groupHinge = nil
+                self.retireGroupSource(.lid,reason:reason,run:token)
+            }
+            let started = sensor.start()
+            guard groupRunToken == token else { sensor.stop(); return }
+            if !started {
+                let reason = sensor.status
+                stopGroupGamepads()
+                groupGamepadStatus = "Lid input could not start: " + reason
+                return
+            }
+        }
+        if sources.contains(.camera) {
+            let camera = BuilderCameraSource()
+            groupCamera = camera
+            groupCameraLastFrame = ProcessInfo.processInfo.systemUptime
+            groupCameraReceivedFrame = false
+            groupCameraOrientation = patchCameraOrientation
+            groupCameraMirrorX = patchCameraMirrorX
+            camera.start(deviceID:patchCameraDeviceID)
+        }
+        if let transport = remoteTransport, let page = remotePage {
+            do {
+                groupRemoteRunID = try groupHost.beginRemoteGroupBridge()
+                groupRemoteTransport = transport
+                groupRemotePage = page
+                groupRemoteEndpoint = transport.endpoint
+                groupRemoteReady = false
+                groupRemoteSlots = [:]
+                groupRemoteStatus = "Starting TLS controller"
+                transport.start()
+                page.start()
+            } catch {
+                stopGroupGamepads()
+                groupGamepadStatus = "Mobile bridge setup failed; all group output released."
+                return
+            }
+        }
+        refreshGroupOutputState()
+        groupGamepadStatus = dynamicPreview != nil
+            ? "Dynamic MPE pool setup sent; receiver not verified. Neutralize controls before playing."
+            : tuning == nil
+            ? "Standard group ports registered. Release controller controls and lift each touch surface before playing."
+            : "MPE setup sent; receiver not verified. Release controller controls and lift each touch surface before playing."
+        if !hapticGroups.isEmpty {
+            guard startGroupHaptics(run:token) else {
+                stopGroupGamepads()
+                groupGamepadStatus = "Requested Trackpad output could not start. Group Start aborted."
+                return
+            }
+        }
+        pollGroupGamepads(run:token)
+        guard groupRunToken == token else { return }
+        builderGamepads.beginEvents { [weak self] source,frame in
+            self?.receiveGroupGamepad(source:source,frame:frame,run:token)
+        }
+        groupWatchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for:.milliseconds(20)) } catch { return }
+                guard let self, self.groupRunToken == token else { return }
+                let cycleStarted = ProcessInfo.processInfo.systemUptime
+                // Drain known remote disconnects together with expiry before
+                // any local samples can reconcile shared continuous targets.
+                if self.groupRemoteRunID != nil { self.drainGroupRemote(run:token) }
+                guard self.groupRunToken == token else { return }
+                self.consumeGroupReports(self.groupHost.expireGamepads(now:ProcessInfo.processInfo.systemUptime))
+                guard self.groupRunToken == token else { return }
+                self.drainGroupSurfaces(run:token)
+                guard self.groupRunToken == token else { return }
+                self.drainGroupCamera(run:token)
+                self.pollGroupGamepads(run:token)
+                guard self.groupRunToken == token else { return }
+                let end = ProcessInfo.processInfo.systemUptime
+                self.updateGroupHaptics()
+                self.groupTimingAccumulator.record(start:cycleStarted,end:ProcessInfo.processInfo.systemUptime)
+                if end-self.groupTimingLastPublished >= 1 {
+                    self.groupTimingLastPublished = end
+                    self.groupTiming = self.groupTimingAccumulator
+                }
+            }
+        }
+    }
+
+    private func startGroupHaptics(run:UUID) -> Bool {
+        guard groupRunToken == run,groupHaptics == nil,let driver else { return false }
+        let token = UUID()
+        let output = LiveNoteHapticOutput(driver:driver,requiresFreshGroupFrames:true)
+        groupHaptics = output
+        groupHapticToken = token
+        do {
+            try output.start { [weak self] message in
+                Task { @MainActor in
+                    guard let self,self.groupRunToken == run,self.groupHapticToken == token else { return }
+                    self.stopGroupHaptics(reason:"Trackpad output stopped: " + message)
+                }
+            }
+            groupHapticRunning = true
+            groupHapticStatus = "Experimental group Trackpad output active; MIDI remains separate."
+            updateGroupHaptics()
+            return true
+        } catch {
+            stopGroupHaptics(reason:"Trackpad output could not start.")
+            return false
+        }
+    }
+
+    private func updateGroupHaptics() {
+        guard let output = groupHaptics,let snapshot = groupHost.groupHapticSnapshot(now:ProcessInfo.processInfo.systemUptime) else { return }
+        output.updateGroup(snapshot:snapshot,masterLevel:masterLevel)
+    }
+
+    func stopGroupHaptics(reason:String = "Group Trackpad output off; MIDI unchanged") {
+        groupHapticToken = nil
+        groupHost.disableGroupHaptics()
+        groupHaptics?.stop()
+        groupHaptics = nil
+        groupHapticRunning = false
+        groupHapticStatus = reason
+    }
+
+    private func consumeGroupReports(_ reports: [PerformanceGroupDelivery.Report]) {
+        for report in reports where report.capacityRefused > 0 {
+            groupCapacityRefusals += min(report.capacityRefused,Int.max-groupCapacityRefusals)
+        }
+        let failures = reports.reduce(into:Set<UUID>()) { $0.formUnion($1.failedGroups) }
+        if !failures.isEmpty {
+            groupFaultIDs.formUnion(failures)
+            groupStoppedIDs.formUnion(failures)
+            groupGamepadStatus = "A group MIDI send failed. Affected groups stopped; inspect cleanup status."
+        }
+        // Publish reconciled edges promptly, not just on the next 20 ms
+        // watchdog. The independent latest-frame mailbox never waits for
+        // the physical driver. Silent polling does not do extra rendering.
+        if !reports.isEmpty {
+            updateGroupHaptics()
+        }
+        refreshGroupOutputState()
+        if groupGamepadsRunning, !groupRegisteredIDs.isEmpty,
+           groupRegisteredIDs.isSubset(of:groupStoppedIDs) { stopGroupGamepads() }
+    }
+
+    /// Sample the complete set of mapped Xbox slots before sending MIDI.
+    /// Known simultaneous losses must reconcile once, before surviving
+    /// snapshots. Event callbacks still provide immediate individual edges.
+    private func pollGroupGamepads(run:UUID) {
+        guard groupRunToken == run else { return }
+        var snapshots:[(SensorSource,GamepadFrame)] = []
+        var departing:[SensorSource:UUID] = [:]
+        for source in GamepadFrame.orderedSources {
+            guard let token = groupGamepadTokens[source] else { continue }
+            if let frame = builderGamepads.read(source) { snapshots.append((source,frame)) }
+            else { departing[source] = token }
+        }
+        if !departing.isEmpty {
+            for source in departing.keys { groupGamepadTokens.removeValue(forKey:source) }
+            consumeGroupReports(groupHost.unbindGroupSources(departing))
+            guard groupRunToken == run else { return }
+            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads(); return }
+            groupGamepadStatus = "Controller input lost. Affected slots released; restart to rebind."
+        }
+        for (source,frame) in snapshots {
+            guard groupRunToken == run else { return }
+            receiveGroupGamepad(source:source,frame:frame,run:run)
+        }
+    }
+
+    private func receiveGroupGamepad(source:SensorSource,frame:GamepadFrame?,run:UUID) {
+        guard groupRunToken == run, let token = groupGamepadTokens[source] else { return }
+        guard let frame else {
+            groupGamepadTokens.removeValue(forKey:source)
+            consumeGroupReports(groupHost.unbindGamepad(source,token:token))
+            groupGamepadStatus = "Controller input lost. Stop and explicitly restart to bind a replacement."
+            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
+            return
+        }
+        if let result = groupHost.receiveGamepad(source,token:token,frame:frame,now:ProcessInfo.processInfo.systemUptime) {
+            consumeGroupReports(result.reports)
+        }
+    }
+
+    private func receiveGroupScalar(_ source:SensorSource,value:Double?,run:UUID) {
+        guard groupRunToken == run, let token = groupGamepadTokens[source] else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let result = groupHost.receiveScalar(source,token:token,value:value,hostTime:now,now:now) else { return }
+        consumeGroupReports(result.reports)
+        if source == .lid, result.status == .lost || result.status == .waitingForNeutral {
+            groupHinge?.stop()
+            groupHinge = nil
+            retireGroupSource(source,reason:"Lid input lost or stalled. Restart to rebind.",run:run)
+        }
+    }
+
+    private func retireGroupSource(_ source:SensorSource,reason:String,run:UUID) {
+        guard groupRunToken == run, let token = groupGamepadTokens.removeValue(forKey:source) else { return }
+        consumeGroupReports(groupHost.unbindGamepad(source,token:token))
+        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
+        groupGamepadStatus = reason + (groupCleanupIDs.isEmpty ? "" : " MIDI cleanup pending.")
+    }
+
+    private func stopGroupCamera(reason:String,run:UUID) {
+        guard groupRunToken == run, let camera = groupCamera else { return }
+        groupCamera = nil
+        // Retire the source and release its MIDI before tearing down capture.
+        retiringPatchCamera = camera
+        retireGroupSource(.camera,reason:reason,run:run)
+        camera.stop()
+    }
+
+    private func drainGroupCamera(run:UUID) {
+        guard groupRunToken == run, let camera = groupCamera,
+              let token = groupGamepadTokens[.camera] else { return }
+        guard BuilderCameraSource.authorization == .authorized else {
+            stopGroupCamera(reason:"Camera permission lost; restart explicitly.",run:run)
+            return
+        }
+        for event in camera.drain() {
+            guard groupRunToken == run, groupCamera === camera else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            switch event {
+            case .ready:
+                break
+            case .fault(let reason):
+                stopGroupCamera(reason:reason,run:run)
+                return
+            case .frame(let hand,let time):
+                guard time.isFinite, time >= groupCameraLastFrame, now >= time,
+                      now-time < PhysicalPatchRuntime.timeout else {
+                    stopGroupCamera(reason:"Stale camera input; restart explicitly.",run:run)
+                    return
+                }
+                groupCameraLastFrame = time
+                groupCameraReceivedFrame = true
+                let oriented = hand?.oriented(groupCameraOrientation,mirrorX:groupCameraMirrorX)
+                if let result = groupHost.receiveCamera(token:token,hand:oriented,hostTime:time,now:now) {
+                    consumeGroupReports(result.reports)
+                }
+            default:
+                stopGroupCamera(reason:"Unexpected camera frame type; restart explicitly.",run:run)
+                return
+            }
+        }
+        guard groupRunToken == run, groupCamera === camera else { return }
+        let limit = groupCameraReceivedFrame ? 2.0 : 8.0
+        if ProcessInfo.processInfo.systemUptime-groupCameraLastFrame >= limit {
+            stopGroupCamera(reason:"Camera stopped delivering fresh frames; restart explicitly.",run:run)
+        }
+    }
+
+    /// Shared native queue overflow has unknown provenance; retire both
+    /// surface owners atomically. A known bad sample retires only its source.
+    /// Other devices and ports keep playing unless all sources are gone.
+    private func retireGroupSurfaces(_ sources:Set<SensorSource>,reason:String,run:UUID) {
+        guard groupRunToken == run else { return }
+        var tokens:[SensorSource:UUID] = [:]
+        for source in sources where source == .trackpad || source == .magicMouse {
+            if let token = groupGamepadTokens.removeValue(forKey:source) { tokens[source] = token }
+        }
+        guard !tokens.isEmpty else { return }
+        consumeGroupReports(groupHost.unbindGroupSources(tokens))
+        guard groupRunToken == run else { return }
+        if groupGamepadTokens[.trackpad] == nil && groupGamepadTokens[.magicMouse] == nil,
+           let mailbox = groupSurfaceMailbox {
+            touch?.setPatchMailbox(nil)
+            mailbox.close()
+            groupSurfaceMailbox = nil
+            refreshSharedSurfaceMonitoring()
+        }
+        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
+        groupGamepadStatus = reason + (groupCleanupIDs.isEmpty ? "" : " MIDI cleanup pending.")
+    }
+
+    private func drainGroupSurfaces(run:UUID) {
+        guard groupRunToken == run, let mailbox = groupSurfaceMailbox else { return }
+        let batch = mailbox.drain()
+        let now = ProcessInfo.processInfo.systemUptime
+        // The original mailbox is bounded and edge-preserving. An overflow or
+        // stale queued contact cannot be replayed as a new performance.
+        if batch.overflow {
+            retireGroupSurfaces([.trackpad,.magicMouse],reason:"Surface queue overflow. Surface owners released; restart to rebind. Other devices retained.",run:run)
+            return
+        }
+        // Validate the entire batch before emitting any attack from a bad
+        // source. A stale/unmapped sample from another device cannot stop it.
+        var bad:Set<SensorSource> = []
+        for sample in batch.samples {
+            let source:SensorSource = sample.frame.surface == .trackpad ? .trackpad : .magicMouse
+            guard groupGamepadTokens[source] != nil else { continue }
+            if !PhysicalPatchRuntime.admitsPhysicalReceipt(sample.time,now:now) ||
+               sample.frame.contacts.contains(where:{ $0.isDown && (!$0.x.isFinite || !$0.y.isFinite || !$0.size.isFinite) }) {
+                bad.insert(source)
+            }
+        }
+        if !bad.isEmpty {
+            retireGroupSurfaces(bad,reason:"Stale or invalid surface input released. Restart affected surfaces explicitly.",run:run)
+        }
+        for sample in batch.samples {
+            guard groupRunToken == run else { return }
+            let source: SensorSource = sample.frame.surface == .trackpad ? .trackpad : .magicMouse
+            guard let token = groupGamepadTokens[source] else { continue }
+            // The earlier group sends may have blocked. Retire only this
+            // expired surface; other devices and owners remain active.
+            let admissionNow=ProcessInfo.processInfo.systemUptime
+            guard PhysicalPatchRuntime.admitsPhysicalReceipt(sample.time,now:admissionNow) else {
+                retireGroupSurfaces([source],reason:"Surface input expired during processing; restart affected surface explicitly.",run:run)
+                continue
+            }
+            let contact = sample.frame.contacts.lazy.filter { $0.isDown }.min { $0.id < $1.id }
+            var x: Double?
+            var y: Double?
+            var size: Double?
+            if let contact {
+                let rawX = min(1,max(0,Double(contact.x)))
+                let rawY = min(1,max(0,Double(contact.y)))
+                let point = source == .magicMouse ? groupSurfaceOrientation.transformed(x:rawX,y:rawY) : (rawX,rawY)
+                x = point.0; y = point.1; size = min(1,max(0,Double(contact.size)))
+            }
+            if let result = groupHost.receiveSurface(source,token:token,x:x,y:y,size:size,
+                                                    hostTime:sample.time,now:admissionNow) {
+                consumeGroupReports(result.reports)
+            }
+        }
+    }
+
+    func groupRemoteLabelPreview(source:SensorSource) -> [String] {
+        guard groupGamepadsRunning,groupRemoteReady,let run = groupRemoteRunID else { return [] }
+        return groupHost.remoteGroupLabelPreview(run:run,source:source)
+    }
+
+    func issueGroupRemoteInvitation(source:SensorSource,shareLabels:Bool = false) throws -> Data {
+        guard groupGamepadsRunning,groupRemoteReady,let run = groupRemoteRunID else {
+            throw RemoteTouchError.unavailable
+        }
+        let secret = try RemoteLoopbackTransport.invitation()
+        try groupHost.issueRemoteGroupInvitation(run:run,secret:secret,source:source,
+                                                now:ProcessInfo.processInfo.systemUptime,shareLabels:shareLabels)
+        return secret
+    }
+
+    func cancelGroupRemoteInvitation() {
+        if let run = groupRemoteRunID { groupHost.cancelRemoteGroupInvitation(run:run) }
+    }
+
+    func revokeGroupRemote(_ connection:UUID) {
+        guard let run = groupRemoteRunID,let transport = groupRemoteTransport else { return }
+        let result = groupHost.revokeRemoteGroupConnection(run:run,connection:connection)
+        transport.revoke(connection)
+        groupRemoteSlots = groupHost.remoteGroupSlots(run:run)
+        consumeGroupReports(result.reports)
+    }
+
+    private func detachGroupRemoteTransport(reason:String) {
+        let transport = groupRemoteTransport
+        let page = groupRemotePage
+        groupRemoteRunID = nil
+        groupRemoteTransport = nil
+        groupRemotePage = nil
+        groupRemoteReady = false
+        groupRemoteSlots = [:]
+        groupRemoteEndpoint = nil
+        groupRemoteStatus = reason
+        transport?.stop()
+        page?.stop()
+    }
+
+    func stopGroupRemote() {
+        guard let run = groupRemoteRunID else { return }
+        let result = groupHost.stopRemoteGroupBridge(run:run)
+        detachGroupRemoteTransport(reason:"Mobile listener stopped; local groups retained.")
+        consumeGroupReports(result.reports)
+        if groupGamepadsRunning && groupGamepadTokens.isEmpty { stopGroupGamepads() }
+    }
+
+    private func drainGroupRemote(run:UUID) {
+        guard groupRunToken == run,let listener = groupRemoteRunID,
+              let transport = groupRemoteTransport,let page = groupRemotePage else { return }
+        switch page.status {
+        case .failed,.stopped:
+            stopGroupRemote()
+            groupRemoteStatus = "HTTPS controller failed; remote owners released."
+            return
+        case .starting,.ready: break
+        }
+        let result = groupHost.processRemoteGroupEvents(run:listener,events:transport.drain(),
+                                                        now:ProcessInfo.processInfo.systemUptime)
+        consumeGroupReports(result.reports)
+        guard groupRunToken == run,groupRemoteRunID == listener,groupRemoteTransport === transport else { return }
+        if result.fault || result.actions.contains(.stop) {
+            detachGroupRemoteTransport(reason:"Remote listener retired; remote owners released.")
+            if groupGamepadTokens.isEmpty { stopGroupGamepads() }
+            return
+        }
+        for action in result.actions {
+            switch action {
+            case .acknowledge(let id,let ok): transport.acknowledge(id,accepted:ok)
+            case .capabilities(let id,let caps): transport.acknowledge(id,accepted:true,capabilities:caps)
+            case .mapping(let id,let mapping): transport.acknowledge(id,accepted:true,mapping:mapping)
+            case .mappingLabels(let id,let labels): transport.acknowledge(id,accepted:true,labels:labels)
+            case .revoke(let id): transport.revoke(id)
+            case .stop: break
+            }
+        }
+        let ready = groupHost.remoteGroupReady(run:listener) && page.status == .ready
+        let peers = groupHost.remoteGroupSlots(run:listener)
+        if groupRemoteReady != ready { groupRemoteReady = ready }
+        if groupRemoteSlots != peers { groupRemoteSlots = peers }
+        let status = ready ? "TLS controller ready; receiver not verified." : "Waiting for TLS controller"
+        if groupRemoteStatus != status { groupRemoteStatus = status }
+    }
+
+    func stopGroupGamepads() {
+        // Invalidate callbacks before stopping the existing adapter.
+        guard groupGamepadsRunning else { return }
+        groupRunToken = nil
+        groupWatchdog?.cancel()
+        groupWatchdog = nil
+        groupTiming = groupTimingAccumulator
+        groupGamepadTokens.removeAll()
+        groupGamepadsRunning = false
+        groupStoppedIDs = groupRegisteredIDs
+        // Block new actuator frames before potentially slow MIDI cleanup.
+        groupHaptics?.invalidateGroupFrames()
+        // Release MIDI before potentially slow native monitor teardown.
+        if let report = groupHost.panic() { consumeGroupReports([report]) }
+        stopGroupHaptics(reason:"Group Trackpad output off")
+        detachGroupRemoteTransport(reason:"Mobile listener off")
+        builderGamepads.stop()
+        groupHinge?.stop()
+        groupHinge = nil
+        if let camera = groupCamera {
+            groupCamera = nil
+            retiringPatchCamera = camera
+            camera.stop()
+        }
+        if groupNativeBar {
+            groupNativeBar = false
+            installTouchBar()
+        }
+        if let mailbox = groupSurfaceMailbox {
+            touch?.setPatchMailbox(nil)
+            mailbox.close()
+            groupSurfaceMailbox = nil
+            refreshSharedSurfaceMonitoring()
+        }
+        groupGamepadStatus = groupCleanupIDs.isEmpty
+            ? (!groupRetainsTuning ? "Group MIDI stopped. Registered ports retained for restart." : "MPE stopped. Close retained ports before another Start.")
+            : "Group MIDI stopped; cleanup pending. Retry before restarting."
+    }
+
+    func stopPerformanceGroup(_ id:UUID) {
+        guard groupGamepadsRunning, groupRegisteredIDs.contains(id), !groupStoppedIDs.contains(id) else { return }
+        if let report = groupHost.stopGroup(id) {
+            groupStoppedIDs.insert(id)
+            consumeGroupReports([report])
+            updateGroupHaptics()
+            if groupRegisteredIDs.isSubset(of:groupStoppedIDs) { stopGroupGamepads() }
+        }
+    }
+
+    func retryGroupCleanup() {
+        for id in groupHost.pendingCleanup {
+            if let report = groupHost.retryCleanup(id) { consumeGroupReports([report]) }
+        }
+        _ = groupHost.retryDisposal()
+        refreshGroupOutputState()
+        if groupRegisteredIDs.isEmpty && groupCleanupIDs.isEmpty && groupDisposalCount == 0 && !groupGamepadsRunning {
+            groupTunedConfiguration = nil
+            groupDynamicPreview = nil
+        }
+        groupGamepadStatus = groupCleanupIDs.isEmpty && groupDisposalCount == 0
+            ? "No pending group cleanup." : "Group cleanup still pending. Check CoreMIDI and retry."
+    }
+
+    func closeGroupPorts() {
+        guard !groupGamepadsRunning else { return }
+        let closed = groupHost.close()
+        refreshGroupOutputState()
+        if closed { groupTunedConfiguration = nil; groupDynamicPreview = nil }
+        groupGamepadStatus = closed ? "Group MIDI ports closed." : "Group close refused or disposal failed; retry cleanup."
+    }
+
     private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
     private let airTunedMIDI = ChordMIDIOutput(name:"TIHULU Air Strings MPE")
     private var airTunedPlan:AirTunedOutput?
@@ -291,18 +1059,25 @@ final class StudioController: ObservableObject {
     private var patchPadTasks: [PatchSimulation.Input: Task<Void, Never>] = [:]
     private var patchPadTokens: [PatchSimulation.Input: UUID] = [:]
     private var surfaceMonitorToken: UUID?
+    private var surfaceInventoryTask: Task<Void,Never>?
+    private var handlingSurfaceInventoryFault = false
     private var surfaceInbox: OrderedTouchInbox<QueuedTouchSnapshot>?
-    private var surfaceSnapshotCursor = TouchSnapshotCursor()
+    private var surfaceSnapshotCursor = TouchPublicationCursor()
+    private var helperPedalPublicationFence = TouchConsumerPublicationFence()
+    private var helperEffectsPublicationFence = TouchConsumerPublicationFence()
     private var touchDispatchMetrics = TouchDispatchMetrics()
     private var touchPreviewCadence = TouchPreviewCadence()
     private var helperPreviewCadence = TouchPreviewCadence()
     // Unthrottled state for musical processing and physical-click attribution.
     private var liveTouchStates: [TouchPerformanceState] = []
-    private var liveHelperStates: [TouchPerformanceState] = []
+    private var liveHelperStates: [HelperSurfaceContact] = []
     private var clickTouchingSurfaces: Set<TouchSurfaceKind> = []
     private var clickSnapshotRevision: UInt64?
     private var clickSnapshotReceivedAt: Double?
     private var physicalClickDown = false
+    private var physicalClickReceipt:Double?
+    private var helperClickFence = PhysicalClickSessionFence()
+    private var touchClickFence = PhysicalClickSessionFence()
     @Published private(set) var sequenceRunning = false
     @Published private(set) var sequenceStatus = "Sequencer MIDI idle"
     private let sequenceMIDI = ChordMIDIOutput(name: "TIHULU Sequencer")
@@ -375,7 +1150,7 @@ final class StudioController: ObservableObject {
     private var nativePianoTokens: [Int: UUID] = [:]
     private(set) var touchBarGestureEpoch = TouchBarGestureEpoch()
     var touchBarOwnsHaptics: Bool { touchBarOutputArmed }
-    var liveNoteOwnsHaptics: Bool { chordOwnsHaptics || touchBarOwnsHaptics || gamepadHaptics != nil }
+    var liveNoteOwnsHaptics: Bool { chordOwnsHaptics || touchBarOwnsHaptics || gamepadHaptics != nil || groupHaptics != nil }
     @Published private(set) var chordProgression = StudioController.readChordProgression()
     @Published private(set) var progressionRunning = false
     @Published private(set) var progressionStep: Int?
@@ -391,7 +1166,7 @@ final class StudioController: ObservableObject {
     @Published var touchContact = TrackpadContact()
     @Published var magicMouseOrientation = SurfaceOrientation(rawValue: UserDefaults.standard.string(forKey: "TIHULU.magicMouseOrientation") ?? "") ?? .horizontal
     @Published var touchStates: [TouchPerformanceState] = []
-    @Published var midiHelperStates: [TouchPerformanceState] = []
+    @Published var midiHelperStates: [HelperSurfaceContact] = []
     @Published var midiHelperRunning = false
     @Published var midiHelperSustainActive = false
     @Published var midiHelperTrackpadSustainActive = false
@@ -473,10 +1248,12 @@ final class StudioController: ObservableObject {
     private var helperEffectsRearmGate = HelperRearmGate()
     private var touchSustainSettings = MIDIHelperSustainSettings()
     private var touchSustainState = MIDIHelperSustainState()
+    private var touchSustainRearmGate = HelperRearmGate()
     private var captureMonitor: PerformanceCaptureMonitor?
     private var captureHealthTask: Task<Void,Never>?
     private var captureGeneration: UInt64 = 0
     private var lastRetiredCaptureStatus: String?
+    private var lastRetiredCaptureSnapshot:PerformanceCaptureDiagnosticSnapshot?
     private var captureHotkeyArmed = false
     private var instrumentPreviewRequested = false
     private var helperPreviewRequested = false
@@ -484,6 +1261,7 @@ final class StudioController: ObservableObject {
     private var hingeSensor: MacBookHingeAngleSource?
     private var midiTouchBarNotes = TouchBarNoteState()
     private var clickedSurface: TouchSurfaceKind?
+    private var clickAttributionNotBefore:Double?
     private var trackpadClickPressure: Double?
     private var activeMIDINoteMap: [String: ActiveMIDINote] = [:]
 
@@ -526,7 +1304,10 @@ final class StudioController: ObservableObject {
                               remotePage: RemoteLoopbackPageServer? = nil,
                               synthetic:SensorSource? = nil,tunedAir:Bool = false, sendHaptics:Bool = false,
                               gamepadOutputSelection:GamepadOutputSelection? = nil) {
-        guard !patchRunning else { return }
+        guard !patchRunning, !groupGamepadsRunning else {
+            if groupGamepadsRunning { patchStatus = "Stop group MIDI before starting Builder." }
+            return
+        }
         var requestedPlan: GamepadOutputPlan?
         if let selection = gamepadOutputSelection {
             guard physical,synthetic == nil,remoteTransport == nil,!tunedAir,
@@ -644,6 +1425,12 @@ final class StudioController: ObservableObject {
                     guard touchPreviewRunning else {
                         stopInstrumentPatch()
                         patchStatus = "Shared native surface monitoring failed."
+                        return
+                    }
+                    let physicalSources = Set(sources).filter { $0 != synthetic }
+                    if let message = missingNativeSurfaceMessage(nativeSurfaces(for:physicalSources)) {
+                        stopInstrumentPatch()
+                        patchStatus = message
                         return
                     }
                 }
@@ -852,9 +1639,13 @@ final class StudioController: ObservableObject {
         recordPatchCommands(commands)
     }
 
-    var builderBarToken: UUID? { patchNativeBar ? patchNativeToken : nil }
+    var builderBarToken: UUID? { groupNativeBar ? groupRunToken : (patchNativeBar ? patchNativeToken : nil) }
 
     func builderBarValue(_ value: Double?, token: UUID) {
+        if groupNativeBar, groupRunToken == token {
+            receiveGroupScalar(.touchBar,value:value,run:token)
+            return
+        }
         guard patchNativeBar, token == patchNativeToken else { return }
         receiveBuilderScalar(.touchBar, value: value)
     }
@@ -1009,13 +1800,21 @@ final class StudioController: ObservableObject {
                                                  oldestSample:oldest)
         }
         let now = ProcessInfo.processInfo.systemUptime
-        if batch.overflow || batch.samples.contains(where: { now - $0.time >= PhysicalPatchRuntime.timeout }) {
+        if batch.overflow || batch.samples.contains(where: { !PhysicalPatchRuntime.admitsPhysicalReceipt($0.time,now:now) }) {
             stopInstrumentPatch()
             patchStatus = "Native input backlog or stale frames. Output released; restart explicitly."
             return
         }
         for sample in batch.samples {
             guard patchRunning else { return }
+            // Earlier synchronous MIDI sends may consume most of the
+            // receipt budget. Revalidate before every physical frame.
+            let admissionNow=ProcessInfo.processInfo.systemUptime
+            guard PhysicalPatchRuntime.admitsPhysicalReceipt(sample.time,now:admissionNow) else {
+                stopInstrumentPatch()
+                patchStatus = "Native input expired during processing. Output released; restart explicitly."
+                return
+            }
             let surface = sample.frame.surface
             let source: SensorSource = surface == .trackpad ? .trackpad : .magicMouse
             let contact = sample.frame.contacts.lazy.filter { $0.isDown }.min { $0.id < $1.id }
@@ -1031,11 +1830,11 @@ final class StudioController: ObservableObject {
                 size = min(1,max(0,Double(contact.size)))
             }
             let commands = patchPhysicalRuntime.receive(source: source, x: x, y: y, size: size,
-                                                        hostTime: sample.time, now: now)
+                                                        hostTime: sample.time, now: admissionNow)
             recordPatchCommands(commands)
         }
         guard patchRunning else { return }
-        drainBuilderCamera(now: now)
+        drainBuilderCamera(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
         drainBuilderRemote(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
@@ -1335,6 +2134,7 @@ final class StudioController: ObservableObject {
     }
 
     func stopInstrumentPatch() {
+        if groupGamepadsRunning { stopGroupGamepads() }
         flushPatchMonitor()
         gamepadHapticToken = nil
         gamepadHaptics?.stop()
@@ -1453,6 +2253,7 @@ final class StudioController: ObservableObject {
     }
 
     func armChordPads() {
+        guard !groupGamepadsRunning else { chordStatus = "Stop group MIDI first."; return }
         guard !chordArmed else { return }
         releaseChordPads()
         guard chordOutstanding.isEmpty, chordMPESelectors.isEmpty else {
@@ -1770,6 +2571,7 @@ final class StudioController: ObservableObject {
     /// Explicit reconnect releases the old bar owners before replacing controls.
     /// No note or MIDI output is armed by this action.
     func reconnectNativeTouchBar() {
+        if groupNativeBar { stopGroupGamepads() }
         retireTouchBarGesturesForReplacement()
         if patchNativeBar { receiveBuilderScalar(.touchBar, value: nil) }
         nativeTouchBarItemRequests = 0
@@ -1779,6 +2581,7 @@ final class StudioController: ObservableObject {
     }
 
     func setTouchBarProfile(_ proposed: TouchBarProfile) {
+        guard !groupGamepadsRunning else { lastError = "Stop group MIDI before changing Touch Bar layout."; return }
         let next = proposed.normalized()
         guard next != touchBarProfile else { return }
         // Stop the old producer before replacing its target or channel.
@@ -1810,6 +2613,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarKey(_ note: Int, pressed: Bool, owner: TouchBarNoteOwner = .screenPiano) {
+        guard !groupGamepadsRunning else { return }
         if touchBarProfile.effectiveOutput.sendsHaptics {
             guard touchBarOutputArmed else { return }
             let commands = touchBarLocalState.key(note, owner: owner, pressed: pressed,
@@ -1832,6 +2636,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarValue(_ zone: TouchBarZone, normalized value: Double, releaseOnly: Bool = false) {
+        guard !groupGamepadsRunning else { return }
         guard value.isFinite, [.pitchBend, .fretless, .vibrato, .expression, .filter, .wah].contains(zone) else { return }
         if touchBarProfile.effectiveOutput.sendsHaptics {
             guard touchBarOutputArmed, value.isFinite else { return }
@@ -1878,6 +2683,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarSustainPressed(_ isPressed: Bool) {
+        guard !groupGamepadsRunning else { return }
         if touchBarProfile.effectiveOutput.sendsHaptics {
             guard touchBarOutputArmed else { return }
             let next = touchBarProfile.sustainMode == .toggle
@@ -1901,6 +2707,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarNativeTap(_ note: Int) {
+        guard !groupGamepadsRunning else { return }
         guard !touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed else { return }
         let token = UUID()
         nativePianoTokens[note] = token
@@ -1914,6 +2721,7 @@ final class StudioController: ObservableObject {
     }
 
     func armTouchBarOutput() {
+        guard !groupGamepadsRunning else { touchBarOutputStatus = "Stop group MIDI first."; return }
         guard touchBarProfile.effectiveOutput.sendsHaptics, !touchBarOutputArmed else { return }
         guard (gamepadHaptics == nil && !chordOwnsHaptics) || sharedNoteOutputEnabled,
               !speakerBusy, !touchRunning, !midiHelperRunning, !midiRunning,
@@ -2023,7 +2831,7 @@ final class StudioController: ObservableObject {
 
     /// An explicit read-only probe never routes a sample to MIDI or haptics.
     func probeLidSensor() {
-        guard !liveHingeEnabled, patchHinge == nil else {
+        guard !liveHingeEnabled, patchHinge == nil, !groupGamepadsRunning else {
             hingeProbeStatus = "Stop live lid input before probing."
             return
         }
@@ -2129,7 +2937,14 @@ final class StudioController: ObservableObject {
             try driver.open()
             self.driver = driver
             self.playback = HapticPlaybackEngine(driver: driver)
-            self.touch = TouchInstrumentService(driver: driver)
+            let touchEngineGeneration = engineGeneration
+            self.touch = TouchInstrumentService(driver:driver,onHapticFault:{ [weak self] message in
+                Task { @MainActor in
+                    guard let self,self.engineGeneration == touchEngineGeneration,self.touchRunning,
+                          self.touch?.hapticDiagnosticSnapshot().outputFaulted == true else { return }
+                    self.lastError = "Touch haptic output stopped after repeated motor failures. MIDI routing unchanged; Stop/Start Touch to retry. " + message
+                }
+            })
             self.midi = MIDIHapticService(driver: driver)
             self.systemAudio = SystemAudioHapticCapture(driver: driver)
             engineReady = true
@@ -2147,6 +2962,8 @@ final class StudioController: ObservableObject {
         retireCaptureMonitor()
         captureArmed = false
         captureHotkeyArmed = false
+        stopGroupGamepads()
+        if !groupCleanupIDs.isEmpty || groupDisposalCount != 0 { retryGroupCleanup() }
         stopInstrumentPatch()
         stopLiveSequence()
         engineGeneration &+= 1
@@ -2167,6 +2984,8 @@ final class StudioController: ObservableObject {
         trackpadClickPressure = nil
         stopSystemAudio()
         playback?.stop(closeDriver: false)
+        surfaceInventoryTask?.cancel()
+        surfaceInventoryTask = nil
         surfaceMonitorToken = nil
         surfaceInbox?.close()
         surfaceInbox = nil
@@ -2182,7 +3001,10 @@ final class StudioController: ObservableObject {
         helperPreviewRequested = false
         midiHelperRunning = false
         helperSustainState.reset()
+        helperPedalPublicationFence.reset()
+        helperEffectsPublicationFence.reset()
         touchSustainState.reset()
+        touchSustainRearmGate.reset()
         touchInstrumentSustainActive = false
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
@@ -2245,7 +3067,7 @@ final class StudioController: ObservableObject {
             guard !Task.isCancelled, let self, self.engineReady,
                   self.playback === engine, !self.isPlaying,
                   !self.touchRunning, !self.midiRunning, !self.midiHelperRunning,
-                  !self.systemAudioRunning, !self.liveNoteOwnsHaptics, let events, !events.isEmpty else { return }
+                  !self.systemAudioRunning, !self.groupGamepadsRunning, !self.liveNoteOwnsHaptics, let events, !events.isEmpty else { return }
             self.startupGreetingPlaying = true
             let generation = self.renderGeneration
             engine.play(events: events, masterLevel: self.masterLevel) { [weak self] _ in
@@ -2324,6 +3146,7 @@ final class StudioController: ObservableObject {
     /// One independent MIDI sequence, with optional exclusive haptic
     /// preview. MIDI-only does not require the Force Touch driver.
     func startLiveSequence(output: MusicalOutput, loop: Bool, tuned:TunedMIDIClip? = nil, makeClip: () throws -> MIDIClip) {
+        guard !groupGamepadsRunning else { sequenceStatus = "Stop group MIDI first."; return }
         guard output.sendsMIDI, !sequenceRunning, tuned == nil || !output.sendsHaptics else { return }
         do {
             let clip = try (tuned?.clip ?? makeClip()).validated()
@@ -2530,6 +3353,16 @@ final class StudioController: ObservableObject {
 
     func setMagicMouseOrientation(_ newOrientation: SurfaceOrientation) {
         guard magicMouseOrientation != newOrientation else { return }
+        // Coordinates are transformed at Helper admission. Do not apply a
+        // pre-orientation queued contact to a new expressive mapping.
+        if midiHelperRunning && helperSurfaceSelection.accepts(.magicMouse) {
+            helperEffectsPublicationFence.begin(after:touch?.consumerPublicationBoundary().sequence ?? 0)
+            helperEffectsRearmGate.invalidate()
+            if helperSendToDAW {
+                midi?.resetHelperControls(assignments:helperAssignments,channel:helperTargetChannel,
+                    vibratoCC:helperVibratoCC,expressionCC:helperExpressionCC)
+            }
+        }
         magicMouseOrientation = newOrientation
         UserDefaults.standard.set(newOrientation.rawValue, forKey: "TIHULU.magicMouseOrientation")
         var updated = currentTouchConfiguration
@@ -2541,11 +3374,13 @@ final class StudioController: ObservableObject {
     /// Distribute the same physical frames to independently enabled Instrument
     /// and Helper consumers, filtered by surface assignment.
     private func refreshSharedSurfaceMonitoring() {
-        guard let touch else { return }
+        guard !handlingSurfaceInventoryFault,let touch else { return }
         let needed = instrumentPreviewRequested || helperPreviewRequested ||
-                     touchRunning || midiHelperRunning ||
+                     touchRunning || midiHelperRunning || groupSurfaceMailbox != nil ||
                      (patchPhysical && instrumentPatch.routes.contains { $0.source != patchHybridSource && ($0.source == .trackpad || $0.source == .magicMouse) })
         if !needed {
+            surfaceInventoryTask?.cancel()
+            surfaceInventoryTask = nil
             surfaceMonitorToken = nil
             surfaceInbox?.close()
             surfaceInbox = nil
@@ -2593,7 +3428,10 @@ final class StudioController: ObservableObject {
                 }
             }
             touchPreviewRunning = true
+            startSurfaceInventoryCheck(generation:generation,token:token)
         } catch {
+            surfaceInventoryTask?.cancel()
+            surfaceInventoryTask = nil
             surfaceMonitorToken = nil
             surfaceInbox?.close()
             surfaceInbox = nil
@@ -2601,6 +3439,82 @@ final class StudioController: ObservableObject {
             touchPreviewRunning = false
             fail(error)
         }
+    }
+
+    private func missingNativeSurfaceMessage(_ required:Set<TouchSurfaceKind>) -> String? {
+        let missing = NativeSurfaceAdmission.missing(required:required,registered:driver?.registeredSurfaceKinds)
+        guard !missing.isEmpty else { return nil }
+        let names = missing.map(\.rawValue).sorted().joined(separator:", ")
+        return "Native surface unavailable: " + names + ". Connect the device and reopen surface monitoring (or Reconnect), then Start explicitly."
+    }
+
+    private func nativeSurfaces(for sources:Set<SensorSource>) -> Set<TouchSurfaceKind> {
+        var required:Set<TouchSurfaceKind> = []
+        if sources.contains(.trackpad) { required.insert(.trackpad) }
+        if sources.contains(.magicMouse) { required.insert(.magicMouse) }
+        return required
+    }
+
+    private func startSurfaceInventoryCheck(generation:UInt64,token:UUID) {
+        surfaceInventoryTask?.cancel()
+        guard let driver else { return }
+        let expected=driver.registeredSurfaceIDs
+        let results=NativeInventoryResultSlot<HapticTrackpadDriver.SurfaceInventory>()
+        driver.requestSurfaceInventory(results)
+        surfaceInventoryTask = Task { [weak self,driver,results] in
+            var evidence = NativeSurfaceInventoryGuard()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for:.seconds(1)) } catch { return }
+                guard let self,self.engineGeneration == generation,
+                      self.surfaceMonitorToken == token,self.touchPreviewRunning else { return }
+                let inventory=results.take()
+                let available=inventory?.expected == expected ? inventory?.available : nil
+                switch evidence.observe(expected:expected,available:available) {
+                case .healthy,.suspect:
+                    driver.requestSurfaceInventory(results)
+                case .lost,.unavailable:
+                    self.handleSurfaceInventoryFault()
+                    return
+                }
+            }
+        }
+    }
+
+    private func handleSurfaceInventoryFault() {
+        guard !handlingSurfaceInventoryFault else { return }
+        handlingSurfaceInventoryFault = true
+        defer { handlingSurfaceInventoryFault = false }
+        // Release the cursor and retire publication before MIDI cleanup.
+        // Unrelated group sources, audio and sequencers are not panicked.
+        retireCaptureMonitor()
+        captureArmed = false
+        captureHotkeyArmed = false
+        surfaceInventoryTask?.cancel()
+        surfaceInventoryTask = nil
+        surfaceMonitorToken = nil
+        surfaceInbox?.close()
+        surfaceInbox = nil
+        clearClickAttribution()
+        instrumentPreviewRequested = false
+        helperPreviewRequested = false
+        if touchRunning { stopTouch() }
+        if midiHelperRunning { stopMIDIHelper() }
+        if let run = groupRunToken,groupSurfaceMailbox != nil {
+            retireGroupSurfaces([.trackpad,.magicMouse],
+                reason:"Native surface inventory lost. Surface owners released; restart explicitly.",run:run)
+        }
+        if patchPhysical && instrumentPatch.routes.contains(where: {
+            $0.source != patchHybridSource && ($0.source == .trackpad || $0.source == .magicMouse)
+        }) { stopInstrumentPatch() }
+        touch?.stopPreview()
+        touchPreviewRunning = false
+        liveTouchStates = []
+        liveHelperStates = []
+        touchStates = []
+        midiHelperStates = []
+        touchContact = TrackpadContact()
+        captureStatus = "Cursor free · native surface inventory lost"
+        lastError = "Native touch device disconnected or inventory unavailable. Surface performances stopped; reconnect devices and restart explicitly."
     }
 
     private func drainTouchInbox(_ inbox: OrderedTouchInbox<QueuedTouchSnapshot>, generation: UInt64, token: UUID) {
@@ -2615,12 +3529,20 @@ final class StudioController: ObservableObject {
             guard surfaceMonitorToken == token, surfaceInbox === inbox, touchPreviewRunning else { return }
             let startedAt = ProcessInfo.processInfo.systemUptime
             guard let revision = touch?.currentSampleRevision,
-                  surfaceSnapshotCursor.accept(sample.stamp,currentRevision:revision) else {
+                  surfaceSnapshotCursor.accept(sample.stamp) else {
+                touchDispatchMetrics.reject()
+                continue
+            }
+            let mappedCurrent = sample.stamp.revision == revision
+            let helperNeeded = (helperPreviewRequested || midiHelperRunning) && helperSurfaceSelection.accepts(sample.sourceSurface)
+            // Old note maps cannot sound, but their ordered physical
+            // releases still belong to an independently running Helper.
+            guard mappedCurrent || helperNeeded else {
                 touchDispatchMetrics.reject()
                 continue
             }
             // Never replay a late musical onset after a blocked main actor.
-            if startedAt - sample.queuedAt >= 0.150 {
+            if !TouchPublicationAdmission.permits(queuedAt:sample.queuedAt,now:startedAt) {
                 touchDispatchMetrics.reject()
                 if touchRunning || midiHelperRunning {
                     handleTouchInputBacklog()
@@ -2635,10 +3557,12 @@ final class StudioController: ObservableObject {
                 }
                 continue
             }
-            clickTouchingSurfaces = Set(sample.states.filter(\.isTouching).map(\.surface))
-            clickSnapshotRevision = sample.stamp.revision
-            clickSnapshotReceivedAt = sample.queuedAt
-            handleSharedSurfaceStates(sample.states)
+            if mappedCurrent {
+                clickTouchingSurfaces = Set(sample.helperContacts.map(\.surface))
+                clickSnapshotRevision = sample.clickObservation?.stamp.revision
+                clickSnapshotReceivedAt = sample.clickObservation?.receivedAt
+            }
+            handleSharedSurfaceStates(sample,admitTouch:mappedCurrent)
             touchDispatchMetrics.record(queuedAt:sample.queuedAt,startedAt:startedAt,
                 endedAt:ProcessInfo.processInfo.systemUptime)
         }
@@ -2667,18 +3591,23 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func handleSharedSurfaceStates(_ states: [TouchPerformanceState]) {
-        if instrumentPreviewRequested || touchRunning {
-            let instrumentStates = states.filter {
-                currentTouchConfiguration.surfaceSelection.accepts($0.surface)
-            }
-            handleTouchStates(instrumentStates)
-        }
-        if helperPreviewRequested || midiHelperRunning {
-            let helperStates = states.filter {
-                helperSurfaceSelection.accepts($0.surface)
-            }
-            handleMIDIHelperStates(helperStates,freshFrame:true)
+    private func handleSharedSurfaceStates(_ sample:QueuedTouchSnapshot,admitTouch:Bool) {
+        let instrumentStates = admitTouch && (instrumentPreviewRequested || touchRunning) ? sample.states.filter {
+            currentTouchConfiguration.surfaceSelection.accepts($0.surface)
+        } : nil
+        let helperStates = (helperPreviewRequested || midiHelperRunning) ? sample.helperContacts.filter {
+            helperSurfaceSelection.accepts($0.surface)
+        }.map { $0.oriented(magicMouseOrientation) } : nil
+        // Commit both pedal intents before any note release. An owner
+        // handoff in one frame must not pulse CC64 off and back on.
+        let selectedSource = helperSurfaceSelection.accepts(sample.sourceSurface)
+        let pedalAdmitted = helperPedalPublicationFence.permits(sample.stamp,selectedSource:selectedSource)
+        let effectsAdmitted = helperEffectsPublicationFence.permits(sample.stamp,selectedSource:selectedSource)
+        let pedal = applyPhysicalPedalFrame(touchStates:instrumentStates,
+            helperStates:pedalAdmitted ? helperStates : nil,freshFrame:true)
+        if let instrumentStates { handleTouchStates(instrumentStates,pedal:pedal) }
+        if let helperStates {
+            handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:effectsAdmitted)
         }
     }
 
@@ -2722,6 +3651,29 @@ final class StudioController: ObservableObject {
     func updateTouchConfiguration(_ configuration: TouchInstrumentConfiguration) {
         var configuration = configuration
         configuration.magicMouseOrientation = magicMouseOrientation
+        if touchRunning {
+            configuration = currentTouchConfiguration.applyingLiveControls(from:configuration)
+            guard configuration.hasValidSampleDomain else {
+                stopTouch()
+                lastError = "Invalid live Touch configuration. Performance stopped; correct the settings and restart."
+                return
+            }
+            guard configuration != currentTouchConfiguration else { return }
+            if configuration.requiresSampleInvalidation(comparedTo:currentTouchConfiguration) {
+                // Match the native service's sample/haptic reset at the
+                // controller boundary. Do not wait for another hardware
+                // frame to release notes belonging to the old mapping.
+                touch?.invalidatePendingSamples()
+                touchClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
+                liveTouchStates = []
+                touchSustainRearmGate.invalidate()
+                touchSustainState.reset()
+                midi?.releaseTouchSustain()
+                midi?.endAllTouchOutput()
+                touch?.setSustainActive(false)
+                touchInstrumentSustainActive = false
+            }
+        }
         currentTouchConfiguration = configuration
         refreshSharedSurfaceMonitoring()
     }
@@ -2756,6 +3708,10 @@ final class StudioController: ObservableObject {
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
         guard !touchRunning, allowLivePerformance() else { return }
+        guard configuration.hasValidSampleDomain else {
+            lastError = "Invalid Touch configuration. Check root, note width, pitch span, trigger threshold and gain."
+            return
+        }
         if separateChannels != nil {
             guard midiOut, midiMode == .standard, configuration.permitsSeparateDAWSurfaceChannels else {
                 lastError = "Separate DAW channels require two pitched Standard MIDI surfaces. Disable MPE/fretless or use the shared route."
@@ -2791,6 +3747,8 @@ final class StudioController: ObservableObject {
         touchIndependentDAWSustain = separateChannels != nil && independentDAWSustain
         touchSustainSettings = sustainSettings
         touch.invalidatePendingSamples()
+        liveTouchStates = []
+        touchSustainRearmGate.reset()
         touchSustainState.reset()
 
         if !instrumentPreviewRequested {
@@ -2799,12 +3757,20 @@ final class StudioController: ObservableObject {
             updateTouchConfiguration(configuration)
         }
         guard touchPreviewRunning else { return }
+        if let message = missingNativeSurfaceMessage(Set(configuration.selectedSurfaces)) {
+            touchMIDIOutEnabled = false
+            touchSeparateChannels = nil
+            touchIndependentDAWSustain = false
+            lastError = message
+            return
+        }
 
         if midiOut, !midiRunning {
             startMIDI()
             guard midiRunning else { return }
         }
 
+        touchClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
         touch.setActive(true)
         touchRunning = true
         startPerformanceEventMonitor()
@@ -2830,6 +3796,8 @@ final class StudioController: ObservableObject {
     }
 
     func stopTouch() {
+        touchClickFence.end()
+        touchSustainRearmGate.reset()
         touchSeparateChannels = nil
         touchIndependentDAWSustain = false
         midi?.releaseTouchSustain()
@@ -2860,14 +3828,10 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func handleTouchStates(_ states: [TouchPerformanceState]) {
+    private func handleTouchStates(_ states: [TouchPerformanceState],pedal:MIDIHelperSustainSnapshot?) {
         liveTouchStates = states
-        // Every accepted hardware frame reaches the musical path before UI.
+        // Pedals were already evaluated and settled by the shared frame.
         if touchRunning {
-            // Fixed independent pedals are committed before note edges in
-            // this same snapshot; legacy/MPE ordering remains unchanged.
-            let earlySustain = touchMIDIOutEnabled && touchIndependentDAWSustain
-            if earlySustain { updateTouchSustain(states) }
             if touchMIDIOutEnabled {
                 midi?.sendTouchStates(
                     states,
@@ -2875,10 +3839,10 @@ final class StudioController: ObservableObject {
                     midiMode: touchMIDIMode,
                     baseChannel: touchMIDIChannel,
                     multiTouchEnabled: touchMultiTouchEnabled,
-                    separateChannels: touchSeparateChannels
+                    separateChannels: touchSeparateChannels,
+                    sustainNewVoices: pedal?.isActive == true
                 )
             }
-            if !earlySustain { updateTouchSustain(states) }
         }
         guard instrumentPreviewRequested, states != touchStates,
               touchPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
@@ -2957,8 +3921,13 @@ final class StudioController: ObservableObject {
             touchBarSustainOn = false
         }
         captureMonitor?.releasePointer()
-        touchSustainState.reset()
-        touchInstrumentSustainActive = false
+        // A haptic-only Touch session has no owner in this MIDI bridge.
+        // Keep its pedal latch and driver sustain synchronized when MIDI stops.
+        if !touchRunning {
+            touchSustainState.reset()
+            touchSustainRearmGate.reset()
+            touchInstrumentSustainActive = false
+        }
         helperSustainState.reset()
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
@@ -2968,7 +3937,8 @@ final class StudioController: ObservableObject {
         stopCaptureMonitorIfIdle()
         activeMIDINoteMap.removeAll()
         activeMIDINotes = []
-        engineStatus = engineReady ? "Force Touch trackpad ready" : engineStatus
+        engineStatus = touchRunning ? "Touch Instrument active · MIDI bridge stopped" :
+            (engineReady ? "Force Touch trackpad ready" : engineStatus)
         if midi?.hasUnconfirmedOutgoingCleanup == true {
             lastError = midi?.requiresManualDAWReset == true
                 ? "Reset DAW controllers and quit/relaunch this app."
@@ -2994,6 +3964,31 @@ final class StudioController: ObservableObject {
     }
 
     func updateMIDIHelperSurface(_ surfaceSelection: TouchSurfaceSelection) {
+        if midiHelperRunning && surfaceSelection != helperSurfaceSelection,
+           let message = missingNativeSurfaceMessage(Set(TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) })) {
+            stopMIDIHelper()
+            helperSurfaceSelection = surfaceSelection
+            lastError = message
+            return
+        }
+        if midiHelperRunning && surfaceSelection != helperSurfaceSelection {
+            let sequence = touch?.consumerPublicationBoundary().sequence ?? 0
+            helperPedalPublicationFence.begin(after:sequence)
+            helperEffectsPublicationFence.begin(after:sequence)
+            helperClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
+            liveHelperStates = []
+            helperSustainState.reset()
+            helperRearmGate.invalidate()
+            helperEffectsRearmGate.invalidate()
+            midi?.releaseHelperSustain()
+            if helperSendToDAW {
+                midi?.resetHelperControls(assignments:helperAssignments,channel:helperTargetChannel,
+                    vibratoCC:helperVibratoCC,expressionCC:helperExpressionCC)
+            }
+            midiHelperSustainActive = false
+            midiHelperTrackpadSustainActive = false
+            midiHelperMagicMouseSustainActive = false
+        }
         helperSurfaceSelection = surfaceSelection
         refreshSharedSurfaceMonitoring()
     }
@@ -3018,6 +4013,12 @@ final class StudioController: ObservableObject {
         configureReceiverBendRange:Bool = false
     ) {
         guard allowLivePerformance() else { return }
+        if midiHelperRunning,
+           let message = missingNativeSurfaceMessage(Set(TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) })) {
+            stopMIDIHelper()
+            lastError = message
+            return
+        }
         guard !sendToDAW || HelperCCPolicy.permits(vibrato:assignments.vibrato,expression:assignments.expression,
                                                    vibratoCC:vibratoCC,expressionCC:expressionCC) else {
             // Reject the new configuration and stop any old active helper
@@ -3045,7 +4046,18 @@ final class StudioController: ObservableObject {
             pedalSettingsChanged:newSustainSettings != helperSustainSettings,
             surfaceChanged:surfaceSelection != helperSurfaceSelection,
             sharingChanged:sharePedalSurface != helperSharePedalSurface)
-        if !midiHelperRunning || transition.pedalChanged || transition.effectsChanged { touch?.invalidatePendingSamples() }
+        if !midiHelperRunning || transition.pedalChanged {
+            helperClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
+        }
+        let boundary = touch?.consumerPublicationBoundary()
+        if !midiHelperRunning || transition.pedalChanged {
+            helperPedalPublicationFence.begin(after:boundary?.sequence ?? 0)
+        }
+        if !midiHelperRunning || transition.effectsChanged {
+            helperEffectsPublicationFence.begin(after:boundary?.sequence ?? 0)
+        }
+        // An effects-only edit must not clear an independent held pedal.
+        if !midiHelperRunning || transition.pedalChanged { liveHelperStates = [] }
         if midiHelperRunning {
             if transition.effectsChanged {
                 if helperSendToDAW {
@@ -3065,6 +4077,12 @@ final class StudioController: ObservableObject {
         } else {
             helperRearmGate.reset()
             helperEffectsRearmGate.reset()
+            // Do not turn a pre-start held contact into a new pedal or
+            // expressive onset. An explicitly idle start is immediately ready.
+            if boundary?.touching.contains(where: { surfaceSelection.accepts($0) }) == true {
+                helperRearmGate.invalidate()
+                helperEffectsRearmGate.invalidate()
+            }
         }
         helperSustainSettings = newSustainSettings
         helperAssignments = assignments
@@ -3084,6 +4102,10 @@ final class StudioController: ObservableObject {
             updateMIDIHelperSurface(surfaceSelection)
         }
         guard touchPreviewRunning else { return }
+        if let message = missingNativeSurfaceMessage(Set(TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) })) {
+            lastError = message
+            return
+        }
 
         if !midiRunning {
             startMIDI()
@@ -3097,7 +4119,11 @@ final class StudioController: ObservableObject {
 
     func stopMIDIHelper() {
         guard midiHelperRunning else { return }
-        touch?.invalidatePendingSamples()
+        helperClickFence.end()
+        let sequence = touch?.consumerPublicationBoundary().sequence ?? 0
+        helperPedalPublicationFence.begin(after:sequence)
+        helperEffectsPublicationFence.begin(after:sequence)
+        liveHelperStates = []
         midi?.releaseHelperSustain()
         helperRearmGate.reset()
         helperEffectsRearmGate.reset()
@@ -3132,43 +4158,51 @@ final class StudioController: ObservableObject {
         stopCaptureMonitorIfIdle()
     }
 
-    private func handleMIDIHelperStates(_ states: [TouchPerformanceState],freshFrame:Bool = false) {
-        liveHelperStates = states
-        defer {
-            if helperPreviewRequested, states != midiHelperStates,
-               helperPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
-                   contactEdge:previewContactEdge(midiHelperStates,states)) {
-                midiHelperStates = states
-            }
-        }
-        guard midiHelperRunning else { return }
-
-        let selectedClick = clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false
-        let touching = states.contains(where: { $0.isTouching })
-        let pedalReady = helperRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame)
-        let effectsReady = helperEffectsRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame)
-        let active = states.filter { $0.isTouching && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
-        if pedalReady {
+    private func evaluateHelperSustain(_ states: [HelperSurfaceContact],freshFrame:Bool) -> Bool? {
+        guard midiHelperRunning else { return nil }
+        let selectedClick = helperClickFence.permits(receipt:physicalClickReceipt,
+            now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false)
+        let touching = states.contains { helperSurfaceSelection.accepts($0.surface) }
+        guard helperRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame) else { return nil }
+        let active = states.filter { helperSurfaceSelection.accepts($0.surface) && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
         let snapshot = helperSustainState.update(
             trackpadContactSizes: active
                 .filter { $0.surface == .trackpad }
                 .map(\.pressure),
             magicMouseTouching: active.contains { $0.surface == .magicMouse },
-            settings: helperSustainSettings,
+            settings: helperSustainSettings.restricted(trackpad:helperSurfaceSelection.accepts(.trackpad),
+                magicMouse:helperSurfaceSelection.accepts(.magicMouse)),
             trackpadClickDown: selectedClick && clickedSurface == .trackpad,
             magicMouseClickDown: selectedClick && clickedSurface == .magicMouse,
             trackpadClickPressure: trackpadClickPressure,
-            magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure)
+            magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure),
+            freshContacts:freshFrame
         )
         if midiHelperTrackpadSustainActive != snapshot.trackpadActive { midiHelperTrackpadSustainActive = snapshot.trackpadActive }
         if midiHelperMagicMouseSustainActive != snapshot.magicMouseActive { midiHelperMagicMouseSustainActive = snapshot.magicMouseActive }
         let helperSustained = snapshot.isActive && helperSendToDAW
         if midiHelperSustainActive != helperSustained { midiHelperSustainActive = helperSustained }
 
-        if helperSendToDAW { midi?.setHelperSustain(snapshot.isActive,channel:helperTargetChannel) }
-        else { midi?.releaseHelperSustain() }
+        return helperSustained
+    }
+
+    private func handleMIDIHelperStates(_ states: [HelperSurfaceContact],pedalAdmitted:Bool,effectsAdmitted:Bool) {
+        if pedalAdmitted || !midiHelperRunning { liveHelperStates = states }
+        defer {
+            if helperPreviewRequested, states != midiHelperStates,
+               helperPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
+                   contactEdge:midiHelperStates.map(\.id) != states.map(\.id)) {
+                midiHelperStates = states
+            }
         }
+        guard midiHelperRunning,effectsAdmitted else { return }
+        let selectedClick = helperClickFence.permits(receipt:physicalClickReceipt,
+            now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false)
+        let touching = states.contains { helperSurfaceSelection.accepts($0.surface) }
+        let effectsReady = helperEffectsRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:true)
+        // This path receives accepted multitouch frames only.
         guard helperSendToDAW,effectsReady else { return }
+        let active = states.filter { helperSurfaceSelection.accepts($0.surface) && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
         // Sustain-only is a strict gate path. No pitch, CC7/11, pressure,
         // note or RPN generation from these contacts.
         guard helperAssignments.hasEffects else { return }
@@ -3216,6 +4250,7 @@ final class StudioController: ObservableObject {
             Magic Mouse max contacts / triggered: \(h.mouseRawMax) / \(h.mouseTriggeredMax)
             Drum strikes accepted / drained: \(h.acceptedDrumStrikes) / \(h.drainedDrumStrikes)
             Motor calls returned / threw: \(h.motorSubmissions) / \(h.motorErrors)
+            Touch motor fault latched: \(h.outputFaulted ? "YES" : "NO")
             Contact counts are committed active frames. Motor calls do not prove physical vibration.
             """
         } else { hapticReport = "Touch diagnostics unavailable." }
@@ -3236,7 +4271,7 @@ final class StudioController: ObservableObject {
         let os = ProcessInfo.processInfo.operatingSystemVersionString
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development"
         let build = Bundle.main.infoDictionary?["NoSpeakerBuildSHA"] as? String ?? "unknown"
-        let snapshot = ensureCaptureMonitor().diagnosticSnapshot()
+        let snapshot = (captureMonitor ?? PerformanceCaptureMonitor()).diagnosticSnapshot()
 
         func yesNo(_ yes: Bool) -> String { yes ? "YES" : "NO" }
 
@@ -3278,6 +4313,10 @@ final class StudioController: ObservableObject {
         Matched shortcuts: \(snapshot.shortcutMatches)
         Event tap timeouts: \(snapshot.tapTimeouts)
         Event tap disabled by system/user: \(snapshot.tapDisabledByUserInput)
+        Coalesced pressure samples: \(snapshot.coalescedPressureSamples)
+        Physical input mailbox overflows: \(snapshot.physicalMailboxOverflows)
+        Previous monitor timeouts: \(lastRetiredCaptureSnapshot?.tapTimeouts ?? 0)
+        Previous monitor mailbox overflows: \(lastRetiredCaptureSnapshot?.physicalMailboxOverflows ?? 0)
         Last event tap status: \(snapshot.lastEventTapStatus)
         Previous monitor status: \(lastRetiredCaptureStatus ?? "None")
         Current capture status: \(captureStatus)
@@ -3296,8 +4335,9 @@ final class StudioController: ObservableObject {
         armed: Bool,
         shortcut: PerformanceCaptureShortcut
     ) {
+        guard !armed || !groupGamepadsRunning else { lastError = "Stop group MIDI before arming Capture."; return }
         guard shortcut.isValid else {
-            lastError = "Escape is reserved for Panic Stop. Choose another key or key combination."
+            lastError = PerformanceCaptureError.invalidShortcut.localizedDescription
             return
         }
         captureShortcut = shortcut
@@ -3323,46 +4363,76 @@ final class StudioController: ObservableObject {
     /// Each retired monitor has its own callback fence.
     private func ensureCaptureMonitor() -> PerformanceCaptureMonitor {
         if let captureMonitor { return captureMonitor }
+        // Preview may have continued while the previous tap was absent.
+        // A newly created tap must not inherit those contact observations.
+        clearClickAttribution()
         captureGeneration &+= 1
         let generation = captureGeneration
+        let panicEngineGeneration = engineGeneration
         let capture = PerformanceCaptureMonitor()
         capture.onCaptureChanged = { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.captureGeneration == generation else { return }
-                self.pointerCaptured = self.captureMonitor?.isCaptured ?? false
+                guard let monitor=self.captureMonitor else { return }
+                let health=monitor.diagnosticSnapshot()
+                self.pointerCaptured = health.pointerCaptured
+                // A queued change from an already disabled tap must not
+                // overwrite the error/recovery status with false readiness.
+                guard health.operational else { return }
                 if self.captureArmed || self.touchRunning || self.midiHelperRunning {
                     self.captureStatus = self.pointerCaptured
                         ? "Cursor captured · press the shortcut again or Esc"
-                        : "Cursor free · event monitor active"
+                        : (health.readyForGlobalCapture
+                            ? "Cursor free · global shortcut ready"
+                            : "Cursor free · physical-click monitor active")
                 }
             }
         }
         capture.onPanic = { [weak self] in
             Task { @MainActor in
-                guard let self, self.captureGeneration == generation else { return }
+                guard let self,PerformanceCaptureSafety.acceptsEmergencyRequest(
+                    engineAtCapture:panicEngineGeneration,currentEngine:self.engineGeneration) else { return }
+                // Tap replacement/disarm cannot cancel an already accepted
+                // Escape. Explicit engine retirement fences old requests.
                 self.panicStop()
             }
         }
-        capture.onPhysicalClick = { [weak self] down, pressure in
+        capture.onPhysicalInputAvailable = { [weak self] in
             Task { @MainActor in
-                guard let self, self.captureGeneration == generation else { return }
-                self.handlePhysicalClick(down, pressure: pressure)
-            }
-        }
-        capture.onPhysicalPressure = { [weak self] pressure in
-            Task { @MainActor in
-                guard let self, self.captureGeneration == generation else { return }
-                self.handlePhysicalPressure(pressure)
+                guard let self,self.captureGeneration == generation,
+                      let monitor = self.captureMonitor else { return }
+                let batch = monitor.drainPhysicalInput()
+                if batch.invalidated || batch.events.count != batch.receipts.count {
+                    self.invalidatePhysicalClickState()
+                    return
+                }
+                for (event,receipt) in zip(batch.events,batch.receipts) {
+                    guard self.captureGeneration == generation else { return }
+                    guard monitor.acceptsPhysicalInput(batch) else {
+                        self.invalidatePhysicalClickState()
+                        return
+                    }
+                    switch event {
+                    case .click(let down,let pressure): self.handlePhysicalClick(down,pressure:pressure,receipt:receipt)
+                    case .pressure(let pressure): self.handlePhysicalPressure(pressure)
+                    }
+                }
             }
         }
         capture.onMonitorRecovered = { [weak self] in
             Task { @MainActor in
                 guard let self, self.captureGeneration == generation else { return }
-                self.pointerCaptured = self.captureMonitor?.isCaptured ?? false
-                // A click-up event may have been lost while the tap timed out.
-                // Release any synthetic sustain state instead of sticking CC64.
-                self.invalidatePhysicalClickState()
-                self.captureStatus = "Input monitor recovered after timeout · cursor released · press the capture shortcut to resume"
+                guard let monitor=self.captureMonitor else { return }
+                let health=monitor.diagnosticSnapshot()
+                guard health.operational else { return }
+                self.pointerCaptured = health.pointerCaptured
+                // This callback may arrive after a fresh capture shortcut.
+                // Show the current state, not the historical timeout state.
+                self.captureStatus = health.pointerCaptured
+                    ? "Cursor captured · press the shortcut again or Esc"
+                    : (health.readyForGlobalCapture
+                        ? "Input monitor recovered · cursor free · press the capture shortcut to resume"
+                        : "Input monitor recovered · cursor free · physical-click monitor active")
             }
         }
         capture.onMonitorFailed = { [weak self] in
@@ -3390,7 +4460,11 @@ final class StudioController: ObservableObject {
         captureHealthTask = nil
         captureGeneration &+= 1
         let old = captureMonitor
-        if let old { lastRetiredCaptureStatus = old.diagnosticSnapshot().lastEventTapStatus }
+        if let old {
+            let snapshot = old.diagnosticSnapshot()
+            lastRetiredCaptureSnapshot = snapshot
+            lastRetiredCaptureStatus = snapshot.lastEventTapStatus
+        }
         captureMonitor = nil
         old?.setCaptureHotkeyEnabled(false)
         old?.stop()
@@ -3404,7 +4478,7 @@ final class StudioController: ObservableObject {
         guard captureHotkeyArmed || touchRunning || midiHelperRunning else { return }
         var monitor = ensureCaptureMonitor()
         let before = monitor.diagnosticSnapshot()
-        if before.listening && !before.eventTapEnabled {
+        if before.eventTapCreated && (!before.listening || !before.eventTapEnabled) {
             retireCaptureMonitor()
             invalidatePhysicalClickState()
             monitor = ensureCaptureMonitor()
@@ -3412,10 +4486,17 @@ final class StudioController: ObservableObject {
         do {
             try monitor.start(shortcut: captureShortcut, requestPermissions: captureHotkeyArmed)
             monitor.setCaptureHotkeyEnabled(captureHotkeyArmed)
+            let health=monitor.diagnosticSnapshot()
+            guard health.operational, !captureHotkeyArmed || health.readyForGlobalCapture else {
+                throw PerformanceCaptureError.tapUnavailable
+            }
+            pointerCaptured=health.pointerCaptured
             startCaptureHealthCheck()
-            captureStatus = captureHotkeyArmed
-                ? "Ready globally · \(captureShortcut.displayName) toggles capture · Esc stops all"
-                : "Cursor free · physical-click monitor active"
+            captureStatus = pointerCaptured
+                ? "Cursor captured · press the shortcut again or Esc"
+                : (captureHotkeyArmed
+                    ? "Ready globally · \(captureShortcut.displayName) toggles capture · Esc stops all"
+                    : "Cursor free · physical-click monitor active")
         } catch {
             retireCaptureMonitor()
             invalidatePhysicalClickState()
@@ -3438,7 +4519,7 @@ final class StudioController: ObservableObject {
                 guard let self,self.captureGeneration == generation,
                       let monitor = self.captureMonitor else { return }
                 let health = monitor.diagnosticSnapshot()
-                guard health.accessibilityGranted,health.listening,health.eventTapEnabled else {
+                guard health.operational, !self.captureHotkeyArmed || health.readyForGlobalCapture else {
                     self.retireCaptureMonitor()
                     self.invalidatePhysicalClickState()
                     self.captureArmed = false
@@ -3451,25 +4532,35 @@ final class StudioController: ObservableObject {
     }
 
     func togglePointerCaptureNow() {
-        if pointerCaptured || captureMonitor?.isCaptured == true {
-            captureMonitor?.releasePointer()
-            pointerCaptured = false
-            captureStatus = "Cursor free"
+        guard let monitor=captureMonitor else {
+            pointerCaptured=false
+            captureStatus="Capture unavailable · enable Global Capture and check permissions"
             return
         }
-        guard captureArmed, let monitor = captureMonitor, monitor.setPointerCaptured(true) else {
-            captureStatus = "Capture unavailable · enable Global Capture and check permissions"
+        if !captureArmed {
+            monitor.releasePointer()
+            pointerCaptured=false
+            captureStatus="Cursor free · Global Capture OFF"
             return
         }
-        pointerCaptured = true
-        captureStatus = "Cursor captured · shortcut or Esc releases"
+        // Never toggle based on a stale SwiftUI flag. Native lock serializes
+        // the explicit button with the global shortcut and timeout handler.
+        _=monitor.togglePointerCapture()
+        let health=monitor.diagnosticSnapshot()
+        pointerCaptured=health.pointerCaptured
+        captureStatus = pointerCaptured
+            ? "Cursor captured · shortcut or Esc releases"
+            : (health.readyForGlobalCapture
+                ? "Cursor free"
+                : "Capture unavailable · enable Global Capture and check permissions")
     }
 
     private func stopCaptureMonitorIfIdle() {
         if !captureHotkeyArmed && !touchRunning && !midiHelperRunning {
             retireCaptureMonitor()
-            clickedSurface = nil
-            trackpadClickPressure = nil
+            // Preview can outlive the capture monitor. Never carry a
+            // pressed edge or its attribution into the next monitor epoch.
+            clearClickAttribution()
             pointerCaptured = false
             captureStatus = "Cursor free · global capture OFF"
         }
@@ -3479,54 +4570,90 @@ final class StudioController: ObservableObject {
         clickTouchingSurfaces.removeAll()
         clickSnapshotRevision = nil
         clickSnapshotReceivedAt = nil
+        physicalClickReceipt = nil
         physicalClickDown = false
         clickedSurface = nil
         trackpadClickPressure = nil
+        // Every explicit attribution reset is a publication boundary,
+        // including preview-only, engine restart and monitor recreation.
+        clickAttributionNotBefore=ProcessInfo.processInfo.systemUptime
     }
 
     private func invalidatePhysicalClickState() {
         helperSustainState.invalidatePhysicalClicks(settings:helperSustainSettings)
         touchSustainState.invalidatePhysicalClicks(settings:touchSustainSettings)
         handlePhysicalClick(false,pressure:0)
+        clearClickAttribution()
     }
 
-    private func handlePhysicalClick(_ down: Bool, pressure: Double) {
+    private func handlePhysicalClick(_ down: Bool, pressure: Double,receipt:Double? = nil) {
         if down {
             guard !physicalClickDown else { return }
             physicalClickDown = true
+            physicalClickReceipt = receipt
             // Use only the most recent shared, unfiltered monitor snapshot.
             clickedSurface = PhysicalClickAttribution.resolve(clickTouchingSurfaces,
                 snapshotRevision:clickSnapshotRevision,currentRevision:touch?.currentSampleRevision,
-                receivedAt:clickSnapshotReceivedAt,now:ProcessInfo.processInfo.systemUptime)
+                receivedAt:clickSnapshotReceivedAt,now:ProcessInfo.processInfo.systemUptime,clickReceipt:receipt,
+                notBefore:clickAttributionNotBefore)
             trackpadClickPressure = clickedSurface == .trackpad && pressure.isFinite && (0...1).contains(pressure) ? pressure : nil
         } else {
             physicalClickDown = false
+            physicalClickReceipt = nil
             clickedSurface = nil
             trackpadClickPressure = nil
         }
-        if midiHelperRunning { handleMIDIHelperStates(liveHelperStates) }
-        if touchRunning { updateTouchSustain(liveTouchStates) }
+        applyPhysicalPedalFrame(touchStates:touchRunning ? liveTouchStates : nil,
+            helperStates:midiHelperRunning ? liveHelperStates : nil,freshFrame:false)
     }
 
     private func handlePhysicalPressure(_ pressure: Double) {
         guard clickedSurface == .trackpad else { return }
         trackpadClickPressure = pressure.isFinite && (0...1).contains(pressure) ? pressure : nil
-        if midiHelperRunning { handleMIDIHelperStates(liveHelperStates) }
-        if touchRunning { updateTouchSustain(liveTouchStates) }
+        applyPhysicalPedalFrame(touchStates:touchRunning ? liveTouchStates : nil,
+            helperStates:midiHelperRunning ? liveHelperStates : nil,freshFrame:false)
     }
 
-    private func updateTouchSustain(_ states: [TouchPerformanceState]) {
-        let active = states.filter(\.isTouching)
+    @discardableResult
+    private func applyPhysicalPedalFrame(touchStates:[TouchPerformanceState]?,
+                                         helperStates:[HelperSurfaceContact]?,
+                                         freshFrame:Bool) -> MIDIHelperSustainSnapshot? {
+        let touchPedal = touchRunning ? touchStates.flatMap { evaluateTouchSustain($0,freshFrame:freshFrame) } : nil
+        let helperPedal = midiHelperRunning ? helperStates.flatMap { evaluateHelperSustain($0,freshFrame:freshFrame) } : nil
+        let midiTouch = touchMIDIOutEnabled ? touchPedal : nil
+        if midiTouch != nil || helperPedal != nil {
+            let routes = currentTouchConfiguration.selectedSurfaces.filter {
+                currentTouchConfiguration.output(for:$0).sendsMIDI
+            }.map { currentTouchConfiguration.instrument(for:$0) }
+            let fixed = LegacyTouchSustainTargets.fixedChannels(baseChannel:touchMIDIChannel,
+                hasMelody:routes.contains { $0 != .drums },hasDrums:routes.contains(.drums),
+                isMPE:touchMIDIMode == .mpe)
+            midi?.setPhysicalSustainFrame(touch:midiTouch,separateChannels:touchSeparateChannels,
+                independent:touchIndependentDAWSustain,fixedTouchChannels:fixed,
+                helper:helperPedal,helperChannel:helperTargetChannel)
+        }
+        return touchPedal
+    }
+
+    private func evaluateTouchSustain(_ states: [TouchPerformanceState],freshFrame:Bool) -> MIDIHelperSustainSnapshot? {
+        let selected = states.filter { currentTouchConfiguration.surfaceSelection.accepts($0.surface) }
+        let active = selected.filter { $0.isTouching && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
+        let selectedClick = touchClickFence.permits(receipt:physicalClickReceipt,
+            now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { currentTouchConfiguration.surfaceSelection.accepts($0) } ?? false)
+        guard touchSustainRearmGate.permits(touching:selected.contains(where: { $0.isTouching }),
+            clicking:selectedClick,freshFrame:freshFrame) else { return nil }
         let snapshot = touchSustainState.update(
             trackpadContactSizes: active
                 .filter { $0.surface == .trackpad }
                 .map(\.pressure),
             magicMouseTouching: active.contains { $0.surface == .magicMouse },
-            settings: touchSustainSettings,
-            trackpadClickDown: clickedSurface == .trackpad,
-            magicMouseClickDown: clickedSurface == .magicMouse,
+            settings: touchSustainSettings.restricted(trackpad:currentTouchConfiguration.surfaceSelection.accepts(.trackpad),
+                magicMouse:currentTouchConfiguration.surfaceSelection.accepts(.magicMouse)),
+            trackpadClickDown: selectedClick && clickedSurface == .trackpad,
+            magicMouseClickDown: selectedClick && clickedSurface == .magicMouse,
             trackpadClickPressure: trackpadClickPressure,
-            magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure)
+            magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure),
+            freshContacts:freshFrame
         )
         let hapticsEnabled = currentTouchConfiguration.localHapticSound &&
             currentTouchConfiguration.selectedSurfaces.contains {
@@ -3535,13 +4662,7 @@ final class StudioController: ObservableObject {
         let instrumentSustained = snapshot.isActive && (touchMIDIOutEnabled || hapticsEnabled)
         if touchInstrumentSustainActive != instrumentSustained { touchInstrumentSustainActive = instrumentSustained }
         touch?.setSustainActive(snapshot.isActive && hapticsEnabled)
-        if touchMIDIOutEnabled {
-            if let split = touchSeparateChannels {
-                midi?.setTouchSustainChannels(split.sustainTargets(snapshot,independent:touchIndependentDAWSustain))
-            } else {
-                midi?.setTouchSustain(snapshot.isActive,baseChannel:touchMIDIChannel)
-            }
-        }
+        return snapshot
     }
 
     func playMIDIFile(_ url: URL) {
@@ -3566,11 +4687,17 @@ final class StudioController: ObservableObject {
         let selectedProfile = profile ?? activeProfile
         let fileURL = url
         let token = beginPlaybackRequest()
+        let cancellation = VoiceRenderCancellation()
+        voiceRenderCancellation = cancellation
         Task {
+            defer {
+                if voiceRenderCancellation === cancellation { voiceRenderCancellation = nil }
+            }
             do {
                 let events = try await Task.detached(priority: .userInitiated) {
-                    try AudioFileHapticService.render(url: fileURL, profile: selectedProfile)
+                    try AudioFileHapticService.render(url:fileURL,profile:selectedProfile,cancellation:cancellation)
                 }.value
+                try cancellation.check()
                 guard renderGeneration == token, !liveNoteOwnsHaptics else { return }
                 playRendered(events, token: token)
             } catch {
@@ -3587,6 +4714,7 @@ final class StudioController: ObservableObject {
     }
 
     func startSystemAudio() {
+        guard !groupGamepadsRunning else { lastError = "Stop group MIDI first."; return }
         cancelStartupGreeting()
         guard !speakerBusy else { return }
         guard !liveNoteOwnsHaptics, !sequenceOwnsHaptics else {
@@ -3674,6 +4802,10 @@ final class StudioController: ObservableObject {
     }
 
     private func allowOtherPerformance() -> Bool {
+        guard !groupGamepadsRunning else {
+            lastError = "Stop group MIDI before starting another live performance."
+            return false
+        }
         guard !sequenceOwnsHaptics else {
             lastError = "Stop the sequencer's combined Trackpad/MIDI output first."
             return false
