@@ -71,20 +71,30 @@ public struct BoundedMIDIPlayback: Sendable {
     /// Never replay stale onsets after a stalled scheduler. Failed sends are
     /// ambiguous: record attempted onsets before sending and retain failed offs.
     public mutating func advance(now: UInt64, send: (SensorCommand) -> Bool) {
+        advance(now:now,refreshNow:{ now },send:send)
+    }
+
+    /// Native drivers must resample uptime after every synchronous send:
+    /// a slow first send must not authorize a stale second onset.
+    public mutating func advance(now: UInt64, refreshNow: () -> UInt64,
+                                 send: (SensorCommand) -> Bool) {
         guard state == .playing else { return }
-        guard now >= last else { retire(.faulted,send:send); return }
-        last = now
-        let elapsed = now - start
-        // A delayed scheduler must not emit a burst of historical notes.
-        if next < events.count, elapsed >= events[next].offsetNS,
-           elapsed - events[next].offsetNS > Self.maximumLatenessNS {
-            retire(.faulted,send:send); return
-        }
-        // Even within the lateness budget, never emit an onset whose own
-        // release is already due. This also rejects collapsed short taps.
-        while next < events.count, events[next].offsetNS <= elapsed {
-            let event = events[next]
-            let cmd = event.command
+        var current=now
+        while state == .playing {
+            guard current >= last else { retire(.faulted,send:send); return }
+            last=current
+            let elapsed=current-start
+            guard next < events.count, events[next].offsetNS <= elapsed else {
+                if elapsed >= durationNS {
+                    retire(outstanding.isEmpty ? .finished : .faulted,send:send)
+                }
+                return
+            }
+            let event=events[next]
+            guard elapsed-event.offsetNS <= Self.maximumLatenessNS else {
+                retire(.faulted,send:send); return
+            }
+            let cmd=event.command
             if cmd.value > 0 {
                 if events[(next+1)...].contains(where:{
                     $0.command.destination == cmd.destination && $0.command.value == 0 && $0.offsetNS <= elapsed
@@ -96,9 +106,7 @@ public struct BoundedMIDIPlayback: Sendable {
             guard send(cmd) else { retire(.faulted,send:send); return }
             if cmd.value == 0 { outstanding.remove(cmd.destination) }
             next += 1
-        }
-        if elapsed >= durationNS {
-            retire(outstanding.isEmpty ? .finished : .faulted,send:send)
+            current=refreshNow()
         }
     }
 
