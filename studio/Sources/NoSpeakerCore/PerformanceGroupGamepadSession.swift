@@ -19,6 +19,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
         var armed = false
         var lease: UUID?
         var lastSeen: Double?
+        // Keep the surface receipt fence across resets and ordinary lifts.
+        var lastSurfaceReceipt: Double?
         var sequence: UInt64 = 0
         var lastActive: [SensorSignal:Double]?
         mutating func reset() {
@@ -37,14 +39,23 @@ public struct PerformanceGroupGamepadSession: Sendable {
     public var pendingCleanup: Set<UUID> { delivery.pendingCleanup }
     public var retired: Bool { delivery.retired }
 
-    /// First native adapter slice is deliberately gamepad-only; reject
-    /// mixed profiles rather than silently ignoring their other sources.
-    public init(profile: PerformanceGroupProfile, allowLayering: Bool = false) throws {
+    /// Existing gamepad callers remain gamepad-only by default. Explicit
+    /// local mode also accepts primary-contact Trackpad and Magic Mouse.
+    public static func supports(_ profile:PerformanceGroupProfile, allowSurfaces:Bool = false) -> Bool {
         let routes = profile.groups.flatMap { $0.patch.routes }
-        guard profile.isValid, !routes.isEmpty,
-              routes.allSatisfy({ GamepadFrame.sources.contains($0.source) && GamepadFrame.permits($0) }) else {
+        return profile.isValid && !routes.isEmpty && routes.allSatisfy {
+            if GamepadFrame.sources.contains($0.source) { return GamepadFrame.permits($0) }
+            return allowSurfaces && ($0.source == .trackpad || $0.source == .magicMouse) &&
+                PhysicalPatchRuntime.supportedSignals.contains($0.signal)
+        }
+    }
+
+    public init(profile: PerformanceGroupProfile, allowLayering: Bool = false,
+                allowSurfaces: Bool = false) throws {
+        guard Self.supports(profile,allowSurfaces:allowSurfaces) else {
             throw AdmissionError.unsupportedProfile
         }
+        let routes = profile.groups.flatMap { $0.patch.routes }
         mapped = Dictionary(grouping:routes,by:{ $0.source }).mapValues { Set($0.map(\.signal)) }
         smoothed = Set(routes.filter { ($0.response?.smoothingMS ?? 0) > 0 }.map(\.source))
         delivery = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
@@ -66,7 +77,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     public mutating func receive(_ source: SensorSource, token: UUID,
                                  frame: GamepadFrame?, now: Double,
                                  send: (PerformanceGroupCommand) -> Bool) -> Result {
-        guard !retired, bindings[source]?.token == token else {
+        guard !retired, GamepadFrame.sources.contains(source), bindings[source]?.token == token else {
             return .init(status:.ignored,reports:[])
         }
         guard now.isFinite, now >= clock else {
@@ -129,6 +140,71 @@ public struct PerformanceGroupGamepadSession: Sendable {
         bindings[source] = binding
         reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,
             values:values,releasing:signals.subtracting(values.keys),send:send))
+        if !delivery.hasLease(lease) { bindings[source]?.reset() }
+        return .init(status:.delivered,reports:reports)
+    }
+
+    /// A primary-contact sample from the existing ordered surface mailbox.
+    /// All nil means an observed lift. Partial or invalid samples are loss,
+    /// not neutral evidence. Capture time controls the expiry deadline;
+    /// processing time is the monotonic clock used by the shared router.
+    public mutating func receiveSurface(_ source:SensorSource, token:UUID,
+                                        x:Double?, y:Double?, size:Double?,
+                                        hostTime:Double, now:Double,
+                                        send:(PerformanceGroupCommand) -> Bool) -> Result {
+        guard !retired, (source == .trackpad || source == .magicMouse),
+              bindings[source]?.token == token else { return .init(status:.ignored,reports:[]) }
+        guard now.isFinite, now >= clock else {
+            return .init(status:.lost,reports:reset(Set(bindings.keys),send:send))
+        }
+        clock = now
+        var reports = reset(staleSources(now:now),send:send)
+        guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
+        guard hostTime.isFinite, hostTime >= 0, hostTime <= now,
+              now-hostTime < Self.timeout,
+              binding.lastSurfaceReceipt.map({ hostTime >= $0 }) ?? true else {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        binding.lastSurfaceReceipt = hostTime
+        bindings[source] = binding
+        if x == nil && y == nil && size == nil {
+            // Ordinary touch release ends this source lease, matching the
+            // existing surface policy rather than the controller toggle lift.
+            reports += reset([source],send:send)
+            bindings[source]?.armed = true
+            bindings[source]?.lastSeen = nil
+            return .init(status:.ready,reports:reports)
+        }
+        guard let x, let y, let size,
+              [x,y,size].allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        if let lease = binding.lease, !delivery.hasLease(lease) { binding.reset() }
+        binding.lastSeen = hostTime
+        guard binding.armed else {
+            bindings[source] = binding
+            return .init(status:.waitingForNeutral,reports:reports)
+        }
+        if binding.lease == nil {
+            do { binding.lease = try delivery.connect(source,now:now) }
+            catch {
+                binding.reset()
+                bindings[source] = binding
+                return .init(status:.admissionRejected,reports:reports)
+            }
+        }
+        let stride = UInt64(SensorSignal.allCases.count+1)
+        guard let lease = binding.lease, binding.sequence < (UInt64.max-stride)/stride else {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        binding.sequence += 1
+        let values: [SensorSignal:Double] = [.x:x,.y:y,.contactSize:size,.contact:1]
+        let filtered = values.filter { mapped[source]?.contains($0.key) == true }
+        bindings[source] = binding
+        reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,values:filtered,send:send))
         if !delivery.hasLease(lease) { bindings[source]?.reset() }
         return .init(status:.delivered,reports:reports)
     }
