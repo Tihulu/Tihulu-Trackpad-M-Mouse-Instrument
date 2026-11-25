@@ -653,3 +653,26 @@ import Testing
     let off=owners.replace(.helper,channels:idle.isActive ? [2] : [])
     #expect(off.map(\.value)==[0] && owners.active.isEmpty)
 }
+
+@Test func invalidLivePedalThresholdReleasesEvenWithoutFreshContacts() {
+    for bad in [Double.nan,.infinity,-0.1,1.1] {
+        var state=MIDIHelperSustainState()
+        var config=MIDIHelperSustainSettings(trackpadEnabled:true,magicMouseEnabled:true,
+            magicMouseGesture:.tapToggle,magicMouseTapThreshold:0.5)
+        let initial=state.update(trackpadContactSizes:[0.8],magicMouseTouching:true,settings:config,
+            magicMouseContactSizes:[0.8])
+        #expect(initial.trackpadActive && initial.magicMouseActive)
+        config.trackpadContactThreshold=bad
+        let released=state.update(trackpadContactSizes:[],magicMouseTouching:false,settings:config,freshContacts:false)
+        #expect(!released.trackpadActive && released.magicMouseActive)
+        config.magicMouseTapThreshold=bad
+        let bothReleased=state.update(trackpadContactSizes:[],magicMouseTouching:false,settings:config,freshContacts:false)
+        #expect(!bothReleased.isActive)
+        config.magicMouseTapThreshold=0.5
+        let held=state.update(trackpadContactSizes:[],magicMouseTouching:true,settings:config,magicMouseContactSizes:[0.9])
+        #expect(!held.isActive)
+        _=state.update(trackpadContactSizes:[],magicMouseTouching:false,settings:config)
+        let next=state.update(trackpadContactSizes:[],magicMouseTouching:true,settings:config,magicMouseContactSizes:[0.9])
+        #expect(next.magicMouseActive && !next.trackpadActive)
+    }
+}

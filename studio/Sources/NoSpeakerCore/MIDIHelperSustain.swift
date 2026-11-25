@@ -149,7 +149,11 @@ public struct MIDIHelperSustainState: Sendable {
         previousMouseGesture = settings.magicMouseGesture
 
         let trackpadActive: Bool
-        if !settings.trackpadEnabled {
+        if !settings.trackpadEnabled ||
+            (settings.trackpadGesture == .contactThreshold &&
+             (!threshold.isFinite || !(0.05...1).contains(threshold))) {
+            // Invalid configuration must release even on a click-only
+            // callback carrying no fresh contact sample.
             trackpadHeld = false
             trackpadLatched = false
             trackpadActive = false
@@ -204,7 +208,10 @@ public struct MIDIHelperSustainState: Sendable {
         }
 
         let mouseActive: Bool
-        if !settings.magicMouseEnabled {
+        if !settings.magicMouseEnabled ||
+            (settings.magicMouseGesture == .tapToggle &&
+             (!settings.magicMouseTapThreshold.isFinite || !(0...1).contains(settings.magicMouseTapThreshold))) {
+            // Never preserve an old toggle under an invalid sensitivity.
             mouseLatched = false
             mouseActive = false
         } else if !freshContacts && (settings.magicMouseGesture == .touchHold || settings.magicMouseGesture == .tapToggle) {
