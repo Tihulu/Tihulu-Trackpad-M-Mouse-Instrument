@@ -27,7 +27,7 @@ public enum GamepadXYMapping {
     }
 
     /// Left X: pitch bend. Left Y: positive-half vibrato (zero at center).
-    /// Right X: stereo pan. Right Y: filter. Centered CCs release at 64.
+    /// Right X: stereo pan. Right Y: resonance. Centered CCs release at 64.
     /// Names describe conventional assignments, not guaranteed DAW plugins.
     public static func installExpression(in patch: InstrumentPatch, source: SensorSource,
                                          channel: Int, replaceExisting: Bool = false) throws -> InstrumentPatch {
@@ -47,7 +47,7 @@ public enum GamepadXYMapping {
                   destination:.init(.controlChange,channel:channel,number:10),
                   response:.init(release:0.5)),
             .init(id:UUID().uuidString,source:source,signal:.padRSY,
-                  destination:.init(.controlChange,channel:channel,number:74),
+                  destination:.init(.controlChange,channel:channel,number:71),
                   response:.init(release:0.5))
         ]
         guard next.isValid else { throw SensorRouterError.invalidMappings }
