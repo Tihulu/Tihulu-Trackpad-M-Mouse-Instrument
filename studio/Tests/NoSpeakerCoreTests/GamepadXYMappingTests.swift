@@ -42,7 +42,7 @@ import Testing
             target:original.destination,calibration:.init(minimum:0.8,maximum:0.2))
     }
     let conflict = SensorMapping(id:"other",source:.gamepad2,signal:.padRSY,
-                                 destination:.init(.controlChange,number:74))
+                                 destination:.init(.controlChange,number:71))
     #expect(throws:SensorRouterError.invalidMappings) {
         try GamepadXYMapping.installExpression(in:.init(routes:[conflict]),source:.gamepad1,channel:0)
     }
@@ -57,7 +57,7 @@ import Testing
     let bend = SensorDestination(.pitchBend,channel:3)
     let mod = SensorDestination(.controlChange,channel:3,number:1)
     let pan = SensorDestination(.controlChange,channel:3,number:10)
-    let filter = SensorDestination(.controlChange,channel:3,number:74)
+    let resonance = SensorDestination(.controlChange,channel:3,number:71)
     var runtime = PhysicalPatchRuntime()
     try runtime.configure(patch)
     _ = runtime.receiveGamepad(source:.gamepad4,frame:neutral,now:1)
@@ -66,14 +66,14 @@ import Testing
     #expect(first.contains(.init(bend,value:16383)))
     #expect(first.contains(.init(mod,value:127)))
     #expect(first.contains(.init(pan,value:0)))
-    #expect(first.contains(.init(filter,value:0)))
+    #expect(first.contains(.init(resonance,value:0)))
     let partial = runtime.receiveGamepad(source:.gamepad4,frame:oneCentered,now:1.02)
     #expect(partial == [.init(bend,value:8192)])
     let release = runtime.receiveGamepad(source:.gamepad4,frame:neutral,now:1.03)
     #expect(release.count == 3)
     #expect(release.contains(.init(mod,value:0)))
     #expect(release.contains(.init(pan,value:64)))
-    #expect(release.contains(.init(filter,value:64)))
+    #expect(release.contains(.init(resonance,value:64)))
     #expect(runtime.stop().isEmpty)
 }
 
@@ -87,4 +87,8 @@ import Testing
     #expect(patch.routes.count == 48)
     #expect(patch.routes.filter { $0.pedalMode != nil }.count == 28)
     #expect(patch.routes.filter { GamepadFrame.sticks.contains($0.signal) }.count == 16)
+    for source in GamepadFrame.orderedSources {
+        #expect(patch.routes.contains { $0.source == source && $0.signal == .padLT && $0.destination.number == 74 })
+        #expect(patch.routes.contains { $0.source == source && $0.signal == .padRSY && $0.destination.number == 71 })
+    }
 }
