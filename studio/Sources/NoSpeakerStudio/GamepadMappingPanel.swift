@@ -20,6 +20,10 @@ struct GamepadMappingPanel: View {
     @State private var noteText = "C4"
     @State private var chord = "C4,E4,G4"
     @State private var confirmCopy = false
+    @State private var presetChannel = 0
+    @State private var confirmPreset = false
+    @State private var presetBase: InstrumentPatch?
+    @State private var pendingPreset: InstrumentPatch?
     @State private var remapCopyChannel = false
     @State private var copyChannel = 1
     @State private var complexSelection = false
@@ -105,6 +109,22 @@ struct GamepadMappingPanel: View {
         } catch { message = "Copy refused: invalid routing or route capacity." }
     }
 
+    private func preparePedalboard() {
+        do {
+            let occupied = patch.routes.contains { $0.source == slot }
+            let next = try GamepadPedalboardPreset.install(in:patch,source:slot,channel:presetChannel,replaceExisting:occupied)
+            if occupied {
+                presetBase = patch
+                pendingPreset = next
+                confirmPreset = true
+            } else {
+                patch = next
+                physical = true
+                message = "Pedalboard added. Enable MIDI and learn the effect CCs in your DAW."
+            }
+        } catch { message = "Pedalboard refused: conflicting targets or route capacity. Existing map preserved." }
+    }
+
     var body: some View {
         GroupBox("Xbox / Gamepad · custom control map") {
             VStack(alignment:.leading,spacing:10) {
@@ -120,6 +140,12 @@ struct GamepadMappingPanel: View {
                         else { copyMap(replace:false) }
                     }.disabled(!patch.routes.contains(where:{ $0.source == slot }))
                 }
+                HStack {
+                    Stepper("Pedalboard Ch \(presetChannel+1)",value:$presetChannel,in:0...15)
+                    Button("Load effect pedalboard…") { preparePedalboard() }
+                }
+                Text("A/B/X/Y and RB: Toggle · LB: Hold · LT: Wah CC74 · RT: Sustain · sticks: Bend / Expression. Learn CC80–85 in your DAW; this preset does not select plug-ins automatically.")
+                    .font(.caption).foregroundStyle(.secondary)
                 LazyVGrid(columns:[GridItem(.adaptive(minimum:150),spacing:6)],spacing:6) {
                     ForEach(GamepadFrame.signals,id:\.self) { input in
                         Button {
@@ -207,6 +233,20 @@ struct GamepadMappingPanel: View {
         .onAppear { loadSelection() }
         .onChange(of:slot) { _ in loadSelection() }
         .onChange(of:patch) { _ in loadSelection() }
+        .confirmationDialog("Replace selected controller with a pedalboard?",isPresented:$confirmPreset,titleVisibility:.visible) {
+            Button("Replace selected controller",role:.destructive) {
+                if let base = presetBase, let next = pendingPreset, patch == base {
+                    patch = next
+                    physical = true
+                    message = "Pedalboard loaded. Other device routes preserved."
+                } else { message = "Draft changed. Review and try again." }
+                presetBase = nil
+                pendingPreset = nil
+            }
+            Button("Cancel",role:.cancel) { presetBase = nil; pendingPreset = nil }
+        } message: {
+            Text("Only the selected controller's old map will be replaced. Other devices and the saved patch remain unchanged until you save.")
+        }
         .confirmationDialog("Replace the other controller map?",isPresented:$confirmCopy,titleVisibility:.visible) {
             Button("Replace destination map",role:.destructive) { copyMap(replace:true) }
             Button("Cancel",role:.cancel) {}
