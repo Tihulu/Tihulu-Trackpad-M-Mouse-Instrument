@@ -6,7 +6,7 @@ import Foundation
 public struct AirTunedOutput:Sendable {
     private let destinations:[SensorDestination:SensorDestination]
     public let members:[TunedMIDIClip.Member]
-    public var setupCommands:[SensorCommand] { TunedMIDIClip.setup(members:members) }
+    public let setupCommands:[SensorCommand]
     public var logicalTargets:Set<SensorDestination> { Set(destinations.keys) }
 
     /// Only intentional zone-wide musical effects are allowed on the master.
@@ -43,6 +43,7 @@ public struct AirTunedOutput:Sendable {
             mapping[route.destination] = master
         }
         destinations = mapping; self.members = members
+        setupCommands = TunedMIDIClip.setup(members:members)
     }
 
     public func translate(_ command:SensorCommand) -> SensorCommand? {

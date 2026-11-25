@@ -387,12 +387,16 @@ struct InstrumentBuilderView: View {
                             Text("Primary contact per surface; contact size is not measured pressure. The private macOS driver groups compatible external touch surfaces under Magic Mouse; device identity is not verified here. The shared monitor supports independent Touch Instrument and MIDI Helper sessions; route the dedicated MIDI source separately in the DAW. Lift or loss of input releases owned controls. No automatic pointer capture.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Text("Use TIHULU Instrument Builder as a dedicated DAW input if MIDI is enabled. Connect a separate instrument/channel. Stop or Panic releases owned controls. Physical sessions continue across pages; simulation ends when leaving. Remote starts only explicitly; LAN requires a successful Mac-only diagnostic and trusted certificate.")
+                        Text("Use " + (tunedAir ? "TIHULU Air Strings MPE" : "TIHULU Instrument Builder") + " as a dedicated DAW input if MIDI is enabled. Connect a separate instrument/channel. Stop or Panic releases owned controls. Physical sessions continue across pages; simulation ends when leaving. Remote starts only explicitly; LAN requires a successful Mac-only diagnostic and trusted certificate.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }
                 GroupBox("Command monitor") {
                     VStack(alignment: .leading, spacing: 4) {
+                        if studio.patchTunedAirActive {
+                            Text("Logical router commands (before MPE channel translation). Verify wire channels and pitch bends in your DAW MIDI monitor.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         ForEach(Array(studio.patchMessages.enumerated()), id: \.offset) { item in
                             Text(item.element).font(.system(.caption, design: .monospaced))
                         }

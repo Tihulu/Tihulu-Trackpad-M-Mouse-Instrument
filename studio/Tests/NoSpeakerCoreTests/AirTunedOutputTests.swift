@@ -97,3 +97,20 @@ import Testing
     patch.routes.append(.init(id:"bend",source:.camera,signal:.x,destination:.init(.pitchBend),response:.init(release:0.9)))
     #expect(throws:MIDIClipError.invalidClip) { try AirTunedOutput(patch:patch,scale:scale,root:60) }
 }
+
+@Test func tunedAirTakeBudgetIncludesSetupAndClosure() throws {
+    var scale = CustomScale(); scale.centOffsets = [7:25]
+    let patch = InstrumentPatch(routes:AirStrumPerformance.routes(bank:AirStrumPerformance.threeCourseBank))
+    let plan = try AirTunedOutput(patch:patch,scale:scale,root:60)
+    var take = try #require(EnsembleTake(patch:patch,bpm:120,now:1,tuning:plan))
+    let note = SensorDestination(.note,number:55)
+    let budget = EnsembleTake.maximumEvents-SensorRouter.maxMappings-plan.setupCommands.count
+    for i in 0..<budget {
+        let ok = take.append(.init(note,value:i % 2 == 0 ? 80 : 0),now:1)
+        #expect(ok)
+    }
+    let extra = take.append(.init(note,value:80),now:1)
+    #expect(!extra && take.truncated)
+    #expect(take.events.count+plan.setupCommands.count <= EnsembleTake.maximumEvents)
+    #expect(take.endTick != nil)
+}

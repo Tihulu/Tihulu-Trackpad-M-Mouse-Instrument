@@ -13,6 +13,7 @@ public struct EnsembleTake: Sendable {
     private let origin: Double
     private let releases: [SensorDestination:Int]
     private let tuning:AirTunedOutput?
+    private let eventBudget:Int
     public var isTuned:Bool { tuning != nil }
     private var outstanding: [SensorDestination:Int] = [:]
     private var lastTime: Double
@@ -25,6 +26,7 @@ public struct EnsembleTake: Sendable {
               let releases = ContinuousResponse.releaseValues(for:patch.routes),
               tuning.map({ $0.logicalTargets == Set(releases.keys) }) ?? true else { return nil }
         self.tuning = tuning
+        eventBudget = Self.maximumEvents-SensorRouter.maxMappings-(tuning?.setupCommands.count ?? 0)
         self.bpm = bpm; self.origin = now; self.lastTime = now; self.releases = releases
     }
     private func tick(_ time:Double) -> Int {
@@ -37,7 +39,7 @@ public struct EnsembleTake: Sendable {
         checkTime(now:now)
         guard endTick == nil else { return false }
         guard now.isFinite,now >= lastTime,now-origin < Self.maximumDuration,
-              events.count < Self.maximumEvents-SensorRouter.maxMappings-(tuning?.setupCommands.count ?? 0),
+              events.count < eventBudget,
               let release = releases[command.destination],
               (0...(command.destination.kind == .pitchBend ? 16383 : 127)).contains(command.value)
         else { truncated = true; finish(now:lastTime); return false }
