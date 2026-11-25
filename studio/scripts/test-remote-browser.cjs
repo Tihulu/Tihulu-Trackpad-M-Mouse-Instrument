@@ -7,7 +7,7 @@ const source=fs.readFileSync(path.join(__dirname,"../Sources/NoSpeakerMac/Remote
 const script=source.split('private static let script = #"""')[1].split('"""#')[0]
   .replaceAll("__REMOTE_ORIGIN__","https://local.test").replaceAll("__REMOTE_SOCKET__","wss://local.test");
 const fullManifest={kind:"capabilities",version:7,touch:true,tilt:true,acceleration:true,rotation:true,airDrums:true,drums:255,piano:67108863,pedals:63};
-function setup(permission="granted",manifest=fullManifest,experimental=true,autoMapping=true){
+function setup(permission="granted",manifest=fullManifest,experimental=true,autoMapping=true,groupNeutral=false){
   let time=1000, ticker, socket, nextTimer=0;const timers=new Map();
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
     setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
@@ -21,7 +21,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     send(data){if(typeof data==="string"){this.frames.push(JSON.parse(data));this.sentAt=time;(this.sendTimes??=[]).push(time);}}
     close(){this.closed=true;}
   }
-  vm.runInNewContext(script,{document,window,location:{origin:"https://local.test"},WebSocket:WS,performance:{now:()=>time},
+  vm.runInNewContext(script.replaceAll("__GROUP_NEUTRAL__",groupNeutral?"enabled":"disabled"),{document,window,location:{origin:"https://local.test"},WebSocket:WS,performance:{now:()=>time},
     setTimeout:(f,ms)=>{const id=++nextTimer;timers.set(id,{f,at:time+ms});return id;},clearTimeout:id=>timers.delete(id),setInterval:f=>(ticker=f,1),clearInterval(){ticker=null;}});
   elements.secret.value="aa".repeat(32);elements.connect.emit("click");socket.onopen();socket.onmessage({data:"admitted"});
   const query=socket.frames.shift();
@@ -591,4 +591,38 @@ test("cancelled strip contact fails closed instead of replaying stale attacks",(
   a.elements.piano0.emit("pointercancel",drumEvent(1));
   assert.equal(a.socket.closed,true);
   assert.equal(a.elements.pianoEnable.disabled,true);
+});
+
+
+test("group browser waits for neutral ACK before first musical touch",()=>{
+  const a=setup("granted",touchOnly,false,true,true);
+  assert.equal(a.socket.frames.at(-1).kind,"release");
+  assert.equal(a.elements.playView.hidden,true);
+  a.elements.pad.emit("pointerdown",xyEvent(1));
+  assert.equal(a.socket.frames.length,1);
+  a.ack();
+  assert.equal(a.elements.playView.hidden,false);
+  a.elements.pad.emit("pointerdown",xyEvent(2));
+  assert.equal(a.socket.frames.at(-1).kind,"touch");
+});
+test("group browser neutral handshake covers drum piano and pedal masks",()=>{
+  for(const [key,mask,kind] of [["drums",1,"drumPads"],["piano",1,"pianoKeys"],["pedals",8,"pedalboard"]]){
+    const manifest={...touchOnly,touch:false,[key]:mask};
+    const a=setup("granted",manifest,false,true,true);
+    const neutral=a.socket.frames.at(-1);
+    assert.equal(neutral.kind,kind);
+    assert.equal(neutral.mask,0);
+    if(key==="pedals")assert.deepEqual(neutral.levels,[0,0,0,0,0,0]);
+    assert.equal(a.elements.playView.hidden,true);
+    a.ack();
+    assert.equal(a.elements.playView.hidden,false);
+  }
+});
+test("group browser rejects multi-surface and missing neutral ACK",()=>{
+  const mixed=setup("granted",{...touchOnly,drums:1},false,true,true);
+  assert.equal(mixed.socket.closed,true);
+  const a=setup("granted",touchOnly,false,true,true);
+  a.step(221);
+  assert.equal(a.socket.closed,true);
+  assert.equal(a.elements.playView.hidden,true);
 });
