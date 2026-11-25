@@ -136,6 +136,43 @@ def main(binary):
             run(binary, "helper", "simulate", frames, success=False)
         frames.write_text(json.dumps([{"owner":"helper","controls":[touch,touch]}]))
         run(binary, "helper", "simulate", frames, success=False)
+        clip = {"bpm":120,"length":960,"notes":[
+            {"start":0,"duration":240,"channel":0,"pitch":60,"velocity":90},
+            {"start":0,"duration":240,"channel":0,"pitch":62,"velocity":90}]}
+        tuned = {"clip":clip,"root":60,"degreeCents":"0, 180, 400, 700, 1200"}
+        frames.write_text(json.dumps(tuned))
+        output = run(binary, "midi", "tuned", frames)
+        assert output["mpeRequired"] and not output["nominalPitchesOnly"]
+        assert output["masterChannel"] == 1 and output["bendRange"] == 2
+        assert [m["channel"] for m in output["members"]] == [2,3]
+        assert output["members"][0]["bend"] == 8192 and output["members"][1]["bend"] < 8192
+        midi = base64.b64decode(output["data"], validate=True)
+        assert bytes.fromhex("b0 65 00") in midi and bytes.fromhex("91 3c 5a") in midi
+        assert bytes.fromhex("92 3e 5a") in midi and midi.endswith(bytes.fromhex("ff 2f 00"))
+        tuned["clip"]["notes"][1]["channel"] = 1
+        frames.write_text(json.dumps(tuned))
+        run(binary, "midi", "tuned", frames, success=False)
+        tuned["clip"]["notes"][1]["channel"] = 0
+        tuned["degreeCents"] = "0, 150, 400"
+        frames.write_text(json.dumps(tuned))
+        run(binary, "midi", "tuned", frames, success=False)
+        groove = {"clip":{"bpm":120,"length":960,"notes":[
+            {"start":240,"duration":120,"channel":0,"pitch":60,"velocity":90}]},
+            "groove":{"swing":60,"humanize":0,"intensity":100,"accent":0,"probability":100,"seed":1}}
+        frames.write_text(json.dumps(groove))
+        swung = run(binary, "midi", "groove", frames)
+        assert swung["clip"]["notes"][0]["start"] == 288
+        assert swung == run(binary, "midi", "groove", frames)
+        groove["groove"]["swing"] = 99
+        frames.write_text(json.dumps(groove))
+        run(binary, "midi", "groove", frames, success=False)
+        frames.write_text(json.dumps({"sampleRate":16000,"samples":[0.0]*400}))
+        silence = run(binary, "voice", "analyze", frames)
+        assert silence["frames"] == 1 and silence["events"] == [] and not silence["hardware"]
+        frames.write_text(json.dumps({"sampleRate":8000,"samples":[0.0]*400}))
+        run(binary, "voice", "analyze", frames, success=False)
+        frames.write_text(json.dumps({"sampleRate":16000,"samples":[1.1]*400}))
+        run(binary, "voice", "analyze", frames, success=False)
         run(binary, "live", "start", success=False)
     print("Engine CLI smoke tests passed.")
 
