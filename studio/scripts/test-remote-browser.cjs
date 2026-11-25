@@ -1073,3 +1073,33 @@ test("custom grid columns persist and reject invalid or active edits without sen
   b.elements.navSetup.emit("click");b.elements.layoutReset.emit("click");
   assert.equal(b.elements.customGrid.attributes["data-columns"],"2");
 });
+
+test("fully moved surface hides only empty originals and retains release controls",()=>{
+  const stored=new Map(),manifest={...fullManifest,drums:4,pedals:16};
+  const a=setup("granted",manifest,false,true,false,stored);
+  a.elements.navSetup.emit("click");
+  for(const id of ["d2","p4"]){
+    a.elements.customAddChoice.value=id;a.elements.customAdd.emit("click");
+  }
+  assert.equal(a.elements.drumSection.hidden,true);
+  assert.equal(a.elements.pedalSection.hidden,true);
+  assert.equal(a.elements.customSection.hidden,false);
+  assert.equal(a.elements.customDrumRelease.hidden,false);
+  assert.equal(a.elements.customPedalRelease.hidden,false);
+  a.elements.layoutSave.emit("click");
+  const b=setup("granted",manifest,false,true,false,stored);
+  assert.equal(b.elements.drumSection.hidden,true);
+  b.elements.customDrumEnable.emit("click");
+  b.elements.drum2.emit("pointerdown",drumEvent(7));
+  assert.equal(b.socket.frames.at(-1).mask,4);b.ack();
+  b.elements.customDrumRelease.emit("click");b.step();b.ack();
+  assert.equal(b.socket.frames.at(-1).mask,0);
+  b.elements.customDrumEnable.emit("click");
+  b.elements.navSetup.emit("click");
+  b.elements.customChoice.value="d2";b.elements.customRemove.emit("click");
+  assert.equal(b.elements.drumSection.hidden,false);
+  assert.equal(b.elements.pedalSection.hidden,true);
+  assert.equal(b.elements.customDrumRelease.hidden,true);
+  assert.equal(b.elements.drumGrid.children.includes(b.elements.drum2),true);
+  assert.deepEqual(b.socket.frames.filter(f=>f.kind==="drumPads").map(f=>f.mask),[4,0]);
+});
