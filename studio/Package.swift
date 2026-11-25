@@ -17,6 +17,7 @@ let package = Package(
         .target(name: "NoSpeakerProcessSignals"),
         .executableTarget(name: "TihuluNativeCLI", dependencies: [
             "NoSpeakerProcessSignals",
+            "NoSpeakerCore",
             .target(name: "NoSpeakerMac", condition: .when(platforms: [.macOS]))
         ]),
         .target(

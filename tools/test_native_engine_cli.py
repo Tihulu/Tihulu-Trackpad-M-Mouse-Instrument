@@ -26,7 +26,7 @@ assert help_doc["schema"] == 1
 assert help_doc["product"] == "tihulu-mac-instrument-native"
 assert help_doc["platformSupported"] == mac
 assert help_doc["liveOutput"] is False and help_doc["permissionRequests"] is False
-assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]", "gamepad sample --confirm", "midi monitor NAME SECONDS --confirm", "session probe SECONDS --confirm"}
+assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]", "gamepad sample --confirm", "midi monitor NAME SECONDS --confirm", "session probe SECONDS --confirm", "midi plan JSON"}
 for command in [("start",), ("midi", "send"), ("preflight", "--request-permissions"),
                 ("midi", "endpoints", "--names", "--send"), ("--unknown",),
                 ("midi", "monitor", "test", "1"), ("midi", "monitor", "test", "0", "--confirm"),
@@ -38,6 +38,22 @@ for command in [("session", "probe", "1"), ("session", "probe", "0", "--confirm"
                 ("session", "probe", "11", "--confirm"), ("session", "probe", "01", "--confirm"),
                 ("session", "probe", "1", "--confirm", "--names")]:
     invoke(*command, success=False)
+clip = {"bpm": 120, "length": 1920, "notes": [
+    {"start": 0, "duration": 480, "channel": 0, "pitch": 60, "velocity": 90},
+    {"start": 240, "duration": 480, "channel": 1, "pitch": 64, "velocity": 80},
+    {"start": 480, "duration": 480, "channel": 0, "pitch": 60, "velocity": 90}]}
+plan = invoke("midi", "plan", json.dumps(clip))
+assert plan["command"] == "midi plan" and plan["liveOutput"] is False
+assert plan["result"] == {"noteCount": 3, "eventCount": 6, "durationNS": 1000000000,
+                          "peakConcurrentNotes": 2, "hardware": False, "receiverConfirmed": False}
+for bad in [dict(clip, length=19201), dict(clip, notes=[]), dict(clip, notes=clip["notes"] * 86),
+            dict(clip, notes=[dict(clip["notes"][0], velocity=0)]),
+            dict(clip, notes=[dict(clip["notes"][0], destination="external")]),
+            dict(clip, notes=[clip["notes"][0]]*2), dict(clip, output="external")]:
+    invoke("midi", "plan", json.dumps(bad), success=False)
+for bad in ("", "{", "x"*65537, "/tmp/clip.json"):
+    invoke("midi", "plan", bad, success=False)
+invoke("midi", "plan", json.dumps(clip), "--confirm", success=False)
 probe = invoke("session", "probe", "1", "--confirm")
 assert probe["command"] == "session probe" and probe["liveOutput"] is False
 assert probe["result"] == {"requestedSeconds": 1, "completed": True, "hardware": False}

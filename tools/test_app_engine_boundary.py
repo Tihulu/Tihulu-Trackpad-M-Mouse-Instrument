@@ -38,7 +38,7 @@ def check_sources():
             result.add(value[0])
         return result
     require(names("TihuluEngineCLI") == {"NoSpeakerCore"}, "CLI must not depend on native/UI code")
-    require(names("TihuluNativeCLI") == {"NoSpeakerMac", "NoSpeakerProcessSignals"}, "Native CLI must not depend on Studio")
+    require(names("TihuluNativeCLI") == {"NoSpeakerMac", "NoSpeakerProcessSignals", "NoSpeakerCore"}, "Native CLI must not depend on Studio")
     require(not names("NoSpeakerProcessSignals"), "Process signal bridge must remain independent")
     require(names(STUDIO) == {"NoSpeakerCore", "NoSpeakerMac"}, "App target dependencies changed")
     require(names("NoSpeakerMac") == {"NoSpeakerCore"}, "Native dependency boundary changed")

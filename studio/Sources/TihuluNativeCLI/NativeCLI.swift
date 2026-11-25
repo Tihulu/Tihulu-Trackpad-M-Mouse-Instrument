@@ -1,5 +1,6 @@
 import Foundation
 import NoSpeakerProcessSignals
+import NoSpeakerCore
 #if os(macOS)
 import NoSpeakerMac
 import Darwin
@@ -20,7 +21,7 @@ struct TihuluNativeCLI {
         let platformSupported:Bool
         let liveOutput = false
         let permissionRequests = false
-        let commands = ["capabilities","preflight","midi endpoints [--names]","gamepad devices [--names]","gamepad sample --confirm","midi monitor NAME SECONDS --confirm","session probe SECONDS --confirm"]
+        let commands = ["capabilities","preflight","midi endpoints [--names]","gamepad devices [--names]","gamepad sample --confirm","midi monitor NAME SECONDS --confirm","session probe SECONDS --confirm","midi plan JSON"]
     }
     struct Envelope<Payload:Encodable>: Encodable {
         let schema = 1
@@ -33,6 +34,41 @@ struct TihuluNativeCLI {
         encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
         FileHandle.standardOutput.write(try encoder.encode(payload))
         FileHandle.standardOutput.write(Data([10]))
+    }
+
+    struct PlaybackPlan:Encodable {
+        let noteCount:Int
+        let eventCount:Int
+        let durationNS:UInt64
+        let peakConcurrentNotes:Int
+        let hardware = false
+        let receiverConfirmed = false
+    }
+
+    /// Portable validation only, with no filesystem reads or hardware
+    /// access. JSON is an explicit bounded argument, not a filename.
+    /// This parser is not a live output authorization boundary.
+    static func playbackPlan(_ json:String) throws -> PlaybackPlan {
+        guard !json.isEmpty,json.utf8.count<=65_536 else {
+            throw CLIError("Playback plan JSON must contain 1-65536 UTF-8 bytes.")
+        }
+        let data=Data(json.utf8)
+        guard let root=try JSONSerialization.jsonObject(with:data) as? [String:Any],
+              Set(root.keys)==["bpm","length","notes"],
+              let notes=root["notes"] as? [[String:Any]],
+              notes.count<=BoundedMIDIPlayback.maximumNotes,
+              notes.allSatisfy({Set($0.keys)==["start","duration","channel","pitch","velocity"]}) else {
+            throw CLIError("Use a MIDIClip JSON object with bpm, length and bounded note fields.")
+        }
+        let clip=try JSONDecoder().decode(MIDIClip.self,from:data)
+        let player=try BoundedMIDIPlayback(clip:clip)
+        var active=0,peak=0
+        for event in player.events {
+            active += event.command.value>0 ? 1 : -1
+            peak=max(peak,active)
+        }
+        return .init(noteCount:clip.notes.count,eventCount:player.events.count,
+                     durationNS:player.durationNS,peakConcurrentNotes:peak)
     }
 
     struct SessionProbe:Encodable,Sendable {
@@ -95,6 +131,11 @@ struct TihuluNativeCLI {
                 #else
                 try emit(Capabilities(platformSupported:false))
                 #endif
+                return
+            }
+            if args.count>=2 && Array(args.prefix(2)) == ["midi","plan"] {
+                guard args.count==3 else { throw CLIError("Use midi plan JSON; no live output.") }
+                try emit(Envelope(command:"midi plan",result:playbackPlan(args[2])))
                 return
             }
             if args.count>=2 && Array(args.prefix(2)) == ["session","probe"] {
