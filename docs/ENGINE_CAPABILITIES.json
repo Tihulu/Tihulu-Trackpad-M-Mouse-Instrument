@@ -16,7 +16,7 @@
       "path": "studio/Sources/NoSpeakerMac"
     },
     {
-      "name": "tihulu-engine",
+      "name": "tihulu-mac-instrument-engine",
       "kind": "json-cli",
       "platform": "SwiftPM offline",
       "path": "studio/Sources/TihuluEngineCLI/CLI.swift"
