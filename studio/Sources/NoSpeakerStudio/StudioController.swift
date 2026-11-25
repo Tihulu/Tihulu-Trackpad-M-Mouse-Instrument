@@ -403,6 +403,7 @@ final class StudioController: ObservableObject {
     private var touchMultiTouchEnabled = true
     private var touchMIDIChannel = 0
     private var touchSeparateChannels: DAWSurfaceChannels?
+    private var touchIndependentDAWSustain = false
 
     @Published private(set) var keyboardAuditRunning = false
     @Published private(set) var keyboardAuditResult:KeyboardOutputAudit?
@@ -2656,6 +2657,7 @@ final class StudioController: ObservableObject {
         multiTouch: Bool = true,
         midiChannel: Int = 0,
         separateChannels: DAWSurfaceChannels? = nil,
+        independentDAWSustain: Bool = false,
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
         guard !touchRunning, allowLivePerformance() else { return }
@@ -2691,6 +2693,7 @@ final class StudioController: ObservableObject {
         touchMultiTouchEnabled = multiTouch
         touchMIDIChannel = max(0, min(15, midiChannel))
         touchSeparateChannels = separateChannels
+        touchIndependentDAWSustain = separateChannels != nil && independentDAWSustain
         touchSustainSettings = sustainSettings
         touch.invalidatePendingSamples()
         touchSustainState.reset()
@@ -2733,6 +2736,7 @@ final class StudioController: ObservableObject {
 
     func stopTouch() {
         touchSeparateChannels = nil
+        touchIndependentDAWSustain = false
         midi?.releaseTouchSustain()
         touchSustainState.reset()
         touchInstrumentSustainActive = false
@@ -3423,11 +3427,11 @@ final class StudioController: ObservableObject {
         if touchInstrumentSustainActive != instrumentSustained { touchInstrumentSustainActive = instrumentSustained }
         touch?.setSustainActive(snapshot.isActive && hapticsEnabled)
         if touchMIDIOutEnabled {
-            midi?.setTouchSustain(
-                snapshot.isActive,
-                baseChannel: touchMIDIChannel,
-                separateChannels: touchSeparateChannels
-            )
+            if let split = touchSeparateChannels {
+                midi?.setTouchSustainChannels(split.sustainTargets(snapshot,independent:touchIndependentDAWSustain))
+            } else {
+                midi?.setTouchSustain(snapshot.isActive,baseChannel:touchMIDIChannel)
+            }
         }
     }
 
