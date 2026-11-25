@@ -10,6 +10,9 @@ public struct PerformanceGroupTunedDelivery: Sendable {
     private var delivery: PerformanceGroupDelivery
     private var selectors: [UUID:MIDISelectorCleanup] = [:]
     public private(set) var state: State = .unprepared
+    public var sessionCount: Int { delivery.sessionCount }
+    public var retired: Bool { state == .retired }
+    public func hasLease(_ id:UUID) -> Bool { state == .ready && delivery.hasLease(id) }
     public var pendingCleanup: Set<UUID> {
         delivery.pendingCleanup.union(selectors.compactMap { $0.value.isEmpty ? nil : $0.key })
     }
@@ -65,6 +68,15 @@ public struct PerformanceGroupTunedDelivery: Sendable {
         }
     }
 
+    public mutating func disconnectBatch(_ leases:Set<UUID>,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        guard state == .ready else { return .init() }
+        let frozen = plan
+        return delivery.disconnectBatch(leases) {
+            guard let translated = frozen.translate($0) else { return false }
+            return send(translated)
+        }
+    }
+
     public mutating func expire(now:Double,timeout:Double,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
         guard state == .ready else { return .init() }
         let frozen = plan
@@ -95,19 +107,24 @@ public struct PerformanceGroupTunedDelivery: Sendable {
         for id in selectors.keys.sorted(by:{ $0.uuidString < $1.uuidString }) {
             _ = retrySelectors(id,send:send)
         }
-        return report
+        return report.includingSetupCleanup(pendingCleanup,failedGroup:nil)
     }
 
     /// Retry on the original group's endpoint only. Fixed member bends are
     /// not reset on stop, avoiding retuning already-released note tails.
     public mutating func retryCleanup(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> Bool {
+        _ = retryCleanupReport(id,send:send)
+        return !pendingCleanup.contains(id)
+    }
+
+    public mutating func retryCleanupReport(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
         let frozen = plan
-        _ = delivery.retryCleanup(id) {
+        let report = delivery.retryCleanup(id) {
             guard let translated = frozen.translate($0) else { return false }
             return send(translated)
         }
-        _ = retrySelectors(id,send:send)
-        return !pendingCleanup.contains(id)
+        let selectorsClean = retrySelectors(id,send:send)
+        return report.includingSetupCleanup(pendingCleanup,failedGroup:selectorsClean ? nil : id)
     }
 
     private mutating func retrySelectors(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> Bool {
