@@ -19,6 +19,8 @@ public struct DynamicMPEGroupDelivery: Sendable {
     public var pendingCleanup:Set<UUID> { Set(pools.compactMap { $0.value.pendingCleanup ? $0.key : nil }) }
     public var activeGroups:Set<UUID> { Set(pools.compactMap { $0.value.state == .ready ? $0.key : nil }) }
     public var sessionCount:Int { router.sessionCount }
+    public var retired:Bool { state == .retired }
+    public func hasLease(_ id:UUID) -> Bool { state == .ready && router.hasLease(id) }
 
     public init(profile:PerformanceGroupProfile,tuning:[UUID:PerformanceGroupTuningPlan.Specification],
                 allowLayering:Bool = false) throws {

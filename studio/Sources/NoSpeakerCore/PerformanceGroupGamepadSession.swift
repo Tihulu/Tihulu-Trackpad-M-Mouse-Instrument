@@ -1,7 +1,7 @@
 import Foundation
 
-// The same device adapter drives either standard MIDI or explicitly tuned
-// output. Both use PerformanceGroupDelivery's one ownership ledger.
+// The same device adapter drives standard, fixed-member and explicitly
+// requested dynamic output. Each preserves its own wire cleanup ledger.
 private protocol LocalGroupOutput: Sendable {
     var ready: Bool { get }
     var retired: Bool { get }
@@ -27,6 +27,37 @@ extension PerformanceGroupDelivery: LocalGroupOutput {
 }
 extension PerformanceGroupTunedDelivery: LocalGroupOutput {
     fileprivate var ready: Bool { state == .ready }
+}
+
+/// Adapter preserves the existing device/session fences and report shape.
+private struct DynamicLocalGroupOutput: LocalGroupOutput {
+    var engine:DynamicMPEGroupDelivery
+    var ready:Bool { engine.state == .ready }
+    var retired:Bool { engine.retired }
+    var sessionCount:Int { engine.sessionCount }
+    var pendingCleanup:Set<UUID> { engine.pendingCleanup }
+    mutating func prepare(send:(PerformanceGroupCommand)->Bool) -> Bool { engine.prepare(send:send) }
+    mutating func connect(_ source:SensorSource,now:Double) throws -> UUID { try engine.connect(source,now:now) }
+    func hasLease(_ id:UUID) -> Bool { engine.hasLease(id) }
+    mutating func frame(lease:UUID,sequence:UInt64,now:Double,values:[SensorSignal:Double],
+                        releasing:Set<SensorSignal>,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        .init(dynamic:engine.frame(lease:lease,sequence:sequence,now:now,values:values,releasing:releasing,send:send))
+    }
+    mutating func disconnect(_ lease:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        disconnectBatch([lease],send:send)
+    }
+    mutating func disconnectBatch(_ leases:Set<UUID>,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        .init(dynamic:engine.disconnectBatch(leases,send:send))
+    }
+    mutating func stopGroup(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        .init(dynamic:engine.stopGroup(id,send:send))
+    }
+    mutating func panic(send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        .init(dynamic:engine.panic(send:send))
+    }
+    mutating func retryCleanupReport(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        .init(dynamic:engine.retryCleanup(id,send:send))
+    }
 }
 
 /// Device-specific input policy for the group engine. This does not enumerate
@@ -167,7 +198,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
 
     public init(profile: PerformanceGroupProfile, allowLayering: Bool = false,
                 allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false,
-                tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:], allowRemote:Bool = false) throws {
+                tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:], allowRemote:Bool = false,
+                dynamicMPE:Bool = false) throws {
         guard Self.supports(profile,allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera,allowRemote:allowRemote) else {
             throw AdmissionError.unsupportedProfile
         }
@@ -192,7 +224,12 @@ public struct PerformanceGroupGamepadSession: Sendable {
             }
         }
         smoothed = Set(routes.filter { ($0.response?.smoothingMS ?? 0) > 0 }.map(\.source))
-        if tuning.isEmpty {
+        if dynamicMPE {
+            // Explicit local-only candidate; never infer from note count
+            // or fall back to fixed/standard output after invalid setup.
+            guard !tuning.isEmpty,!allowRemote else { throw AdmissionError.unsupportedProfile }
+            delivery = DynamicLocalGroupOutput(engine:try .init(profile:profile,tuning:tuning,allowLayering:allowLayering))
+        } else if tuning.isEmpty {
             delivery = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
         } else {
             delivery = try PerformanceGroupTunedDelivery(profile:profile,tuning:tuning,allowLayering:allowLayering)
