@@ -11,6 +11,15 @@ public struct DynamicMPEPoolPlan: Sendable {
     fileprivate let notes:[SensorDestination:Int]
     fileprivate let controls:Set<SensorDestination>
 
+    /// Logical destinations have no permanent member address. The preview
+    /// lists possible wire destinations, never a promised allocation.
+    public func possibleChannels(for target:SensorDestination) -> [Int] {
+        if let bend = notes[target] {
+            return members.filter { $0.bend == bend }.map { $0.channel+1 }
+        }
+        return controls.contains(target) ? [1] : []
+    }
+
     public init(patch:InstrumentPatch,specification:PerformanceGroupTuningPlan.Specification) throws {
         let scale = specification.scale, root = specification.root
         guard patch.isValid,scale.isValid,scale.isMicrotonal,(0...127).contains(root),

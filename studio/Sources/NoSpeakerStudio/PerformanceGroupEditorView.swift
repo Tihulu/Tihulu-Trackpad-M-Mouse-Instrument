@@ -567,6 +567,7 @@ struct PerformanceGroupEditorView: View {
                 if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
                 if didLoad && !readFailed {
                     PerformanceGroupTuningPreviewView(profile:saved,locked:editingLocked || profile != saved,configuration:$tuningPreview,draft:$tuningDraft)
+                    DynamicMPEPreviewView(profile:saved,locked:editingLocked || profile != saved)
                 }
                 liveControls
             }.padding(6)
