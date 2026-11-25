@@ -381,3 +381,36 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
         #expect(bridge.connectionIDs.isEmpty && session.boundSources.isEmpty)
     }
 }
+
+@Test func remoteGroupBatchRechecksReceiptAfterEarlierSynchronousAttack() throws {
+    for stall in [false,true] {
+        let phone=groupRemoteFixture(.phone,.drumPad1,36)
+        let tablet=groupRemoteFixture(.tablet,.pianoKey0,60)
+        var session=try PerformanceGroupGamepadSession(profile:.init(groups:[phone,tablet]),allowRemote:true)
+        var bridge=PerformanceGroupRemoteBridge()
+        let a=UUID(),b=UUID()
+        let sa=Data(repeating:1,count:32),sb=Data(repeating:2,count:32)
+        var sent:[PerformanceGroupCommand]=[]
+        var now=1.05
+        let sink:(PerformanceGroupCommand)->Bool = {
+            sent.append($0)
+            if stall && $0.groupID==phone.id && $0.command.value>0 { now=1.16 }
+            return true
+        }
+        _=bridge.process([.ready],now:1,session:&session,send:sink)
+        try bridge.issue(secret:sa,source:.phone,now:1,session:session)
+        _=bridge.process([.invitation(a,sa,1.01)],now:1.01,session:&session,send:sink)
+        try bridge.issue(secret:sb,source:.tablet,now:1.02,session:session)
+        _=bridge.process([.invitation(b,sb,1.03)],now:1.03,session:&session,send:sink)
+        _=bridge.process([.frame(a,groupRemoteWire("drumPads",4,1,",\"mask\":0"),1.04),
+                          .frame(b,groupRemoteWire("pianoKeys",5,1,",\"mask\":0"),1.04)],
+                         now:1.04,session:&session,send:sink)
+        let result=bridge.process([.frame(a,groupRemoteWire("drumPads",4,2,",\"mask\":1"),1.05),
+                                   .frame(b,groupRemoteWire("pianoKeys",5,2,",\"mask\":1"),1.05)],
+                                  now:1.05,refreshNow:{now},session:&session,send:sink)
+        #expect(sent.filter{$0.command.value>0}.map(\.groupID) == (stall ? [phone.id] : [phone.id,tablet.id]))
+        #expect(result.actions == [.acknowledge(a,true),.acknowledge(b,!stall)])
+        #expect(bridge.connectionIDs == (stall ? [a] : [a,b]))
+        #expect(!session.retired)
+    }
+}

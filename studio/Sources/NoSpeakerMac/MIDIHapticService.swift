@@ -1375,7 +1375,8 @@ public final class PerformanceGroupMIDIHost {
             return result
         }
         let peers = bridge.connectionIDs
-        let result = bridge.process(events,now:now,session:&state,send:send)
+        let result = bridge.process(events,now:now,
+            refreshNow:{ ProcessInfo.processInfo.systemUptime },session:&state,send:send)
         if result.fault || !peers.isSubset(of:bridge.connectionIDs) { discardGroupHapticAttacks() }
         gamepads = state
         remoteBridge = bridge.stopped ? nil : bridge

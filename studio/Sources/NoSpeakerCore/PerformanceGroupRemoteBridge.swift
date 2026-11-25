@@ -78,6 +78,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
     }
 
     public mutating func process(_ events:[RemoteHostEvent],now:Double,
+                                 refreshNow:(()->Double)? = nil,
                                  session:inout PerformanceGroupGamepadSession,
                                  send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupRemoteBatch {
         guard !stopped else { return .init() }
@@ -111,7 +112,20 @@ public struct PerformanceGroupRemoteBridge: Sendable {
             bindings.removeValue(forKey:id)
             result.actions.append(.revoke(id))
         }
+        var lastProcessingTime=now
         for event in events {
+            // Expiry/disconnect cleanup and earlier frames synchronously
+            // invoke the sink. Never reuse the batch-start receipt budget.
+            let eventNow=refreshNow?() ?? now
+            guard eventNow.isFinite,eventNow>=lastProcessingTime else {
+                let retirement=stop(session:&session,send:send)
+                result.reports += retirement.reports
+                result.actions += retirement.actions
+                result.fault=true
+                return result
+            }
+            lastProcessingTime=eventNow
+            let now=eventNow
             switch event {
             case .ready: ready = true
             case .disconnected,.fault: break
@@ -232,6 +246,6 @@ public struct PerformanceGroupRemoteBridge: Sendable {
     }
 
     private func fresh(_ receipt:Double,now:Double) -> Bool {
-        receipt.isFinite && receipt >= 0 && receipt <= now && now-receipt < 0.1
+        MonotonicReceiptAdmission.permits(receipt:receipt,now:now,maximumAge:0.1)
     }
 }

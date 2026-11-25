@@ -215,7 +215,7 @@ public struct PhysicalPatchRuntime: Sendable {
     /// processing instant. A batch-start timestamp is not sufficient
     /// after earlier synchronous MIDI sends have consumed time.
     public static func admitsPhysicalReceipt(_ hostTime:Double,now:Double)->Bool {
-        hostTime.isFinite && now.isFinite && hostTime>=0 && now>=hostTime && now-hostTime<Self.timeout
+        MonotonicReceiptAdmission.permits(receipt:hostTime,now:now,maximumAge:Self.timeout)
     }
 
     /// hostTime is local receipt time, not the undocumented driver timestamp.

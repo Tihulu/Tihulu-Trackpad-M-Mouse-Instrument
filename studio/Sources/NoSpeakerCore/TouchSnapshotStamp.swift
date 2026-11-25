@@ -76,12 +76,36 @@ public struct PhysicalSurfaceSnapshotCache<Surface:Hashable & Sendable,Contact:S
     public mutating func reset() { states.removeAll(); observations.removeAll() }
 }
 
+/// Strict deadline admission for monotonic receipts. Comparing the
+/// representable deadline as well as elapsed time prevents subtraction
+/// rounding from extending the original window at nonzero uptime.
+public enum MonotonicReceiptAdmission {
+    public static func permits(receipt:Double,now:Double,maximumAge:Double)->Bool {
+        receipt.isFinite && now.isFinite && maximumAge.isFinite && maximumAge>0 &&
+            receipt>=0 && now>=receipt && now-receipt<maximumAge &&
+            now<receipt+maximumAge
+    }
+}
+
 /// The shared Touch/Helper inbox cannot authorize onsets from a
 /// future, nonfinite or expired monotonic publication timestamp.
 public enum TouchPublicationAdmission {
     public static let maximumAge:Double=0.150
     public static func permits(queuedAt:Double,now:Double)->Bool {
-        queuedAt.isFinite && now.isFinite && queuedAt>=0 && now>=queuedAt &&
-            now-queuedAt<maximumAge
+        MonotonicReceiptAdmission.permits(receipt:queuedAt,now:now,maximumAge:maximumAge)
+    }
+
+    /// Pedal reconciliation and Touch output may synchronously block. A
+    /// later consumer must not inherit the earlier admission decision.
+    /// On false the caller retires the physical session and its ownership.
+    public static func dispatch(queuedAt:Double,now:()->Double,
+                                prepare:()->Void,touch:()->Void,helper:()->Void)->Bool {
+        guard permits(queuedAt:queuedAt,now:now()) else { return false }
+        prepare()
+        guard permits(queuedAt:queuedAt,now:now()) else { return false }
+        touch()
+        guard permits(queuedAt:queuedAt,now:now()) else { return false }
+        helper()
+        return true
     }
 }

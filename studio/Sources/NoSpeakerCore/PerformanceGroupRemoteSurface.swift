@@ -106,8 +106,8 @@ struct PerformanceGroupRemoteFence: Sendable {
     private var count = 0
 
     mutating func accept(_ validated:ValidatedGroupRemoteFrame?,receipt:Double,now:Double) -> RemoteTouchFrame? {
-        guard receipt.isFinite, now.isFinite, receipt >= 0, receipt <= now,
-              now-receipt < 0.1, lastReceipt.map({ receipt >= $0 }) ?? true,
+        guard MonotonicReceiptAdmission.permits(receipt:receipt,now:now,maximumAge:0.1),
+              lastReceipt.map({ receipt >= $0 }) ?? true,
               let frame = validated?.frame, frame.sequence > sequence else { return nil }
         if let start = windowStart, receipt-start >= 1 { windowStart = receipt; count = 0 }
         if windowStart == nil { windowStart = receipt }

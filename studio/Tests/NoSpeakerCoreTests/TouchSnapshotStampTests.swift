@@ -151,3 +151,33 @@ import Testing
     #expect(!TouchPublicationAdmission.permits(queuedAt:queued[1],now:0.17))
     #expect(TouchPublicationAdmission.permits(queuedAt:0.16,now:0.17))
 }
+
+@Test func receiptAdmissionRejectsRepresentableDeadlineAtNonzeroUptime() {
+    for age in [0.1,0.150,0.35] {
+        for receipt in [0.0,1,10,100,1000,10000,100000] {
+            let deadline=receipt+age
+            #expect(MonotonicReceiptAdmission.permits(receipt:receipt,now:deadline.nextDown,maximumAge:age))
+            #expect(!MonotonicReceiptAdmission.permits(receipt:receipt,now:deadline,maximumAge:age))
+            #expect(!MonotonicReceiptAdmission.permits(receipt:receipt,now:deadline.nextUp,maximumAge:age))
+        }
+    }
+    #expect(!TouchPublicationAdmission.permits(queuedAt:1,now:1.150))
+    #expect(!PhysicalPatchRuntime.admitsPhysicalReceipt(10,now:10.35))
+}
+
+@Test func touchDispatchRechecksAfterSynchronousPedalAndTouchSends() {
+    for blockedStage in [0,1,2] {
+        var now=1.01
+        var trace:[String]=[]
+        let accepted=TouchPublicationAdmission.dispatch(queuedAt:1,now:{now},prepare:{
+            trace.append("pedal")
+            if blockedStage==1 { now=1.15 }
+        },touch:{
+            trace.append("touch")
+            if blockedStage==2 { now=1.16 }
+        },helper:{trace.append("helper")})
+        #expect(accepted == (blockedStage==0))
+        #expect(trace == (blockedStage==0 ? ["pedal","touch","helper"] :
+                         blockedStage==1 ? ["pedal"] : ["pedal","touch"]))
+    }
+}
