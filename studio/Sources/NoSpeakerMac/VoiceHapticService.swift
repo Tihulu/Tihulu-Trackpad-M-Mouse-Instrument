@@ -72,6 +72,7 @@ private final class VoicePCMCollector: @unchecked Sendable {
     let finished = DispatchSemaphore(value: 0)
     private var values: [Float] = []
     private var inputRate: Double = 16_000
+    private var invalid = false
 
     func append(_ buffer: AVAudioBuffer) {
         guard let pcm = buffer as? AVAudioPCMBuffer else { return }
@@ -81,6 +82,11 @@ private final class VoicePCMCollector: @unchecked Sendable {
         }
         let n = Int(pcm.frameLength)
         let rate = pcm.format.sampleRate
+        guard rate.isFinite, (8000...96000).contains(rate), n <= Int(rate)*240 else {
+            lock.lock(); invalid = true; lock.unlock()
+            finished.signal()
+            return
+        }
         var samples: [Float] = []
         if let channels = pcm.floatChannelData {
             samples = Array(UnsafeBufferPointer(start: channels[0], count: n))
@@ -91,8 +97,15 @@ private final class VoicePCMCollector: @unchecked Sendable {
         }
         guard !samples.isEmpty else { return }
         lock.lock()
+        guard !invalid, values.count <= Int(rate)*240-samples.count,
+              values.isEmpty || abs(inputRate-rate) < 1 else {
+            invalid = true
+            lock.unlock()
+            finished.signal()
+            return
+        }
         inputRate = rate
-        values.append(contentsOf: samples)
+        values.append(contentsOf:samples)
         lock.unlock()
     }
 
@@ -100,8 +113,9 @@ private final class VoicePCMCollector: @unchecked Sendable {
         lock.lock()
         let input = values
         let rate = inputRate
+        let valid = !invalid
         lock.unlock()
-        guard rate > 0, rate.isFinite, !input.isEmpty else { return [] }
+        guard valid, rate > 0, rate.isFinite, !input.isEmpty else { return [] }
         if abs(rate - 16_000) < 1 { return input }
         let newCount = Int(Double(input.count) * 16_000 / rate)
         guard newCount > 0 else { return [] }
@@ -238,7 +252,10 @@ public enum VoiceHapticService {
         collector.append(buffer)
         let samples = collector.samples16kHz()
         guard !samples.isEmpty else { throw VoiceHapticError.audioReadFailed }
-        return HapticVoiceAnalyzer.hapticEvents(frames: HapticVoiceAnalyzer.analyze(samples))
+        try cancellation.check()
+        let frames = HapticVoiceAnalyzer.analyze(samples)
+        try cancellation.check()
+        return HapticVoiceAnalyzer.hapticEvents(frames:frames)
     }
 
     private static func installedVoiceRecords() -> [(name: String, locale: String)] {
@@ -334,10 +351,14 @@ public enum VoiceHapticService {
         }
         try cancellation.check()
         let samples = collector.samples16kHz()
-        guard !samples.isEmpty else { throw VoiceHapticError.audioReadFailed }
-        return HapticVoiceAnalyzer.hapticEvents(
-            frames: HapticVoiceAnalyzer.analyze(samples)
-        )
+        guard !samples.isEmpty else {
+            synthesizer.stopSpeaking(at:.immediate)
+            throw VoiceHapticError.audioReadFailed
+        }
+        try cancellation.check()
+        let frames = HapticVoiceAnalyzer.analyze(samples)
+        try cancellation.check()
+        return HapticVoiceAnalyzer.hapticEvents(frames:frames)
     }
 
     public static func render(text: String, voice: String? = nil,
