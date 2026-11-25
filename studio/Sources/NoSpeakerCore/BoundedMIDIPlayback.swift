@@ -77,10 +77,14 @@ public struct BoundedMIDIPlayback: Sendable {
     /// Native drivers must resample uptime after every synchronous send:
     /// a slow first send must not authorize a stale second onset.
     public mutating func advance(now: UInt64, refreshNow: () -> UInt64,
+                                 shouldStop: () -> Bool = { false },
                                  send: (SensorCommand) -> Bool) {
         guard state == .playing else { return }
         var current=now
         while state == .playing {
+            // Stop before admitting another note into the output ledger.
+            // Cleanup bypasses this admission fence and still sends offs.
+            if shouldStop() { retire(.stopped,send:send); return }
             guard current >= last else { retire(.faulted,send:send); return }
             last=current
             let elapsed=current-start
