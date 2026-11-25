@@ -777,6 +777,10 @@ private struct TouchInstrumentView: View {
 
     private var effectivePitchSpan: Double { 24.0 / zoneWidth }
 
+    private var needsFretlessMPE: Bool {
+        midiMode == .standard && configuration.requiresPolyphonicFretlessMPE(multiTouch:multiTouch)
+    }
+
     private var mappedMIDINotes: [Int] { configuration.mappedMIDINotes }
 
     private var hasMelodic: Bool {
@@ -861,14 +865,16 @@ private struct TouchInstrumentView: View {
 
                     Spacer()
 
-                    Button(studio.touchRunning ? "Stop Touch Instrument" : "Start Touch Instrument") {
+                    Button(studio.touchRunning ? "Stop Touch Instrument" : (needsFretlessMPE ? "Start with MPE" : "Start Touch Instrument")) {
                         if studio.touchRunning {
                             studio.stopTouch()
                         } else {
+                            let selectedMode: TouchMIDIMode = needsFretlessMPE ? .mpe : midiMode
+                            midiMode = selectedMode
                             studio.startTouch(
                                 configuration: configuration,
                                 midiOut: configuration.hasMIDIOutput,
-                                midiMode: midiMode,
+                                midiMode: selectedMode,
                                 multiTouch: multiTouch,
                                 midiChannel: midiChannel - 1,
                                 sustainSettings: .init(
@@ -884,6 +890,11 @@ private struct TouchInstrumentView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                }
+
+                if needsFretlessMPE && !studio.touchRunning {
+                    Text("Fretless + Multi Touch requires independent MIDI bends. Start with MPE selects MPE; enable MPE on your receiving DAW instrument. For Standard MIDI, turn Multi Touch off.")
+                        .font(.callout).foregroundStyle(.orange)
                 }
 
                 GroupBox("Independent Surface Instruments & Outputs") {
@@ -1136,13 +1147,13 @@ private struct TouchInstrumentView: View {
                                     .font(.caption)
                                     .foregroundStyle(.orange)
                             }
-                            if hasMelodic && fretless && multiTouch && midiMode == .standard {
-                                Text("Independent fretless multi-touch bends require MPE. Standard MIDI allows one melodic bend at a time; drums remain polyphonic on Channel 10.")
+                            if needsFretlessMPE {
+                                Text("Start with MPE enables independent fretless MIDI bends. Standard MIDI can play only one fretless melodic finger; turn Multi Touch off to use it.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             if hasMelodic && midiMode == .mpe {
-                                Text("MPE member channels 2–16 are allocated per finger, excluding drum Channel 10.")
+                                Text("MPE member channels 2–16 are allocated per finger, excluding drum Channel 10. Use an MPE-capable DAW instrument with matching per-member pitch-bend ranges.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }

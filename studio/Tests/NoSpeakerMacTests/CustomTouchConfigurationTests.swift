@@ -112,4 +112,23 @@ import NoSpeakerCore
     config.mouseStringLayout = .init(customFretCents:[0,1201])
     #expect(!config.permitsStringMIDI(isMPE:true))
 }
+@Test func polyphonicFretlessMPERequirementFollowsSelectedMIDISurfaces() {
+    var config = TouchInstrumentConfiguration(fretless:true)
+    #expect(!config.requiresPolyphonicFretlessMPE(multiTouch:true))
+    config.trackpadOutput = .both
+    #expect(config.requiresPolyphonicFretlessMPE(multiTouch:true))
+    #expect(!config.requiresPolyphonicFretlessMPE(multiTouch:false))
+    config.fretless = false
+    #expect(!config.requiresPolyphonicFretlessMPE(multiTouch:true))
+    config.fretless = true
+    config.trackpadInstrument = .drums
+    #expect(!config.requiresPolyphonicFretlessMPE(multiTouch:true))
+    config.surfaceSelection = .both
+    #expect(config.requiresPolyphonicFretlessMPE(multiTouch:true))
+    config.magicMouseOutput = .trackpadHaptic
+    #expect(!config.requiresPolyphonicFretlessMPE(multiTouch:true))
+    config.magicMouseOutput = .midiInstrument
+    config.magicMouseInstrument = .guitar
+    #expect(!config.requiresPolyphonicFretlessMPE(multiTouch:true))
+}
 #endif

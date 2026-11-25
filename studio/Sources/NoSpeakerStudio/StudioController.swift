@@ -2461,6 +2461,10 @@ final class StudioController: ObservableObject {
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
         guard allowLivePerformance() else { return }
+        guard !midiOut || midiMode == .mpe || !configuration.requiresPolyphonicFretlessMPE(multiTouch:multiTouch) else {
+            lastError = "Fretless Multi Touch MIDI needs MPE. Select MPE for independent fingers, or turn Multi Touch off for Standard MIDI."
+            return
+        }
         guard configuration.permitsStringMIDI(isMPE:midiMode == .mpe) else {
             lastError = "Fretless and microtonal String MIDI require MPE. Fretted strings cannot share Standard MIDI with a fretless melodic surface. Check the string layout and select MPE or separate routes."
             return
