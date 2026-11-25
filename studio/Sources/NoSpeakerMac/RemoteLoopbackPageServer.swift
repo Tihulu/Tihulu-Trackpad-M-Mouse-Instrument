@@ -262,13 +262,18 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     return defaultLayout();
   }
   let layout=loadLayout(),layoutMessage="",layoutOptionsKey="",layoutSyncKey="";
-  let layoutDrag=null,layoutHandles=[];
+  let layoutDrag=null,layoutHandles=[],layoutHandleEpoch=0;
   function availablePanels(){
     if(!caps)return [];
     const available=[caps.touch,Boolean(caps.drums),Boolean(caps.piano),Boolean(caps.pedals),caps.tilt,caps.acceleration||caps.rotation];
     return layout.order.filter(id=>available[panelIDs.indexOf(id)]);
   }
-  function canEditLayout(){return admitted&&caps&&currentView==="setup"&&!navigationBusy();}
+  // A heartbeat has no musical ownership. Keep idle editing usable even
+  // when the existing liveness ACK is outstanding; never change scheduling.
+  function canEditLayout(){
+    return admitted&&caps&&currentView==="setup"&&!releasingAll&&
+      workloadMask()===0&&(!pending||pendingKind==="heartbeat");
+  }
   function applyLayout(){
     const play=get("playView");
     // Keep visual and keyboard/screen-reader navigation order consistent.
@@ -297,23 +302,25 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function rebuildLayoutHandles(available){
     clearLayoutDrag();
+    const epoch=++layoutHandleEpoch;
+    const currentHandle=()=>epoch===layoutHandleEpoch;
     layoutHandles=available.map(id=>{
       const button=document.createElement("button");
       button.type="button";button.textContent="↕ "+panelNames[panelIDs.indexOf(id)];
       button.setAttribute("aria-label","Reorder "+panelNames[panelIDs.indexOf(id)]);
       button.addEventListener("click",()=>{
-        if(!canEditLayout())return;
+        if(!currentHandle()||!canEditLayout())return;
         get("layoutPanel").value=id;syncLayout();
       });
       button.addEventListener("pointerdown",e=>{
-        if(!canEditLayout()||layoutDrag||e.button!==0||!Number.isFinite(e.clientY))return;
+        if(!currentHandle()||!canEditLayout()||layoutDrag||e.button!==0||!Number.isFinite(e.clientY))return;
         e.preventDefault();
         try{button.setPointerCapture(e.pointerId);}catch{return;}
         layoutDrag={id,pointer:e.pointerId,connection:ws,startY:e.clientY,target:id};
         button.setAttribute("data-target","true");
       });
       button.addEventListener("pointermove",e=>{
-        if(layoutDrag?.pointer!==e.pointerId||layoutDrag.id!==id)return;
+        if(!currentHandle()||layoutDrag?.pointer!==e.pointerId||layoutDrag.id!==id)return;
         if(!canEditLayout()||layoutDrag.connection!==ws){clearLayoutDrag();return;}
         e.preventDefault();
         layoutDrag.target=dragTarget(e.clientY)??id;
@@ -321,7 +328,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       });
       button.addEventListener("pointerup",e=>{
         const drag=layoutDrag;
-        if(drag?.pointer!==e.pointerId||drag.id!==id)return;
+        if(!currentHandle()||drag?.pointer!==e.pointerId||drag.id!==id)return;
         clearLayoutDrag();
         if(!canEditLayout()||drag.connection!==ws||!Number.isFinite(e.clientY))return;
         if(Math.abs(e.clientY-drag.startY)<8){get("layoutPanel").value=id;syncLayout();return;}
@@ -329,7 +336,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         if(target)movePanelTo(id,target);
       });
       for(const event of ["pointercancel","lostpointercapture"])button.addEventListener(event,e=>{
-        if(layoutDrag?.pointer===e.pointerId&&layoutDrag.id===id)clearLayoutDrag();
+        if(currentHandle()&&layoutDrag?.pointer===e.pointerId&&layoutDrag.id===id)clearLayoutDrag();
       });
       return {id,button};
     });
@@ -352,7 +359,17 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("layoutSection").hidden=!visible;
     // The play/ACK hot path must not rebuild editor options or write
     // layout attributes on every performance sample.
-    if(!visible){if(layoutDrag)clearLayoutDrag();layoutSyncKey="";return;}
+    if(!visible){
+      if(layoutDrag)clearLayoutDrag();
+      layoutSyncKey="";
+      // On disconnection retire detached handlers as well as drag state.
+      if(!caps&&layoutHandles.length){
+        layoutHandleEpoch++;layoutHandles=[];layoutOptionsKey="";
+        get("layoutDragList").replaceChildren();
+        get("layoutPanel").replaceChildren();
+      }
+      return;
+    }
     const panel=get("layoutPanel"),available=availablePanels(),key=available.join(",");
     if(key!==layoutOptionsKey){
       const previous=panel.value;

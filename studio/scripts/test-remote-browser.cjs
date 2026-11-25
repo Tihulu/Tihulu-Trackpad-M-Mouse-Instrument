@@ -811,3 +811,31 @@ test("mobile layout drag cancellation and stale pointer cannot reorder",()=>{
   assert.equal(a.elements.pianoSection.style.order,"2");
   assert.equal(a.socket.frames.length,0);
 });
+
+
+test("idle heartbeat does not interrupt mobile layout drag or alter liveness wire",()=>{
+  const a=setup("granted",fullManifest,false);
+  a.elements.navSetup.emit("click");
+  const handles=layoutDragRows(a),piano=handles[2];
+  piano.emit("pointerdown",layoutPointer(1,110));
+  a.step(500);
+  assert.equal(a.socket.frames.at(-1).kind,"heartbeat");
+  piano.emit("pointermove",layoutPointer(1,5));
+  piano.emit("pointerup",layoutPointer(1,5));
+  assert.equal(a.elements.pianoSection.style.order,"0");
+  assert.deepEqual(a.socket.frames.map(x=>x.kind),["heartbeat"]);
+  a.ack();
+  assert.equal(a.socket.closed,undefined);
+});
+test("obsolete mobile drag handles cannot mutate a rebuilt layout",()=>{
+  const a=setup("granted",fullManifest,false);
+  a.elements.navSetup.emit("click");
+  const old=layoutDragRows(a)[2];
+  old.emit("pointerdown",layoutPointer(1,110));
+  old.emit("pointerup",layoutPointer(1,5));
+  assert.equal(a.elements.pianoSection.style.order,"0");
+  old.emit("pointerdown",layoutPointer(1,5));
+  old.emit("pointerup",layoutPointer(1,220));
+  assert.equal(a.elements.pianoSection.style.order,"0");
+  assert.equal(a.socket.frames.length,0);
+});
