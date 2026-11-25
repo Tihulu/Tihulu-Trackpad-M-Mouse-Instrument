@@ -90,6 +90,7 @@ struct InstrumentBuilderView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }.disabled(studio.patchRunning)
+                GamepadMappingPanel(patch:$draft,physical:$physical).disabled(studio.patchRunning)
                 GroupBox("Orchestra & Jam · ensemble templates") {
                     VStack(alignment:.leading,spacing:8) {
                         ForEach(EnsemblePreset.allCases) { preset in
