@@ -133,3 +133,33 @@ private func frame(_ frequencies: [Double], level: Double = 0.5,
     let check38 = mixer.render(now: 1.101) == nil
     #expect(check38)
 }
+
+@Test func mixerThreeLiveSourcesShareSixVoicesAndRetireIndependently() throws {
+    var mixer = HapticFrameMixer()
+    let a = mixer.begin(.chords)
+    let b = mixer.begin(.touchBar)
+    let g = mixer.begin(.gamepad)
+    let fa = frame([220,230,240,250,260,270])
+    let fb = frame([440,450,460,470,480,490])
+    let fg = frame([660,670,680,690,700,710])
+    #expect(mixer.submit(fa,from:a,now:1))
+    #expect(mixer.submit(fb,from:b,now:1))
+    #expect(mixer.submit(fg,from:g,now:1))
+    let all = try #require(mixer.render(now:1))
+    #expect(all.tones.map(\.frequencyHz) == [220,660,440,230,670,450])
+    #expect(all.level <= 1 && all.durationMS <= 18)
+    #expect(mixer.release(g))
+    #expect(!mixer.submit(fg,from:g,now:1))
+    let two = try #require(mixer.render(now:1))
+    #expect(two.tones.map(\.frequencyHz) == [220,440,230,450,240,460])
+    let fresh = mixer.begin(.gamepad)
+    #expect(!mixer.release(g))
+    #expect(mixer.submit(fg,from:fresh,now:1))
+    #expect(mixer.release(a))
+    #expect(mixer.release(b))
+    #expect(mixer.render(now:1)?.tones == fg.tones)
+    #expect(mixer.render(now:1.05) == nil)
+    mixer.releaseAll()
+    #expect(mixer.sourceCount == 0)
+    #expect(!mixer.submit(fg,from:fresh,now:1.06))
+}
