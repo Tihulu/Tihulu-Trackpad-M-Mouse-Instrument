@@ -156,18 +156,38 @@
         "MIDIClip",
         "MIDIClipWriter",
         "NoteSequence",
-        "DrumSequence"
+        "DrumSequence",
+        "TunedMIDIClip",
+        "GrooveSettings"
       ],
       "source": [
         "studio/Sources/NoSpeakerCore/MIDIClip.swift",
-        "studio/Sources/NoSpeakerCore/Sequencer.swift"
+        "studio/Sources/NoSpeakerCore/Sequencer.swift",
+        "studio/Sources/NoSpeakerCore/TunedMIDIClip.swift",
+        "studio/Sources/NoSpeakerCore/GrooveSettings.swift"
       ],
       "cli": [
         "midi encode",
         "midi melody",
-        "midi drums"
+        "midi drums",
+        "midi tuned",
+        "midi groove"
       ],
-      "status": "offline nominal SMF0 export; tuning fields rejected; no live MIDI"
+      "status": "offline SMF0 nominal and dedicated single-instrument MPE exports; no live MIDI"
+    },
+    {
+      "id": "voice-analysis",
+      "api": [
+        "HapticVoiceAnalyzer",
+        "HapticVoiceFrame"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/VoiceAnalysis.swift"
+      ],
+      "cli": [
+        "voice analyze"
+      ],
+      "status": "offline normalized mono PCM analysis and haptic frame data; no synthesis, recording or hardware"
     }
   ],
   "constraints": {
