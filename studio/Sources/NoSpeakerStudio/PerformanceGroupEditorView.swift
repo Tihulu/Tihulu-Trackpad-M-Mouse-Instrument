@@ -191,6 +191,31 @@ struct PerformanceGroupEditorView: View {
                                      groupPort:.init(name:group.name,port:group.plannedPortName,status:status))
     }
 
+    private var localSources: [SensorSource] {
+        Set(saved.groups.flatMap { $0.patch.routes.map(\.source) }).sorted { $0.rawValue < $1.rawValue }
+    }
+
+    private func localSourceStatus(_ source:SensorSource) -> String {
+        switch studio.groupSourceStates[source] {
+        case .waitingForNeutral: return "Waiting for neutral or release; lid may require restart"
+        case .armed: return "Armed; awaiting sample"
+        case .leased: return "Input lease present; receiver not verified"
+        case nil: return "Not bound"
+        }
+    }
+
+    private var inputReadiness: some View {
+        VStack(alignment:.leading,spacing:3) {
+            ForEach(localSources,id:\.self) { source in
+                HStack {
+                    Text(source.rawValue)
+                    Spacer()
+                    Text(localSourceStatus(source)).foregroundStyle(.secondary)
+                }.font(.caption)
+            }
+        }
+    }
+
     private var liveControls: some View {
         GroupBox("Experimental group MIDI - local controllers and Helpers") {
             VStack(alignment:.leading,spacing:8) {
@@ -199,10 +224,10 @@ struct PerformanceGroupEditorView: View {
                 if !supportedLocalProfile {
                     Text("Save a supported local group profile to enable Start.").font(.caption)
                 }
-                if saved.groups.contains(where:{ $0.patch.routes.contains(where:{ $0.source == .lid }) }) {
+                if localSources.contains(.lid) {
                     Text("Lid input needs a compatible sensor. Start may fail on unsupported Macs; the actual sensor is opened only on Start.").font(.caption)
                 }
-                if saved.groups.contains(where:{ $0.patch.routes.contains(where:{ $0.source == .touchBar }) }) {
+                if localSources.contains(.touchBar) {
                     Text("Use the native Builder ribbon on a Touch Bar. Registration does not verify that the hardware is present. Release the ribbon after a stall before playing again.").font(.caption)
                 }
                 Button("Refresh controllers") { studio.refreshBuilderGamepads() }
@@ -232,6 +257,7 @@ struct PerformanceGroupEditorView: View {
                         .disabled(studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0)
                 }
                 Text(studio.groupGamepadStatus).font(.caption)
+                inputReadiness
                 Text("\(studio.groupRegisteredIDs.count) registered ports; \(studio.groupCleanupIDs.count) pending MIDI cleanups; \(studio.groupDisposalCount) pending port disposals.")
                     .font(.caption)
                 ForEach(saved.groups.filter { studio.groupRegisteredIDs.contains($0.id) }) { group in
