@@ -189,11 +189,21 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     first.patch.routes.append(.init(id:"second",source:.phone,signal:.drumPad2,destination:.init(.note,number:38)))
     first.patch.performanceLayout = .init(widgets:[
         .init(source:.phone,signal:.drumPad1,label:"First"),
-        .init(source:.phone,signal:.drumPad2,label:"bad\u{202E}text")
+        .init(source:.phone,signal:.drumPad2,label:"   ")
     ])
     var second = groupRemoteFixture(.phone,.drumPad1,40)
     second.patch.performanceLayout = .init(widgets:[.init(source:.phone,signal:.drumPad1,label:"Second")])
-    let session = try PerformanceGroupGamepadSession(profile:.init(groups:[first,second]),allowLayering:true,allowRemote:true)
+    let profile = PerformanceGroupProfile(groups:[first,second])
+    #expect(profile.isValid)
+    #expect(!RemoteMappingLabel.permits("bad\u{202E}text"))
+    #expect(!RemoteMappingLabel.permits("   "))
+    var invalid = profile
+    invalid.groups[0].patch.performanceLayout?.widgets[1].label = "bad\u{202E}text"
+    #expect(!invalid.isValid)
+    #expect(throws:PerformanceGroupGamepadSession.AdmissionError.unsupportedProfile) {
+        try PerformanceGroupGamepadSession(profile:invalid,allowLayering:true,allowRemote:true)
+    }
+    let session = try PerformanceGroupGamepadSession(profile:profile,allowLayering:true,allowRemote:true)
     #expect(session.groupRemoteLabels(.phone).isEmpty)
     #expect(session.groupRemoteLabels(.tablet).isEmpty)
 }
