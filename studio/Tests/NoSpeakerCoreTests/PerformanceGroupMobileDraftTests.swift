@@ -91,3 +91,58 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     draft.widgets.append(draft.widgets[0])
     #expect(throws:PerformanceGroupMobileDraft.EditError.capacityOrConflict) { try draft.applying(to:profile) }
 }
+
+@Test func mobileDraftExplicitLayeredTargetPreservesScopedNoteGate() throws {
+    let group = PerformanceInstrumentGroup(name:"Mobile chords",patch:.init(routes:[
+        .init(id:"root",source:.phone2,signal:.contact,destination:.init(.note,number:60))
+    ]))
+    let profile = PerformanceGroupProfile(groups:[group])
+    var draft = try PerformanceGroupMobileDraft(profile:profile,groupID:group.id,source:.phone2)
+    #expect(!draft.duplicateMapping("missing",newID:"third"))
+    #expect(!draft.duplicateMapping("root",newID:"root"))
+    #expect(!draft.duplicateMapping("root",newID:""))
+    #expect(draft.duplicateMapping("root",newID:"third"))
+    #expect(draft.routes.count==2 && draft.routes[1].signal == .contact)
+    draft.routes[1].destination.number = 64
+    let next = try draft.applying(to:profile)
+    #expect(next.groups[0].id==group.id && next.groups[0].patch.routes[0]==group.patch.routes[0])
+    #expect(try PerformanceGroupProfile.read(next.archive())==next)
+
+    var session = try PerformanceGroupGamepadSession(profile:next,allowRemote:true)
+    let token = try session.bind(.phone2,now:0)
+    var events:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { events.append($0); return true }
+    func frame(_ text:String)->Data { Data(text.utf8) }
+    _ = session.receiveRemote(.phone2,token:token,bytes:frame(#"{"kind":"release","version":1,"sequence":1}"#),hostTime:0,now:0,send:sink)
+    _ = session.receiveRemote(.phone2,token:token,bytes:frame(#"{"kind":"touch","version":1,"sequence":2,"x":0.5,"y":0.5}"#),hostTime:0.01,now:0.01,send:sink)
+    #expect(events.count==2)
+    #expect(Set(events.filter { $0.command.value>0 }.map { $0.command.destination.number }) == [60,64])
+    events.removeAll()
+    _ = session.receiveRemote(.phone2,token:token,bytes:frame(#"{"kind":"release","version":1,"sequence":3}"#),hostTime:0.02,now:0.02,send:sink)
+    #expect(events.count==2)
+    #expect(Set(events.filter { $0.command.value==0 }.map { $0.command.destination.number }) == [60,64])
+    #expect(events.allSatisfy { $0.groupID==group.id })
+}
+
+@Test func mobileDraftTargetCapacityAccountsForOtherGroupsAndIDs() throws {
+    var profile = mobileDraftFixture()
+    let extra = PerformanceGroupProfile.maximumRoutes-4
+    for index in 0..<extra {
+        profile.groups[1].patch.routes.append(.init(id:"extra-\(index)",source:.phone2,signal:.pedalSustain,destination:.init(.sustain)))
+    }
+    #expect(profile.isValid)
+    var draft = try PerformanceGroupMobileDraft(profile:profile,groupID:profile.groups[0].id,source:.phone2)
+    #expect(draft.remainingRouteCapacity==1)
+    #expect(!draft.duplicateMapping("mobile",newID:"local"))
+    #expect(draft.duplicateMapping("mobile",newID:"second"))
+    draft.routes[1].destination.number = 65
+    #expect(draft.remainingRouteCapacity==0)
+    #expect(draft.availableSignals.isEmpty)
+    #expect(!draft.append(.x))
+    #expect(!draft.duplicateMapping("mobile"))
+    let applied = try draft.applying(to:profile)
+    #expect(applied.groups[1]==profile.groups[1])
+    #expect(applied.groups.reduce(0) { $0+$1.patch.routes.count }==PerformanceGroupProfile.maximumRoutes)
+    draft.routes.removeLast()
+    #expect(draft.remainingRouteCapacity==1)
+}

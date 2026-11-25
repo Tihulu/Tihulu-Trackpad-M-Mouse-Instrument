@@ -26,8 +26,35 @@ public struct PerformanceGroupMobileDraft: Identifiable, Equatable, Sendable {
     public static var signals:[SensorSignal] {
         [.x,.y,.contact] + RemoteDrumPads.signals + RemotePiano.signals + RemotePedalboard.signals
     }
+    /// Capacity is shared by all groups, not just this slot's visible rows.
+    public var remainingRouteCapacity:Int {
+        let total = baseline.groups.reduce(0) { $0 + $1.patch.routes.count }
+        let original = baseline.groups.first(where:{ $0.id == groupID })?
+            .patch.routes.filter { $0.source == source }.count ?? 0
+        return max(0,PerformanceGroupProfile.maximumRoutes-(total-original)-routes.count)
+    }
+
     public var availableSignals:[SensorSignal] {
-        Self.signals.filter { signal in !routes.contains(where:{ $0.signal == signal }) }
+        guard remainingRouteCapacity > 0 else { return [] }
+        return Self.signals.filter { signal in !routes.contains(where:{ $0.signal == signal }) }
+    }
+
+    /// Explicitly create a second target for an already mapped input.
+    /// Copy calibration and release semantics; the new ID owns an independent
+    /// contribution. The editor must still apply the full validated profile.
+    @discardableResult
+    public mutating func duplicateMapping(_ mappingID:String,newID:String = UUID().uuidString) -> Bool {
+        guard remainingRouteCapacity > 0,
+              let original = routes.first(where:{ $0.id == mappingID }),
+              original.source == source,Self.signals.contains(original.signal),
+              !routes.contains(where:{ $0.id == newID }),
+              !(baseline.groups.first(where:{ $0.id == groupID })?.patch.routes.contains(where:{ $0.source != source && $0.id == newID }) ?? true)
+        else { return false }
+        var copy = original
+        copy.id = newID
+        guard InstrumentPatch.permits(copy),PerformanceGroupGamepadSession.permitsLiveControl(copy) else { return false }
+        routes.append(copy)
+        return true
     }
 
     /// Defaults are examples, not automatic changes to a DAW. No reserved
@@ -57,7 +84,7 @@ public struct PerformanceGroupMobileDraft: Identifiable, Equatable, Sendable {
     }
 
     public mutating func append(_ signal:SensorSignal) -> Bool {
-        guard availableSignals.contains(signal),routes.count < PerformanceGroupProfile.maximumRoutes,
+        guard availableSignals.contains(signal),
               let route = Self.suggestedRoute(source:source,signal:signal) else { return false }
         routes.append(route)
         return true

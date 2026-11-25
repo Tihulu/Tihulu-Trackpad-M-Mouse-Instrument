@@ -35,6 +35,8 @@ struct PerformanceGroupMobileDraftView: View {
                             if !draft.append(signal) { message = "Already mapped or no room." }
                         }.disabled(!draft.availableSignals.contains(signal))
                     }
+                    Text("Remaining MIDI targets across all groups: \(draft.remainingRouteCapacity)")
+                        .font(.caption).foregroundStyle(.secondary)
                     ForEach($draft.routes) { $route in
                         GroupBox {
                             VStack(alignment:.leading,spacing:5) {
@@ -72,6 +74,13 @@ struct PerformanceGroupMobileDraftView: View {
                                 if route.response != nil {
                                     Button("Remove custom response") { route.response = nil }
                                 }
+                                Button("Duplicate MIDI target for this input") {
+                                    if !draft.duplicateMapping(route.id) {
+                                        message = "No capacity or invalid target. Correct the mapping before duplicating."
+                                    } else {
+                                        message = "Target copied. Change the new row's MIDI destination as needed."
+                                    }
+                                }.disabled(draft.remainingRouteCapacity == 0)
                                 Button("Remove mapping",role:.destructive) {
                                     let id = route.id
                                     draft.routes.removeAll { $0.id == id }
