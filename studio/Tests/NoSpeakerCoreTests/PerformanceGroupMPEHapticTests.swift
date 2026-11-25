@@ -85,3 +85,47 @@ private func mpeHapticSpec(_ cents:Int) -> PerformanceGroupTuningPlan.Specificat
     another.observe(.init(groupID:a.id,command:.init(.init(.controlChange,channel:0,number:101),value:0)),accepted:true)
     #expect(another.activeGroups.isEmpty)
 }
+
+
+@Test func groupMPEHapticShortAttackMatchesWirePitchAndFailsClosedOnCleanup() throws {
+    let a = mpeHapticGroup(.gamepad1), b = mpeHapticGroup(.gamepad2)
+    let profile = PerformanceGroupProfile(groups:[a,b])
+    let tuning = [a.id:mpeHapticSpec(-20),b.id:mpeHapticSpec(20)]
+    var output = try PerformanceGroupTunedDelivery(profile:profile,tuning:tuning)
+    let prepared = output.prepare { _ in true }
+    #expect(prepared)
+    var haptic = try PerformanceGroupHapticProjection(profile:profile,selected:[a.id,b.id],preparedTuning:tuning)
+    let x = try output.connect(.gamepad1,now:1), y = try output.connect(.gamepad2,now:1)
+    var time = 1.01
+    let sink:(PerformanceGroupCommand)->Bool = { item in
+        haptic.observe(item,accepted:true,now:time)
+        return true
+    }
+    _ = output.frame(lease:x,sequence:1,now:time,values:[.padA:1],send:sink)
+    let held = try #require(haptic.frame())
+    time = 1.014
+    _ = output.frame(lease:x,sequence:2,now:time,values:[:],releasing:[.padA],send:sink)
+    var mailbox = GroupHapticMailbox(now:1)
+    let first = haptic.snapshot(now:time)
+    #expect(first.held == nil && first.attacks.count == 1)
+    #expect(first.attacks.first?.frame.tones.first?.frequencyHz == held.tones.first?.frequencyHz)
+    _ = mailbox.publish(snapshot:first,masterLevel:1,now:time)
+    time = 1.015
+    _ = output.frame(lease:x,sequence:3,now:time,values:[.padA:1],send:sink)
+    _ = output.frame(lease:y,sequence:1,now:time,values:[.padA:1],send:sink)
+    time = 1.016
+    let failed = output.frame(lease:x,sequence:4,now:time,values:[:],releasing:[.padA]) { item in
+        haptic.observe(item,accepted:false,now:time)
+        return false
+    }
+    #expect(failed.failedGroups == [a.id] && failed.pendingCleanup == [a.id])
+    let survivor = haptic.snapshot(now:time)
+    _ = mailbox.publish(snapshot:survivor,masterLevel:1,now:time)
+    let rendered = mailbox.read(now:1.018)
+    #expect(rendered?.frame == survivor.held && rendered?.frame?.tones.count == 1)
+    let clean = output.retryCleanup(a.id,send:sink)
+    #expect(clean && haptic.activeGroups == [b.id])
+    haptic.stop()
+    mailbox.close()
+    #expect(haptic.frame() == nil && mailbox.retired)
+}
