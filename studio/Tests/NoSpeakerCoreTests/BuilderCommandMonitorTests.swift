@@ -17,3 +17,18 @@ import Testing
     let history = BuilderCommandMonitor.updated(["previous"],attempted:Array(commands.prefix(1)))
     #expect(history == ["Ch 1 · controlChange 74 → 50","previous"])
 }
+
+@Test func builderMonitorBatchedHistoryMatchesImmediateHistoryForRapidCommands() {
+    var buffer = BuilderCommandMonitor.Buffer()
+    var reference: [String] = ["previous"]
+    for i in 0..<1024 {
+        let command = SensorCommand(.init(.note,channel:i%16,number:i%128),value:i%2 == 0 ? 100 : 0)
+        buffer.append([command])
+        reference = BuilderCommandMonitor.updated(reference,attempted:[command])
+    }
+    let result = buffer.flush(previous:["previous"])
+    #expect(result == reference)
+    #expect(result?.count == BuilderCommandMonitor.limit)
+    let empty = buffer.flush(previous:reference)
+    #expect(empty == nil)
+}

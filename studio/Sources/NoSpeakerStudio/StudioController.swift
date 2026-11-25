@@ -32,6 +32,7 @@ final class StudioController: ObservableObject {
     @Published private(set) var patchRunning = false
     @Published private(set) var patchInputs: [PatchSimulation.Input] = []
     @Published private(set) var patchMessages: [String] = []
+    private var patchMonitorBuffer = BuilderCommandMonitor.Buffer()
     @Published private(set) var patchStatus = "Builder idle"
     private var patchSimulation = PatchSimulation()
     private var debugCameraRunToken:UUID?
@@ -617,6 +618,7 @@ final class StudioController: ObservableObject {
             debugCameraRunToken = UUID()
             patchRunning = true
             beginEnsembleTakeIfArmed()
+            patchMonitorBuffer = BuilderCommandMonitor.Buffer()
             patchMessages = []
             patchStatus = physical ? (synthetic == nil ? "Native input requested · waiting for a physical contact" : "Hybrid · explicit synthetic source · waiting for input") :
                 (sendMIDI ? "Simulated inputs · live TIHULU Instrument Builder MIDI" : "Simulation only · no MIDI output")
@@ -674,7 +676,19 @@ final class StudioController: ObservableObject {
                     remoteTransport.start()
                     remotePage?.start()
                 }
-                startPatchWatchdog()
+                // Arm from a real initial snapshot, then process native value
+                // changes without waiting for the 20 ms watchdog.
+                if let token = patchNativeToken {
+                    for source in sources.intersection(GamepadFrame.sources) {
+                        receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token)
+                    }
+                    if patchRunning {
+                        builderGamepads.beginEvents { [weak self] source,frame in
+                            self?.receiveBuilderGamepad(source:source,frame:frame,token:token)
+                        }
+                    }
+                }
+                if patchRunning { startPatchWatchdog() }
             } else if patchSimulation.hasDualCamera || patchSimulation.hasHelperHands {
                 startAirDebugWatchdog()
             }
@@ -908,6 +922,12 @@ final class StudioController: ObservableObject {
         recordPatchCommands(commands)
     }
 
+    private func receiveBuilderGamepad(source:SensorSource,frame:GamepadFrame?,token:UUID) {
+        guard patchRunning, patchPhysical, patchNativeToken == token else { return }
+        let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:ProcessInfo.processInfo.systemUptime)
+        recordPatchCommands(commands)
+    }
+
     private func startPatchWatchdog() {
         guard let mailbox = patchMailbox else { return }
         patchWatchdog = Task { [weak self] in
@@ -921,6 +941,7 @@ final class StudioController: ObservableObject {
     }
 
     private func drainPhysicalPatch(_ mailbox: PatchSurfaceMailbox) {
+        defer { flushPatchMonitor() }
         let batch = mailbox.drain()
         let now = ProcessInfo.processInfo.systemUptime
         if batch.overflow || batch.samples.contains(where: { now - $0.time >= PhysicalPatchRuntime.timeout }) {
@@ -955,9 +976,8 @@ final class StudioController: ObservableObject {
         guard patchRunning else { return }
         let gamepadSources = Set(instrumentPatch.routes.map(\.source)).intersection(GamepadFrame.sources)
         for source in gamepadSources.sorted(by:{ $0.rawValue < $1.rawValue }) {
-            let frame = builderGamepads.read(source)
-            let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:ProcessInfo.processInfo.systemUptime)
-            recordPatchCommands(commands)
+            guard let token = patchNativeToken else { return }
+            receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token)
             guard patchRunning else { return }
         }
         let expired = patchPhysicalRuntime.expire(now: ProcessInfo.processInfo.systemUptime)
@@ -1197,10 +1217,20 @@ final class StudioController: ObservableObject {
         // Deliver synchronously in the original order, publish the bounded
         // monitor only once. A failure still includes the attempted command.
         if patchHapticEnabled { updateGamepadHaptics() }
-        patchMessages = BuilderCommandMonitor.updated(patchMessages, attempted:attempted)
+        patchMonitorBuffer.append(attempted)
+        // Physical playback publishes at watchdog cadence, not per event.
+        // Simulation and failure/stop paths still show the last attempted data.
+        if !patchPhysical || !patchRunning { flushPatchMonitor() }
+    }
+
+    private func flushPatchMonitor() {
+        if let next = patchMonitorBuffer.flush(previous:patchMessages), next != patchMessages {
+            patchMessages = next
+        }
     }
 
     func stopInstrumentPatch() {
+        flushPatchMonitor()
         gamepadHapticToken = nil
         gamepadHaptics?.stop()
         gamepadHaptics = nil
