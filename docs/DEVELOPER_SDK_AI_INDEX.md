@@ -202,6 +202,8 @@ Preflight returns current process Accessibility/Input Monitoring checks, connect
 
 The read-only `gamepad devices` command reports connected and extended-profile counts, four logical slot capacity, and at most sixteen snapshot-local device rows. Stick-click availability is explicit. Optional `--names` exposes sanitized vendor labels only; no persistent IDs or controller input values are read. Ordinals are not session bindings and must not be used to reattach a live source. No discovery or handlers are installed. Both platforms check capability help, rejection of binding/unknown flags and the native JSON boundary.
 
+`tihulu-mac-instrument-native gamepad sample --confirm` returns one bounded snapshot of up to sixteen already connected controllers, reusing the exact Builder normalization (button, trigger and stick dead zones). A sampled row contains normalized active signals only; absent signals are neutral or within the production dead zone, not missing data. Unsupported, invalid and disconnected rows carry no values. The ordinal belongs to this invocation only. The explicit confirmation admits reading all listed controllers once, without names, pairing, discovery, handler installation, slot binding, haptic output or MIDI sends. This is not an atomic multi-device measurement, a continuous monitor or a physical latency test. Keep input snapshots local unless you intentionally share them.
+
 ### Explicit receive-only MIDI observation
 
 ```sh
