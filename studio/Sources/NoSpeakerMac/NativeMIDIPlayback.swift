@@ -133,6 +133,7 @@ public final class NativeMIDIPlayback {
         }
         if stopRequested || Task.isCancelled {
             player.stop { gate.send($0) }
+            recordGate(gate)
             return report(cancelled:true)
         }
         _=try player.begin(now:Self.now())
@@ -148,7 +149,7 @@ public final class NativeMIDIPlayback {
             }
             let cancelled=stopRequested
             player.advance(now:Self.now(),refreshNow:{ Self.now() },shouldStop:{ cancelled || Task.isCancelled },
-                           authorizeOnset:{ gate.validate() }) { command in
+                           authorizeOnset:{ gate.authorizeOnset() }) { command in
                 if command.value > 0 && (cancelled || Task.isCancelled) { return false }
                 return gate.send(command)
             }
@@ -279,6 +280,7 @@ public final class NativeMIDIPlayback {
         private(set) var retired:Bool
         private(set) var maximumIdentityCheckNS:UInt64=0
         private(set) var maximumNativeSendNS:UInt64=0
+        private var onsetAuthorized=false
         init(source:MIDIEndpointRef,id:Int32,name:String,retired:Bool) {
             self.source=source;self.id=id;self.name=name;self.retired=retired
         }
@@ -291,8 +293,23 @@ public final class NativeMIDIPlayback {
             }
             return true
         }
+        func authorizeOnset()->Bool {
+            onsetAuthorized=validate()
+            return onsetAuthorized
+        }
         func send(_ command:SensorCommand)->Bool {
-            guard validate() else { return false }
+            // Onsets use the immediately preceding identity validation,
+            // followed by the core's fresh clock/cancellation check.
+            // No suspension or second potentially slow property query
+            // occurs between that check and the native send.
+            let authorized=onsetAuthorized
+            onsetAuthorized=false
+            if command.value>0 {
+                guard authorized,!retired else { return false }
+            } else {
+                // Cleanup always independently verifies the old identity.
+                guard validate() else { return false }
+            }
             let started=NativeMIDIPlayback.now()
             defer { maximumNativeSendNS=max(maximumNativeSendNS,NativeMIDIPlayback.now()-started) }
             return NativeMIDIPlayback.send(command,source:source)

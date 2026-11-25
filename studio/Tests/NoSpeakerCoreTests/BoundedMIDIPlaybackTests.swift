@@ -403,3 +403,16 @@ private func playbackClip() -> MIDIClip {
     #expect(commands.count==2 && commands.first?.value==90 && commands.last?.value==0)
     #expect(commands.first?.destination==commands.last?.destination && player.outstanding.isEmpty)
 }
+
+@Test func boundedPlaybackShortGateExpiringDuringAuthorizationNeverSounds() throws {
+    let clip=MIDIClip(bpm:120,length:960,notes:[.init(start:0,duration:1,channel:0,pitch:60,velocity:90)])
+    var player=try BoundedMIDIPlayback(clip:clip)
+    _=try player.begin(now:0)
+    var now:UInt64=0
+    var sent:[SensorCommand]=[]
+    player.advance(now:now,refreshNow:{now},authorizeOnset:{now=1_000_000;return true}) {
+        sent.append($0);return true
+    }
+    #expect(player.fault == .expiredOnset && player.maximumObservedLatenessNS==1_000_000)
+    #expect(sent.isEmpty && player.outstanding.isEmpty)
+}
