@@ -91,3 +91,33 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     let stillBound = session.receive(.gamepad1,token:token,frame:neutral,now:1.41,send:sink)
     #expect(stillBound.status == .ready)
 }
+
+
+@Test func remoteGroupBridgeReconcilesExpiryAndDisconnectWithoutRestoringDepartingOwner() throws {
+    let target = SensorDestination(.controlChange,number:74)
+    let group = PerformanceInstrumentGroup(name:"Shared CC",patch:.init(routes:[
+        .init(id:"high",source:.phone,signal:.x,destination:target,priority:10),
+        .init(id:"low",source:.tablet,signal:.x,destination:target,priority:0)
+    ]))
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowRemote:true)
+    var bridge = PerformanceGroupRemoteBridge()
+    let a = UUID(), b = UUID()
+    let secretA = Data(repeating:1,count:32), secretB = Data(repeating:2,count:32)
+    var sent:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { sent.append($0); return true }
+    _ = bridge.process([.ready],now:1,session:&session,send:sink)
+    try bridge.issue(secret:secretA,source:.phone,now:1,session:session)
+    _ = bridge.process([.invitation(a,secretA,1.01)],now:1.01,session:&session,send:sink)
+    try bridge.issue(secret:secretB,source:.tablet,now:1.02,session:session)
+    _ = bridge.process([.invitation(b,secretB,1.03)],now:1.03,session:&session,send:sink)
+    _ = bridge.process([.frame(a,groupRemoteWire("release",1,1),1.04),
+                        .frame(b,groupRemoteWire("release",1,1),1.04)],now:1.04,session:&session,send:sink)
+    _ = bridge.process([.frame(a,groupRemoteWire("touch",1,2,",\"x\":1,\"y\":0.5"),1.05)],now:1.05,session:&session,send:sink)
+    _ = bridge.process([.frame(b,groupRemoteWire("touch",1,2,",\"x\":0.5,\"y\":0.5"),1.20)],now:1.20,session:&session,send:sink)
+    #expect(sent.last?.command.value == 127)
+    sent.removeAll()
+    let result = bridge.process([.disconnected(b)],now:1.41,session:&session,send:sink)
+    #expect(sent.map(\.command.value) == [0])
+    #expect(result.actions == [.revoke(a)])
+    #expect(bridge.connectionIDs.isEmpty && session.boundSources.isEmpty)
+}
