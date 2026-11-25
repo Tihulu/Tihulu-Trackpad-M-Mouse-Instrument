@@ -31,7 +31,8 @@ private func nativePlaybackClip() -> MIDIClip {
     })
     let running=try #require(task)
     let report=try await running.value
-    #expect(report.state=="finished")
+    #expect(report.state=="finished",
+            "state=\(report.state), reason=\(report.faultReason ?? "none"), max lateness ns=\(report.maximumObservedLatenessNS), identity ns=\(report.maximumIdentityCheckNS), native send ns=\(report.maximumNativeSendNS)")
     #expect(report.cleanupConfirmed && report.outstandingNotes==0)
     #expect(!report.cancelled && !report.receiverConfirmed)
     #expect(observation.callbackCount>=2 && observation.packetCount>=2)
