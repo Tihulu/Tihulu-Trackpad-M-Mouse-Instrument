@@ -449,3 +449,76 @@ private func groupTunedSnapshot(_ down:Bool = false) throws -> GamepadFrame {
         try draft.applying(to:profile,configuration:nil)
     }
 }
+
+
+@Test func groupTunedRemoteSharesNoteOwnershipAndPreservesOtherPorts() throws {
+    var group = tunedGroup(.gamepad1)
+    group.patch.routes.append(.init(id:"touch",source:.phone,signal:.contact,
+        destination:.init(.note,channel:3,number:62)))
+    let sibling = tunedGroup(.gamepad2)
+    let profile = PerformanceGroupProfile(groups:[group,sibling])
+    let tuning = [group.id:groupTuning(-20)]
+    let configuration = try PerformanceGroupTuningConfiguration(profile:profile,tuning:tuning)
+    let activation = try PerformanceGroupActivationPlan(profile:profile,mode:.tuned(configuration),
+        allowLayering:false,confirmedTuning:true,registeredIDs:[],cleanupIDs:[],pendingDisposalCount:0,allowRemote:true)
+    var session = try PerformanceGroupGamepadSession(profile:profile,tuning:activation.tuning,allowRemote:true)
+    var wire:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { wire.append($0); return true }
+    let prepared = session.prepare(send:sink)
+    #expect(prepared)
+    #expect(wire.allSatisfy { $0.groupID == group.id && $0.command.destination.kind != .note })
+    wire.removeAll()
+    let local = try session.bind(.gamepad1,now:1)
+    let other = try session.bind(.gamepad2,now:1)
+    let neutral = try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+    var buttons = Array(repeating:0.0,count:12); buttons[0] = 1
+    let held = try #require(GamepadFrame(buttons:buttons,triggers:[0,0],sticks:[0,0,0,0]))
+    _ = session.receive(.gamepad1,token:local,frame:neutral,now:1,send:sink)
+    _ = session.receive(.gamepad2,token:other,frame:neutral,now:1,send:sink)
+    var bridge = PerformanceGroupRemoteBridge()
+    let peer = UUID(), secret = Data(repeating:8,count:32)
+    _ = bridge.process([.ready],now:1,session:&session,send:sink)
+    try bridge.issue(secret:secret,source:.phone,now:1,session:session)
+    _ = bridge.process([.invitation(peer,secret,1.01)],now:1.01,session:&session,send:sink)
+    func frame(_ sequence:Int,_ kind:String,_ suffix:String = "") -> Data {
+        Data("{\"version\":1,\"sequence\":\(sequence),\"kind\":\"\(kind)\"\(suffix)}".utf8)
+    }
+    _ = bridge.process([.frame(peer,frame(1,"release"),1.02)],now:1.02,session:&session,send:sink)
+    _ = session.receive(.gamepad1,token:local,frame:held,now:1.03,send:sink)
+    _ = session.receive(.gamepad2,token:other,frame:held,now:1.03,send:sink)
+    _ = bridge.process([.frame(peer,frame(2,"touch",",\"x\":0.5,\"y\":0.5"),1.04)],now:1.04,session:&session,send:sink)
+    let noteOns = wire.filter { $0.command.destination.kind == .note && $0.command.value > 0 }
+    #expect(noteOns.count == 2)
+    #expect(noteOns.first(where:{ $0.groupID == group.id })?.command.destination.channel == 1)
+    #expect(noteOns.first(where:{ $0.groupID == sibling.id })?.command.destination.channel == 3)
+    wire.removeAll()
+    _ = bridge.stop(session:&session,send:sink)
+    #expect(wire.isEmpty)
+    _ = session.receive(.gamepad1,token:local,frame:neutral,now:1.05,send:sink)
+    #expect(wire.filter { $0.command.destination.kind == .note && $0.command.value == 0 }.map(\.groupID) == [group.id])
+    wire.removeAll()
+    _ = session.panic(send:sink)
+    #expect(wire.filter { $0.command.destination.kind == .note && $0.command.value == 0 }.map(\.groupID) == [sibling.id])
+}
+
+@Test func groupTunedRemoteRequiresConfirmedConfigurationAndNoRetainedPorts() throws {
+    var group = tunedGroup(.gamepad1)
+    group.patch.routes.append(.init(id:"touch",source:.phone,signal:.contact,
+        destination:.init(.note,channel:3,number:62)))
+    let profile = PerformanceGroupProfile(groups:[group])
+    let configuration = try PerformanceGroupTuningConfiguration(profile:profile,tuning:[group.id:groupTuning(-20)])
+    #expect(throws:PerformanceGroupActivationPlan.AdmissionError.tuningNotConfirmed) {
+        try PerformanceGroupActivationPlan(profile:profile,mode:.tuned(configuration),allowLayering:false,
+            confirmedTuning:false,registeredIDs:[],cleanupIDs:[],pendingDisposalCount:0,allowRemote:true)
+    }
+    #expect(throws:PerformanceGroupActivationPlan.AdmissionError.tuningRequiresClosedPorts) {
+        try PerformanceGroupActivationPlan(profile:profile,mode:.tuned(configuration),allowLayering:false,
+            confirmedTuning:true,registeredIDs:[group.id],cleanupIDs:[],pendingDisposalCount:0,allowRemote:true)
+    }
+    var session = try PerformanceGroupGamepadSession(profile:profile,tuning:configuration.tuning,allowRemote:true)
+    let prepared = session.prepare { _ in false }
+    #expect(!prepared && session.retired && !session.pendingCleanup.isEmpty)
+    #expect(throws:PerformanceGroupGamepadSession.AdmissionError.retired) {
+        try session.bind(.phone,now:1)
+    }
+}
