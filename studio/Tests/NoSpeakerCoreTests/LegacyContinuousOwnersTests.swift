@@ -89,3 +89,43 @@ import Testing
     #expect(!HelperPerformancePolicy.permitsEffects(isTrackpad:true,settings:settings,sharePedalSurface:false))
     #expect(!HelperPerformancePolicy.permitsEffects(isTrackpad:false,settings:settings,sharePedalSurface:false))
 }
+
+@Test func optimizedContinuousSingleTargetMatchesFullSnapshotAcrossOwners() {
+    let targets = (1...15).filter { $0 != 9 }.flatMap { channel in
+        [SensorDestination(.pitchBend,channel:channel),SensorDestination(.controlChange,channel:channel,number:1),
+         SensorDestination(.controlChange,channel:channel,number:11)]
+    }
+    let owners: [LegacyContinuousOwners.Owner] = [.touch,.legacyTouch,.helper,.touchBar]
+    var single = LegacyContinuousOwners(), snapshot = LegacyContinuousOwners()
+    for step in 0..<2048 {
+        let target = targets[(step*17)%targets.count]
+        let owner = owners[(step/7)%owners.count]
+        let value: LegacyContinuousOwners.Value = target.kind == .pitchBend
+            ? .init((step*213)%16384,neutral:8192,bendRange:step%2 == 0 ? 12 : 24)
+            : .init(step%128,neutral:target.number == 11 ? 127 : 0)
+        var next = snapshot.values(for:owner)
+        next[target] = value
+        #expect(single.set(owner,target:target,value:value) == snapshot.replace(owner,values:next))
+        #expect(single.set(owner,target:target,value:value).isEmpty)
+        if step%19 == 0 {
+            #expect(single.release(owner,channel:target.channel) == snapshot.release(owner,channel:target.channel))
+        }
+        for owner in owners { #expect(single.values(for:owner) == snapshot.values(for:owner)) }
+    }
+    #expect(single.releaseAll() == snapshot.releaseAll())
+}
+
+@Test func reusedFretlessMemberKeepsBendRangeUntilNewPitchIsEstablished() {
+    var s = LegacyContinuousOwners()
+    let bend = SensorDestination(.pitchBend,channel:2)
+    let cc = SensorDestination(.controlChange,channel:2,number:11)
+    let old = LegacyContinuousOwners.Value(10000,neutral:8192,bendRange:12)
+    _ = s.replace(.touch,values:[bend:old,cc:.init(44,neutral:127)])
+    // Onset staging retains the bend, changes the expression, then establishes
+    // the new pitch before note-on. No neutral bend or redundant range update.
+    #expect(s.replace(.touch,values:[bend:old,cc:.init(81,neutral:127)]) == [.init(cc,value:81)])
+    #expect(s.set(.touch,target:bend,value:.init(11000,neutral:8192,bendRange:12)) == [.init(bend,value:11000)])
+    #expect(s.release(.touch) == [.init(cc,value:127),.init(bend,value:8192)].sorted {
+        $0.target.kind.rawValue < $1.target.kind.rawValue
+    })
+}

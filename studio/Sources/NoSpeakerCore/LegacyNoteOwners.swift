@@ -1,13 +1,19 @@
 /// One note gate per channel/note on a shared outgoing endpoint.
 /// Owner replacement is idempotent; no retrigger while another owner holds.
+/// The reverse count avoids scanning all held notes on every attack or lift.
 public struct LegacyNoteOwners<Owner: Hashable> {
     private var owners: [Owner:SensorDestination] = [:]
+    private var counts: [SensorDestination:Int] = [:]
     public init() {}
-    public var active: Set<SensorDestination> { Set(owners.values) }
+    public var active: Set<SensorDestination> { Set(counts.keys) }
 
     public mutating func release(_ owner: Owner) -> [SensorCommand] {
-        guard let target = owners.removeValue(forKey:owner),
-              !owners.values.contains(target) else { return [] }
+        guard let target = owners.removeValue(forKey:owner) else { return [] }
+        if let count = counts[target], count > 1 {
+            counts[target] = count - 1
+            return []
+        }
+        counts.removeValue(forKey:target)
         return [.init(target,value:0)]
     }
 
@@ -16,15 +22,17 @@ public struct LegacyNoteOwners<Owner: Hashable> {
         let target = SensorDestination(.note,channel:channel,number:note)
         guard owners[owner] != target else { return [] }
         var commands = release(owner)
-        let alreadyHeld = owners.values.contains(target)
+        let count = counts[target] ?? 0
         owners[owner] = target
-        if !alreadyHeld { commands.append(.init(target,value:velocity)) }
+        counts[target] = count + 1
+        if count == 0 { commands.append(.init(target,value:velocity)) }
         return commands
     }
 
     public mutating func releaseAll() -> [SensorCommand] {
         let targets = active.sorted { $0.channel == $1.channel ? $0.number < $1.number : $0.channel < $1.channel }
         owners.removeAll()
+        counts.removeAll()
         return targets.map { .init($0,value:0) }
     }
 }

@@ -18,6 +18,7 @@ public struct LegacyChannelPressure: Sendable {
     public init() {}
     public mutating func replace(_ next: [Int:Int]) -> [Update] {
         guard next.allSatisfy({ (0...15).contains($0.key) && (0...127).contains($0.value) }) else { return [] }
+        guard values != next else { return [] }
         let previous = values
         values = next
         return Set(previous.keys).union(next.keys).sorted().compactMap { channel in
