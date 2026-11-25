@@ -38,7 +38,7 @@ private func makeStereoFixture(_ url:URL,frameCount:Int) throws -> [Float] {
     let expected = HapticSignalProcessor.hapticEvents(samples:samples,sampleRate:16_000,profile:.rhythm)
     let actual:[ScheduledHapticEvent]
     do { actual = try AudioFileHapticService.render(url:url,profile:.rhythm) }
-    catch { Issue.record("Production WAV decode failed: "+String(describing:error));throw error }
+    catch { Issue.record("Production WAV decode failed: \(String(describing:error))");throw error }
     #expect(!actual.isEmpty)
     #expect(actual == expected)
     #expect((actual.last?.time ?? 0) > 1.0)
