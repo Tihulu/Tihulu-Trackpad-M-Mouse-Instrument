@@ -1275,10 +1275,14 @@ final class StudioController: ObservableObject {
         if !patchPhysical || !patchRunning { flushPatchMonitor() }
     }
 
-    func resetBuilderPerformanceMetrics() { builderPerformanceMetrics = BuilderPerformanceMetrics() }
+    func resetBuilderPerformanceMetrics() {
+        builderPerformanceMetrics = BuilderPerformanceMetrics()
+        patchPhysicalRuntime.resetGamepadSnapshotMetrics()
+    }
 
     func builderPerformanceReport() -> String {
         let m = builderPerformanceMetrics
+        let g = patchPhysicalRuntime.gamepadSnapshotMetrics
         func ms(_ seconds:Double) -> String { String(format:"%.2f ms",seconds*1000) }
         return """
         Native watchdog ticks: \(m.ticks)
@@ -1288,6 +1292,8 @@ final class StudioController: ObservableObject {
         Logical command batches / commands: \(m.commandBatches) / \(m.logicalCommands)
         MIDI attempts / failures: \(m.midiAttempts) / \(m.midiFailures)
         Max command batch work: \(ms(m.maxBatchDuration))
+        Gamepad snapshots / skipped identical: \(g.accepted) / \(g.skippedDuplicates)
+        Gamepad mapped events: \(g.mappedEvents)
         Host timing only; not measured audio or physical latency. Cleanup retries excluded.
         """
     }
