@@ -442,6 +442,17 @@ struct PerformanceGroupEditorView: View {
                     Button("Add from Builder draft") { add(patch:currentPatch) }
                         .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
                 }.disabled(editingLocked || !didLoad || readFailed || !profile.isValid || profile.groups.count >= PerformanceGroupProfile.maximumGroups)
+                Menu("Party Jam starter groups") {
+                    ForEach(PerformanceGroupPartyJamPreset.allCases) { preset in
+                        Button(preset.title) {
+                            message = preset.install(in:&profile)
+                                ? preset.detail + " Review and save the draft before Start."
+                                : "Starter layout refused; existing draft retained."
+                        }
+                    }
+                }.disabled(editingLocked || !didLoad || readFailed || !profile.groups.isEmpty)
+                Text("Starter groups populate an empty draft only. No devices connect until explicit Start.")
+                    .font(.caption).foregroundStyle(.secondary)
                 ForEach(profile.groups) { group in groupCard(group) }
                 if !profile.layeredInputs.isEmpty {
                     Text("Shared inputs (layered output requires explicit consent): " +
