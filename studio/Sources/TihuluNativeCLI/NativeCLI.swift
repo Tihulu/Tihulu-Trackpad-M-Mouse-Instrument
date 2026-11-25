@@ -19,7 +19,7 @@ struct TihuluNativeCLI {
         let platformSupported:Bool
         let liveOutput = false
         let permissionRequests = false
-        let commands = ["capabilities","preflight","midi endpoints [--names]"]
+        let commands = ["capabilities","preflight","midi endpoints [--names]","gamepad devices [--names]"]
     }
     struct Envelope<Payload:Encodable>: Encodable {
         let schema = 1
@@ -46,15 +46,18 @@ struct TihuluNativeCLI {
                 #endif
                 return
             }
-            guard args == ["preflight"] || args == ["midi","endpoints"] || args == ["midi","endpoints","--names"] else {
+            let named = args.last == "--names"
+            let command = named ? Array(args.dropLast()) : args
+            guard args == ["preflight"] || command == ["midi","endpoints"] || command == ["gamepad","devices"] else {
                 throw CLIError("Unknown command or flags. Use --help. Live output is not supported.")
             }
             #if os(macOS)
             if args == ["preflight"] {
                 try emit(Envelope(command:"preflight",result:NativeEngineDiagnostics.preflight()))
+            } else if command == ["gamepad","devices"] {
+                try emit(Envelope(command:"gamepad devices",result:NativeEngineDiagnostics.gamepads(includeNames:named)))
             } else {
-                try emit(Envelope(command:"midi endpoints",
-                    result:NativeEngineDiagnostics.midi(includeNames:args.last == "--names")))
+                try emit(Envelope(command:"midi endpoints",result:NativeEngineDiagnostics.midi(includeNames:named)))
             }
             #else
             throw CLIError("Native inspection requires macOS. Use the offline engine for portable analysis.")

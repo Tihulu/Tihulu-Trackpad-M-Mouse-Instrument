@@ -24,6 +24,43 @@ public enum NativeEngineDiagnostics {
         public let midi:MIDISnapshot
     }
 
+    public struct GamepadSnapshot: Encodable, Sendable {
+        public struct Device: Encodable, Sendable {
+            // Snapshot ordinal, never a stable physical ID or live slot.
+            public let ordinal:Int
+            public let name:String?
+            public let extendedProfile:Bool
+            public let leftStickClick:Bool
+            public let rightStickClick:Bool
+        }
+        public let connectedCount:Int
+        public let extendedProfileCount:Int
+        public let maximumLogicalSlots:Int
+        public let omittedCount:Int
+        public let devices:[Device]
+    }
+
+    private static func safeLabel(_ original:String) -> String {
+        let clean = original.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
+        let bounded = String(String.UnicodeScalarView(clean.prefix(128)))
+        return bounded.isEmpty ? "(unnamed)" : bounded
+    }
+
+    public static func gamepads(includeNames:Bool = false) -> GamepadSnapshot {
+        let connected = GCController.controllers()
+        let devices = connected.prefix(16).enumerated().map { index,controller in
+            let profile = controller.extendedGamepad
+            return GamepadSnapshot.Device(ordinal:index+1,
+                name:includeNames ? safeLabel(controller.vendorName ?? "Game controller") : nil,
+                extendedProfile:profile != nil,
+                leftStickClick:profile?.leftThumbstickButton != nil,
+                rightStickClick:profile?.rightThumbstickButton != nil)
+        }
+        return .init(connectedCount:connected.count,
+            extendedProfileCount:connected.filter { $0.extendedGamepad != nil }.count,
+            maximumLogicalSlots:4,omittedCount:max(0,connected.count-devices.count),devices:devices)
+    }
+
     public static func midi(includeNames:Bool = false) -> MIDISnapshot {
         let sources = MIDIGetNumberOfSources()
         let destinations = MIDIGetNumberOfDestinations()
@@ -33,10 +70,7 @@ public enum NativeEngineDiagnostics {
             var value:Unmanaged<CFString>?
             let status = MIDIObjectGetStringProperty(endpoint,kMIDIPropertyDisplayName,&value)
             guard status == noErr,let value else { return "(unavailable)" }
-            let original = value.takeRetainedValue() as String
-            let clean = original.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
-            let bounded = String(String.UnicodeScalarView(clean.prefix(128)))
-            return bounded.isEmpty ? "(unnamed)" : bounded
+            return safeLabel(value.takeRetainedValue() as String)
         }
         return .init(sourceCount:Int(sources),destinationCount:Int(destinations),
             sourceNames:includeNames ? (0..<min(Int(sources),cap)).map { label(MIDIGetSource($0)) } : nil,

@@ -23,9 +23,10 @@ assert help_doc["schema"] == 1
 assert help_doc["product"] == "tihulu-mac-instrument-native"
 assert help_doc["platformSupported"] == mac
 assert help_doc["liveOutput"] is False and help_doc["permissionRequests"] is False
-assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]"}
+assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]"}
 for command in [("start",), ("midi", "send"), ("preflight", "--request-permissions"),
-                ("midi", "endpoints", "--names", "--send"), ("--unknown",)]:
+                ("midi", "endpoints", "--names", "--send"), ("--unknown",),
+                ("preflight", "--names"), ("gamepad", "devices", "--bind"), ("gamepad", "devices", "--names", "--names")]:
     invoke(*command, success=False)
 
 if mac:
@@ -49,8 +50,26 @@ if mac:
     midi_shape(invoke("midi", "endpoints")["result"], False)
     # Explicit names flag; never print device names in CI.
     midi_shape(invoke("midi", "endpoints", "--names")["result"], True)
+    for named in (False, True):
+        args = ("gamepad", "devices", "--names") if named else ("gamepad", "devices")
+        report = invoke(*args)
+        assert report["command"] == "gamepad devices" and report["liveOutput"] is False
+        value = report["result"]
+        count = value["connectedCount"]
+        assert type(count) is int and 0 <= value["extendedProfileCount"] <= count
+        assert value["maximumLogicalSlots"] == 4
+        assert len(value["devices"]) == min(16, count)
+        assert value["omittedCount"] == max(0, count-16)
+        for i, device in enumerate(value["devices"], 1):
+            assert device["ordinal"] == i
+            assert all(type(device[k]) is bool for k in ("extendedProfile", "leftStickClick", "rightStickClick"))
+            assert device["extendedProfile"] or not (device["leftStickClick"] or device["rightStickClick"])
+            assert ("name" in device) == named
+            if named:
+                assert 0 < len(device["name"]) <= 128
 else:
-    for command in [("preflight",), ("midi", "endpoints"), ("midi", "endpoints", "--names")]:
+    for command in [("preflight",), ("midi", "endpoints"), ("midi", "endpoints", "--names"),
+                    ("gamepad", "devices"), ("gamepad", "devices", "--names")]:
         assert "requires macOS" in invoke(*command, success=False)
 
 print("Native CLI capability, read-only boundary and platform tests passed.")

@@ -242,9 +242,10 @@
       "cli": [
         "capabilities",
         "preflight",
-        "midi endpoints [--names]"
+        "midi endpoints [--names]",
+        "gamepad devices [--names]"
       ],
-      "status": "read-only native CoreMIDI inventory, connected gamepad count and permission preflight; no hardware activation, event tap or live output"
+      "status": "read-only native CoreMIDI inventory, gamepad profile availability and permission preflight; no binding, hardware activation, event tap or live output"
     }
   ],
   "constraints": {
