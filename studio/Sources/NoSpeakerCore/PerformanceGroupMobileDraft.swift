@@ -129,6 +129,35 @@ public struct PerformanceGroupMobileDraft: Identifiable, Equatable, Sendable {
         return true
     }
 
+    /// Edit a whole surface in the selected group/slot atomically. A nil
+    /// channel preserves channels; transposition affects notes only.
+    /// No clipping, wrapping, silent partial updates or cross-group edits.
+    @discardableResult
+    public mutating func transformFamily(_ family:PerformanceGroupRemoteSurface,
+                                         channel:Int? = nil, transpose:Int = 0) -> Bool {
+        guard channel.map({(0...15).contains($0)}) ?? true,
+              (-127...127).contains(transpose),channel != nil || transpose != 0 else { return false }
+        var candidate=self
+        var changed=false
+        for index in candidate.routes.indices where family.signals.contains(candidate.routes[index].signal) {
+            var route=candidate.routes[index]
+            guard route.source==source else { return false }
+            if let channel { route.destination.channel=channel }
+            if route.destination.kind == .note {
+                let (pitch,overflow)=route.destination.number.addingReportingOverflow(transpose)
+                guard !overflow,(0...127).contains(pitch) else { return false }
+                route.destination.number=pitch
+            }
+            if route != candidate.routes[index] {
+                candidate.routes[index]=route
+                changed=true
+            }
+        }
+        guard changed,(try? candidate.applying(to:baseline)) != nil else { return false }
+        routes=candidate.routes
+        return true
+    }
+
     /// Defaults are examples, not automatic changes to a DAW. No reserved
     /// selectors, and gain controls explicitly return to zero if chosen.
     public static func suggestedRoute(source:SensorSource,signal:SensorSignal,id:String = UUID().uuidString) -> SensorMapping? {

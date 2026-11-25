@@ -10,6 +10,8 @@ struct PerformanceGroupMobileDraftView: View {
     @State private var widgetSignal:SensorSignal = .contact
     @State private var message = ""
     @State private var family:PerformanceGroupRemoteSurface = .xy
+    @State private var familyChannel=0
+    @State private var familyTranspose=12
     let apply:(PerformanceGroupMobileDraft)->Bool
 
     init(draft:PerformanceGroupMobileDraft,apply:@escaping(PerformanceGroupMobileDraft)->Bool) {
@@ -47,6 +49,22 @@ struct PerformanceGroupMobileDraftView: View {
                                 ? "Missing controls added; existing mappings kept."
                                 : "No missing controls, insufficient capacity or conflicting surface."
                         }
+                    }
+                    DisclosureGroup("Selected surface: bulk MIDI routing") {
+                        Text("Only existing mappings in this group and mobile slot change. All changes are validated together.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Stepper("MIDI channel \(familyChannel+1)",value:$familyChannel,in:0...15)
+                        Button("Set channel for selected surface") {
+                            message=draft.transformFamily(family,channel:familyChannel)
+                                ? "Surface channel updated."
+                                : "No change or invalid group configuration. Nothing applied."
+                        }
+                        Stepper("Transpose notes \(familyTranspose) semitones",value:$familyTranspose,in:-127...127)
+                        Button("Transpose selected surface notes") {
+                            message=draft.transformFamily(family,transpose:familyTranspose)
+                                ? "Surface notes transposed."
+                                : "No change, pitch outside MIDI range or conflicting configuration."
+                        }.disabled(familyTranspose==0)
                     }
                     Text("Remaining MIDI targets across all groups: \(draft.remainingRouteCapacity)")
                         .font(.caption).foregroundStyle(.secondary)

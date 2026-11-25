@@ -259,3 +259,45 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     let result=try draft.applying(to:profile)
     #expect(result.groups[0].patch.routes==draft.routes)
 }
+
+@Test func mobileDraftBulkChannelAndTransposePreserveOtherSlotsAndControls() throws {
+    let group=PerformanceInstrumentGroup(name:"Mixed",patch:.init(routes:[
+        .init(id:"key",source:.phone,signal:.pianoKey0,destination:.init(.note,channel:1,number:48)),
+        .init(id:"pedal",source:.phone,signal:.pianoSustain,destination:.init(.sustain,channel:1)),
+        .init(id:"x",source:.phone,signal:.x,destination:.init(.pitchBend)),
+        .init(id:"other",source:.tablet,signal:.pianoKey0,destination:.init(.note,number:60))
+    ]))
+    let sibling=PerformanceInstrumentGroup(name:"Sibling",patch:.init(routes:[
+        .init(id:"key",source:.phone,signal:.pianoKey1,destination:.init(.note,number:49))
+    ]))
+    let profile=PerformanceGroupProfile(groups:[group,sibling])
+    var draft=try PerformanceGroupMobileDraft(profile:profile,groupID:group.id,source:.phone)
+    let changed=draft.transformFamily(.piano,channel:4,transpose:12)
+    #expect(changed)
+    let next=try draft.applying(to:profile)
+    let routes=next.groups[0].patch.routes
+    #expect(routes[0].destination == .init(.note,channel:4,number:60))
+    #expect(routes[1].destination == .init(.sustain,channel:4))
+    #expect(routes[2...]==group.patch.routes[2...])
+    #expect(routes.map(\.id)==group.patch.routes.map(\.id))
+    #expect(next.groups[1]==sibling)
+    #expect(try PerformanceGroupProfile.read(next.archive())==next)
+}
+
+@Test func mobileDraftBulkTransposeRejectsEntireOperationOnPitchOverflow() throws {
+    let group=PerformanceInstrumentGroup(name:"Piano",patch:.init(routes:[
+        .init(id:"first",source:.phone,signal:.pianoKey0,destination:.init(.note,number:60)),
+        .init(id:"last",source:.phone,signal:.pianoKey1,destination:.init(.note,number:127))
+    ]))
+    let profile=PerformanceGroupProfile(groups:[group])
+    var draft=try PerformanceGroupMobileDraft(profile:profile,groupID:group.id,source:.phone)
+    let overflow=draft.transformFamily(.piano,channel:6,transpose:1)
+    let badChannel=draft.transformFamily(.piano,channel:16)
+    let badTranspose=draft.transformFamily(.piano,transpose:Int.max)
+    let absent=draft.transformFamily(.drums,channel:4)
+    let noChange=draft.transformFamily(.piano,channel:0)
+    #expect(!overflow && !badChannel && !badTranspose && !absent && !noChange)
+    #expect(draft.routes==group.patch.routes)
+    let changed=draft.transformFamily(.piano,transpose:-12)
+    #expect(changed && draft.routes.map(\.destination.number)==[48,115])
+}
