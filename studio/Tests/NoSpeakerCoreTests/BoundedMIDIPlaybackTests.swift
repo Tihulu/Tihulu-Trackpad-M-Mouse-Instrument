@@ -480,3 +480,20 @@ private func playbackClip() -> MIDIClip {
     #expect(result.scenarios==32 && result.passedScenarios==32)
     #expect(result.maximumCleanupDebt==1 && result.allCleanAfterRetry)
 }
+
+@Test func boundedMIDIAuditCancellationReturnsNoPartialSuccessAndKeepsPreparedClip() throws {
+    let schedule=try BoundedMIDIPlayback(clip:playbackClip())
+    #expect(throws:CancellationError.self) {
+        _=try BoundedMIDISimulation.audit(schedule,shouldStop:{true})
+    }
+    var checks=0
+    #expect(throws:CancellationError.self) {
+        _=try BoundedMIDISimulation.audit(schedule,shouldStop:{
+            checks+=1
+            return checks==5
+        })
+    }
+    #expect(checks==5 && schedule.state == .ready && schedule.outstanding.isEmpty)
+    let complete=try BoundedMIDISimulation.audit(schedule)
+    #expect(complete.scenarios==complete.passedScenarios && complete.allCleanAfterRetry)
+}

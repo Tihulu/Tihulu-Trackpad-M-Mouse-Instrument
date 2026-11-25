@@ -10,10 +10,11 @@ import NoSpeakerCore
 @MainActor
 public final class NativeMIDIPlayback {
     public enum Failure: LocalizedError {
-        case invalidLifecycle, native(String,Int32), cleanupPending, sourceIdentityLost, sessionFailure(String,String)
+        case invalidLifecycle, capacity, native(String,Int32), cleanupPending, sourceIdentityLost, sessionFailure(String,String)
         public var errorDescription:String? {
             switch self {
             case .invalidLifecycle: return "Playback is not in the required lifecycle state."
+            case .capacity: return "At most four native playback sources may be open. Close owned sessions or quit and relaunch if recovery is unconfirmed."
             case .native(let action,let code): return "MIDI "+action+" failed ("+String(code)+")."
             case .cleanupPending: return "MIDI note cleanup is unconfirmed; retain the source and retry."
             case .sourceIdentityLost: return "Original MIDI source identity is unconfirmed; never send to or dispose a replacement."
@@ -58,6 +59,12 @@ public final class NativeMIDIPlayback {
               recoveryRequired:identityRetired || disposalFailed || (player.state != .playing && !player.outstanding.isEmpty))
     }
 
+    // Library callers may open more than one session. Keep a bounded
+    // process-wide inventory, including unidentified or abandoned handles.
+    public static let maximumOpenSources=4
+    private static var openSlots:Set<UUID>=[]
+    private let slot=UUID()
+
     public let sourceName = "TIHULU SDK Playback "+UUID().uuidString
     private var endpoint=MIDIEndpointRef()
     private var sourceID:Int32=0
@@ -93,7 +100,13 @@ public final class NativeMIDIPlayback {
             throw Failure.invalidLifecycle
         }
         try Task.checkCancellation()
+        guard Self.openSlots.count<Self.maximumOpenSources,
+              Self.openSlots.insert(slot).inserted else { throw Failure.capacity }
+        // Release admission only if no handle was obtained. A quarantined
+        // or abandoned endpoint must continue consuming its slot.
+        defer { if endpoint==0 { Self.openSlots.remove(slot) } }
         let client=try MIDIProcessClient.shared.acquire()
+        try Task.checkCancellation()
         var source=MIDIEndpointRef()
         let status=MIDISourceCreate(client,sourceName as CFString,&source)
         guard source != 0 else {
@@ -264,6 +277,7 @@ public final class NativeMIDIPlayback {
         disposalFailed=false
         MIDIProcessClient.shared.unregisterIsolatedSource(source)
         endpoint=0
+        Self.openSlots.remove(slot)
     }
 
     private func report(cancelled:Bool) -> Report {

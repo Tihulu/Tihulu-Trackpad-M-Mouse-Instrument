@@ -78,7 +78,9 @@ struct TihuluNativeCLI {
             throw BoundedMIDIPlanInput.Failure.invalid
         }
         let (_,player)=try BoundedMIDIPlanInput.prepare(Data(json.utf8))
-        return try BoundedMIDISimulation.audit(player)
+        return try BoundedMIDISimulation.audit(player,shouldStop:{
+            Task.isCancelled || tihulu_stop_requested() != 0
+        })
     }
 
     struct SessionProbe:Encodable,Sendable {
@@ -162,7 +164,9 @@ struct TihuluNativeCLI {
             }
             if args.count>=2 && Array(args.prefix(2)) == ["midi","audit"] {
                 guard args.count==3 else { throw CLIError("Use midi audit JSON; no live output.") }
-                try emit(Envelope(command:"midi audit",result:playbackAudit(args[2])))
+                try await withProcessStop(command:"midi audit") {
+                    try playbackAudit(args[2])
+                }
                 return
             }
             if args.count>=2 && Array(args.prefix(2)) == ["session","probe"] {

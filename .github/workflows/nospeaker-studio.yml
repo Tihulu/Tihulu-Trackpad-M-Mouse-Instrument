@@ -112,7 +112,8 @@ jobs:
             nativePlaybackRunAndCloseDisposesOnlyOwnSource \
             nativePlaybackRunAndClosePreservesIdentityRecoveryOnFailure \
             nativePlaybackPreparedSessionReceivesNoteGateBeforeDisposal \
-            nativePlaybackOpenQuarantinesUnverifiedSourceWithoutDisposal
+            nativePlaybackOpenQuarantinesUnverifiedSourceWithoutDisposal \
+            nativePlaybackSourceCapacityReleasesOnlyVerifiedClosedSlots
           do
             log="$(mktemp)"
             if swift test --filter "$fixture" >"$log" 2>&1; then

@@ -377,4 +377,29 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
     #expect(try NativeMIDIMonitor.resolve(name:changed)==created)
 }
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackSourceCapacityReleasesOnlyVerifiedClosedSlots() throws {
+    var players:[NativeMIDIPlayback]=[]
+    defer { for player in players { if player.lifecycle.sourceOpen { try? player.close() } } }
+    for _ in 0..<NativeMIDIPlayback.maximumOpenSources {
+        let player=try NativeMIDIPlayback(clip:nativePlaybackClip())
+        players.append(player)
+        try player.open()
+    }
+    let extra=try NativeMIDIPlayback(clip:nativePlaybackClip())
+    players.append(extra)
+    #expect(throws:NativeMIDIPlayback.Failure.self) { try extra.open() }
+    #expect(!extra.lifecycle.sourceOpen && extra.lifecycle.state=="ready")
+    let first=try #require(players.first)
+    try first.close()
+    #expect(throws:NativeMIDIMonitor.Failure.self) { _=try NativeMIDIMonitor.resolve(name:first.sourceName) }
+    try extra.open()
+    #expect(extra.lifecycle.sourceOpen)
+    for player in players.dropFirst() {
+        #expect(try NativeMIDIMonitor.resolve(name:player.sourceName) != 0)
+    }
+    for player in players.dropFirst() { try player.close() }
+    #expect(players.allSatisfy { !$0.lifecycle.sourceOpen })
+}
 #endif

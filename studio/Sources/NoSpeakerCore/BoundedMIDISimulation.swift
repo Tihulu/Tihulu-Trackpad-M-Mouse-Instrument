@@ -33,11 +33,13 @@ public enum BoundedMIDISimulation {
     /// after reaching the simulated receiver. All immediate cleanup sends
     /// then fail, followed by a partial retry and a successful owned-debt retry.
     /// Work is bounded by the same 256-note/512-event schedule limit.
-    public static func audit(_ schedule:BoundedMIDIPlayback) throws -> Audit {
+    public static func audit(_ schedule:BoundedMIDIPlayback,
+                             shouldStop:()->Bool = { false }) throws -> Audit {
         guard schedule.state == .ready,!schedule.events.isEmpty else { throw Failure.invalidSchedule }
         var passed=0,maximumDebt=0
         for edge in schedule.events.indices {
             for delivered in [false,true] {
+                if shouldStop() { throw CancellationError() }
                 var player=schedule
                 guard try player.begin(now:0) else { throw Failure.invalidSchedule }
                 var sounding:Set<SensorDestination>=[]
@@ -54,6 +56,7 @@ public enum BoundedMIDISimulation {
                     }
                 }
                 while let deadline=player.nextDeadline {
+                    if shouldStop() { throw CancellationError() }
                     guard steps<=schedule.events.count else { throw Failure.invalidSchedule }
                     steps+=1
                     player.advance(now:deadline) { command in
@@ -123,6 +126,7 @@ public enum BoundedMIDISimulation {
                 passed+=1
             }
         }
+        if shouldStop() { throw CancellationError() }
         return .init(eventCount:schedule.events.count,scenarios:schedule.events.count*2,
             passedScenarios:passed,maximumCleanupDebt:maximumDebt,allCleanAfterRetry:true,
             hardware:false,receiverConfirmed:false)
