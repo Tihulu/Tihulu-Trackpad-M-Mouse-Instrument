@@ -94,8 +94,12 @@ public enum NativeMIDIMonitor {
                 _ = counter.stop()
                 var result:OSStatus=noErr
                 if connected {
-                    let status=MIDIPortDisconnectSource(port,source)
-                    if status != noErr { result=status }
+                    // Never disconnect using a retired/reused source handle.
+                    // Disposing our own input port removes its subscriptions.
+                    if identity(source)==bound {
+                        let status=MIDIPortDisconnectSource(port,source)
+                        if status != noErr { result=status }
+                    }
                     connected=false
                 }
                 if port != 0 {
@@ -108,42 +112,50 @@ public enum NativeMIDIMonitor {
                 }
                 return result
             }
-            defer { _ = cleanup() }
-            var status=makeClient(&client)
-            guard status==noErr else { throw Failure.native("client",status) }
-            status=makePort(client,&port,counter:counter)
-            guard status==noErr else { throw Failure.native("input port",status) }
-            guard try resolve(name:sourceName)==source,identity(source)==bound else { throw Failure.sourceUnavailable }
-            let clock=ContinuousClock()
-            let deadline=clock.now.advanced(by:.seconds(seconds))
-            try Task.checkCancellation()
-            guard counter.begin(now:DispatchTime.now().uptimeNanoseconds,seconds:seconds) else {
+            do {
+                var status=makeClient(&client)
+                guard status==noErr else { throw Failure.native("client",status) }
+                status=makePort(client,&port,counter:counter)
+                guard status==noErr else { throw Failure.native("input port",status) }
+                guard try resolve(name:sourceName)==source,identity(source)==bound else { throw Failure.sourceUnavailable }
+                let clock=ContinuousClock()
+                let deadline=clock.now.advanced(by:.seconds(seconds))
                 try Task.checkCancellation()
-                throw Failure.invalidSelection
-            }
-            try Task.checkCancellation()
-            status=MIDIPortConnectSource(port,source,nil)
-            guard status==noErr else { throw Failure.native("connect",status) }
-            connected=true
-            try Task.checkCancellation()
-            guard identity(source)==bound else { throw Failure.sourceUnavailable }
-            try onConnected()
-            try Task.checkCancellation()
-            // Poll only the bound endpoint, never resolve/reconnect a new one.
-            // Identity loss is terminal even if the name later reappears.
-            var available=identity(source)==bound
-            while available && clock.now<deadline {
-                try await clock.sleep(until:min(deadline,clock.now.advanced(by:.milliseconds(100))))
+                guard counter.begin(now:DispatchTime.now().uptimeNanoseconds,seconds:seconds) else {
+                    try Task.checkCancellation()
+                    throw Failure.invalidSelection
+                }
                 try Task.checkCancellation()
-                available=identity(source)==bound
+                status=MIDIPortConnectSource(port,source,nil)
+                guard status==noErr else { throw Failure.native("connect",status) }
+                connected=true
+                try Task.checkCancellation()
+                guard identity(source)==bound else { throw Failure.sourceUnavailable }
+                try onConnected()
+                try Task.checkCancellation()
+                // Poll only the bound endpoint, never resolve/reconnect a new one.
+                // Identity loss is terminal even if the name later reappears.
+                var available=identity(source)==bound
+                while available && clock.now<deadline {
+                    try await clock.sleep(until:min(deadline,clock.now.advanced(by:.milliseconds(100))))
+                    try Task.checkCancellation()
+                    available=identity(source)==bound
+                }
+                let counts=counter.stop()
+                try Task.checkCancellation()
+                guard available else { throw Failure.sourceUnavailable }
+                status=cleanup()
+                guard status==noErr else { throw Failure.native("cleanup",status) }
+                try Task.checkCancellation()
+                return .init(requestedSeconds:seconds,callbackCount:counts.callbacks,packetCount:counts.packets,
+                             sourceStillPresent:available,cleanupConfirmed:true)
+            } catch {
+                // Preserve a cleanup failure even when the primary error
+                // was cancellation or identity loss; never claim clean exit.
+                let status=cleanup()
+                guard status==noErr else { throw Failure.native("cleanup after interruption",status) }
+                throw error
             }
-            let counts=counter.stop()
-            try Task.checkCancellation()
-            status=cleanup()
-            guard status==noErr else { throw Failure.native("cleanup",status) }
-            try Task.checkCancellation()
-            return .init(requestedSeconds:seconds,callbackCount:counts.callbacks,packetCount:counts.packets,
-                         sourceStillPresent:available,cleanupConfirmed:true)
         } onCancel: {
             // Retire callback admission immediately, even if MainActor
             // has not yet resumed to dispose the native input port.

@@ -41,32 +41,48 @@ struct TihuluNativeCLI {
         let hardware = false
     }
 
+    private enum StopEvent<T:Sendable>:Sendable {
+        case operation(Result<T,any Error>)
+        case stop
+        case watcherCancelled
+    }
+
     /// One foreground session per process. Only the C bridge runs inside
     /// the signal handler; Swift cancellation and cleanup run normally.
     @MainActor
     static func withProcessStop<T:Sendable>(_ operation:@escaping @MainActor @Sendable () async throws -> T) async throws -> T {
         guard tihulu_stop_install()==0 else { throw CLIError("Could not install process stop handlers.") }
         defer { tihulu_stop_restore() }
-        return try await withThrowingTaskGroup(of:T.self) { group in
+        let outcome:Result<T,any Error> = await withTaskGroup(of:StopEvent<T>.self) { group in
             group.addTask {
-                try Task.checkCancellation()
-                guard tihulu_stop_requested()==0 else { throw CancellationError() }
-                return try await operation()
-            }
-            group.addTask {
-                while true {
+                do {
                     try Task.checkCancellation()
-                    if tihulu_stop_requested() != 0 { throw CancellationError() }
-                    try await Task.sleep(nanoseconds:10_000_000)
+                    guard tihulu_stop_requested()==0 else { throw CancellationError() }
+                    return .operation(.success(try await operation()))
+                } catch { return .operation(.failure(error)) }
+            }
+            group.addTask {
+                while !Task.isCancelled {
+                    if tihulu_stop_requested() != 0 { return .stop }
+                    do { try await Task.sleep(nanoseconds:10_000_000) }
+                    catch { return .watcherCancelled }
                 }
+                return .watcherCancelled
             }
-            // Leaving the group waits for the cancelled operation's cleanup.
-            defer { group.cancelAll() }
-            guard let result=try await group.next(),tihulu_stop_requested()==0 else {
-                throw CancellationError()
+            // Always collect the operation result, even when the watcher
+            // wins. A cleanup error must not be hidden by cancellation.
+            var result:Result<T,any Error>?
+            for await event in group {
+                if case .operation(let value)=event { result=value }
+                group.cancelAll()
             }
-            return result
+            return result ?? .failure(CancellationError())
         }
+        let value=try outcome.get()
+        // Recheck after both children have exited, not before their cleanup.
+        try Task.checkCancellation()
+        guard tihulu_stop_requested()==0 else { throw CancellationError() }
+        return value
     }
 
     @MainActor
@@ -90,6 +106,7 @@ struct TihuluNativeCLI {
                     // Readiness is diagnostic stderr only. JSON is emitted
                     // after successful completion, never on cancellation.
                     FileHandle.standardError.write(Data("session probe ready\n".utf8))
+                    defer { FileHandle.standardError.write(Data("session probe cleanup\n".utf8)) }
                     try await Task.sleep(nanoseconds:UInt64(seconds)*1_000_000_000)
                     return SessionProbe(requestedSeconds:seconds,completed:true)
                 }

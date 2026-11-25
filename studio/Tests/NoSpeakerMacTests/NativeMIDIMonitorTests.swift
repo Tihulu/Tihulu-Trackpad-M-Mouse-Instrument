@@ -85,4 +85,27 @@ private func makeObserverFixtureClient(_ client:inout MIDIClientRef)->OSStatus {
         Issue.record("Unexpected error: \(error)")
     }
 }
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativeObserverRefusesSuccessAfterIdentityLoss() async throws {
+    var client=MIDIClientRef()
+    try #require(makeObserverFixtureClient(&client)==noErr && client != 0)
+    defer { _=MIDIClientDispose(client) }
+    var source=MIDIEndpointRef()
+    let name="TIHULU observer identity fixture "+UUID().uuidString
+    try #require(MIDISourceCreate(client,name as CFString,&source)==noErr && source != 0)
+    defer { _=MIDIEndpointDispose(source) }
+    do {
+        _=try await NativeMIDIMonitor.observe(sourceName:name,seconds:1,onConnected:{
+            let renamed="TIHULU retired observer "+UUID().uuidString
+            try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,renamed as CFString)==noErr)
+        })
+        Issue.record("Observation returned success after original source identity changed")
+    } catch NativeMIDIMonitor.Failure.sourceUnavailable {
+        // Expected: ambiguous counts cannot be returned as success.
+    }
+    try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,name as CFString)==noErr)
+    let next=try await NativeMIDIMonitor.observe(sourceName:name,seconds:1)
+    #expect(next.cleanupConfirmed && next.sourceStillPresent && next.callbackCount==0)
+}
 #endif

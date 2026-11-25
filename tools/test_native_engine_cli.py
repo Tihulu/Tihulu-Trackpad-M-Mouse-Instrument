@@ -56,7 +56,8 @@ for signum in (signal.SIGINT, signal.SIGTERM):
             process.send_signal(signum)
             stdout, stderr = process.communicate(timeout=5)
             assert process.returncode == 2 and not stdout, (process.returncode, stdout, stderr)
-            assert "Session cancelled; no success report." in stderr, stderr
+            assert stderr.count("session probe cleanup") == 1, stderr
+            assert stderr.index("session probe cleanup") < stderr.index("Session cancelled; no success report."), stderr
             assert time.monotonic() - started < 5
         finally:
             if process.poll() is None:
