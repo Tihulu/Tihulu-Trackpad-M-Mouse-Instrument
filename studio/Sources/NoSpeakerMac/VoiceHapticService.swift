@@ -109,7 +109,8 @@ private final class VoicePCMCollector: @unchecked Sendable {
         lock.unlock()
     }
 
-    func samples16kHz() -> [Float] {
+    func samples16kHz(cancellation:VoiceRenderCancellation) throws -> [Float] {
+        try cancellation.check()
         lock.lock()
         let input = values
         let rate = inputRate
@@ -120,13 +121,17 @@ private final class VoicePCMCollector: @unchecked Sendable {
         let newCount = Int(Double(input.count) * 16_000 / rate)
         guard newCount > 0 else { return [] }
         let step = rate / 16_000
-        return (0..<newCount).map { i in
+        var output = [Float]()
+        output.reserveCapacity(newCount)
+        for i in 0..<newCount {
+            if i % 4096 == 0 { try cancellation.check() }
             let pos = Double(i) * step
             let lo = min(input.count - 1, Int(pos))
             let hi = min(input.count - 1, lo + 1)
             let fract = Float(pos - Double(lo))
-            return input[lo] * (1 - fract) + input[hi] * fract
+            output.append(input[lo] * (1 - fract) + input[hi] * fract)
         }
+        return output
     }
 }
 
@@ -250,10 +255,10 @@ public enum VoiceHapticService {
         try audioFile.read(into: buffer)
         let collector = VoicePCMCollector()
         collector.append(buffer)
-        let samples = collector.samples16kHz()
+        let samples = try collector.samples16kHz(cancellation:cancellation)
         guard !samples.isEmpty else { throw VoiceHapticError.audioReadFailed }
         try cancellation.check()
-        let frames = HapticVoiceAnalyzer.analyze(samples)
+        let frames = try HapticVoiceAnalyzer.analyze(samples,cancellation:cancellation)
         try cancellation.check()
         return HapticVoiceAnalyzer.hapticEvents(frames:frames)
     }
@@ -350,13 +355,13 @@ public enum VoiceHapticService {
             }
         }
         try cancellation.check()
-        let samples = collector.samples16kHz()
+        let samples = try collector.samples16kHz(cancellation:cancellation)
         guard !samples.isEmpty else {
             synthesizer.stopSpeaking(at:.immediate)
             throw VoiceHapticError.audioReadFailed
         }
         try cancellation.check()
-        let frames = HapticVoiceAnalyzer.analyze(samples)
+        let frames = try HapticVoiceAnalyzer.analyze(samples,cancellation:cancellation)
         try cancellation.check()
         return HapticVoiceAnalyzer.hapticEvents(frames:frames)
     }
@@ -393,7 +398,7 @@ public enum VoiceHapticService {
         guard let channel = buffer.floatChannelData?[0] else { throw VoiceHapticError.audioReadFailed }
         let samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
         try cancellation.check()
-        let frames = HapticVoiceAnalyzer.analyze(samples)
+        let frames = try HapticVoiceAnalyzer.analyze(samples,cancellation:cancellation)
         try cancellation.check()
         return HapticVoiceAnalyzer.hapticEvents(frames: frames)
     }
