@@ -6,7 +6,7 @@ struct GamepadMappingPanel: View {
     @Binding var patch: InstrumentPatch
     @Binding var physical: Bool
     private enum Action: String, CaseIterable, Identifiable {
-        case note = "Note", chord = "Chord", sustain = "Sustain", bend = "Pitch bend", cc = "MIDI CC", clear = "Unmapped"
+        case note = "Note", chord = "Chord", sustain = "Sustain", bend = "Pitch bend", cc = "MIDI CC", pedal = "Effect pedal / switch", clear = "Unmapped"
         var id: String { rawValue }
     }
     @State private var slot: SensorSource = .gamepad1
@@ -14,6 +14,9 @@ struct GamepadMappingPanel: View {
     @State private var action: Action = .note
     @State private var channel = 0
     @State private var number = 74
+    @State private var pedalMode = GamepadPedalMode.hold
+    @State private var pedalCC = 80
+    @State private var pedalSustain = false
     @State private var noteText = "C4"
     @State private var chord = "C4,E4,G4"
     @State private var confirmCopy = false
@@ -36,6 +39,7 @@ struct GamepadMappingPanel: View {
         case .sustain: return [.init(.sustain,channel:channel)]
         case .bend: return [.init(.pitchBend,channel:channel)]
         case .cc: return [.init(.controlChange,channel:channel,number:number)]
+        case .pedal: return [pedalSustain ? .init(.sustain,channel:channel) : .init(.controlChange,channel:channel,number:pedalCC)]
         case .clear: return []
         }
     }
@@ -51,7 +55,7 @@ struct GamepadMappingPanel: View {
             case .pitchBend: name = "Bend"
             case .sustain: name = "Sustain"
             }
-            return "\(name) · Ch \(d.channel+1)"
+            return "\(name) · Ch \(d.channel+1)" + (r.pedalMode.map { " · " + $0.rawValue } ?? "")
         }.joined(separator:", ")
     }
     private var otherSlot: SensorSource { slot == .gamepad1 ? .gamepad2 : .gamepad1 }
@@ -69,6 +73,13 @@ struct GamepadMappingPanel: View {
               routes.count == 1 || (kind == .note && Set(routes.map(\.destination)).count == routes.count && routes.allSatisfy({ $0.velocity == velocity })) else {
             complexSelection = true
             action = analog ? .bend : .note
+            return
+        }
+        if let mode = first.pedalMode {
+            action = .pedal
+            pedalMode = mode
+            pedalSustain = kind == .sustain
+            if !pedalSustain { pedalCC = first.destination.number }
             return
         }
         switch kind {
@@ -153,6 +164,24 @@ struct GamepadMappingPanel: View {
                             Button("Filter / Wah") { number = 74 }
                         }
                     }
+                    if action == .pedal {
+                        Picker("Behavior",selection:$pedalMode) {
+                            ForEach(GamepadPedalMode.allCases) { Text($0.rawValue).tag($0) }
+                        }.pickerStyle(.segmented)
+                        Toggle("Sustain (CC64)",isOn:$pedalSustain)
+                        if !pedalSustain {
+                            Stepper("Effect CC \(pedalCC)",value:$pedalCC,in:0...119)
+                            HStack {
+                                Button("Drive / switch 1 (80)") { pedalCC = 80 }
+                                Button("Switch 2 (81)") { pedalCC = 81 }
+                                Button("Switch 3 (82)") { pedalCC = 82 }
+                            }
+                        }
+                        Text(pedalMode == .hold ? "Press = 127, release = 0." : "First press = 127, next press = 0. Release rearms the switch. Stop or disconnect clears its ownership.")
+                            .font(.caption)
+                        Text("Assign the CC to a plug-in parameter in your DAW. Names are examples, not universal effect numbers. Switches use binary values and replace this control’s custom calibration/curve; use Advanced Routes for analog effects.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if action == .note || action == .chord {
                         Stepper("Velocity \(velocity)",value:$velocity,in:1...127)
                     }
@@ -161,11 +190,11 @@ struct GamepadMappingPanel: View {
                     Button(selectedRoutes.isEmpty ? "Assign control" : "Replace this control") {
                         guard let destinations else { return }
                         do {
-                            patch = try GamepadMappingEditor.replace(in:patch,source:slot,signal:signal,destinations:destinations,velocity:velocity)
+                            patch = try GamepadMappingEditor.replace(in:patch,source:slot,signal:signal,destinations:destinations,velocity:velocity,pedalMode:action == .pedal ? pedalMode : nil)
                             physical = true
                             loadSelection()
                             message = "Mapping updated. Save or start explicitly."
-                        } catch { message = "Invalid mapping or route capacity. Previous map preserved." }
+                        } catch { message = "Invalid mapping, reserved CC, mixed analog/switch target or route capacity. Previous map preserved." }
                     }.buttonStyle(.borderedProminent)
                         .disabled(destinations == nil || !allowed.contains(action))
                     Text("\(patch.routes.count)/\(SensorRouter.maxMappings) routes").font(.caption)
