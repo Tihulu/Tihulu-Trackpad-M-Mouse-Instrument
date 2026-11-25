@@ -154,4 +154,25 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
         try player.close()
     }
 }
+// Exercise a real identity mutation on a source created solely by this test.
+// A restored name cannot reactivate the retired production session.
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackRejectsChangedAndRestoredSourceIdentity() async throws {
+    let player=try NativeMIDIPlayback(clip:nativePlaybackClip())
+    try player.open()
+    let source=try NativeMIDIMonitor.resolve(name:player.sourceName)
+    // Fixture owns this source. Production deliberately refuses to dispose
+    // an identity it has retired; the test can clean up its own fixture.
+    defer {
+        _=MIDIEndpointDispose(source)
+        MIDIProcessClient.shared.unregisterIsolatedSource(source)
+    }
+    let changed="TIHULU renamed fixture "+UUID().uuidString
+    try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,changed as CFString)==noErr)
+    await #expect(throws:NativeMIDIPlayback.Failure.self) { _=try await player.run() }
+    try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,player.sourceName as CFString)==noErr)
+    await #expect(throws:NativeMIDIPlayback.Failure.self) { _=try await player.run() }
+    #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
+}
 #endif
