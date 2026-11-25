@@ -338,3 +338,46 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     }
     #expect(bridge.connectionIDs==[peer] && session.boundSources==[.phone])
 }
+
+@Test func groupRemoteLabelLastPageMustFinishBeforeOriginalMetadataDeadline() throws {
+    let signals=Array(RemotePiano.keySignals.prefix(12))
+    let group=PerformanceInstrumentGroup(name:"Keys",patch:.init(routes:signals.enumerated().map { index,signal in
+        .init(id:"key-\(index)",source:.phone,signal:signal,destination:.init(.note,number:48+index))
+    },performanceLayout:.init(widgets:signals.enumerated().map { index,signal in
+        .init(source:.phone,signal:signal,label:"Key \(index)")
+    })))
+    for completeInTime in [true,false] {
+        var session=try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowRemote:true)
+        var bridge=PerformanceGroupRemoteBridge()
+        let peer=UUID(),secret=Data(repeating:5,count:32)
+        let sink:(PerformanceGroupCommand)->Bool={ _ in Issue.record("Unexpected MIDI");return true }
+        _=bridge.process([.ready],now:0,session:&session,send:sink)
+        try bridge.issue(secret:secret,source:.phone,now:0,session:session,shareLabels:true)
+        _=bridge.process([.invitation(peer,secret,0)],now:0,session:&session,send:sink)
+        _=bridge.process([.frame(peer,groupRemoteWire("capabilities",7,1),0.25)],now:0.25,session:&session,send:sink)
+        _=bridge.process([.frame(peer,groupRemoteWire("mapping",8,2,",\"page\":0"),0.5)],now:0.5,session:&session,send:sink)
+        for page in 0..<11 {
+            let now=0.75+Double(page)*0.9
+            let batch=bridge.process([.frame(peer,groupRemoteWire("mappingLabels",8,page+3,",\"page\":\(page)"),now)],now:now,session:&session,send:sink)
+            #expect(batch.actions.count==1)
+            if case .some(.mappingLabels(let id,let value))=batch.actions.first {
+                #expect(id==peer && value.page==page && value.pages==12 && value.total==12)
+            } else { Issue.record("Missing consented label page") }
+        }
+        let now=completeInTime ? 10.249 : 10.25
+        let final=bridge.process([.frame(peer,groupRemoteWire("mappingLabels",8,14,",\"page\":11"),now)],now:now,session:&session,send:sink)
+        if completeInTime {
+            #expect(final.actions.count==1)
+            if case .some(.mappingLabels(let id,let value))=final.actions.first {
+                #expect(id==peer && value.page==11 && value.rows.count==1 && value.total==12)
+            } else { Issue.record("Missing final page") }
+            let play=bridge.process([.frame(peer,groupRemoteWire("pianoKeys",5,15,",\"mask\":0"),10.26)],now:10.26,session:&session,send:sink)
+            #expect(play.actions==[.acknowledge(peer,true)])
+            let replay=bridge.process([.frame(peer,groupRemoteWire("mappingLabels",8,16,",\"page\":0"),10.27)],now:10.27,session:&session,send:sink)
+            #expect(replay.actions==[.acknowledge(peer,false)])
+        } else {
+            #expect(final.actions==[.revoke(peer),.acknowledge(peer,false)])
+        }
+        #expect(bridge.connectionIDs.isEmpty && session.boundSources.isEmpty)
+    }
+}

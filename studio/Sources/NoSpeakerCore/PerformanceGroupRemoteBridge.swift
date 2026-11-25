@@ -199,11 +199,21 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                         rows:total == 0 ? [] : [binding.labels[page]])
                     binding.nextLabelPage += 1
                     binding.labelsComplete = binding.nextLabelPage == pages
+                    if binding.labelsComplete {
+                        // The consented snapshot is no longer needed once
+                        // the final response has been built. No refresh.
+                        binding.labels.removeAll()
+                        binding.metadataStartedAt=nil
+                    }
                     result.actions.append(.mappingLabels(id,response))
                 case .heartbeat:
                     result.actions.append(.acknowledge(id,true))
                 default:
                     binding.performanceStarted = true
+                    // Optional labels omitted by a performing client must
+                    // never be retained for a later metadata refresh.
+                    binding.labels.removeAll()
+                    binding.metadataStartedAt=nil
                     result.actions.append(.acknowledge(id,true))
                 }
                 bindings[id] = binding
