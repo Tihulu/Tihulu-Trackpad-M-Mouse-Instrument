@@ -300,10 +300,16 @@ public struct PhysicalClickSessionFence:Sendable {
 public enum PhysicalClickAttribution {
     public static func resolve<Surface:Hashable>(_ touching:Set<Surface>,
         snapshotRevision:UInt64?,currentRevision:UInt64?,receivedAt:Double?,now:Double,
-        clickReceipt:Double? = nil) -> Surface? {
+        clickReceipt:Double? = nil,notBefore:Double? = nil) -> Surface? {
         guard let snapshotRevision, let currentRevision, snapshotRevision == currentRevision,
               let receivedAt, receivedAt.isFinite, now.isFinite, now >= receivedAt,
               now-receivedAt < 0.35, touching.count == 1 else { return nil }
+        if let notBefore {
+            // An event-monitor invalidation retires all earlier contact
+            // observations, including samples still queued for delivery.
+            guard notBefore.isFinite,notBefore>=0,receivedAt>=notBefore,
+                  let clickReceipt,clickReceipt>=notBefore else { return nil }
+        }
         if let clickReceipt {
             // Never attribute an earlier click to a later surface snapshot.
             // Also reject clicks before the monotonic epoch or in the future.

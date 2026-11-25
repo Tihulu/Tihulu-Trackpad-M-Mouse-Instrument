@@ -1255,6 +1255,7 @@ final class StudioController: ObservableObject {
     private var hingeSensor: MacBookHingeAngleSource?
     private var midiTouchBarNotes = TouchBarNoteState()
     private var clickedSurface: TouchSurfaceKind?
+    private var clickAttributionNotBefore:Double?
     private var trackpadClickPressure: Double?
     private var activeMIDINoteMap: [String: ActiveMIDINote] = [:]
 
@@ -4562,6 +4563,10 @@ final class StudioController: ObservableObject {
         helperSustainState.invalidatePhysicalClicks(settings:helperSustainSettings)
         touchSustainState.invalidatePhysicalClicks(settings:touchSustainSettings)
         handlePhysicalClick(false,pressure:0)
+        clearClickAttribution()
+        // Do not re-admit an observation captured before the loss even if
+        // it arrives from the separate touch mailbox after recovery.
+        clickAttributionNotBefore=ProcessInfo.processInfo.systemUptime
     }
 
     private func handlePhysicalClick(_ down: Bool, pressure: Double,receipt:Double? = nil) {
@@ -4572,7 +4577,8 @@ final class StudioController: ObservableObject {
             // Use only the most recent shared, unfiltered monitor snapshot.
             clickedSurface = PhysicalClickAttribution.resolve(clickTouchingSurfaces,
                 snapshotRevision:clickSnapshotRevision,currentRevision:touch?.currentSampleRevision,
-                receivedAt:clickSnapshotReceivedAt,now:ProcessInfo.processInfo.systemUptime,clickReceipt:receipt)
+                receivedAt:clickSnapshotReceivedAt,now:ProcessInfo.processInfo.systemUptime,clickReceipt:receipt,
+                notBefore:clickAttributionNotBefore)
             trackpadClickPressure = clickedSurface == .trackpad && pressure.isFinite && (0...1).contains(pressure) ? pressure : nil
         } else {
             physicalClickDown = false

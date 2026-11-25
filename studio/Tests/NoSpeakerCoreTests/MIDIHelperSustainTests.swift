@@ -621,3 +621,35 @@ import Testing
     let next = engine.update(trackpadContactSizes:[0.9],magicMouseTouching:true,settings:settings)
     #expect(next.trackpadActive && next.magicMouseActive)
 }
+
+@Test func clickAttributionRecoveryRetiresEvenFreshQueuedContactSnapshots() {
+    let one:Set<String>=["trackpad"]
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,
+        receivedAt:1.01,now:1.10,clickReceipt:1.09,notBefore:1.05)==nil)
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,
+        receivedAt:1.06,now:1.10,clickReceipt:1.04,notBefore:1.05)==nil)
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,
+        receivedAt:1.06,now:1.10,notBefore:1.05)==nil)
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,
+        receivedAt:1.06,now:1.10,clickReceipt:1.09,notBefore:1.05)=="trackpad")
+    #expect(PhysicalClickAttribution.resolve(one,snapshotRevision:2,currentRevision:2,
+        receivedAt:1.06,now:1.10,clickReceipt:1.09,notBefore:.nan)==nil)
+}
+
+@Test func clickRecoveryReleasesClickPedalWithoutPulsingIndependentTouchPedal() {
+    var engine=MIDIHelperSustainState()
+    var owners=LegacySustainOwners()
+    let config=MIDIHelperSustainSettings(trackpadEnabled:true,magicMouseEnabled:true,
+        magicMouseGesture:.touchHold,trackpadGesture:.physicalClickToggle)
+    let initial=engine.update(trackpadContactSizes:[0.8],magicMouseTouching:true,settings:config,trackpadClickDown:true)
+    #expect(initial.trackpadActive && initial.magicMouseActive)
+    let on=owners.replaceFrame([.touch:[2],.helper:[2]])
+    #expect(on.map(\.value)==[127])
+    engine.invalidatePhysicalClicks(settings:config)
+    #expect(!engine.snapshot.trackpadActive && engine.snapshot.magicMouseActive)
+    let handoff=owners.replaceFrame([.touch:[],.helper:engine.snapshot.magicMouseActive ? [2] : []])
+    #expect(handoff.isEmpty && owners.active==[2])
+    let idle=engine.update(trackpadContactSizes:[],magicMouseTouching:false,settings:config)
+    let off=owners.replace(.helper,channels:idle.isActive ? [2] : [])
+    #expect(off.map(\.value)==[0] && owners.active.isEmpty)
+}
