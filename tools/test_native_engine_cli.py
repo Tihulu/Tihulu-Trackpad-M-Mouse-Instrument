@@ -26,7 +26,7 @@ assert help_doc["schema"] == 1
 assert help_doc["product"] == "tihulu-mac-instrument-native"
 assert help_doc["platformSupported"] == mac
 assert help_doc["liveOutput"] is False and help_doc["permissionRequests"] is False
-assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]", "gamepad sample --confirm", "midi monitor NAME SECONDS --confirm", "session probe SECONDS --confirm", "midi plan JSON", "midi simulate JSON"}
+assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]", "gamepad sample --confirm", "midi monitor NAME SECONDS --confirm", "session probe SECONDS --confirm", "midi plan JSON", "midi simulate JSON", "midi audit JSON"}
 for command in [("start",), ("midi", "send"), ("preflight", "--request-permissions"),
                 ("midi", "endpoints", "--names", "--send"), ("--unknown",),
                 ("midi", "monitor", "test", "1"), ("midi", "monitor", "test", "0", "--confirm"),
@@ -70,6 +70,14 @@ assert simulation["result"] == {"noteOns": 3, "noteOffs": 3, "peakConcurrentNote
 for bad in ("", "{}", wire.replace('"pitch": 60', '"pitch": 60, "pitch": 61', 1)):
     invoke("midi", "simulate", bad, success=False)
 invoke("midi", "simulate", wire, "--confirm", success=False)
+audit = invoke("midi", "audit", wire)
+assert audit["command"] == "midi audit" and audit["liveOutput"] is False
+assert audit["result"] == {"eventCount": 6, "scenarios": 12, "passedScenarios": 12,
+                           "maximumCleanupDebt": 2, "allCleanAfterRetry": True,
+                           "hardware": False, "receiverConfirmed": False}
+for bad in ("", "{}", "x"*65537, wire.replace('"pitch": 60', '"pitch": 60, "pitch": 61', 1)):
+    invoke("midi", "audit", bad, success=False)
+invoke("midi", "audit", wire, "--confirm", success=False)
 probe = invoke("session", "probe", "1", "--confirm")
 assert probe["command"] == "session probe" and probe["liveOutput"] is False
 assert probe["result"] == {"requestedSeconds": 1, "completed": True, "hardware": False}

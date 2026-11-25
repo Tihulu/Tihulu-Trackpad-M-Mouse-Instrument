@@ -262,9 +262,10 @@
         "midi monitor NAME SECONDS --confirm",
         "session probe SECONDS --confirm",
         "midi plan JSON",
-        "midi simulate JSON"
+        "midi simulate JSON",
+        "midi audit JSON"
       ],
-      "status": "read-only inventory, explicitly confirmed normalized controller snapshots and bounded aggregate MIDI receive observation; no live output or automatic hardware activation; foreground SIGINT/SIGTERM cancellation and portable no-hardware session probe; portable bounded nominal MIDI planning (no output); deterministic offline note-lifecycle simulation"
+      "status": "read-only inventory, explicitly confirmed normalized controller snapshots and bounded aggregate MIDI receive observation; no live output or automatic hardware activation; foreground SIGINT/SIGTERM cancellation and portable no-hardware session probe; portable bounded nominal MIDI planning (no output); deterministic offline note-lifecycle simulation; deterministic bounded audit of ambiguous send failures and owned cleanup retry"
     },
     {
       "id": "native-nominal-playback",

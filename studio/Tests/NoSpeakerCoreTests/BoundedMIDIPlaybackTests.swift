@@ -450,3 +450,23 @@ private func playbackClip() -> MIDIClip {
     #expect(player.state == .faulted && player.fault == .expiredOnset)
     #expect(sent.map(\.value)==[90,0] && player.outstanding.isEmpty)
 }
+
+@Test func boundedMIDIClipAuditChecksEveryAmbiguousEdgeAndOwnedRetry() throws {
+    var schedule=try BoundedMIDIPlayback(clip:playbackClip())
+    let report=try BoundedMIDISimulation.audit(schedule)
+    #expect(report.eventCount==6 && report.scenarios==12 && report.passedScenarios==12)
+    #expect(report.maximumCleanupDebt==2 && report.allCleanAfterRetry)
+    #expect(!report.hardware && !report.receiverConfirmed && schedule.state == .ready)
+    _=try schedule.begin(now:0)
+    #expect(throws:BoundedMIDISimulation.Failure.self) { _=try BoundedMIDISimulation.audit(schedule) }
+}
+
+@Test func boundedMIDIAuditCoversAllMaximumCapacityEdges() throws {
+    let notes=(0..<256).map { index in
+        MIDIClip.Note(start:0,duration:480,channel:index/128,pitch:index%128,velocity:90)
+    }
+    let schedule=try BoundedMIDIPlayback(clip:.init(bpm:120,length:960,notes:notes))
+    let report=try BoundedMIDISimulation.audit(schedule)
+    #expect(report.eventCount==512 && report.scenarios==1024 && report.passedScenarios==1024)
+    #expect(report.maximumCleanupDebt==256 && report.allCleanAfterRetry)
+}
