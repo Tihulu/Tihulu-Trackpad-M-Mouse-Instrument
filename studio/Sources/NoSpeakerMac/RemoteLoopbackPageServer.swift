@@ -15,14 +15,16 @@ public final class RemoteLoopbackPageServer: @unchecked Sendable {
     private func setStatus(_ value: Status) { lock.lock(); state = value; lock.unlock() }
     private let parameters: NWParameters
     public let endpoint: RemoteEndpoint
+    private let groupNeutralHandshake: Bool
     private var attemptStart = 0.0
     private var attempts = 0
     private var listener: NWListener?
     private var connections: [UUID: NWConnection] = [:]
     private var stopped = false
 
-    public init(identity: SecIdentity, endpoint: RemoteEndpoint = .loopback) throws {
+    public init(identity: SecIdentity, endpoint: RemoteEndpoint = .loopback, groupNeutralHandshake:Bool = false) throws {
         self.endpoint = endpoint
+        self.groupNeutralHandshake = groupNeutralHandshake
         guard let localIdentity = sec_identity_create(identity) else { throw RemoteLoopbackTransport.Failure.identity }
         let tls = NWProtocolTLS.Options()
         sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
@@ -81,7 +83,7 @@ public final class RemoteLoopbackPageServer: @unchecked Sendable {
             case .incomplete:
                 if complete { self.close(id) } else { self.read(id, accumulated: next) }
             case .page: self.respond(id, content: Self.page, type: "text/html; charset=utf-8")
-            case .script: self.respond(id, content: Self.script.replacingOccurrences(of: "__REMOTE_ORIGIN__", with: self.endpoint.origin).replacingOccurrences(of: "__REMOTE_SOCKET__", with: self.endpoint.socketURL), type: "text/javascript; charset=utf-8")
+            case .script: self.respond(id, content: Self.script.replacingOccurrences(of: "__REMOTE_ORIGIN__", with: self.endpoint.origin).replacingOccurrences(of: "__REMOTE_SOCKET__", with: self.endpoint.socketURL).replacingOccurrences(of: "__GROUP_NEUTRAL__", with: self.groupNeutralHandshake ? "enabled" : "disabled"), type: "text/javascript; charset=utf-8")
             case .rejected: self.close(id)
             }
         }
@@ -213,6 +215,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function sendTouchEdge(){const edge=touchQueue.shift();send(edge.kind,edge.axes);}
   let caps=null,experimentalWorkload=false,workloadRefusal="";
+  const groupNeutralHandshake="__GROUP_NEUTRAL__"==="enabled";
+  let groupReady=null;
   let releasingAll=false,releaseAllTimer=null;
   let currentView="connection",ackSamples=[];
   const viewNames=["play","setup","connection"];
@@ -383,7 +387,22 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     mappingStage=null;mappingRows=null;mappingLabels=new Map();
   }
   function ready(manifest,rows,labels=new Map()){
-    clearMapping();mappingRows=rows;mappingLabels=labels;caps=manifest;currentView="play";
+    clearMapping();
+    if(groupNeutralHandshake){
+      const surfaces=[manifest.touch,!!manifest.drums,!!manifest.piano,!!manifest.pedals].filter(Boolean).length;
+      if(surfaces!==1||manifest.tilt||manifest.acceleration||manifest.rotation||manifest.airDrums){close("Unsupported group surface.");return;}
+      groupReady={manifest,rows,labels};
+      status.textContent="Arming neutral group controls…";
+      if(manifest.touch)send("release");
+      else if(manifest.drums)send("drumPads",{mask:0});
+      else if(manifest.piano)send("pianoKeys",{mask:0});
+      else send("pedalboard",{mask:0,levels:[0,0,0,0,0,0]});
+      return;
+    }
+    finishReady(manifest,rows,labels);
+  }
+  function finishReady(manifest,rows,labels){
+    mappingRows=rows;mappingLabels=labels;caps=manifest;currentView="play";
     if(!octaveAvailable(0)&&octaveAvailable(1))pianoOctave=1;
     syncControls();renderMapping();status.textContent="Connected. Only mapped controls are available.";
     timer=setInterval(tick,25);tick();
@@ -741,7 +760,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
-    const old=ws;ws=null;admitted=false;caps=null;currentView="connection";ackSamples=[];releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
+    const old=ws;ws=null;admitted=false;caps=null;groupReady=null;currentView="connection";ackSamples=[];releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
     if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();syncControls();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
@@ -854,6 +873,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       }
       if(pending&&pendingKind==="mappingLabels"){
         if(!acceptLabels(e.data))close("Invalid label response. Reconnect explicitly.");return;
+      }
+      if(groupReady){
+        if(!pending||e.data!=="accepted"){close("Group neutral handshake rejected.");return;}
+        const armed=groupReady;groupReady=null;
+        clearDeadline();pending=false;pendingKind=null;
+        finishReady(armed.manifest,armed.rows,armed.labels);return;
       }
       if(!pending||!caps||e.data!=="accepted"){close("Unexpected response.");return;}
       recordAck();clearDeadline();pending=false;const kind=pendingKind;pendingKind=null;
