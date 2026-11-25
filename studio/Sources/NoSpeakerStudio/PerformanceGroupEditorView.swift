@@ -348,6 +348,9 @@ struct PerformanceGroupEditorView: View {
                     Text("Unsaved changes. Save before leaving this screen.").font(.caption).foregroundStyle(.orange)
                 }
                 if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
+                if didLoad && !readFailed {
+                    PerformanceGroupTuningPreviewView(profile:saved,locked:editingLocked || profile != saved)
+                }
                 liveControls
             }.padding(6)
         }.onAppear { load() }
