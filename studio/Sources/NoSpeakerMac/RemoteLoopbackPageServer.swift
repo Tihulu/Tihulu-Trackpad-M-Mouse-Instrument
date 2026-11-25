@@ -458,13 +458,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function syncCustomEditor(editable){
     const available=customIDs.filter(id=>customMapped(id)&&!details.custom.includes(id));
-    const chosen=details.custom.filter(customMapped);
-    const key=JSON.stringify([available,chosen,available.map(customLabel),chosen.map(customLabel)]);
+    const chosen=details.custom;
+    const chosenLabel=id=>customMapped(id)?customLabel(id):((id[0]==="d"?"Pad ":"Pedal ")+(Number(id[1])+1)+" (not mapped)");
+    const key=JSON.stringify([available,chosen,available.map(customLabel),chosen.map(chosenLabel)]);
     if(key!==customOptionsKey){
       for(const [id,ids] of [["customAddChoice",available],["customChoice",chosen]]){
         const control=get(id),before=control.value;
         control.replaceChildren(...ids.map(value=>{
-          const option=document.createElement("option");option.value=value;option.textContent=customLabel(value);return option;
+          const option=document.createElement("option");option.value=value;option.textContent=id==="customChoice"?chosenLabel(value):customLabel(value);return option;
         }));
         control.value=ids.includes(before)?before:(ids[0]??"");
       }
@@ -481,19 +482,18 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function changeCustom(action){
     if(!canEditLayout())return;
     const id=get(action==="add"?"customAddChoice":"customChoice").value;
-    if(!customMapped(id))return;
-    const chosen=details.custom.filter(customMapped),index=chosen.indexOf(id);
+    if(!customIDs.includes(id))return;
+    const chosen=details.custom,index=chosen.indexOf(id);
     if(action==="add"){
-      if(details.custom.includes(id)||details.custom.length>=8)return;
+      if(!customMapped(id)||details.custom.includes(id)||details.custom.length>=8)return;
       details.custom.push(id);
     }else if(action==="remove"){
       if(index<0)return;details.custom=details.custom.filter(x=>x!==id);
-    }else{
+    }else if(action==="up"||action==="down"){
       const next=index+(action==="up"?-1:1);
       if(index<0||next<0||next>=chosen.length)return;
-      const a=details.custom.indexOf(id),b=details.custom.indexOf(chosen[next]);
-      [details.custom[a],details.custom[b]]=[details.custom[b],details.custom[a]];
-    }
+      [chosen[index],chosen[next]]=[chosen[next],chosen[index]];
+    }else{return;}
     clearLayoutDrag();layoutMessage="Custom panel changed. Save to retain it.";applyLayout();syncLayout();
   }
   function syncSliderEditor(editable){
