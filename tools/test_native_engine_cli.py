@@ -23,12 +23,12 @@ assert help_doc["schema"] == 1
 assert help_doc["product"] == "tihulu-mac-instrument-native"
 assert help_doc["platformSupported"] == mac
 assert help_doc["liveOutput"] is False and help_doc["permissionRequests"] is False
-assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]", "midi monitor NAME SECONDS --confirm"}
+assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]", "gamepad devices [--names]", "gamepad sample --confirm", "midi monitor NAME SECONDS --confirm"}
 for command in [("start",), ("midi", "send"), ("preflight", "--request-permissions"),
                 ("midi", "endpoints", "--names", "--send"), ("--unknown",),
                 ("midi", "monitor", "test", "1"), ("midi", "monitor", "test", "0", "--confirm"),
                 ("midi", "monitor", "test", "11", "--confirm"), ("midi", "monitor", "test", "01", "--confirm"),
-                ("midi", "monitor", "test", "1", "--confirm", "--names"), ("preflight", "--names"), ("gamepad", "devices", "--bind"), ("gamepad", "devices", "--names", "--names")]:
+                ("midi", "monitor", "test", "1", "--confirm", "--names"), ("preflight", "--names"), ("gamepad", "devices", "--bind"), ("gamepad", "devices", "--names", "--names"), ("gamepad", "sample"), ("gamepad", "sample", "--confirm", "--names"), ("gamepad", "sample", "--confirm", "--confirm")]:
     invoke(*command, success=False)
 
 if mac:
@@ -73,9 +73,23 @@ if mac:
             assert ("name" in device) == named
             if named:
                 assert 0 < len(device["name"]) <= 128
+    sample = invoke("gamepad", "sample", "--confirm")
+    assert sample["command"] == "gamepad sample" and sample["liveOutput"] is False
+    value = sample["result"]
+    count = value["connectedCount"]
+    assert type(count) is int and count >= 0
+    assert len(value["devices"]) == min(16, count)
+    assert value["omittedCount"] == max(0, count-16)
+    for ordinal, device in enumerate(value["devices"], 1):
+        assert device["ordinal"] == ordinal
+        assert device["status"] in {"sampled", "unsupported", "invalid", "disconnected"}
+        assert set(device) == ({"ordinal", "status", "active"} if device["status"] == "sampled" else {"ordinal", "status"})
+        if device["status"] == "sampled":
+            assert len(device["active"]) <= 18
+            assert all(type(v) in (int, float) and 0 <= v <= 1 for v in device["active"].values())
 else:
     for command in [("preflight",), ("midi", "endpoints"), ("midi", "endpoints", "--names"),
-                    ("gamepad", "devices"), ("gamepad", "devices", "--names"),
+                    ("gamepad", "devices"), ("gamepad", "devices", "--names"), ("gamepad", "sample", "--confirm"),
                     ("midi", "monitor", "test", "1", "--confirm")]:
         assert "requires macOS" in invoke(*command, success=False)
 
