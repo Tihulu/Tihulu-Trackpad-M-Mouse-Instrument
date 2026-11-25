@@ -159,6 +159,8 @@ final class StudioController: ObservableObject {
     @Published private(set) var groupStoppedIDs: Set<UUID> = []
     private var groupGamepadTokens: [SensorSource:UUID] = [:]
     private var groupSurfaceMailbox: PatchSurfaceMailbox?
+    private var groupHinge: MacBookHingeAngleSource?
+    private var groupNativeBar = false
     private var groupSurfaceOrientation: SurfaceOrientation = .horizontal
     private var groupRunToken: UUID?
     private var groupWatchdog: Task<Void,Never>?
@@ -186,7 +188,7 @@ final class StudioController: ObservableObject {
         }
         let routes = profile.groups.flatMap { $0.patch.routes }
         let sources = Set(routes.map(\.source))
-        guard PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true),
+        guard PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true,allowScalars:true),
               (allowLayering || profile.layeredInputs.isEmpty) else {
             groupGamepadStatus = "Use a valid saved local group profile and explicitly approve shared signals."
             return
@@ -208,7 +210,7 @@ final class StudioController: ObservableObject {
             return
         }
         do {
-            try groupHost.startGamepads(profile:profile,allowLayering:allowLayering,allowSurfaces:true)
+            try groupHost.startGamepads(profile:profile,allowLayering:allowLayering,allowSurfaces:true,allowScalars:true)
         } catch {
             builderGamepads.stop()
             refreshGroupOutputState()
@@ -239,6 +241,31 @@ final class StudioController: ObservableObject {
             guard touchPreviewRunning else {
                 stopGroupGamepads()
                 groupGamepadStatus = "Surface monitoring could not start; group output stopped."
+                return
+            }
+        }
+        if sources.contains(.touchBar) {
+            groupNativeBar = true
+            installTouchBar()
+        }
+        if sources.contains(.lid) {
+            let sensor = MacBookHingeAngleSource()
+            groupHinge = sensor
+            sensor.onAngle = { [weak self, weak sensor] degrees in
+                guard let self, let sensor, self.groupHinge === sensor, self.groupRunToken == token else { return }
+                self.receiveGroupScalar(.lid,value:PhysicalPatchRuntime.normalizedLid(degrees),run:token)
+            }
+            sensor.onLoss = { [weak self, weak sensor] reason in
+                guard let self, let sensor, self.groupHinge === sensor, self.groupRunToken == token else { return }
+                self.groupHinge = nil
+                self.retireGroupScalar(.lid,reason:reason,run:token)
+            }
+            let started = sensor.start()
+            guard groupRunToken == token else { sensor.stop(); return }
+            if !started {
+                let reason = sensor.status
+                stopGroupGamepads()
+                groupGamepadStatus = "Lid input could not start: " + reason
                 return
             }
         }
@@ -289,6 +316,25 @@ final class StudioController: ObservableObject {
         if let result = groupHost.receiveGamepad(source,token:token,frame:frame,now:ProcessInfo.processInfo.systemUptime) {
             consumeGroupReports(result.reports)
         }
+    }
+
+    private func receiveGroupScalar(_ source:SensorSource,value:Double?,run:UUID) {
+        guard groupRunToken == run, let token = groupGamepadTokens[source] else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let result = groupHost.receiveScalar(source,token:token,value:value,hostTime:now,now:now) else { return }
+        consumeGroupReports(result.reports)
+        if source == .lid, result.status == .lost || result.status == .waitingForNeutral {
+            groupHinge?.stop()
+            groupHinge = nil
+            retireGroupScalar(source,reason:"Lid input lost or stalled. Restart to rebind.",run:run)
+        }
+    }
+
+    private func retireGroupScalar(_ source:SensorSource,reason:String,run:UUID) {
+        guard groupRunToken == run, let token = groupGamepadTokens.removeValue(forKey:source) else { return }
+        consumeGroupReports(groupHost.unbindGamepad(source,token:token))
+        if groupGamepadTokens.isEmpty { stopGroupGamepads() }
+        groupGamepadStatus = reason + (groupCleanupIDs.isEmpty ? "" : " MIDI cleanup pending.")
     }
 
     private func drainGroupSurfaces(run:UUID) {
@@ -342,6 +388,12 @@ final class StudioController: ObservableObject {
         // Release MIDI before potentially slow native monitor teardown.
         if let report = groupHost.panic() { consumeGroupReports([report]) }
         builderGamepads.stop()
+        groupHinge?.stop()
+        groupHinge = nil
+        if groupNativeBar {
+            groupNativeBar = false
+            installTouchBar()
+        }
         if let mailbox = groupSurfaceMailbox {
             touch?.setPatchMailbox(nil)
             mailbox.close()
@@ -1086,9 +1138,13 @@ final class StudioController: ObservableObject {
         recordPatchCommands(commands)
     }
 
-    var builderBarToken: UUID? { patchNativeBar ? patchNativeToken : nil }
+    var builderBarToken: UUID? { groupNativeBar ? groupRunToken : (patchNativeBar ? patchNativeToken : nil) }
 
     func builderBarValue(_ value: Double?, token: UUID) {
+        if groupNativeBar, groupRunToken == token {
+            receiveGroupScalar(.touchBar,value:value,run:token)
+            return
+        }
         guard patchNativeBar, token == patchNativeToken else { return }
         receiveBuilderScalar(.touchBar, value: value)
     }
@@ -2006,6 +2062,7 @@ final class StudioController: ObservableObject {
     /// Explicit reconnect releases the old bar owners before replacing controls.
     /// No note or MIDI output is armed by this action.
     func reconnectNativeTouchBar() {
+        if groupNativeBar { stopGroupGamepads() }
         retireTouchBarGesturesForReplacement()
         if patchNativeBar { receiveBuilderScalar(.touchBar, value: nil) }
         nativeTouchBarItemRequests = 0
@@ -2015,6 +2072,7 @@ final class StudioController: ObservableObject {
     }
 
     func setTouchBarProfile(_ proposed: TouchBarProfile) {
+        guard !groupGamepadsRunning else { lastError = "Stop group MIDI before changing Touch Bar layout."; return }
         let next = proposed.normalized()
         guard next != touchBarProfile else { return }
         // Stop the old producer before replacing its target or channel.
@@ -2046,6 +2104,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarKey(_ note: Int, pressed: Bool, owner: TouchBarNoteOwner = .screenPiano) {
+        guard !groupGamepadsRunning else { return }
         if touchBarProfile.effectiveOutput.sendsHaptics {
             guard touchBarOutputArmed else { return }
             let commands = touchBarLocalState.key(note, owner: owner, pressed: pressed,
@@ -2068,6 +2127,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarValue(_ zone: TouchBarZone, normalized value: Double, releaseOnly: Bool = false) {
+        guard !groupGamepadsRunning else { return }
         guard value.isFinite, [.pitchBend, .fretless, .vibrato, .expression, .filter, .wah].contains(zone) else { return }
         if touchBarProfile.effectiveOutput.sendsHaptics {
             guard touchBarOutputArmed, value.isFinite else { return }
@@ -2114,6 +2174,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarSustainPressed(_ isPressed: Bool) {
+        guard !groupGamepadsRunning else { return }
         if touchBarProfile.effectiveOutput.sendsHaptics {
             guard touchBarOutputArmed else { return }
             let next = touchBarProfile.sustainMode == .toggle
@@ -2137,6 +2198,7 @@ final class StudioController: ObservableObject {
     }
 
     func touchBarNativeTap(_ note: Int) {
+        guard !groupGamepadsRunning else { return }
         guard !touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed else { return }
         let token = UUID()
         nativePianoTokens[note] = token
@@ -2260,7 +2322,7 @@ final class StudioController: ObservableObject {
 
     /// An explicit read-only probe never routes a sample to MIDI or haptics.
     func probeLidSensor() {
-        guard !liveHingeEnabled, patchHinge == nil else {
+        guard !liveHingeEnabled, patchHinge == nil, !groupGamepadsRunning else {
             hingeProbeStatus = "Stop live lid input before probing."
             return
         }
