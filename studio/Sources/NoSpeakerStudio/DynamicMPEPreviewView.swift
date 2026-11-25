@@ -44,9 +44,10 @@ struct DynamicMPEPreviewView: View {
                                 Text("Bend " + String(bend) + " · " + String(group.plan.channelsPerBend[bend] ?? 0) + " members")
                             }
                             ForEach(group.routes,id:\.mappingID) { route in
-                                Text(route.source.rawValue + " / " + route.signal.rawValue + " → " +
-                                     (route.logical.kind == .note ? "Note " + String(route.logical.number) : route.logical.kind.rawValue) +
-                                     " · possible CH " + route.possibleChannels.map(String.init).joined(separator:", "))
+                                let input = route.source.rawValue + " / " + route.signal.rawValue
+                                let target = route.logical.kind == .note ? "Note " + String(route.logical.number) : route.logical.kind.rawValue
+                                let channels = route.possibleChannels.map { String($0) }.joined(separator:", ")
+                                Text(input + " → " + target + " · possible CH " + channels)
                             }
                         }.font(.caption)
                     }
