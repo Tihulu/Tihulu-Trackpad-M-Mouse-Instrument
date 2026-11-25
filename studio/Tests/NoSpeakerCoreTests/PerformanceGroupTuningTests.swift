@@ -258,3 +258,55 @@ private func groupTunedSnapshot(_ down:Bool = false) throws -> GamepadFrame {
         try PerformanceGroupTuningConfiguration.read(other,matching:profile)
     }
 }
+
+
+@Test func groupDAWPreviewUsesWireChannelsAndIndependentPortIdentity() throws {
+    let a = tunedGroup(.gamepad1,channel:3)
+    let b = tunedGroup(.gamepad2,channel:3)
+    let c = tunedGroup(.gamepad3,channel:9)
+    let profile = PerformanceGroupProfile(groups:[a,b,c])
+    let configuration = try PerformanceGroupTuningConfiguration(profile:profile,
+        tuning:[a.id:groupTuning(-20),b.id:groupTuning(20)])
+    let preview = try PerformanceGroupDAWProjection(profile:profile,configuration:configuration)
+    let first = try #require(preview.groups.first(where:{ $0.id == a.id }))
+    let second = try #require(preview.groups.first(where:{ $0.id == b.id }))
+    let standard = try #require(preview.groups.first(where:{ $0.id == c.id }))
+    #expect(Set(preview.groups.map(\.port)).count == 3)
+    #expect(first.port == a.plannedPortName && second.port == b.plannedPortName)
+    #expect(first.mode == .lowerMPE && first.masterChannel == 1)
+    #expect(first.members.map(\.channel) == [2,3])
+    #expect(first.members[0].bend < 8192 && second.members[0].bend > 8192)
+    #expect(first.routes.filter { $0.logical.kind == .note }.map(\.channel) == [2,3])
+    #expect(first.routes.filter { $0.logical.kind != .note }.map(\.channel) == [1,1])
+    #expect(first.routes.allSatisfy { $0.logical.channel == 3 })
+    #expect(first.channels == [1,2,3])
+    #expect(standard.mode == .standard && standard.masterChannel == nil && standard.members.isEmpty)
+    #expect(standard.channels == [10] && standard.routes.allSatisfy { $0.logical == $0.wire })
+    let plan = try configuration.plan(matching:profile)
+    for group in preview.groups {
+        for route in group.routes {
+            let item = PerformanceGroupCommand(groupID:group.id,command:.init(route.logical,value:0))
+            #expect(plan.translate(item)?.command.destination == route.wire)
+        }
+    }
+}
+
+@Test func groupDAWPreviewNeverFallsBackAfterStaleTuningAndPreservesRename() throws {
+    let a = tunedGroup(.gamepad1)
+    let b = tunedGroup(.gamepad2)
+    let profile = PerformanceGroupProfile(groups:[a,b])
+    let configuration = try PerformanceGroupTuningConfiguration(profile:profile,tuning:[a.id:groupTuning(-20)])
+    var renamed = profile
+    renamed.groups[0].name = "New name"
+    renamed.groups.swapAt(0,1)
+    let preview = try PerformanceGroupDAWProjection(profile:renamed,configuration:configuration)
+    #expect(preview.groups.map(\.id) == [b.id,a.id])
+    #expect(preview.groups[1].name == "New name" && preview.groups[1].port == a.plannedPortName)
+    #expect(preview.groups[1].mode == .lowerMPE)
+    renamed.groups[1].patch.routes[0].destination.number = 67
+    #expect(throws:PerformanceGroupTuningConfiguration.ConfigurationError.staleProfile) {
+        try PerformanceGroupDAWProjection(profile:renamed,configuration:configuration)
+    }
+    let explicitlyStandard = try PerformanceGroupDAWProjection(profile:renamed)
+    #expect(explicitlyStandard.groups.allSatisfy { $0.mode == .standard })
+}
