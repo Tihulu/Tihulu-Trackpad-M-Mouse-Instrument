@@ -149,10 +149,16 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 @media(max-width:420px){#pedalGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #playView>section[data-wide=true]{grid-column:1/-1}
 @media(min-width:800px){#playView>section[data-wide=false]{grid-column:span 1}}
-#playView[data-size=compact] #pad,#playView[data-size=compact] #pianoBoard{height:clamp(130px,28vh,220px)}
-#playView[data-size=large] #pad,#playView[data-size=large] #pianoBoard{height:clamp(220px,55vh,430px)}
-#playView[data-size=compact] #drumGrid button{min-height:56px}
-#playView[data-size=large] #drumGrid button{min-height:110px}
+#touchSection[data-size=compact] #pad,#pianoSection[data-size=compact] #pianoBoard{height:clamp(130px,28vh,220px)}
+#touchSection[data-size=large] #pad,#pianoSection[data-size=large] #pianoBoard{height:clamp(220px,55vh,430px)}
+#drumSection[data-size=compact] #drumGrid button{min-height:56px}
+#drumSection[data-size=large] #drumGrid button{min-height:110px}
+#pedalSection[data-size=compact] #pedalGrid button{min-height:44px}
+#pedalSection[data-size=large] #pedalGrid button{min-height:76px}
+#drumGrid[data-columns="2"],#pedalGrid[data-columns="2"]{grid-template-columns:repeat(2,minmax(0,1fr))}
+#drumGrid[data-columns="3"],#pedalGrid[data-columns="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}
+#drumGrid[data-columns="4"],#pedalGrid[data-columns="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:360px){#drumGrid[data-columns="4"],#pedalGrid[data-columns="4"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #layoutSection select{max-width:100%;font:inherit;padding:10px;background:#252525;color:inherit}
 #layoutSection button{min-height:44px}
 #layoutDragList{display:grid;gap:4px;max-width:460px}
@@ -178,6 +184,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <button id="layoutUp" type="button">Move earlier</button><button id="layoutDown" type="button">Move later</button>
 <button id="layoutWide" type="button" aria-pressed="false">Full width on tablet</button>
 <label for="layoutSize">Playing surface size</label><select id="layoutSize"><option value="normal">Normal</option><option value="compact">Compact</option><option value="large">Large</option></select>
+<label for="panelSize">Selected panel size</label><select id="panelSize"><option value="inherit">Use overall size</option><option value="compact">Compact</option><option value="normal">Normal</option><option value="large">Large</option></select>
+<label for="panelColumns">Selected grid columns</label><select id="panelColumns"><option value="auto">Automatic</option><option value="2">2 columns</option><option value="3">3 columns</option><option value="4">4 columns</option></select>
 <button id="layoutSave" type="button">Save on this browser</button><button id="layoutReset" type="button">Reset layout</button>
 <p id="layoutStatus" role="status"></p><small>Only presentation preferences are stored locally. Release and disable controls before editing. No invitation, mapping or device name is stored.</small></section></div>
 <div id="playView" hidden><section id="touchSection" hidden><div id="pad" aria-label="XY touch surface" aria-disabled="true"><span>Touch and move</span><div id="dot" hidden></div></div>
@@ -261,6 +269,25 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }catch{}
     return defaultLayout();
   }
+  // The additional preferences are independent of the v1 panel layout.
+  // Existing saved layouts require no migration or rewriting.
+  const detailKey="tihulu.remote.panel-details.v1";
+  const sizedPanels=["touchSection","drumSection","pianoSection","pedalSection"];
+  const gridPanels=["drumSection","pedalSection"];
+  const defaultDetails=()=>({version:1,sizes:{},columns:{}});
+  function validDetails(d){
+    const record=v=>v&&typeof v==="object"&&!Array.isArray(v);
+    return record(d)&&Object.keys(d).sort().join(",")==="columns,sizes,version"&&d.version===1&&
+      record(d.sizes)&&Object.entries(d.sizes).every(([k,v])=>sizedPanels.includes(k)&&["compact","normal","large"].includes(v))&&
+      record(d.columns)&&Object.entries(d.columns).every(([k,v])=>gridPanels.includes(k)&&["2","3","4"].includes(v));
+  }
+  function loadDetails(){
+    try{const raw=window.localStorage?.getItem(detailKey);
+      if(typeof raw==="string"&&raw.length<=1024){const d=JSON.parse(raw);if(validDetails(d))return d;}
+    }catch{}
+    return defaultDetails();
+  }
+  let details=loadDetails();
   let layout=loadLayout(),layoutMessage="",layoutOptionsKey="",layoutSyncKey="";
   let layoutDrag=null,layoutHandles=[],layoutHandleEpoch=0;
   function availablePanels(){
@@ -282,9 +309,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       const element=get(id);
       element.style.order=String(index);
       element.setAttribute("data-wide",String(layout.wide.includes(id)));
+      element.setAttribute("data-size",details.sizes[id]??layout.size);
       play.appendChild(element);
     }
     play.setAttribute("data-size",layout.size);
+    get("drumGrid").setAttribute("data-columns",details.columns.drumSection??"auto");
+    get("pedalGrid").setAttribute("data-columns",details.columns.pedalSection??"auto");
   }
   function clearLayoutDrag(){
     layoutDrag=null;
@@ -384,7 +414,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }
     const editable=Boolean(canEditLayout()),selected=panel.value,index=available.indexOf(selected);
     if(!editable&&layoutDrag)clearLayoutDrag();
-    const stateKey=JSON.stringify([editable,key,selected,layout.wide,layout.size,layoutMessage]);
+    const stateKey=JSON.stringify([editable,key,selected,layout.wide,layout.size,details,layoutMessage]);
     if(stateKey===layoutSyncKey)return;
     layoutSyncKey=stateKey;
     panel.disabled=!editable||available.length===0;
@@ -394,6 +424,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("layoutWide").disabled=!editable||index<0;
     get("layoutWide").setAttribute("aria-pressed",String(layout.wide.includes(selected)));
     get("layoutSize").value=layout.size;get("layoutSize").disabled=!editable;
+    get("panelSize").value=details.sizes[selected]??"inherit";
+    get("panelSize").disabled=!editable||!sizedPanels.includes(selected)||index<0;
+    get("panelColumns").value=details.columns[selected]??"auto";
+    get("panelColumns").disabled=!editable||!gridPanels.includes(selected)||index<0;
     get("layoutSave").disabled=get("layoutReset").disabled=!editable;
     textIfChanged("layoutStatus",!editable&&caps?"Release and disable controls to edit.":layoutMessage);
   }
@@ -416,17 +450,31 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     layout.size=get("layoutSize").value;
     layoutMessage="Layout changed. Save to retain it.";applyLayout();syncLayout();
   }
+  function changePanelDetail(kind){
+    const id=get("layoutPanel").value;
+    if(!canEditLayout()||!availablePanels().includes(id))return;
+    const sizing=kind==="sizes",control=get(sizing?"panelSize":"panelColumns"),value=control.value;
+    if(!(sizing?sizedPanels:gridPanels).includes(id))return;
+    const choices=sizing?["inherit","compact","normal","large"]:["auto","2","3","4"];
+    if(!choices.includes(value))return;
+    clearLayoutDrag();
+    if(value===choices[0])delete details[kind][id];else details[kind][id]=value;
+    layoutMessage="Layout changed. Save to retain it.";applyLayout();syncLayout();
+  }
   function saveLayout(){
-    if(!canEditLayout()||!validLayout(layout))return;
-    try{window.localStorage.setItem(layoutKey,JSON.stringify(layout));layoutMessage="Saved on this browser.";}
-    catch{layoutMessage="Storage unavailable. Layout remains in this page only.";}
+    if(!canEditLayout()||!validLayout(layout)||!validDetails(details))return;
+    try{
+      window.localStorage.setItem(layoutKey,JSON.stringify(layout));
+      window.localStorage.setItem(detailKey,JSON.stringify(details));
+      layoutMessage="Saved on this browser.";
+    }catch{layoutMessage="Storage unavailable or incomplete. Current layout remains in this page.";}
     syncLayout();
   }
   function resetLayout(){
     if(!canEditLayout())return;
     clearLayoutDrag();
-    layout=defaultLayout();
-    try{window.localStorage.removeItem(layoutKey);layoutMessage="Default layout restored.";}
+    layout=defaultLayout();details=defaultDetails();
+    try{window.localStorage.removeItem(layoutKey);window.localStorage.removeItem(detailKey);layoutMessage="Default layout restored.";}
     catch{layoutMessage="Default layout restored for this page; saved data could not be removed.";}
     applyLayout();syncLayout();
   }
@@ -1209,6 +1257,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("layoutDown").addEventListener("click",()=>changePanelOrder(1));
   get("layoutWide").addEventListener("click",changePanelWidth);
   get("layoutSize").addEventListener("change",changeLayoutSize);
+  get("panelSize").addEventListener("change",()=>changePanelDetail("sizes"));
+  get("panelColumns").addEventListener("change",()=>changePanelDetail("columns"));
   get("layoutSave").addEventListener("click",saveLayout);
   get("layoutReset").addEventListener("click",resetLayout);
   for(const v of viewNames)get(navId(v)).addEventListener("click",()=>chooseView(v));

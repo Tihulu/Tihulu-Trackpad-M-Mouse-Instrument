@@ -13,7 +13,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){this.children=this.children.filter(x=>x!==child);this.children.push(child);return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
@@ -837,5 +837,37 @@ test("obsolete mobile drag handles cannot mutate a rebuilt layout",()=>{
   old.emit("pointerdown",layoutPointer(1,5));
   old.emit("pointerup",layoutPointer(1,220));
   assert.equal(a.elements.pianoSection.style.order,"0");
+  assert.equal(a.socket.frames.length,0);
+});
+
+test("per-panel presentation overrides inherit, persist and retain original MIDI masks",()=>{
+  const stored=new Map(),a=setup("granted",fullManifest,false,true,false,stored);
+  a.elements.navSetup.emit("click");
+  a.elements.layoutPanel.value="drumSection";a.elements.layoutPanel.emit("change");
+  a.elements.panelSize.value="large";a.elements.panelSize.emit("change");
+  a.elements.panelColumns.value="2";a.elements.panelColumns.emit("change");
+  a.elements.layoutSize.value="compact";a.elements.layoutSize.emit("change");
+  assert.equal(a.elements.drumSection.attributes["data-size"],"large");
+  assert.equal(a.elements.touchSection.attributes["data-size"],"compact");
+  assert.equal(a.elements.drumGrid.attributes["data-columns"],"2");
+  a.elements.layoutSave.emit("click");
+  const b=setup("granted",fullManifest,false,true,false,stored);
+  assert.equal(b.elements.drumSection.attributes["data-size"],"large");
+  assert.equal(b.elements.drumGrid.attributes["data-columns"],"2");
+  b.elements.drumEnable.emit("click");b.elements.drum3.emit("pointerdown",drumEvent(2));
+  assert.equal(b.socket.frames.at(-1).mask,8);
+  b.ack();b.elements.drum3.emit("pointerup",drumEvent(2));b.step();b.ack();
+  assert.equal(b.socket.frames.at(-1).mask,0);
+});
+test("invalid detail data cannot override mapped controls or layout",()=>{
+  const stored=new Map([["tihulu.remote.panel-details.v1",JSON.stringify({version:1,sizes:{touchSection:"huge"},columns:{drumSection:"99"}})]]);
+  const a=setup("granted",fullManifest,false,true,false,stored);
+  assert.equal(a.elements.touchSection.attributes["data-size"],"normal");
+  assert.equal(a.elements.drumGrid.attributes["data-columns"],"auto");
+  a.elements.navSetup.emit("click");
+  a.elements.layoutPanel.value="tiltSection";a.elements.layoutPanel.emit("change");
+  assert.equal(a.elements.panelSize.disabled,true);
+  a.elements.panelSize.value="large";a.elements.panelSize.emit("change");
+  assert.equal(a.elements.tiltSection.attributes["data-size"],"normal");
   assert.equal(a.socket.frames.length,0);
 });
