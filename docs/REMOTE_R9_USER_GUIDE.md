@@ -42,3 +42,5 @@ Use P01-P14 in [acceptance matrix](REMOTE_R9_ACCEPTANCE_MATRIX.md). Record exact
 ### Local performance layout (experimental)
 
 In Setup, choose a mapped panel, move it earlier/later, toggle tablet full width, or select compact/normal/large playing surfaces. Release and disable controls before editing. Save stores only a versioned fixed-panel presentation preference in this browser; Reset restores the default and removes it. It never stores pairing codes, host mappings, device labels or active state. Unsupported/malformed stored data falls back to default. A different browser has its own layout. This is panel arrangement, not arbitrary new MIDI mapping or a freeform pixel editor.
+
+Panel handles also accept touch/pointer drag to reorder mapped sections; move buttons remain a keyboard-accessible alternative. Reordering happens only on a completed idle drag. Cancellation, disconnect or leaving Setup discards the gesture. This does not create new controls or change their host assignments.

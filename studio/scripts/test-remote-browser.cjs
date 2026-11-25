@@ -13,7 +13,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){this.children=this.children.filter(x=>x!==child);this.children.push(child);return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["layoutSection","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
@@ -775,4 +775,39 @@ test("layout preferences never change host admission and storage failure remains
   assert.equal(a.socket.frames.at(-1).mask,1);
   a.ack();a.elements.drum0.emit("pointerup",drumEvent(1));a.step();a.ack();
   assert.equal(a.socket.frames.at(-1).mask,0);
+});
+
+
+function layoutDragRows(a){
+  const handles=a.elements.layoutDragList.children;
+  handles.forEach((h,i)=>h.getBoundingClientRect=()=>({top:i*48,height:44,width:200,left:0}));
+  return handles;
+}
+function layoutPointer(pointerId,clientY){return {pointerId,clientY,button:0,preventDefault(){}};}
+test("mobile pointer drag reorders mapped panels without any musical messages",()=>{
+  const a=setup("granted",fullManifest,false);
+  a.elements.navSetup.emit("click");
+  const handles=layoutDragRows(a),piano=handles[2];
+  piano.emit("pointerdown",layoutPointer(1,110));
+  piano.emit("pointermove",layoutPointer(1,5));
+  assert.equal(handles[0].attributes["data-target"],"true");
+  piano.emit("pointerup",layoutPointer(1,5));
+  assert.equal(a.elements.playView.children[0],a.elements.pianoSection);
+  assert.equal(a.elements.playView.children[1],a.elements.touchSection);
+  assert.equal(a.elements.playView.children[2],a.elements.drumSection);
+  assert.equal(a.socket.frames.length,0);
+});
+test("mobile layout drag cancellation and stale pointer cannot reorder",()=>{
+  const a=setup("granted",fullManifest,false);
+  a.elements.navSetup.emit("click");
+  const handles=layoutDragRows(a),piano=handles[2];
+  piano.emit("pointerdown",layoutPointer(1,110));
+  piano.emit("pointercancel",layoutPointer(1,5));
+  piano.emit("pointerup",layoutPointer(1,5));
+  assert.equal(a.elements.pianoSection.style.order,"2");
+  piano.emit("pointerdown",layoutPointer(2,110));
+  a.elements.navPlay.emit("click");
+  piano.emit("pointerup",layoutPointer(2,5));
+  assert.equal(a.elements.pianoSection.style.order,"2");
+  assert.equal(a.socket.frames.length,0);
 });

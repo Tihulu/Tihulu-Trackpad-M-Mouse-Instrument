@@ -155,6 +155,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #playView[data-size=large] #drumGrid button{min-height:110px}
 #layoutSection select{max-width:100%;font:inherit;padding:10px;background:#252525;color:inherit}
 #layoutSection button{min-height:44px}
+#layoutDragList{display:grid;gap:4px;max-width:460px}
+#layoutDragList button{margin:0;text-align:left;touch-action:none;user-select:none}
+#layoutDragList button[data-target=true]{border-color:#e5a33b;background:#4c3820}
 </style></head>
 <body><h1>TIHULU Remote</h1><p>Local MIDI performance controller · Experimental</p>
 <div id="remoteBar"><nav aria-label="Controller views"><button id="navPlay" aria-pressed="false" disabled>Play</button><button id="navSetup" aria-pressed="false" disabled>Setup</button><button id="navConnection" aria-pressed="true">Connection</button></nav><button id="releaseAll" disabled>Release my controls</button><button id="disconnect" disabled>Disconnect / release</button><p id="navStatus" role="status"></p><p id="playWorkloadStatus" role="status"></p><p id="status" role="status" aria-live="polite">Not connected.</p><small id="ackLatency">Mac ACK round trip: no sample.</small></div>
@@ -169,6 +172,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <small>Conservative mode allows one touch, drum, piano or pedal surface plus up to two motion streams, or all three motion streams alone. Experimental mode permits additional mapped combinations but may interrupt performance; the same safety limits apply. Change mode only when all controls are disabled and released.</small></section>
 <section id="layoutSection" hidden aria-labelledby="layoutTitle"><h2 id="layoutTitle">My performance layout</h2>
 <p>Arrange the mapped panels on this browser. Layout does not change Mac mappings or enable any controls.</p>
+<p><small>Drag a panel handle to another row to reorder, or use the move buttons below.</small></p>
+<div id="layoutDragList" aria-label="Panel reorder handles"></div>
 <label for="layoutPanel">Panel</label><select id="layoutPanel"></select>
 <button id="layoutUp" type="button">Move earlier</button><button id="layoutDown" type="button">Move later</button>
 <button id="layoutWide" type="button" aria-pressed="false">Full width on tablet</button>
@@ -257,6 +262,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     return defaultLayout();
   }
   let layout=loadLayout(),layoutMessage="",layoutOptionsKey="",layoutSyncKey="";
+  let layoutDrag=null,layoutHandles=[];
   function availablePanels(){
     if(!caps)return [];
     const available=[caps.touch,Boolean(caps.drums),Boolean(caps.piano),Boolean(caps.pedals),caps.tilt,caps.acceleration||caps.rotation];
@@ -275,12 +281,78 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }
     play.setAttribute("data-size",layout.size);
   }
+  function clearLayoutDrag(){
+    layoutDrag=null;
+    for(const h of layoutHandles)h.button.setAttribute("data-target","false");
+  }
+  function dragTarget(y){
+    if(!Number.isFinite(y)||!layoutHandles.length)return null;
+    // The handles are a small fixed list; no host-provided geometry.
+    for(const h of layoutHandles){
+      const rect=h.button.getBoundingClientRect();
+      if(!Number.isFinite(rect.top)||!Number.isFinite(rect.height)||rect.height<=0)return null;
+      if(y<=rect.top+rect.height/2)return h.id;
+    }
+    return layoutHandles.at(-1).id;
+  }
+  function rebuildLayoutHandles(available){
+    clearLayoutDrag();
+    layoutHandles=available.map(id=>{
+      const button=document.createElement("button");
+      button.type="button";button.textContent="↕ "+panelNames[panelIDs.indexOf(id)];
+      button.setAttribute("aria-label","Reorder "+panelNames[panelIDs.indexOf(id)]);
+      button.addEventListener("click",()=>{
+        if(!canEditLayout())return;
+        get("layoutPanel").value=id;syncLayout();
+      });
+      button.addEventListener("pointerdown",e=>{
+        if(!canEditLayout()||layoutDrag||e.button!==0||!Number.isFinite(e.clientY))return;
+        e.preventDefault();
+        try{button.setPointerCapture(e.pointerId);}catch{return;}
+        layoutDrag={id,pointer:e.pointerId,connection:ws,startY:e.clientY,target:id};
+        button.setAttribute("data-target","true");
+      });
+      button.addEventListener("pointermove",e=>{
+        if(layoutDrag?.pointer!==e.pointerId||layoutDrag.id!==id)return;
+        if(!canEditLayout()||layoutDrag.connection!==ws){clearLayoutDrag();return;}
+        e.preventDefault();
+        layoutDrag.target=dragTarget(e.clientY)??id;
+        for(const h of layoutHandles)h.button.setAttribute("data-target",String(h.id===layoutDrag.target));
+      });
+      button.addEventListener("pointerup",e=>{
+        const drag=layoutDrag;
+        if(drag?.pointer!==e.pointerId||drag.id!==id)return;
+        clearLayoutDrag();
+        if(!canEditLayout()||drag.connection!==ws||!Number.isFinite(e.clientY))return;
+        if(Math.abs(e.clientY-drag.startY)<8){get("layoutPanel").value=id;syncLayout();return;}
+        const target=dragTarget(e.clientY);
+        if(target)movePanelTo(id,target);
+      });
+      for(const event of ["pointercancel","lostpointercapture"])button.addEventListener(event,e=>{
+        if(layoutDrag?.pointer===e.pointerId&&layoutDrag.id===id)clearLayoutDrag();
+      });
+      return {id,button};
+    });
+    get("layoutDragList").replaceChildren(...layoutHandles.map(h=>h.button));
+  }
+  function movePanelTo(id,target){
+    if(!canEditLayout())return;
+    const available=availablePanels(),from=available.indexOf(id),to=available.indexOf(target);
+    if(from<0||to<0||from===to)return;
+    clearLayoutDrag();
+    available.splice(from,1);available.splice(to,0,id);
+    // Dormant panels retain their saved positions.
+    let next=0;const visible=new Set(available);
+    layout.order=layout.order.map(p=>visible.has(p)?available[next++]:p);
+    get("layoutPanel").value=id;
+    layoutMessage="Layout changed. Save to retain it.";applyLayout();syncLayout();
+  }
   function syncLayout(){
     const visible=Boolean(caps)&&currentView==="setup";
     get("layoutSection").hidden=!visible;
     // The play/ACK hot path must not rebuild editor options or write
     // layout attributes on every performance sample.
-    if(!visible){layoutSyncKey="";return;}
+    if(!visible){if(layoutDrag)clearLayoutDrag();layoutSyncKey="";return;}
     const panel=get("layoutPanel"),available=availablePanels(),key=available.join(",");
     if(key!==layoutOptionsKey){
       const previous=panel.value;
@@ -291,12 +363,15 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       }));
       panel.value=available.includes(previous)?previous:(available[0]||"");
       layoutOptionsKey=key;
+      rebuildLayoutHandles(available);
     }
     const editable=Boolean(canEditLayout()),selected=panel.value,index=available.indexOf(selected);
+    if(!editable&&layoutDrag)clearLayoutDrag();
     const stateKey=JSON.stringify([editable,key,selected,layout.wide,layout.size,layoutMessage]);
     if(stateKey===layoutSyncKey)return;
     layoutSyncKey=stateKey;
     panel.disabled=!editable||available.length===0;
+    for(const h of layoutHandles)h.button.disabled=!editable;
     get("layoutUp").disabled=!editable||index<=0;
     get("layoutDown").disabled=!editable||index<0||index===available.length-1;
     get("layoutWide").disabled=!editable||index<0;
@@ -309,18 +384,18 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(!canEditLayout())return;
     const available=availablePanels(),id=get("layoutPanel").value,index=available.indexOf(id);
     if(index<0||index+delta<0||index+delta>=available.length)return;
-    const a=layout.order.indexOf(id),b=layout.order.indexOf(available[index+delta]);
-    [layout.order[a],layout.order[b]]=[layout.order[b],layout.order[a]];
-    layoutMessage="Layout changed. Save to retain it.";applyLayout();syncLayout();
+    movePanelTo(id,available[index+delta]);
   }
   function changePanelWidth(){
     if(!canEditLayout())return;
     const id=get("layoutPanel").value;if(!availablePanels().includes(id))return;
+    clearLayoutDrag();
     layout.wide=layout.wide.includes(id)?layout.wide.filter(x=>x!==id):[...layout.wide,id];
     layoutMessage="Layout changed. Save to retain it.";applyLayout();syncLayout();
   }
   function changeLayoutSize(){
     if(!canEditLayout()||!["normal","compact","large"].includes(get("layoutSize").value)){syncLayout();return;}
+    clearLayoutDrag();
     layout.size=get("layoutSize").value;
     layoutMessage="Layout changed. Save to retain it.";applyLayout();syncLayout();
   }
@@ -332,6 +407,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function resetLayout(){
     if(!canEditLayout())return;
+    clearLayoutDrag();
     layout=defaultLayout();
     try{window.localStorage.removeItem(layoutKey);layoutMessage="Default layout restored.";}
     catch{layoutMessage="Default layout restored for this page; saved data could not be removed.";}
