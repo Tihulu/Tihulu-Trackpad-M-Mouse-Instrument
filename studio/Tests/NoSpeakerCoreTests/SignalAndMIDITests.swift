@@ -88,3 +88,46 @@ import Testing
     #expect(events[0].frame.tones.first?.frequencyHz == 120)
     #expect(events[0].frame.level == 1)
 }
+
+
+@Test func spectralAnalysisRejectsInvalidAndUnboundedArguments() {
+    let input = Array(repeating:Float(0.2),count:128)
+    #expect(HapticSignalProcessor.dominantPeaks(samples:input[...],sampleRate:8000,frequencyStep:0).isEmpty)
+    #expect(HapticSignalProcessor.dominantPeaks(samples:input[...],sampleRate:8000,frequencyStep:.nan).isEmpty)
+    #expect(HapticSignalProcessor.dominantPeaks(samples:input[...],sampleRate:8000,frequencyStep:1).isEmpty)
+    #expect(HapticSignalProcessor.hapticEvents(samples:input,sampleRate:.infinity,profile:.voice).isEmpty)
+    #expect(HapticSignalProcessor.hapticEvents(samples:input,sampleRate:8000,profile:.voice,frameDuration:.nan).isEmpty)
+}
+
+@Test func spectralAnalysisConstantOffsetIsSilent() {
+    let input = Array(repeating:Float(0.4),count:1600)
+    #expect(HapticSignalProcessor.dominantPeaks(samples:input[...],sampleRate:8000).isEmpty)
+    for profile in AudioHapticProfile.allCases {
+        #expect(HapticSignalProcessor.hapticEvents(samples:input,sampleRate:8000,profile:profile).isEmpty)
+    }
+}
+
+@Test func spectralAnalysisGoertzelMatchesWindowedReference() throws {
+    let rate = 8000.0,frequency = 720.0
+    let samples = (0..<800).map { Float(0.1+0.5*sin(2*Double.pi*frequency*Double($0)/rate)) }
+    let peak = try #require(HapticSignalProcessor.dominantPeaks(samples:samples[...],sampleRate:rate,
+        minFrequency:frequency,maxFrequency:frequency,peakCount:1,frequencyStep:10).first)
+    let mean = samples.reduce(0.0) { $0+Double($1) }/Double(samples.count)
+    var re=0.0,im=0.0
+    for (i,sample) in samples.enumerated() {
+        let window=0.54-0.46*cos(2*Double.pi*Double(i)/Double(samples.count-1))
+        let value=(Double(sample)-mean)*window
+        let phase=2*Double.pi*frequency*Double(i)/rate
+        re += value*cos(phase);im -= value*sin(phase)
+    }
+    #expect(abs(peak.magnitude-hypot(re,im)) < 0.00001)
+}
+
+@Test func offlineAudioAnalysisCancelsBeforeProducingEvents() {
+    let cancellation = VoiceRenderCancellation()
+    cancellation.cancel()
+    #expect(throws:CancellationError.self) {
+        try HapticSignalProcessor.hapticEvents(samples:Array(repeating:0.5,count:1600),
+            sampleRate:8000,profile:.voice,cancellation:cancellation)
+    }
+}

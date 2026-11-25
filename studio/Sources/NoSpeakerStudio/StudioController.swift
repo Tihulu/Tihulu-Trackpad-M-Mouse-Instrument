@@ -4631,11 +4631,17 @@ final class StudioController: ObservableObject {
         let selectedProfile = profile ?? activeProfile
         let fileURL = url
         let token = beginPlaybackRequest()
+        let cancellation = VoiceRenderCancellation()
+        voiceRenderCancellation = cancellation
         Task {
+            defer {
+                if voiceRenderCancellation === cancellation { voiceRenderCancellation = nil }
+            }
             do {
                 let events = try await Task.detached(priority: .userInitiated) {
-                    try AudioFileHapticService.render(url: fileURL, profile: selectedProfile)
+                    try AudioFileHapticService.render(url:fileURL,profile:selectedProfile,cancellation:cancellation)
                 }.value
+                try cancellation.check()
                 guard renderGeneration == token, !liveNoteOwnsHaptics else { return }
                 playRendered(events, token: token)
             } catch {

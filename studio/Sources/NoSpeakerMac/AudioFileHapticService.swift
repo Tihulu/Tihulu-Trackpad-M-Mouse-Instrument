@@ -5,30 +5,60 @@ import NoSpeakerCore
 
 public enum AudioFileHapticError: LocalizedError {
     case unsupportedChannels
+    case fileTooLarge
+    case invalidSample
 
-    public var errorDescription: String? { "The audio file could not be converted to mono PCM." }
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedChannels: return "The audio file could not be converted to supported mono PCM."
+        case .fileTooLarge: return "Audio exceeds the offline analysis limit (48 million decoded frames or 30 minutes). Split the file and retry."
+        case .invalidSample: return "Audio contains a nonfinite PCM sample."
+        }
+    }
 }
 
 public enum AudioFileHapticService {
     public static func render(url: URL, profile: AudioHapticProfile) throws -> [ScheduledHapticEvent] {
-        let file = try AVAudioFile(forReading: url)
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: file.processingFormat,
-            frameCapacity: AVAudioFrameCount(file.length)
-        ) else { throw AudioFileHapticError.unsupportedChannels }
-        try file.read(into: buffer)
-        guard let channels = buffer.floatChannelData else { throw AudioFileHapticError.unsupportedChannels }
-        let channelCount = Int(buffer.format.channelCount)
-        let frameCount = Int(buffer.frameLength)
-        var mono = [Float](repeating: 0, count: frameCount)
-        for channelIndex in 0..<channelCount {
-            for frame in 0..<frameCount { mono[frame] += channels[channelIndex][frame] / Float(max(1, channelCount)) }
+        try render(url:url,profile:profile,cancellation:VoiceRenderCancellation())
+    }
+
+    public static func render(url:URL,profile:AudioHapticProfile,
+                              cancellation:VoiceRenderCancellation) throws -> [ScheduledHapticEvent] {
+        try cancellation.check()
+        let file = try AVAudioFile(forReading:url,commonFormat:.pcmFormatFloat32,interleaved:false)
+        let format = file.processingFormat
+        let rate = format.sampleRate,channels = Int(format.channelCount)
+        guard rate.isFinite,(8_000...192_000).contains(rate),(1...8).contains(channels),
+              file.length > 0 else { throw AudioFileHapticError.unsupportedChannels }
+        let limit = min(48_000_000,Int(rate*1800))
+        guard file.length <= AVAudioFramePosition(limit) else { throw AudioFileHapticError.fileTooLarge }
+        let chunk = AVAudioFrameCount(16_384)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat:format,frameCapacity:chunk) else {
+            throw AudioFileHapticError.unsupportedChannels
         }
-        return HapticSignalProcessor.hapticEvents(
-            samples: mono,
-            sampleRate: buffer.format.sampleRate,
-            profile: profile
-        )
+        var mono:[Float] = []
+        mono.reserveCapacity(Int(file.length))
+        while true {
+            try cancellation.check()
+            buffer.frameLength = 0
+            try file.read(into:buffer,frameCount:chunk)
+            let frames = Int(buffer.frameLength)
+            if frames == 0 { break }
+            guard frames <= Int(chunk),frames <= limit-mono.count else { throw AudioFileHapticError.fileTooLarge }
+            guard let data = buffer.floatChannelData else { throw AudioFileHapticError.unsupportedChannels }
+            for i in 0..<frames {
+                var value:Double = 0
+                for channel in 0..<channels {
+                    let sample = data[channel][i]
+                    guard sample.isFinite else { throw AudioFileHapticError.invalidSample }
+                    value += Double(max(-1,min(1,sample)))/Double(channels)
+                }
+                mono.append(Float(value))
+            }
+        }
+        guard !mono.isEmpty else { throw AudioFileHapticError.unsupportedChannels }
+        try cancellation.check()
+        return try HapticSignalProcessor.hapticEvents(samples:mono,sampleRate:rate,profile:profile,cancellation:cancellation)
     }
 }
 #endif
