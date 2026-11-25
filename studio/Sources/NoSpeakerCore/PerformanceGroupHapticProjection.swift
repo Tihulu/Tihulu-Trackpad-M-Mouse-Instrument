@@ -58,13 +58,20 @@ public struct PerformanceGroupHapticProjection: Sendable {
         }
         guard !contributions.isEmpty else { return nil }
         if contributions.count == 1 { return contributions.first }
-        let weighted = contributions.map { frame in
-            let sum = frame.tones.reduce(0.0) { $0+$1.amplitude }
-            return frame.tones.filter { $0.amplitude > 0 && sum > 0 }.map {
-                HapticTone(frequencyHz:$0.frequencyHz,amplitude:frame.level*$0.amplitude/sum)
-            }.sorted {
-                $0.amplitude == $1.amplitude ? $0.frequencyHz < $1.frequencyHz : $0.amplitude > $1.amplitude
+        var weighted:[[HapticTone]] = []
+        for frame in contributions {
+            let sum:Double = frame.tones.reduce(0.0) { $0+$1.amplitude }
+            guard sum > 0,sum.isFinite else { continue }
+            var source:[HapticTone] = []
+            for tone in frame.tones where tone.amplitude > 0 {
+                let weight:Double = frame.level*tone.amplitude/sum
+                source.append(.init(frequencyHz:tone.frequencyHz,amplitude:weight))
             }
+            source.sort { a,b in
+                if a.amplitude == b.amplitude { return a.frequencyHz < b.frequencyHz }
+                return a.amplitude > b.amplitude
+            }
+            weighted.append(source)
         }
         var order:[Double] = []
         var levels:[Double:Double] = [:]
