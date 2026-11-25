@@ -54,3 +54,5 @@ Mapped drum pads and pedal controls can now be individually reordered within the
 ### Custom performance panel
 
 Combine up to eight already mapped drum/pedal controls, including the existing expression/volume/wah sliders, into a personal mixed panel. Setup supports add, remove and reordering. The actual control node is moved, never cloned; original stream ownership, MIDI bit identity, enable/release rules and conservative workload limits remain unchanged. Unavailable saved selections stay dormant and never activate automatically. Layout editing requires an idle session. This is composition of existing host-mapped controls, not arbitrary new MIDI endpoints or freely assigned CCs.
+
+Mapped expression, volume and wah sliders support horizontal or vertical native range controls and independent initial levels from 0–100%. Settings only change the local presentation and inactive value; the host receives nothing until the user explicitly enables and activates the mapped pedal. Custom panel placement follows the actual DOM/keyboard order. Moved controls are omitted from their original panel's individual reorder editor.

@@ -169,6 +169,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #customGrid section{border:1px solid #777;border-radius:10px;padding:8px;min-width:0}
 #customGrid section button{width:100%;margin:4px 0;overflow-wrap:anywhere}
 #customGrid input[type=range]{width:100%;accent-color:#79c9a5}
+#playView input[type=range][data-vertical=true]{writing-mode:vertical-lr;direction:rtl;height:145px;width:44px;display:block;margin:8px auto;padding:0;touch-action:none}
 #customGrid button[data-hold=true]{touch-action:none;user-select:none}
 #customGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5}
 #layoutDragList button[data-target=true]{border-color:#e5a33b;background:#4c3820}
@@ -202,6 +203,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <label for="gridControl">Control</label><select id="gridControl"></select>
 <button id="gridControlUp" type="button">Move control earlier</button><button id="gridControlDown" type="button">Move control later</button>
 <small>Control identities and Mac assignments stay unchanged.</small></fieldset>
+<fieldset id="sliderEditor" hidden><legend>Slider configuration</legend>
+<label for="sliderChoice">Mapped slider</label><select id="sliderChoice"></select>
+<label for="sliderDirection">Orientation</label><select id="sliderDirection"><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option></select>
+<label for="sliderDefault">Initial level (%)</label><input id="sliderDefault" type="number" min="0" max="100" step="1" inputmode="numeric" value="100">
+<button id="sliderApply" type="button">Apply slider settings</button>
+<small>Initial level is sent only after explicit pedal activation.</small></fieldset>
 <fieldset id="pedalBehavior"><legend>Pedal switch behavior</legend><label for="pedalMode3">Sustain</label><select id="pedalMode3"><option value="toggle">Toggle</option><option value="hold">Hold</option></select>
 <label for="pedalMode4">Switch A</label><select id="pedalMode4"><option value="toggle">Toggle</option><option value="hold">Hold</option></select>
 <label for="pedalMode5">Switch B</label><select id="pedalMode5"><option value="toggle">Toggle</option><option value="hold">Hold</option></select>
@@ -299,13 +306,15 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const gridPanels=["drumSection","pedalSection"];
   const indices=n=>Array.from({length:n},(_,i)=>i);
   const customIDs=[...indices(8).map(i=>"d"+i),...indices(6).map(i=>"p"+i)];
-  const defaultDetails=()=>({version:1,sizes:{},columns:{},holds:[],drumOrder:indices(8),pedalOrder:indices(6),custom:[]});
+  const defaultDetails=()=>({version:1,sizes:{},columns:{},holds:[],drumOrder:indices(8),pedalOrder:indices(6),custom:[],sliderDefaults:[100,100,0],vertical:[]});
   function validOrder(order,n){
     return Array.isArray(order)&&order.length===n&&new Set(order).size===n&&order.every(i=>Number.isInteger(i)&&i>=0&&i<n);
   }
   function validDetails(d){
     const record=v=>v&&typeof v==="object"&&!Array.isArray(v);
-    return record(d)&&Object.keys(d).every(k=>["columns","sizes","version","holds","drumOrder","pedalOrder","custom"].includes(k))&&d.version===1&&
+    return record(d)&&Object.keys(d).every(k=>["columns","sizes","version","holds","drumOrder","pedalOrder","custom","sliderDefaults","vertical"].includes(k))&&d.version===1&&
+      (d.sliderDefaults===undefined||(Array.isArray(d.sliderDefaults)&&d.sliderDefaults.length===3&&d.sliderDefaults.every(v=>Number.isInteger(v)&&v>=0&&v<=100)))&&
+      (d.vertical===undefined||(Array.isArray(d.vertical)&&d.vertical.length<=3&&new Set(d.vertical).size===d.vertical.length&&d.vertical.every(i=>[0,1,2].includes(i))))&&
       (d.custom===undefined||(Array.isArray(d.custom)&&d.custom.length<=8&&new Set(d.custom).size===d.custom.length&&d.custom.every(id=>customIDs.includes(id))))&&
       (d.drumOrder===undefined||validOrder(d.drumOrder,8))&&(d.pedalOrder===undefined||validOrder(d.pedalOrder,6))&&
       (d.holds===undefined||(Array.isArray(d.holds)&&d.holds.length<=3&&new Set(d.holds).size===d.holds.length&&d.holds.every(i=>[3,4,5].includes(i))))&&
@@ -320,7 +329,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   let details=loadDetails();
   let layout=loadLayout(),layoutMessage="",layoutOptionsKey="",layoutSyncKey="";
-  let layoutDrag=null,layoutHandles=[],layoutHandleEpoch=0,gridOptionsKey="",customOptionsKey="",customActive=[];
+  let layoutDrag=null,layoutHandles=[],layoutHandleEpoch=0,gridOptionsKey="",customOptionsKey="",customActive=[],sliderOptionsKey="",sliderValueKey="";
   function availablePanels(){
     if(!caps)return [];
     const available=[caps.touch,Boolean(caps.drums),Boolean(caps.piano),Boolean(caps.pedals),caps.tilt,caps.acceleration||caps.rotation];
@@ -336,6 +345,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const play=get("playView");
     // Keep visual and keyboard/screen-reader navigation order consistent.
     // Only called at initialization or an admitted idle editor action.
+    customActive=details.custom.filter(customMapped);
+    if(customActive.length)play.appendChild(get("customSection"));
     for(const [index,id] of layout.order.entries()){
       const element=get(id);
       element.style.order=String(index);
@@ -348,10 +359,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("pedalGrid").setAttribute("data-columns",details.columns.pedalSection??"auto");
     for(const i of details.drumOrder)get("drumGrid").appendChild(get("drum"+i));
     for(const i of details.pedalOrder)get("pedalGrid").appendChild(get("pedalCell"+i));
-    customActive=details.custom.filter(customMapped);
     for(const id of customActive)get("customGrid").appendChild(customNode(id));
-    get("customSection").style.order="-1";
-    play.appendChild(get("customSection"));
+    get("customSection").style.order=customActive.length?"-1":"6";
+    if(!customActive.length)play.appendChild(get("customSection"));
+    for(const i of [0,1,2]){
+      const vertical=details.vertical.includes(i),slider=get("pedalLevel"+i);
+      slider.setAttribute("data-vertical",String(vertical));
+      slider.setAttribute("aria-orientation",vertical?"vertical":"horizontal");
+    }
     syncPedals();syncCustom();
   }
   function clearLayoutDrag(){
@@ -477,13 +492,49 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }
     clearLayoutDrag();layoutMessage="Custom panel changed. Save to retain it.";applyLayout();syncLayout();
   }
+  function syncSliderEditor(editable){
+    const available=[0,1,2].filter(i=>has("pedals",i)),choice=get("sliderChoice");
+    get("sliderEditor").hidden=!available.length;
+    const key=JSON.stringify([available,available.map(i=>labelFor(43+i))]);
+    if(key!==sliderOptionsKey){
+      const old=choice.value;
+      choice.replaceChildren(...available.map(i=>{
+        const option=document.createElement("option");option.value=String(i);option.textContent=labelFor(43+i);return option;
+      }));
+      choice.value=available.map(String).includes(old)?old:(available.length?String(available[0]):"");
+      sliderOptionsKey=key;
+    }
+    const index=available.map(String).indexOf(choice.value),i=index<0?null:available[index];
+    const allowed=editable&&i!==null;
+    choice.disabled=!allowed;
+    get("sliderDirection").disabled=get("sliderDefault").disabled=get("sliderApply").disabled=!allowed;
+    // Keep an in-progress numeric edit intact across idle heartbeat ACKs.
+    const valueKey=JSON.stringify([i,i===null?null:details.sliderDefaults[i],i!==null&&details.vertical.includes(i)]);
+    if(valueKey!==sliderValueKey){
+      get("sliderDefault").value=i===null?"":String(details.sliderDefaults[i]);
+      get("sliderDirection").value=i!==null&&details.vertical.includes(i)?"vertical":"horizontal";
+      sliderValueKey=valueKey;
+    }
+  }
+  function applySliderSettings(){
+    if(!canEditLayout())return;
+    const raw=get("sliderChoice").value,i=Number(raw),levelRaw=get("sliderDefault").value,
+      level=Number(levelRaw),direction=get("sliderDirection").value;
+    if(!["0","1","2"].includes(raw)||!has("pedals",i)||
+       !/^(0|[1-9][0-9]{0,2})$/.test(levelRaw)||!Number.isInteger(level)||level>100||
+       !["horizontal","vertical"].includes(direction))return;
+    clearLayoutDrag();details.sliderDefaults[i]=level;pedalPositions[i]=level;
+    details.vertical=details.vertical.filter(v=>v!==i);
+    if(direction==="vertical")details.vertical.push(i);
+    layoutMessage="Slider settings changed. Save to retain them.";applyLayout();syncLayout();
+  }
   function gridChoice(){
     const panel=get("layoutPanel").value;
     if(panel==="drumSection"&&caps?.drums)return {kind:"drums",order:"drumOrder",label:9};
     if(panel==="pedalSection"&&caps?.pedals)return {kind:"pedals",order:"pedalOrder",label:43};
     return null;
   }
-  function visibleGrid(choice){return choice?details[choice.order].filter(i=>has(choice.kind,i)):[];}
+  function visibleGrid(choice){return choice?details[choice.order].filter(i=>has(choice.kind,i)&&!customActive.includes((choice.kind==="drums"?"d":"p")+i)):[];}
   function syncGridEditor(editable){
     const choice=gridChoice(),available=visibleGrid(choice),control=get("gridControl");
     get("gridOrderEditor").hidden=!choice;
@@ -529,6 +580,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       }
       if(!caps&&gridOptionsKey){gridOptionsKey="";get("gridControl").replaceChildren();}
       if(!caps&&customOptionsKey){customOptionsKey="";get("customAddChoice").replaceChildren();get("customChoice").replaceChildren();}
+      if(!caps&&sliderOptionsKey){sliderOptionsKey="";sliderValueKey="";get("sliderChoice").replaceChildren();}
       return;
     }
     const panel=get("layoutPanel"),available=availablePanels(),key=available.join(",");
@@ -545,7 +597,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }
     const editable=Boolean(canEditLayout()),selected=panel.value,index=available.indexOf(selected);
     if(!editable&&layoutDrag)clearLayoutDrag();
-    syncGridEditor(editable);syncCustomEditor(editable);
+    syncGridEditor(editable);syncCustomEditor(editable);syncSliderEditor(editable);
     const stateKey=JSON.stringify([editable,key,selected,layout.wide,layout.size,details,layoutMessage]);
     if(stateKey===layoutSyncKey)return;
     layoutSyncKey=stateKey;
@@ -620,7 +672,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function resetLayout(){
     if(!canEditLayout())return;
     clearLayoutDrag();
-    layout=defaultLayout();details=defaultDetails();
+    layout=defaultLayout();details=defaultDetails();pedalPositions=[...details.sliderDefaults];sliderValueKey="";
     try{window.localStorage.removeItem(layoutKey);window.localStorage.removeItem(detailKey);layoutMessage="Default layout restored.";}
     catch{layoutMessage="Default layout restored for this page; saved data could not be removed.";}
     applyLayout();syncLayout();
@@ -1043,7 +1095,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const pedalOutputs=Array.from({length:3},(_,i)=>get("pedalValue"+i));
   const pedalHoldOwners=new Map();
   const isHoldPedal=i=>details.holds.includes(i);
-  let pedalEnabled=false,pedalMask=0,pedalSentMask=0,pedalPositions=[100,100,0],pedalQueue=[],pedalDirty=false,lastPedalSend=-Infinity,pedalEmergency=false;
+  let pedalEnabled=false,pedalMask=0,pedalSentMask=0,pedalPositions=[...details.sliderDefaults],pedalQueue=[],pedalDirty=false,lastPedalSend=-Infinity,pedalEmergency=false;
   function pedalBusy(){return pedalMask!==0||pedalSentMask!==0||pedalQueue.length!==0||pedalEmergency||pendingKind==="pedalboard";}
   function syncPedals(){
     pedalEnable.disabled=!admitted||!caps?.pedals;pedalEnable.textContent=pedalEnabled?"Disable pedalboard":"Enable pedalboard";
@@ -1066,7 +1118,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     return {mask:pedalMask,levels:Array.from({length:6},(_,i)=>(pedalMask&(1<<i))?(i<3?pedalPositions[i]/100:1):0)};
   }
   function resetPedals(){
-    pedalEnabled=false;pedalHoldOwners.clear();pedalMask=0;pedalSentMask=0;pedalPositions=[100,100,0];pedalQueue=[];pedalDirty=false;lastPedalSend=-Infinity;pedalEmergency=false;
+    pedalEnabled=false;pedalHoldOwners.clear();pedalMask=0;pedalSentMask=0;pedalPositions=[...details.sliderDefaults];pedalQueue=[];pedalDirty=false;lastPedalSend=-Infinity;pedalEmergency=false;
     pedalStatus.textContent="Off.";syncPedals();
   }
   function pedalAdmitted(i){
@@ -1454,6 +1506,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("gridControl").addEventListener("change",()=>syncGridEditor(Boolean(canEditLayout())));
   for(const [id,action] of [["customAdd","add"],["customRemove","remove"],["customUp","up"],["customDown","down"]])get(id).addEventListener("click",()=>changeCustom(action));
   for(const id of ["customAddChoice","customChoice"])get(id).addEventListener("change",()=>syncCustomEditor(Boolean(canEditLayout())));
+  get("sliderChoice").addEventListener("change",()=>{sliderValueKey="";syncSliderEditor(Boolean(canEditLayout()));});
+  get("sliderApply").addEventListener("click",applySliderSettings);
   get("gridControlUp").addEventListener("click",()=>moveGridControl(-1));
   get("gridControlDown").addEventListener("click",()=>moveGridControl(1));
   for(const i of [3,4,5])get("pedalMode"+i).addEventListener("change",()=>changePedalBehavior(i));

@@ -13,7 +13,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["customEditor","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
@@ -973,4 +973,37 @@ test("custom panel rejects unavailable aliases and preserves dormant selections"
   a.elements.layoutSave.emit("click");
   assert.deepEqual(JSON.parse(stored.get("tihulu.remote.panel-details.v1")).custom,["d2","p4"]);
   assert.equal(a.socket.frames.length,0);
+});
+
+test("slider orientation and initial level persist without implicit activation",()=>{
+  const stored=new Map(),a=setup("granted",fullManifest,false,true,false,stored);
+  a.elements.navSetup.emit("click");
+  a.elements.sliderChoice.value="2";a.elements.sliderChoice.emit("change");
+  a.elements.sliderDirection.value="vertical";a.elements.sliderDefault.value="37";a.elements.sliderApply.emit("click");
+  a.elements.layoutSave.emit("click");
+  assert.equal(a.elements.pedalLevel2.attributes["aria-orientation"],"vertical");
+  assert.equal(a.socket.frames.length,0);
+  const b=setup("granted",fullManifest,false,true,false,stored);
+  assert.equal(b.elements.pedalLevel2.value,"37");
+  assert.equal(b.elements.pedalLevel2.attributes["data-vertical"],"true");
+  b.elements.pedalEnable.emit("click");assert.equal(b.socket.frames.length,0);
+  b.elements.pedalToggle2.emit("click");assert.equal(b.socket.frames.at(-1).mask,4);
+  assert.equal(b.socket.frames.at(-1).levels[2],0.37);
+});
+test("slider settings reject invalid numeric values and cannot edit while active",()=>{
+  const a=setup("granted",fullManifest,false);
+  a.elements.navSetup.emit("click");
+  a.elements.sliderChoice.value="0";a.elements.sliderChoice.emit("change");
+  a.elements.sliderDefault.value="101";a.elements.sliderApply.emit("click");
+  assert.equal(a.elements.pedalLevel0.value,"100");
+  a.elements.navPlay.emit("click");a.elements.pedalEnable.emit("click");a.elements.pedalToggle0.emit("click");a.ack();
+  a.elements.navSetup.emit("click");a.elements.sliderDefault.value="1";a.elements.sliderApply.emit("click");
+  assert.equal(a.elements.pedalLevel0.value,"100");assert.equal(a.socket.frames.length,1);
+});
+test("custom panel focus order follows visual order and moved controls leave original editor",()=>{
+  const a=setup("granted",fullManifest,false);
+  a.elements.navSetup.emit("click");a.elements.customAddChoice.value="d2";a.elements.customAdd.emit("click");
+  assert.equal(a.elements.playView.children[0],a.elements.customSection);
+  a.elements.layoutPanel.value="drumSection";a.elements.layoutPanel.emit("change");
+  assert.equal(a.elements.gridControl.children.some(x=>x.value==="2"),false);
 });
