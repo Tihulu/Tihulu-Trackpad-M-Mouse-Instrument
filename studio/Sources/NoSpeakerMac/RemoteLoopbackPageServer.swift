@@ -374,7 +374,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       slider.setAttribute("data-vertical",String(vertical));
       slider.setAttribute("aria-orientation",vertical?"vertical":"horizontal");
     }
-    syncPedals();syncCustom();
+    syncSections();syncPedals();syncCustom();
   }
   function clearLayoutDrag(){
     layoutDrag=null;
@@ -995,7 +995,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }catch{return null;}
   }
   function syncSections(){
-    for(const [id,visible] of [["touchSection",caps?.touch],["drumSection",caps?.drums],["pianoSection",caps?.piano],["pedalSection",caps?.pedals],["tiltSection",caps?.tilt],["inertialSection",caps?.acceleration||caps?.rotation],["accelSection",caps?.acceleration],["rotationSection",caps?.rotation],["airDrumNotice",caps?.airDrums]])get(id).hidden=!visible;
+    // The custom panel owns the existing DOM nodes, not duplicated MIDI
+    // controls. Suppress an original panel only when every mapped control
+    // has moved; restoring any one control immediately restores its panel.
+    const originalDrums=indices(8).some(i=>has("drums",i)&&!customActive.includes("d"+i));
+    const originalPedals=indices(6).some(i=>has("pedals",i)&&!customActive.includes("p"+i));
+    for(const [id,visible] of [["touchSection",caps?.touch],["drumSection",originalDrums],["pianoSection",caps?.piano],["pedalSection",originalPedals],["tiltSection",caps?.tilt],["inertialSection",caps?.acceleration||caps?.rotation],["accelSection",caps?.acceleration],["rotationSection",caps?.rotation],["airDrumNotice",caps?.airDrums]])get(id).hidden=!visible;
   }
   const drumButtons=Array.from({length:8},(_,i)=>get("drum"+i));
   const drumEnable=get("drumEnable"),drumRelease=get("drumRelease"),drumStatus=get("drumStatus");
