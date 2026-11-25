@@ -201,3 +201,60 @@ private func groupTunedSnapshot(_ down:Bool = false) throws -> GamepadFrame {
     let retry = engine.prepare { _ in true }
     #expect(!retry && engine.retired)
 }
+
+
+@Test func groupTuningArchiveKeepsIdentityAcrossRenameAndReorderButRejectsChangedMappings() throws {
+    let a = tunedGroup(.gamepad1)
+    let b = tunedGroup(.gamepad2)
+    let profile = PerformanceGroupProfile(groups:[a,b])
+    let config = try PerformanceGroupTuningConfiguration(profile:profile,tuning:[a.id:groupTuning(-20)])
+    let bytes = try config.archive()
+    let loaded = try PerformanceGroupTuningConfiguration.read(bytes,matching:profile)
+    #expect(loaded == config)
+    var reordered = profile
+    reordered.groups[0].name = "Renamed instrument"
+    reordered.groups.swapAt(0,1)
+    let plan = try loaded.plan(matching:reordered)
+    #expect(Set(plan.zones.keys) == [a.id])
+    reordered.groups[1].patch.routes[0].destination.number = 67
+    #expect(throws:PerformanceGroupTuningConfiguration.ConfigurationError.staleProfile) {
+        try loaded.plan(matching:reordered)
+    }
+    #expect(throws:PerformanceGroupTuningConfiguration.ConfigurationError.staleProfile) {
+        try PerformanceGroupTuningConfiguration.read(bytes,matching:reordered)
+    }
+}
+
+@Test func groupTuningArchiveRejectsLegacyVersionDuplicateAndUnknownGroup() throws {
+    let a = tunedGroup(.gamepad1)
+    let profile = PerformanceGroupProfile(groups:[a])
+    let config = try PerformanceGroupTuningConfiguration(profile:profile,tuning:[a.id:groupTuning(-20)])
+    let bytes = try config.archive()
+    #expect(throws:Error.self) { try PerformanceGroupProfile.read(bytes) }
+    let legacy = try profile.archive()
+    #expect(throws:PerformanceGroupTuningConfiguration.ConfigurationError.unsupportedFormat) {
+        try PerformanceGroupTuningConfiguration.read(legacy,matching:profile)
+    }
+    let object = try #require(JSONSerialization.jsonObject(with:bytes) as? [String:Any])
+    var wrong = object
+    wrong["version"] = 2
+    let version = try JSONSerialization.data(withJSONObject:wrong)
+    #expect(throws:PerformanceGroupTuningConfiguration.ConfigurationError.unsupportedFormat) {
+        try PerformanceGroupTuningConfiguration.read(version,matching:profile)
+    }
+    let entries = try #require(object["entries"] as? [[String:Any]])
+    var duplicate = object
+    duplicate["entries"] = entries+entries
+    let repeated = try JSONSerialization.data(withJSONObject:duplicate)
+    #expect(throws:PerformanceGroupTuningConfiguration.ConfigurationError.duplicateGroup) {
+        try PerformanceGroupTuningConfiguration.read(repeated,matching:profile)
+    }
+    var unknown = object
+    var entry = try #require(entries.first)
+    entry["groupID"] = UUID().uuidString
+    unknown["entries"] = [entry]
+    let other = try JSONSerialization.data(withJSONObject:unknown)
+    #expect(throws:MIDIClipError.invalidClip) {
+        try PerformanceGroupTuningConfiguration.read(other,matching:profile)
+    }
+}
