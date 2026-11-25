@@ -1,0 +1,293 @@
+{
+  "schema": 1,
+  "status": "experimental",
+  "scope": "candidate source capabilities, not runtime or release acceptance",
+  "products": [
+    {
+      "name": "NoSpeakerCore",
+      "kind": "swift-library",
+      "platform": "portable core",
+      "path": "studio/Sources/NoSpeakerCore"
+    },
+    {
+      "name": "NoSpeakerMac",
+      "kind": "swift-library",
+      "platform": "macOS native only",
+      "path": "studio/Sources/NoSpeakerMac"
+    },
+    {
+      "name": "tihulu-mac-instrument-engine",
+      "kind": "json-cli",
+      "platform": "SwiftPM offline",
+      "path": "studio/Sources/TihuluEngineCLI/CLI.swift"
+    },
+    {
+      "name": "tihulu-mac-instrument-native",
+      "kind": "read-only-native-json-cli",
+      "platform": "macOS inspection; portable unsupported status",
+      "path": "studio/Sources/TihuluNativeCLI/NativeCLI.swift"
+    }
+  ],
+  "features": [
+    {
+      "id": "sensor-routing",
+      "api": [
+        "SensorRouter",
+        "InstrumentPatch",
+        "PatchSimulation"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/SensorRouter.swift",
+        "studio/Sources/NoSpeakerCore/InstrumentPatch.swift"
+      ],
+      "cli": [
+        "patch example",
+        "patch validate",
+        "patch routes"
+      ],
+      "status": "offline-core"
+    },
+    {
+      "id": "group-routing",
+      "api": [
+        "PerformanceGroupProfile",
+        "PerformanceGroupRouter",
+        "PerformanceGroupDelivery",
+        "PerformanceGroupEndpointPlan"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/PerformanceGroupProfile.swift",
+        "studio/Sources/NoSpeakerCore/PerformanceGroupRouter.swift",
+        "studio/Sources/NoSpeakerCore/PerformanceGroupDelivery.swift",
+        "studio/Sources/NoSpeakerCore/PerformanceGroupEndpointPlan.swift"
+      ],
+      "cli": [
+        "groups example",
+        "groups validate",
+        "groups ports",
+        "groups simulate"
+      ],
+      "status": "offline-core; no native group registration in this branch"
+    },
+    {
+      "id": "sustain-helper",
+      "api": [
+        "LegacySustainOwners",
+        "LegacyContinuousOwners",
+        "HelperRoutingSnapshot"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/LegacySustainOwners.swift",
+        "studio/Sources/NoSpeakerCore/LegacyContinuousOwners.swift",
+        "studio/Sources/NoSpeakerCore/HelperRoutingSnapshot.swift"
+      ],
+      "cli": [
+        "sustain simulate",
+        "helper simulate"
+      ],
+      "status": "offline sustain and expressive ownership simulation; no live MIDI"
+    },
+    {
+      "id": "tuning-mpe",
+      "api": [
+        "AirTunedOutput",
+        "CustomScale"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/AirTunedOutput.swift",
+        "studio/Sources/NoSpeakerCore/CustomScale.swift"
+      ],
+      "cli": [
+        "scale plan"
+      ],
+      "status": "offline pitch planning; separate group MPE not implemented"
+    },
+    {
+      "id": "haptic-mixing",
+      "api": [
+        "HapticFrameMixer"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/HapticFrameMixer.swift"
+      ],
+      "cli": [
+        "haptics mix"
+      ],
+      "status": "offline frame mix preview; hardware CLI planned"
+    },
+    {
+      "id": "native-midi-touch",
+      "api": [
+        "MIDIHapticService",
+        "ChordMIDIOutput"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerMac/MIDIHapticService.swift",
+        "studio/Sources/NoSpeakerMac/TouchInstrumentService.swift"
+      ],
+      "cli": [],
+      "status": "native-library; requires permissions and lifecycle acceptance"
+    },
+    {
+      "id": "daw-setup",
+      "api": [
+        "DAWSetupProjection"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/DAWSetupProjection.swift",
+        "studio/Sources/NoSpeakerStudio/DAWSetupAssistantView.swift"
+      ],
+      "cli": [
+        "patch routes",
+        "groups ports"
+      ],
+      "status": "read-only logical setup; no receiver confirmation"
+    },
+    {
+      "id": "source-retrieval",
+      "api": [],
+      "source": [
+        "tools/repo_index.py"
+      ],
+      "cli": [
+        "build",
+        "search",
+        "verify"
+      ],
+      "status": "commit-pinned lexical retrieval and source verification; semantic requires trusted local model"
+    },
+    {
+      "id": "midi-file",
+      "api": [
+        "MIDIClip",
+        "MIDIClipWriter",
+        "NoteSequence",
+        "DrumSequence",
+        "TunedMIDIClip",
+        "GrooveSettings",
+        "BoundedMIDIPlayback"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/MIDIClip.swift",
+        "studio/Sources/NoSpeakerCore/Sequencer.swift",
+        "studio/Sources/NoSpeakerCore/TunedMIDIClip.swift",
+        "studio/Sources/NoSpeakerCore/GrooveSettings.swift",
+        "studio/Sources/NoSpeakerCore/BoundedMIDIPlayback.swift"
+      ],
+      "cli": [
+        "midi encode",
+        "midi melody",
+        "midi drums",
+        "midi tuned",
+        "midi groove",
+        "midi playback-plan"
+      ],
+      "status": "offline SMF0 nominal and dedicated single-instrument MPE exports, bounded nominal playback timing and scoped cleanup core; no native live MIDI CLI"
+    },
+    {
+      "id": "voice-analysis",
+      "api": [
+        "HapticVoiceAnalyzer",
+        "HapticVoiceFrame"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/VoiceAnalysis.swift"
+      ],
+      "cli": [
+        "voice analyze"
+      ],
+      "status": "offline normalized mono PCM analysis and haptic frame data; no synthesis, recording or hardware"
+    },
+    {
+      "id": "gamepad-normalization",
+      "api": [
+        "GamepadFrame",
+        "GamepadFrame.Role"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/GamepadFrame.swift",
+        "studio/Sources/TihuluEngineCLI/DeviceCommands.swift"
+      ],
+      "cli": [
+        "gamepad normalize",
+        "gamepad patch"
+      ],
+      "status": "offline full snapshot normalization and four-slot role patch generation; no controller access"
+    },
+    {
+      "id": "camera-helper-replay",
+      "api": [
+        "AirHandsHelper",
+        "AirHandSample",
+        "PatchSimulation"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/AirHandsHelper.swift",
+        "studio/Sources/NoSpeakerCore/AirHandSample.swift",
+        "studio/Sources/NoSpeakerCore/InstrumentPatch.swift",
+        "studio/Sources/TihuluEngineCLI/DeviceCommands.swift"
+      ],
+      "cli": [
+        "camera helper-patch",
+        "camera helper-simulate"
+      ],
+      "status": "offline normalized hand samples and Helper-only patch replay; no camera access"
+    },
+    {
+      "id": "native-diagnostics",
+      "api": [
+        "NativeEngineDiagnostics",
+        "NativeMIDIMonitor",
+        "BoundedMIDIObservation",
+        "BoundedMIDISimulation"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerMac/NativeEngineDiagnostics.swift",
+        "studio/Sources/TihuluNativeCLI/NativeCLI.swift",
+        "studio/Sources/NoSpeakerMac/NativeMIDIMonitor.swift",
+        "studio/Sources/NoSpeakerCore/BoundedMIDIObservation.swift",
+        "studio/Sources/NoSpeakerMac/BuilderGamepadSource.swift",
+        "studio/Sources/NoSpeakerProcessSignals/ProcessStop.c",
+        "studio/Sources/NoSpeakerProcessSignals/include/ProcessStop.h",
+        "studio/Sources/NoSpeakerCore/BoundedMIDIPlayback.swift",
+        "studio/Sources/NoSpeakerCore/BoundedMIDIPlanInput.swift",
+        "studio/Sources/NoSpeakerCore/BoundedMIDISimulation.swift"
+      ],
+      "cli": [
+        "capabilities",
+        "preflight",
+        "midi endpoints [--names]",
+        "gamepad devices [--names]",
+        "gamepad sample --confirm",
+        "midi monitor NAME SECONDS --confirm",
+        "session probe SECONDS --confirm",
+        "midi plan JSON",
+        "midi simulate JSON",
+        "midi audit JSON"
+      ],
+      "status": "read-only inventory, explicitly confirmed normalized controller snapshots and bounded aggregate MIDI receive observation; no live output or automatic hardware activation; foreground SIGINT/SIGTERM cancellation and portable no-hardware session probe; portable bounded nominal MIDI planning (no output); deterministic offline note-lifecycle simulation; deterministic bounded audit of ambiguous send failures and owned cleanup retry"
+    },
+    {
+      "id": "native-nominal-playback",
+      "api": [
+        "NativeMIDIPlayback",
+        "BoundedMIDIPlayback"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerMac/NativeMIDIPlayback.swift",
+        "studio/Sources/NoSpeakerCore/BoundedMIDIPlayback.swift"
+      ],
+      "cli": [],
+      "status": "experimental explicitly opened one-shot native virtual source library; no native CLI output command, physical destination selection or DAW confirmation"
+    }
+  ],
+  "constraints": {
+    "automaticHardwareActivation": false,
+    "defaultNetworkAccess": false,
+    "stableAPI": false,
+    "receiverConfirmation": false,
+    "physicalAcceptance": "separate",
+    "license": "MIT with upstream attribution; additional dependency and model licenses may differ"
+  },
+  "externalExample": "examples/EngineConsumer"
+}
