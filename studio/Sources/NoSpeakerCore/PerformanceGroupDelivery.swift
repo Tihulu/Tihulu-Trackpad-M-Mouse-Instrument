@@ -8,6 +8,14 @@ public struct PerformanceGroupDelivery: Sendable {
         public fileprivate(set) var failedGroups: Set<UUID> = []
         public fileprivate(set) var pendingCleanup: Set<UUID> = []
         public init() {}
+
+        // Merge setup-selector debt without exposing mutable report fields.
+        func includingSetupCleanup(_ pending:Set<UUID>,failedGroup:UUID?) -> Self {
+            var result = self
+            result.pendingCleanup.formUnion(pending)
+            if let failedGroup { result.failedGroups.insert(failedGroup) }
+            return result
+        }
     }
 
     private struct Output: Sendable {
