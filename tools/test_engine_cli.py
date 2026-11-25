@@ -82,6 +82,20 @@ def main(binary):
         assert midi.endswith(bytes.fromhex("ff 2f 00"))
         assert bytes.fromhex("90 3c 5a") in midi and bytes.fromhex("80 3c 00") in midi
         assert encoded["nominalPitchesOnly"] and not encoded["hardware"]
+        plan = run(binary, "midi", "playback-plan", frames)
+        assert plan["hardware"] is False and plan["planned"] is True
+        assert plan["durationNS"] == 500_000_000 and plan["maximumLatenessNS"] == 50_000_000
+        assert plan["events"] == [
+            {"offsetNS":0,"channel":0,"pitch":60,"velocity":90,"kind":"noteOn"},
+            {"offsetNS":250_000_000,"channel":0,"pitch":60,"velocity":0,"kind":"noteOff"}]
+        too_long = json.loads(frames.read_text())
+        too_long["length"] = 19201
+        frames.write_text(json.dumps(too_long))
+        run(binary, "midi", "playback-plan", frames, success=False)
+        too_long["length"] = 960
+        too_long["notes"][0]["cents"] = -10
+        frames.write_text(json.dumps(too_long))
+        run(binary, "midi", "playback-plan", frames, success=False)
         frames.write_text(json.dumps({"bpm":120,"length":960,"notes":[
             {"start":0,"duration":480,"channel":0,"pitch":60,"velocity":90},
             {"start":100,"duration":480,"channel":0,"pitch":60,"velocity":90}]}))
