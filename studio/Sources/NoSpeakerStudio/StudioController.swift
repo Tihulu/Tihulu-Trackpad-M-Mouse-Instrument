@@ -3660,13 +3660,9 @@ final class StudioController: ObservableObject {
                     midiMode: touchMIDIMode,
                     baseChannel: touchMIDIChannel,
                     multiTouchEnabled: touchMultiTouchEnabled,
-                    separateChannels: touchSeparateChannels
+                    separateChannels: touchSeparateChannels,
+                    sustainNewVoices: pedal?.isActive == true
                 )
-            }
-            // Fixed split channels were already settled. Shared legacy/MPE
-            // routes extend the same admitted pedal to newly allocated notes.
-            if touchMIDIOutEnabled, touchSeparateChannels == nil, let pedal {
-                midi?.setTouchSustain(pedal.isActive,baseChannel:touchMIDIChannel)
             }
         }
         guard instrumentPreviewRequested, states != touchStates,
@@ -4312,8 +4308,9 @@ final class StudioController: ObservableObject {
     private func stopCaptureMonitorIfIdle() {
         if !captureHotkeyArmed && !touchRunning && !midiHelperRunning {
             retireCaptureMonitor()
-            clickedSurface = nil
-            trackpadClickPressure = nil
+            // Preview can outlive the capture monitor. Never carry a
+            // pressed edge or its attribution into the next monitor epoch.
+            clearClickAttribution()
             pointerCaptured = false
             captureStatus = "Cursor free · global capture OFF"
         }
@@ -4370,9 +4367,15 @@ final class StudioController: ObservableObject {
         let helperPedal = midiHelperRunning ? helperStates.flatMap { evaluateHelperSustain($0,freshFrame:freshFrame) } : nil
         let midiTouch = touchMIDIOutEnabled ? touchPedal : nil
         if midiTouch != nil || helperPedal != nil {
+            let routes = currentTouchConfiguration.selectedSurfaces.filter {
+                currentTouchConfiguration.output(for:$0).sendsMIDI
+            }.map { currentTouchConfiguration.instrument(for:$0) }
+            let fixed = LegacyTouchSustainTargets.fixedChannels(baseChannel:touchMIDIChannel,
+                hasMelody:routes.contains { $0 != .drums },hasDrums:routes.contains(.drums),
+                isMPE:touchMIDIMode == .mpe)
             midi?.setPhysicalSustainFrame(touch:midiTouch,separateChannels:touchSeparateChannels,
-                independent:touchIndependentDAWSustain,baseChannel:touchMIDIChannel,
-                helper:helperPedal,helperChannel:helperTargetChannel,allowIdleFallback:!freshFrame)
+                independent:touchIndependentDAWSustain,fixedTouchChannels:fixed,
+                helper:helperPedal,helperChannel:helperTargetChannel)
         }
         return touchPedal
     }

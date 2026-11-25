@@ -485,3 +485,70 @@ import Testing
     #expect(transition14 == [1])
     #expect(pool.reserved.isEmpty)
 }
+
+@Test func routedStandardPedalUsesActualFixedDrumAndMelodyChannels() {
+    let drums = LegacyTouchSustainTargets.fixedChannels(baseChannel:2,hasMelody:false,hasDrums:true,isMPE:false)
+    #expect(drums == [9])
+    let mixed = LegacyTouchSustainTargets.fixedChannels(baseChannel:9,hasMelody:true,hasDrums:true,isMPE:false)
+    #expect(mixed == [0,9])
+    let melody = LegacyTouchSustainTargets.fixedChannels(baseChannel:9,hasMelody:true,hasDrums:false,isMPE:false)
+    #expect(melody == [9])
+    let none = LegacyTouchSustainTargets.fixedChannels(baseChannel:4,hasMelody:false,hasDrums:false,isMPE:false)
+    #expect(none.isEmpty)
+}
+
+@Test func routedMPEIdlePedalDoesNotClaimMasterOrAnyUnusedMember() {
+    let pool = LegacyMPEChannelPool()
+    for base in 0...15 {
+        let fixed = LegacyTouchSustainTargets.fixedChannels(baseChannel:base,hasMelody:true,hasDrums:false,isMPE:true)
+        let channels = LegacyTouchSustainTargets.routed(active:true,previous:[],current:[],fixed:fixed)
+        #expect(channels.isEmpty)
+        #expect(pool.next(occupied:[],sustained:channels) == 1)
+    }
+    let drums = LegacyTouchSustainTargets.fixedChannels(baseChannel:1,hasMelody:true,hasDrums:true,isMPE:true)
+    #expect(drums == [9])
+}
+
+@Test func routedMPEPedalCanExtendAllMembersWithoutLosingAChannelToIdleFallback() {
+    var pool = LegacyMPEChannelPool()
+    var owners = LegacySustainOwners()
+    let fixed = LegacyTouchSustainTargets.fixedChannels(baseChannel:1,hasMelody:true,hasDrums:false,isMPE:true)
+    let idle = LegacyTouchSustainTargets.routed(active:true,previous:[],current:[],fixed:fixed)
+    _ = owners.replace(.touch,channels:idle)
+    var allocated: Set<Int> = []
+    for expected in (1...15).filter({ $0 != 9 }) {
+        let channel = pool.next(occupied:allocated,sustained:owners.active)
+        #expect(channel == expected)
+        guard let channel else { return }
+        let on = owners.replace(.touch,channels:owners.channels(for:.touch).union([channel]))
+        #expect(on == [.init(.init(.sustain,channel:channel),value:127)])
+        allocated.insert(channel)
+    }
+    #expect(allocated.count == 14)
+    #expect(pool.next(occupied:allocated,sustained:owners.active) == nil)
+    for channel in allocated {
+        _ = pool.retire(channel:channel,sustained:owners.active.contains(channel),fretless:true)
+    }
+    #expect(pool.reserved == allocated)
+    let off = owners.replace(.touch,channels:LegacyTouchSustainTargets.routed(active:false,previous:allocated,current:[],fixed:fixed))
+    #expect(off.count == 14)
+    let released = pool.pedalChanged(sustained:owners.active)
+    #expect(Set(released) == allocated)
+    #expect(pool.next(occupied:[],sustained:owners.active) == 1)
+}
+
+@Test func routedStandardHandoffKeepsPedalOnEvenWithoutAnActiveNote() {
+    var owners = LegacySustainOwners()
+    _ = owners.replace(.helper,channels:[3])
+    let fixed = LegacyTouchSustainTargets.fixedChannels(baseChannel:3,hasMelody:true,hasDrums:false,isMPE:false)
+    let targets = LegacyTouchSustainTargets.routed(active:true,previous:[],current:[],fixed:fixed)
+    let changes = owners.replaceFrame([.helper:[],.touch:targets])
+    #expect(changes.isEmpty)
+    #expect(owners.active == [3])
+}
+
+@Test func routedSustainRetainsOnlyValidPreviouslyOwnedAndActualChannels() {
+    let targets = LegacyTouchSustainTargets.routed(active:true,previous:[-1,1,16],current:[2,20],fixed:[9])
+    #expect(targets == [1,2,9])
+    #expect(LegacyTouchSustainTargets.routed(active:false,previous:targets,current:[2],fixed:[9]).isEmpty)
+}

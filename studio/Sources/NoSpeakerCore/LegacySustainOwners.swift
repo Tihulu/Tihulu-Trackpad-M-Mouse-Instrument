@@ -35,6 +35,23 @@ public struct LegacySustainOwners: Sendable {
 /// allocated channels are eligible; after allocation the normal idle
 /// fallback remains available. Existing sustained voices retain ownership.
 public enum LegacyTouchSustainTargets {
+    /// Standard destinations are known even before a note exists. MPE
+    /// members are dynamic: never send CC64 to a guessed idle member
+    /// or the zone master. GM drums remain on their fixed channel.
+    public static func fixedChannels(baseChannel:Int,hasMelody:Bool,hasDrums:Bool,isMPE:Bool) -> Set<Int> {
+        var channels: Set<Int> = []
+        if hasDrums { channels.insert(GMDrumPads.midiChannel) }
+        if hasMelody && !isMPE {
+            channels.insert(SurfaceMIDIChannel.melodic(base:baseChannel,hasMIDIDrums:hasDrums))
+        }
+        return channels
+    }
+
+    public static func routed(active:Bool,previous:Set<Int>,current:Set<Int>,fixed:Set<Int>) -> Set<Int> {
+        guard active else { return [] }
+        return previous.union(current).union(fixed).filter { (0...15).contains($0) }
+    }
+
     public static func resolve(active:Bool,previous:Set<Int>,current:Set<Int>,
                                baseChannel:Int,allowIdleFallback:Bool) -> Set<Int> {
         guard active else { return [] }

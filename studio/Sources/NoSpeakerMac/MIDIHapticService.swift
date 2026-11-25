@@ -364,7 +364,8 @@ public final class MIDIHapticService: @unchecked Sendable {
         midiMode: TouchMIDIMode,
         baseChannel: Int = 0,
         multiTouchEnabled: Bool = true,
-        separateChannels: DAWSurfaceChannels? = nil
+        separateChannels: DAWSurfaceChannels? = nil,
+        sustainNewVoices: Bool = false
     ) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
@@ -493,6 +494,13 @@ public final class MIDIHapticService: @unchecked Sendable {
                 channel = free
             } else {
                 channel = standardChannel
+            }
+
+            // A newly allocated MPE member must receive this frame's
+            // admitted pedal before expression and Note On, not afterwards.
+            // Do not mark unused members sustained before allocation.
+            if isMPE && sustainNewVoices && outgoingTouches[key] == nil {
+                extendTouchSustain(to:channel)
             }
 
             // Onsets must not inherit a retired member's expression/pressure.
@@ -629,9 +637,8 @@ public final class MIDIHapticService: @unchecked Sendable {
     /// only the final union transition, never an intermediate OFF/ON.
     public func setPhysicalSustainFrame(touch: MIDIHelperSustainSnapshot?,
                                         separateChannels: DAWSurfaceChannels?,
-                                        independent:Bool,baseChannel:Int,
-                                        helper:Bool?,helperChannel:Int,
-                                        allowIdleFallback:Bool) {
+                                        independent:Bool,fixedTouchChannels:Set<Int>,
+                                        helper:Bool?,helperChannel:Int) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         var updates: [LegacySustainOwners.Owner:Set<Int>] = [:]
@@ -642,15 +649,23 @@ public final class MIDIHapticService: @unchecked Sendable {
                 updates[.touch] = separateChannels.sustainTargets(touch,independent:independent)
             } else {
                 let current = Set(outgoingTouches.values.map(\.channel)).union(physicalChordGates.channels)
-                updates[.touch] = LegacyTouchSustainTargets.resolve(active:touch.isActive,
-                    previous:sustainOwners.channels(for:.touch),current:current,
-                    baseChannel:baseChannel,allowIdleFallback:allowIdleFallback)
+                updates[.touch] = LegacyTouchSustainTargets.routed(active:touch.isActive,
+                    previous:sustainOwners.channels(for:.touch),current:current,fixed:fixedTouchChannels)
             }
         }
         if let helper {
             updates[.helper] = helper && canSend ? [max(0,min(15,helperChannel))] : []
         }
         let commands = sustainOwners.replaceFrame(updates)
+        lock.unlock()
+        if canSend { sendSustainTransitions(commands) }
+    }
+
+    private func extendTouchSustain(to channel:Int) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        let targets = sustainOwners.channels(for:.touch).union([channel])
+        let commands = sustainOwners.replace(.touch,channels:canSend ? targets : [])
         lock.unlock()
         if canSend { sendSustainTransitions(commands) }
     }
