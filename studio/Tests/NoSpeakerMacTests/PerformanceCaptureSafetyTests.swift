@@ -110,28 +110,28 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
 
     func testCapturePhysicalMailboxCoalescesPressureAndPreservesClickOrder() {
         var mailbox = CapturePhysicalMailbox()
-        XCTAssertTrue(mailbox.append(.click(true,0.2)))
-        for i in 0..<1000 { XCTAssertFalse(mailbox.append(.pressure(Double(i)/1000))) }
-        XCTAssertFalse(mailbox.append(.click(false,0)))
-        let batch = mailbox.drain()
+        XCTAssertTrue(mailbox.append(.click(true,0.2),now:1))
+        for i in 0..<1000 { XCTAssertFalse(mailbox.append(.pressure(Double(i)/1000),now:1+Double(i)/100000)) }
+        XCTAssertFalse(mailbox.append(.click(false,0),now:1.02))
+        let batch = mailbox.drain(now:1.03)
         XCTAssertEqual(batch.events,[.click(true,0.2),.pressure(0.999),.click(false,0)])
         XCTAssertEqual(mailbox.coalesced,999)
         XCTAssertFalse(batch.invalidated)
-        XCTAssertTrue(mailbox.append(.click(true,0.3)))
+        XCTAssertTrue(mailbox.append(.click(true,0.3),now:1.04))
     }
 
     func testCapturePhysicalMailboxOverflowInvalidatesAndDropsUntilDrain() {
         var mailbox = CapturePhysicalMailbox()
         for i in 0...CapturePhysicalMailbox.capacity {
-            XCTAssertEqual(mailbox.append(.click(i%2 == 0,0.5)),i == 0)
+            XCTAssertEqual(mailbox.append(.click(i%2 == 0,0.5),now:2+Double(i)/1000),i == 0)
         }
-        XCTAssertFalse(mailbox.append(.click(true,1)))
+        XCTAssertFalse(mailbox.append(.click(true,1),now:2.04))
         XCTAssertEqual(mailbox.overflows,1)
-        let batch = mailbox.drain()
+        let batch = mailbox.drain(now:2.05)
         XCTAssertTrue(batch.invalidated)
         XCTAssertTrue(batch.events.isEmpty)
-        XCTAssertTrue(mailbox.append(.click(true,0.5)))
-        XCTAssertFalse(mailbox.drain().invalidated)
+        XCTAssertTrue(mailbox.append(.click(true,0.5),now:2.06))
+        XCTAssertFalse(mailbox.drain(now:2.07).invalidated)
     }
 
     func testStoppedCaptureMonitorCannotRestartOrCapture() {
@@ -175,10 +175,10 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
 
     func testCapturePhysicalMailboxTimeoutDiscardsAlreadyQueuedEdges() {
         var mailbox = CapturePhysicalMailbox()
-        XCTAssertTrue(mailbox.append(.click(true,0.5)))
+        XCTAssertTrue(mailbox.append(.click(true,0.5),now:4))
         XCTAssertFalse(mailbox.invalidate())
-        XCTAssertFalse(mailbox.append(.click(false,0)))
-        let batch = mailbox.drain()
+        XCTAssertFalse(mailbox.append(.click(false,0),now:4.01))
+        let batch = mailbox.drain(now:4.02)
         XCTAssertTrue(batch.invalidated)
         XCTAssertTrue(batch.events.isEmpty)
     }

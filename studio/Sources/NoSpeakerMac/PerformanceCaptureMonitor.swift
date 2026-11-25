@@ -247,6 +247,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     private var physicalMailbox = CapturePhysicalMailbox()
     private var startClaimed = false
     private var stopped = false
+    private var panicLatched = false
     private var keyDownEvents: UInt64 = 0
     private var pointerEvents: UInt64 = 0
     private var shortcutMatches: UInt64 = 0
@@ -312,7 +313,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     }
     public func acceptsPhysicalInput(_ batch:CapturePhysicalInputBatch) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return listening && !stopped && physicalMailbox.accepts(batch,now:ProcessInfo.processInfo.systemUptime)
+        return listening && !stopped && !panicLatched && physicalMailbox.accepts(batch,now:ProcessInfo.processInfo.systemUptime)
     }
     public var onMonitorFailed: (@Sendable () -> Void)?
     public var onMonitorRecovered: (@Sendable () -> Void)?
@@ -329,7 +330,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
     public func setCaptureHotkeyEnabled(_ enabled: Bool) {
         lock.lock()
-        captureHotkeyEnabled = enabled && !stopped
+        captureHotkeyEnabled = enabled && !stopped && !panicLatched
         if !captureHotkeyEnabled { captured = false }
         lock.unlock()
         if !enabled { onCaptureChanged?(false) }
@@ -632,6 +633,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             } else if action == .panic {
                 captured = false
                 captureHotkeyEnabled = false
+                panicLatched = true
                 invalidateSignal = physicalMailbox.invalidate()
                 changed = false
             }
@@ -662,7 +664,8 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         let suppress = pointerEdges.suppress(button:button,edge:edge,captured:captured)
         let bounded = onPhysicalInputAvailable
         var signal = false
-        if bounded != nil {
+        let physicalAllowed = !panicLatched
+        if physicalAllowed && bounded != nil {
             if type == .leftMouseDown || type == .leftMouseUp {
                 signal = physicalMailbox.append(.click(type == .leftMouseDown,event.getDoubleValueField(.mouseEventPressure)))
             } else if type == .leftMouseDragged {
@@ -672,12 +675,12 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         lock.unlock()
         if signal { bounded?() }
 
-        if bounded == nil && (type == .leftMouseDown || type == .leftMouseUp) {
+        if physicalAllowed && bounded == nil && (type == .leftMouseDown || type == .leftMouseUp) {
             onPhysicalClick?(
                 type == .leftMouseDown,
                 event.getDoubleValueField(.mouseEventPressure)
             )
-        } else if bounded == nil && type == .leftMouseDragged {
+        } else if physicalAllowed && bounded == nil && type == .leftMouseDragged {
             onPhysicalPressure?(event.getDoubleValueField(.mouseEventPressure))
         }
 
