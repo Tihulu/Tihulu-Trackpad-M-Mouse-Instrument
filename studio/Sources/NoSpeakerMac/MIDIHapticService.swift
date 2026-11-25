@@ -371,9 +371,8 @@ public final class MIDIHapticService: @unchecked Sendable {
         let canSend = enabled && virtualSource != 0
         lock.unlock()
         guard canSend else { return }
-        guard configuration.pitchSpanSemitones.isFinite,
-              (0...127).contains(configuration.baseMIDINote),
-              (1...96).contains(configuration.pitchSpanSemitones) else {
+        guard configuration.hasValidSampleDomain else {
+            releaseTouchSustain()
             endAllTouchOutput()
             return
         }
@@ -387,6 +386,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
         let safeMelodicChannel = SurfaceMIDIChannel.melodic(base: baseChannel, hasMIDIDrums: anyDrums)
         if separateChannels != nil && (midiMode != .standard || !configuration.permitsSeparateDAWSurfaceChannels) {
+            releaseTouchSustain()
             endAllTouchOutput()
             return
         }
@@ -398,7 +398,8 @@ public final class MIDIHapticService: @unchecked Sendable {
         let stringRouteAllowed = configuration.permitsStringMIDI(isMPE:midiMode == .mpe)
         let melodicRouteAllowed = configuration.permitsMelodicMIDI(isMPE:midiMode == .mpe)
         var desired = states.filter {
-            $0.isDown && $0.continuousMIDI.isFinite && $0.vibrato.isFinite &&
+            $0.isDown && $0.isTouching && $0.continuousMIDI.isFinite && $0.vibrato.isFinite &&
+            HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) &&
             configuration.surfaceSelection.accepts($0.surface) && configuration.output(for: $0.surface).sendsMIDI &&
             (!configuration.instrument(for:$0.surface).isStringSurface || stringRouteAllowed) &&
             (configuration.instrument(for:$0.surface) != .melodic || melodicRouteAllowed) &&

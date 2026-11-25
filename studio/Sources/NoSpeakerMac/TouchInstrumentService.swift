@@ -156,6 +156,22 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
         TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) }
     }
 
+    /// Project the controls explicitly editable during an active session.
+    /// A view refresh, preference reload or stale binding cannot silently
+    /// change the frozen MIDI surface, scale, output or string mapping.
+    public func applyingLiveControls(from proposed:Self) -> Self {
+        var result = self
+        result.masterLevel = proposed.masterLevel
+        result.triggerMode = proposed.triggerMode
+        result.pressThreshold = proposed.pressThreshold
+        result.velocityFromPressure = proposed.velocityFromPressure
+        result.fixedVelocity = proposed.fixedVelocity
+        result.pressureToExpression = proposed.pressureToExpression
+        result.localHapticSound = proposed.localHapticSound
+        result.magicMouseOrientation = proposed.magicMouseOrientation
+        return result
+    }
+
     // Volume-only changes do not discard held voices. All other changes
     // conservatively invalidate old mapped states and pending percussion.
     func requiresHapticReset(comparedTo previous: Self) -> Bool {
@@ -166,7 +182,7 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
 
     /// A valid gain adjustment must not retire queued musical snapshots.
     /// Invalid gain still fails closed and recovery rebuilds the note cache.
-    func requiresSampleInvalidation(comparedTo previous: Self) -> Bool {
+    public func requiresSampleInvalidation(comparedTo previous: Self) -> Bool {
         requiresHapticReset(comparedTo:previous) ||
             !hasValidSampleDomain || !previous.hasValidSampleDomain
     }

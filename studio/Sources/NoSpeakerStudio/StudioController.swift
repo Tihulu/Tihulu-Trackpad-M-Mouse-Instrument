@@ -26,6 +26,13 @@ final class StudioController: ObservableObject {
     @Published var masterLevel = 0.75 {
         didSet {
             updateChordHaptics(); updateTouchBarHaptics(); updateGamepadHaptics(force:true)
+            // Gain must also follow the master slider while the Touch view
+            // is not mounted. Keep the armed mapping and note ownership.
+            if touchRunning {
+                var updated = currentTouchConfiguration
+                updated.masterLevel = masterLevel
+                updateTouchConfiguration(updated)
+            }
             groupHost.discardGroupHapticAttacks()
             updateGroupHaptics()
         }
@@ -3496,15 +3503,28 @@ final class StudioController: ObservableObject {
     func updateTouchConfiguration(_ configuration: TouchInstrumentConfiguration) {
         var configuration = configuration
         configuration.magicMouseOrientation = magicMouseOrientation
-        if touchRunning && configuration.surfaceSelection != currentTouchConfiguration.surfaceSelection {
-            touch?.invalidatePendingSamples()
-            touchClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
-            liveTouchStates = []
-            touchSustainRearmGate.invalidate()
-            touchSustainState.reset()
-            midi?.releaseTouchSustain()
-            touch?.setSustainActive(false)
-            touchInstrumentSustainActive = false
+        if touchRunning {
+            configuration = currentTouchConfiguration.applyingLiveControls(from:configuration)
+            guard configuration.hasValidSampleDomain else {
+                stopTouch()
+                lastError = "Invalid live Touch configuration. Performance stopped; correct the settings and restart."
+                return
+            }
+            guard configuration != currentTouchConfiguration else { return }
+            if configuration.requiresSampleInvalidation(comparedTo:currentTouchConfiguration) {
+                // Match the native service's sample/haptic reset at the
+                // controller boundary. Do not wait for another hardware
+                // frame to release notes belonging to the old mapping.
+                touch?.invalidatePendingSamples()
+                touchClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
+                liveTouchStates = []
+                touchSustainRearmGate.invalidate()
+                touchSustainState.reset()
+                midi?.releaseTouchSustain()
+                midi?.endAllTouchOutput()
+                touch?.setSustainActive(false)
+                touchInstrumentSustainActive = false
+            }
         }
         currentTouchConfiguration = configuration
         refreshSharedSurfaceMonitoring()
@@ -3540,6 +3560,10 @@ final class StudioController: ObservableObject {
         sustainSettings: MIDIHelperSustainSettings = .init()
     ) {
         guard !touchRunning, allowLivePerformance() else { return }
+        guard configuration.hasValidSampleDomain else {
+            lastError = "Invalid Touch configuration. Check root, note width, pitch span, trigger threshold and gain."
+            return
+        }
         if separateChannels != nil {
             guard midiOut, midiMode == .standard, configuration.permitsSeparateDAWSurfaceChannels else {
                 lastError = "Separate DAW channels require two pitched Standard MIDI surfaces. Disable MPE/fretless or use the shared route."
