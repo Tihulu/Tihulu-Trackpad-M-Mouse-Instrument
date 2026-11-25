@@ -1510,12 +1510,12 @@ final class StudioController: ObservableObject {
                 chordStatus += " · MIDI 12-TET approximation"
             }
         } catch {
-            chordHapticToken = nil
-            chordHaptics?.stop()
-            chordHaptics = nil
-            releaseSharedOutputIfIdle()
-            chordStatus = chordMPESelectors.isEmpty ? error.localizedDescription
-                : "MPE selector cleanup failed. Reset the DAW and retry Release All."
+            // MIDI setup can succeed before acquiring a shared haptic lease.
+            // Roll back this source only, including partially sent selectors.
+            disarmChordPads()
+            chordStatus = chordOutstanding.isEmpty && chordMPESelectors.isEmpty
+                ? error.localizedDescription
+                : "MIDI cleanup failed. Reset the DAW and retry Release All."
         }
     }
 
@@ -1960,11 +1960,11 @@ final class StudioController: ObservableObject {
             touchBarOutputArmed = true
             touchBarOutputStatus = touchBarProfile.effectiveOutput.rawValue + (sharedNoteOutputEnabled ? " ready (shared experimental)" : " ready")
         } catch {
-            touchBarOutputToken = nil
-            touchBarHaptics?.stop()
-            touchBarHaptics = nil
-            releaseSharedOutputIfIdle()
-            touchBarOutputStatus = error.localizedDescription
+            // A failed haptic lease must not leave dedicated MIDI setup armed.
+            disarmTouchBarOutput()
+            touchBarOutputStatus = touchBarOutputLedger.isEmpty
+                ? error.localizedDescription
+                : "MIDI cleanup failed. Reset the DAW and retry."
         }
     }
 
