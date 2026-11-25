@@ -113,3 +113,24 @@ import Testing
     let c=evidence.observe(expected:[1],available:slot.take())
     #expect(a == .suspect && b == .suspect && c == .unavailable)
 }
+
+@Test func mixedUnavailableAndMissingInventoryCannotKeepLostDeviceAlive() {
+    for startMissing in [true,false] {
+        var evidence=NativeSurfaceInventoryGuard()
+        for index in 0..<4 {
+            let missing=(index%2==0)==startMissing
+            let available:Set<UInt64>? = missing ? [1] : nil
+            let verdict=evidence.observe(expected:[1,2],available:available)
+            #expect(verdict == (index==3 ? .unavailable : .suspect))
+        }
+    }
+}
+
+@Test func positivePerDeviceEvidenceResetsMixedInventoryBudget() {
+    var evidence=NativeSurfaceInventoryGuard()
+    for _ in 0..<20 {
+        #expect(evidence.observe(expected:[1,2],available:nil) == .suspect)
+        #expect(evidence.observe(expected:[1,2],available:[1]) == .suspect)
+        #expect(evidence.observe(expected:[1,2],available:[1,2]) == .healthy)
+    }
+}
