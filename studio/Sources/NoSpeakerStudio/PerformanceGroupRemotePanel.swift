@@ -99,7 +99,7 @@ struct PerformanceGroupRemotePanel: View {
     var body: some View {
         GroupBox("Mobile group controllers — experimental TLS") {
             VStack(alignment:.leading,spacing:7) {
-                Text("One selected surface per phone/tablet slot. No MIDI addresses or custom labels shared. Trusted TLS identity required.")
+                Text("Up to two mapped surface families per phone/tablet slot. Enable experimental combinations explicitly in the browser to play both together. No MIDI addresses or custom labels shared. Trusted TLS identity required.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !studio.groupGamepadsRunning {
                     Toggle("Private LAN (requires successful Builder loopback diagnostic)",isOn:$lan)
@@ -154,7 +154,7 @@ struct PerformanceGroupRemotePanel: View {
                         Button("Create one-time invitation") { issue() }.disabled(!sources.contains(source))
                         if !invitation.isEmpty {
                             Text(invitation).font(.system(.caption,design:.monospaced)).textSelection(.enabled)
-                            Text("Enter the secret on the controller within 60 seconds. Treat it as a password. Send a neutral snapshot before playing.")
+                            Text("Enter the secret on the controller within 60 seconds. Treat it as a password. The browser arms all mapped surfaces before playing.")
                                 .font(.caption)
                             Button("Cancel invitation") { clearInvitation() }
                         }
