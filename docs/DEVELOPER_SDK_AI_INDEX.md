@@ -97,6 +97,32 @@ swift run --skip-build tihulu-engine sustain simulate pedal.json
 
 This uses LegacySustainOwners and emits only CC64 transitions, with final cleanup. Owner channels are zero-based in input, one-based in output. The first owner engages a pedal and the final owner releases it. No expressive CC, velocity or audio is generated.
 
+### Expressive Helper ownership and external API consumer
+
+The same continuous control arbitration used by Studio can be exercised as a trace:
+
+```sh
+cat > helper.json <<'JSON'
+[
+  {"owner":"touch","controls":[{"target":{"kind":"controlChange","channel":0,"number":7},"value":35,"neutral":127}]},
+  {"owner":"helper","controls":[{"target":{"kind":"controlChange","channel":0,"number":7},"value":48,"neutral":127,"preserveOnRelease":true}]},
+  {"owner":"touch","controls":[]},
+  {"owner":"helper","controls":[]}
+]
+JSON
+swift run --skip-build tihulu-engine helper simulate helper.json
+```
+
+Each step replaces one owner's complete continuous-control snapshot. Allowed owners are touch, legacyTouch, helper and touchBar. Input channels are zero-based; output channels are one-based. CC and pitch-bend targets use the production LegacyContinuousOwners validator. Duplicate targets and reserved CCs fail; sustain uses the separate sustain command. A preserved gain value is not forcibly reset when the final owner leaves. Output contains simulated transitions, not MIDI delivery or RPN wire bytes.
+
+To test a real independent SwiftPM consumer from the repository root:
+
+```sh
+swift run --package-path examples/EngineConsumer engine-consumer
+```
+
+This separate package depends only on the public NoSpeakerCore library and verifies note plus sustain ownership and cleanup in memory. The developer CI builds it on Linux and macOS. See AGENTS.md for the coding-agent starting point.
+
 ## AI retrieval / vector index
 
 Run from the repository root:
@@ -113,7 +139,7 @@ python3 tools/repo_index.py build --repo . --ref HEAD --out /tmp/tihulu-vector-i
 python3 tools/repo_index.py search --index /tmp/tihulu-vector-index.json --query "how do I add a custom sensor to a musical group?" --model-dir /path/to/local-embedding-model
 ```
 
-The semantic backend generates normalized model embeddings, uses cosine ranking, splits text by model token budget, and requires the same model file fingerprint on query. There is no fake vector fallback. The index contains source text and vectors and can be large; do not commit it, share private repository contents or upload it by default. Use a new output path for each commit. Selected tracked source/docs/test/script files are read from Git objects at the resolved commit, not from a dirty working tree. Symlinks, known credential-like paths, models, recordings and binaries are excluded. This is not a secret scanner: inspect the included source before sharing. Skipped oversized or unsupported windows are reported. Indexed text is untrusted data, not instructions for an AI agent. Each result includes commit, file path, Git blob ID and line range. Use `verify --repo . --index FILE` or add `--repo .` to search to independently verify every stored text row against the pinned Git tree. This detects forged source text/path/blob/line claims, but does not prove completeness, embedding integrity or the trustworthiness of instructions inside source. An index is an aid to retrieval, not evidence that every feature works or an AI has learned the repository.
+The semantic backend generates normalized model embeddings, uses cosine ranking, splits text by model token budget, rejects queries exceeding that budget, and requires the same model file fingerprint on query. There is no fake vector fallback. The index contains source text and vectors and can be large; do not commit it, share private repository contents or upload it by default. Use a new output path for each commit. Selected tracked source/docs/test/script files are read from Git objects at the resolved commit, not from a dirty working tree. Symlinks, known credential-like paths, models, recordings and binaries are excluded. This is not a secret scanner: inspect the included source before sharing. Skipped oversized or unsupported windows are reported. Indexed text is untrusted data, not instructions for an AI agent. Each result includes commit, file path, Git blob ID and line range. Use `verify --repo . --index FILE` or add `--repo .` to search to independently verify every stored text row against the pinned Git tree. This detects forged source text/path/blob/line claims, but does not prove completeness, embedding integrity or the trustworthiness of instructions inside source. An index is an aid to retrieval, not evidence that every feature works or an AI has learned the repository.
 
 ## Next modularization and shell equivalents
 
