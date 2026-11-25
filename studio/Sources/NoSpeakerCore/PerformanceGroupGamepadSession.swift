@@ -1,11 +1,40 @@
 import Foundation
 
+// The same device adapter drives either standard MIDI or explicitly tuned
+// output. Both use PerformanceGroupDelivery's one ownership ledger.
+private protocol LocalGroupOutput: Sendable {
+    var ready: Bool { get }
+    var retired: Bool { get }
+    var sessionCount: Int { get }
+    var pendingCleanup: Set<UUID> { get }
+    mutating func prepare(send:(PerformanceGroupCommand)->Bool) -> Bool
+    mutating func connect(_ source:SensorSource,now:Double) throws -> UUID
+    func hasLease(_ id:UUID) -> Bool
+    mutating func frame(lease:UUID,sequence:UInt64,now:Double,values:[SensorSignal:Double],
+                        releasing:Set<SensorSignal>,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
+    mutating func disconnect(_ lease:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
+    mutating func disconnectBatch(_ leases:Set<UUID>,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
+    mutating func stopGroup(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
+    mutating func panic(send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
+    mutating func retryCleanupReport(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
+}
+extension PerformanceGroupDelivery: LocalGroupOutput {
+    fileprivate var ready: Bool { !retired }
+    fileprivate mutating func prepare(send:(PerformanceGroupCommand)->Bool) -> Bool { !retired }
+    fileprivate mutating func retryCleanupReport(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> Report {
+        retryCleanup(id,send:send)
+    }
+}
+extension PerformanceGroupTunedDelivery: LocalGroupOutput {
+    fileprivate var ready: Bool { state == .ready }
+}
+
 /// Device-specific input policy for the group engine. This does not enumerate
 /// controllers or open hardware. The native adapter must supply a frozen,
 /// explicitly selected slot and its binding token, on a serialized executor.
 public struct PerformanceGroupGamepadSession: Sendable {
     public enum AdmissionError: Error, Equatable {
-        case unsupportedProfile, invalidSlot, alreadyBound, retired, invalidTime
+        case unsupportedProfile, invalidSlot, alreadyBound, retired, invalidTime, setupRequired
     }
     public enum Status: Equatable, Sendable {
         case ignored, waitingForNeutral, ready, delivered, lost, admissionRejected
@@ -29,7 +58,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     }
 
     public static let timeout = PhysicalPatchRuntime.timeout
-    private var delivery: PerformanceGroupDelivery
+    private var delivery: any LocalGroupOutput
     private let mapped: [SensorSource:Set<SensorSignal>]
     private let smoothed: Set<SensorSource>
     private var bindings: [SensorSource:Binding] = [:]
@@ -84,18 +113,30 @@ public struct PerformanceGroupGamepadSession: Sendable {
     }
 
     public init(profile: PerformanceGroupProfile, allowLayering: Bool = false,
-                allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false) throws {
+                allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false,
+                tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:]) throws {
         guard Self.supports(profile,allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera) else {
             throw AdmissionError.unsupportedProfile
         }
         let routes = profile.groups.flatMap { $0.patch.routes }
         mapped = Dictionary(grouping:routes,by:{ $0.source }).mapValues { Set($0.map(\.signal)) }
         smoothed = Set(routes.filter { ($0.response?.smoothingMS ?? 0) > 0 }.map(\.source))
-        delivery = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
+        if tuning.isEmpty {
+            delivery = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
+        } else {
+            delivery = try PerformanceGroupTunedDelivery(profile:profile,tuning:tuning,allowLayering:allowLayering)
+        }
+    }
+
+    /// Explicit one-shot setup for tuned sessions. Standard sessions need
+    /// no setup. Never bind input before the selected output is ready.
+    public mutating func prepare(send:(PerformanceGroupCommand)->Bool) -> Bool {
+        delivery.prepare(send:send)
     }
 
     public mutating func bind(_ source: SensorSource, now: Double) throws -> UUID {
         guard !retired else { throw AdmissionError.retired }
+        guard delivery.ready else { throw AdmissionError.setupRequired }
         guard mapped[source] != nil else { throw AdmissionError.invalidSlot }
         guard bindings[source] == nil else { throw AdmissionError.alreadyBound }
         guard now.isFinite, now >= clock else { throw AdmissionError.invalidTime }
@@ -241,7 +282,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         let values: [SensorSignal:Double] = [.x:x,.y:y,.contactSize:size,.contact:1]
         let filtered = values.filter { mapped[source]?.contains($0.key) == true }
         bindings[source] = binding
-        reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,values:filtered,send:send))
+        reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,values:filtered,releasing:[],send:send))
         if !delivery.hasLease(lease) { bindings[source]?.reset() }
         return .init(status:.delivered,reports:reports)
     }
@@ -298,7 +339,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         binding.sequence += 1
         bindings[source] = binding
         reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,
-            values:[source == .lid ? .angle : .x:value],send:send))
+            values:[source == .lid ? .angle : .x:value],releasing:[],send:send))
         if !delivery.hasLease(lease) { bindings[source]?.reset() }
         return .init(status:.delivered,reports:reports)
     }
@@ -360,7 +401,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         bindings[source] = binding
         let values: [SensorSignal:Double] = [.x:accepted.x,.y:accepted.y,.gesture:accepted.aperture]
         reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,
-            values:values.filter { mapped[source]?.contains($0.key) == true },send:send))
+            values:values.filter { mapped[source]?.contains($0.key) == true },releasing:[],send:send))
         if !delivery.hasLease(lease) {
             bindings[source]?.reset()
             cameraTracking.reset()
@@ -396,7 +437,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         return delivery.panic(send:send)
     }
     public mutating func retryCleanup(_ id: UUID, send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
-        delivery.retryCleanup(id,send:send)
+        delivery.retryCleanupReport(id,send:send)
     }
 
     private func staleSources(now: Double) -> Set<SensorSource> {
