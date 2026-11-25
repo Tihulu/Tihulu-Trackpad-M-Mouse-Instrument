@@ -1161,10 +1161,10 @@ public final class PerformanceGroupMIDIHost {
     /// this entry point. The caller must provide the existing watchdog cadence.
     /// No automatic activation, device polling or handler installation here.
     public func startGamepads(profile: PerformanceGroupProfile, allowLayering: Bool = false,
-                              allowSurfaces: Bool = false, allowScalars: Bool = false) throws {
+                              allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false) throws {
         guard canStart else { throw HostError.activeOrCleanupRequired }
         let next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering,
-                                                       allowSurfaces:allowSurfaces,allowScalars:allowScalars)
+                                                       allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera)
         try openPorts(profile)
         delivery = nil
         gamepads = next
@@ -1230,6 +1230,14 @@ public final class PerformanceGroupMIDIHost {
                               hostTime:Double, now:Double) -> PerformanceGroupGamepadSession.Result? {
         guard var state = gamepads else { return nil }
         let result = state.receiveScalar(source,token:token,value:value,hostTime:hostTime,now:now,send:send)
+        gamepads = state
+        return result
+    }
+
+    public func receiveCamera(token:UUID,hand:AirHandSample?,hostTime:Double,now:Double)
+        -> PerformanceGroupGamepadSession.Result? {
+        guard var state = gamepads else { return nil }
+        let result = state.receiveCamera(token:token,hand:hand,hostTime:hostTime,now:now,send:send)
         gamepads = state
         return result
     }
