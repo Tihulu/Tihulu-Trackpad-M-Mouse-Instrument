@@ -650,7 +650,15 @@ test("group browser arms two families before Play and preserves explicit workloa
   a.step(25);
   assert.equal(a.socket.frames.at(-1).kind,"touch");
   a.ack();
+  // The ACK may already have dispatched a due held-drum refresh.
+  // A release cannot overtake an in-flight frame on the single ACK lane.
+  const beforeRelease=a.socket.frames.length;
   a.elements.pad.emit("pointerup",xyEvent(2));
+  if(a.socket.frames.at(-1).kind==="drumPads"){
+    assert.equal(a.socket.frames.length,beforeRelease);
+    assert.equal(a.socket.frames.at(-1).mask,1);
+    a.ack();
+  }
   a.step(25);
   assert.equal(a.socket.frames.at(-1).kind,"release");
   a.ack();
