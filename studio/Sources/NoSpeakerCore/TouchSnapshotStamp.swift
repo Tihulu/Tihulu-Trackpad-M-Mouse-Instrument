@@ -44,14 +44,34 @@ public struct TouchPublicationCursor: Sendable {
 /// Each native surface owns its own latest complete physical snapshot.
 /// An empty snapshot clears only that surface; a note-map reset must not
 /// reset this cache. Only the physical monitoring lifecycle owns reset.
+public struct PhysicalSurfaceObservation: Sendable, Equatable {
+    public let stamp:TouchSnapshotStamp
+    public let receivedAt:Double
+    public init(stamp:TouchSnapshotStamp,receivedAt:Double) {
+        self.stamp = stamp; self.receivedAt = receivedAt
+    }
+}
+
 public struct PhysicalSurfaceSnapshotCache<Surface:Hashable & Sendable,Contact:Sendable>: Sendable {
     private var states: [Surface:[Contact]] = [:]
+    private var observations:[Surface:PhysicalSurfaceObservation] = [:]
     public init() {}
-    public mutating func replace(_ surface:Surface,contacts:[Contact]) {
-        if contacts.isEmpty { states.removeValue(forKey:surface) }
-        else { states[surface] = contacts }
+    public mutating func replace(_ surface:Surface,contacts:[Contact],observation:PhysicalSurfaceObservation? = nil) {
+        if contacts.isEmpty {
+            states.removeValue(forKey:surface)
+            observations.removeValue(forKey:surface)
+        } else {
+            states[surface] = contacts
+            observations[surface] = observation
+        }
     }
     public var touchingSurfaces:Set<Surface> { Set(states.keys) }
+    /// An unrelated surface publication cannot refresh a held contact's
+    /// click-attribution timestamp or mapping revision.
+    public var singleTouchObservation:PhysicalSurfaceObservation? {
+        guard states.count == 1,let surface = states.keys.first else { return nil }
+        return observations[surface]
+    }
     public func combined(order:[Surface]) -> [Contact] { order.flatMap { states[$0] ?? [] } }
-    public mutating func reset() { states.removeAll() }
+    public mutating func reset() { states.removeAll(); observations.removeAll() }
 }

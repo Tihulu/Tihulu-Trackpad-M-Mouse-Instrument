@@ -351,6 +351,7 @@ public struct HelperSurfaceContact: Sendable, Equatable, Identifiable {
 public struct QueuedTouchSnapshot: Sendable {
     public let states: [TouchPerformanceState]
     public let helperContacts: [HelperSurfaceContact]
+    public let clickObservation: PhysicalSurfaceObservation?
     public let stamp: TouchSnapshotStamp
     public let sourceSurface: TouchSurfaceKind
     public let queuedAt: Double
@@ -722,8 +723,11 @@ public final class TouchInstrumentService: @unchecked Sendable {
             return HelperSurfaceContact(contactID:contact.id,surface:contact.surface,
                 x:Double(contact.x),y:Double(contact.y),pressure:Double(contact.size))
         }
-        helperContactCache.replace(frame.surface,contacts:physical)
+        let receivedAt = ProcessInfo.processInfo.systemUptime
+        helperContactCache.replace(frame.surface,contacts:physical,
+            observation:.init(stamp:stamp,receivedAt:receivedAt))
         let helperContacts = helperContactCache.combined(order:TouchSurfaceKind.allCases)
+        let clickObservation = helperContactCache.singleTouchObservation
         if instrument == .drums && config.drumLayout.isGrid {
             let previous = gridDrumNotes[frame.surface] ?? [:]
             var next: [Int: Int] = [:]
@@ -759,7 +763,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         // A preview is never a percussion trigger.
         guard isActive && active else {
             let inbox = queuedInbox, notify = queuedReady
-            let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
+            let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,clickObservation:clickObservation,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
             lock.unlock()
             if inbox != nil { if ready { notify?() } }
             else { callback?(combined,stamp) }
@@ -803,7 +807,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             }
         }
         let inbox = queuedInbox, notify = queuedReady
-        let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
+        let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,clickObservation:clickObservation,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
         lock.unlock()
         if inbox != nil { if ready { notify?() } }
         else { callback?(combined,stamp) }

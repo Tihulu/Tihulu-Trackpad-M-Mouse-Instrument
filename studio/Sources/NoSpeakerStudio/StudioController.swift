@@ -3441,8 +3441,8 @@ final class StudioController: ObservableObject {
             }
             if mappedCurrent {
                 clickTouchingSurfaces = Set(sample.helperContacts.map(\.surface))
-                clickSnapshotRevision = sample.stamp.revision
-                clickSnapshotReceivedAt = sample.queuedAt
+                clickSnapshotRevision = sample.clickObservation?.stamp.revision
+                clickSnapshotReceivedAt = sample.clickObservation?.receivedAt
             }
             handleSharedSurfaceStates(sample,admitTouch:mappedCurrent)
             touchDispatchMetrics.record(queuedAt:sample.queuedAt,startedAt:startedAt,

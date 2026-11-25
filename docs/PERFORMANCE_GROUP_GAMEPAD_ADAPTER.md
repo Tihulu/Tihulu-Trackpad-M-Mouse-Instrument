@@ -224,3 +224,7 @@ Helper start, stop, surface and routing edits no longer invalidate the common na
 ### Independent physical Helper contacts
 
 Queued snapshots now carry a typed physical contact stream independent of mapped notes. The per-surface physical cache is not erased by Touch mapping revisions or activation changes. The controller consumes publication sequence in monitor-token order: obsolete mapped snapshots cannot sound, but their ordered physical Helper releases remain eligible under the independent consumer watermarks and existing age/backlog policy. Helper orientation is applied at admission and changes fence/reset expressive output, without discarding pedal edges. Three portable and one native test cover ordering, cache isolation, old-map release admission and coordinate/domain handling. The physical cache still relies on valid native empty/release frames; device-disconnect and hardware acceptance remain separate.
+
+### Per-surface click evidence
+
+Physical click attribution now uses the actual sole touching surface's last observation revision and monotonic receipt, not the latest combined-frame timestamp. A frame from the other surface cannot refresh stale evidence or promote it to a new note-mapping revision. Ambiguous, absent or reset evidence fails closed under the existing attribution policy. Two portable regressions cover unrelated-surface refresh and ambiguous evidence. This is not a hardware event-tap acceptance result.

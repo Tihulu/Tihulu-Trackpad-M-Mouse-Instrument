@@ -103,3 +103,33 @@ import Testing
     let oldNoteUp = musical.accept(up,currentRevision:5)
     #expect(rawDown && noteDown && rawUp && !oldNoteUp)
 }
+
+@Test func unrelatedPhysicalSurfaceCannotRefreshClickEvidence() {
+    var cache = PhysicalSurfaceSnapshotCache<Int,Int>()
+    let old = PhysicalSurfaceObservation(stamp:.init(revision:1,sequence:1),receivedAt:10)
+    let unrelated = PhysicalSurfaceObservation(stamp:.init(revision:2,sequence:2),receivedAt:20)
+    cache.replace(0,contacts:[5],observation:old)
+    cache.replace(1,contacts:[],observation:unrelated)
+    #expect(cache.singleTouchObservation == old)
+    #expect(cache.singleTouchObservation?.stamp.revision == 1)
+    #expect(cache.singleTouchObservation?.receivedAt == 10)
+    cache.replace(0,contacts:[5],observation:.init(stamp:.init(revision:2,sequence:3),receivedAt:21))
+    #expect(cache.singleTouchObservation?.stamp.revision == 2)
+    #expect(cache.singleTouchObservation?.receivedAt == 21)
+}
+
+@Test func ambiguousPhysicalClickEvidenceFailsClosedUntilOneSurfaceRemains() {
+    var cache = PhysicalSurfaceSnapshotCache<Int,Int>()
+    let a = PhysicalSurfaceObservation(stamp:.init(revision:1,sequence:1),receivedAt:10)
+    let b = PhysicalSurfaceObservation(stamp:.init(revision:1,sequence:2),receivedAt:11)
+    cache.replace(0,contacts:[5],observation:a)
+    cache.replace(1,contacts:[5],observation:b)
+    #expect(cache.touchingSurfaces == [0,1])
+    #expect(cache.singleTouchObservation == nil)
+    cache.replace(1,contacts:[],observation:b)
+    #expect(cache.singleTouchObservation == a)
+    cache.replace(0,contacts:[5])
+    #expect(cache.singleTouchObservation == nil)
+    cache.reset()
+    #expect(cache.singleTouchObservation == nil)
+}
