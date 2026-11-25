@@ -67,3 +67,63 @@ private func dynamicHapticFixture() throws -> (PerformanceGroupProfile,DynamicMP
         try PerformanceGroupHapticProjection(preparedDynamic:preview,selected:[UUID()])
     }
 }
+
+
+@Test func dynamicHapticCapacityRefusedNotesNeverReachProjection() throws {
+    let spec = try DynamicMPEPreview.specification(name:"Wide",degrees:"0, 220, 400, 500, 700, 900, 1100",rootText:"60")
+    let pitches = (36...83).filter { spec.scale.intervals.contains(($0-60+144)%12) }
+    let group = PerformanceInstrumentGroup(name:"Wide",patch:.init(routes:pitches.enumerated().map { i,note in
+        .init(id:"n\(i)",source:.gamepad1,signal:.padA,destination:.init(.note,channel:3,number:note))
+    }))
+    let profile = PerformanceGroupProfile(groups:[group])
+    let preview = try DynamicMPEPreview(profile:profile,tuning:[group.id:spec])
+    var output = try DynamicMPEGroupDelivery(profile:profile,tuning:preview.tuning)
+    let ready = output.prepare { _ in true }
+    #expect(ready)
+    var projection = try PerformanceGroupHapticProjection(preparedDynamic:preview,selected:[group.id])
+    let lease = try output.connect(.gamepad1,now:1)
+    var sent:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { item in
+        sent.append(item)
+        projection.observe(item,accepted:true)
+        return true
+    }
+    let report = output.frame(lease:lease,sequence:1,now:1.01,values:[.padA:1],send:sink)
+    #expect(report.delivered == 15 && report.capacityRefused == 13)
+    #expect(sent.count == 15 && projection.activeGroups == [group.id])
+    let frame = try #require(projection.frame())
+    #expect(frame.tones.count <= 6)
+    let allocated = Set(sent.map(\.command.destination))
+    sent.removeAll()
+    let held = output.frame(lease:lease,sequence:2,now:1.02,values:[.padA:1],send:sink)
+    #expect(held.delivered == 0 && held.capacityRefused == 0 && sent.isEmpty)
+    #expect(projection.frame() == frame)
+    let release = output.frame(lease:lease,sequence:3,now:1.03,values:[:],releasing:[.padA],send:sink)
+    #expect(release.delivered == 15 && Set(sent.map(\.command.destination)) == allocated)
+    #expect(sent.allSatisfy { $0.command.value == 0 } && projection.frame() == nil)
+}
+
+@Test func dynamicHapticTransportFailureRetiresOnlyFailedGroup() throws {
+    let (profile,preview,a,b) = try dynamicHapticFixture()
+    var output = try DynamicMPEGroupDelivery(profile:profile,tuning:preview.tuning)
+    _ = output.prepare { _ in true }
+    var projection = try PerformanceGroupHapticProjection(preparedDynamic:preview,selected:[a,b])
+    let x = try output.connect(.gamepad1,now:1)
+    let y = try output.connect(.gamepad2,now:1)
+    let sink:(PerformanceGroupCommand)->Bool = { item in
+        projection.observe(item,accepted:true)
+        return true
+    }
+    _ = output.frame(lease:x,sequence:1,now:1.01,values:[.padA:1],send:sink)
+    _ = output.frame(lease:y,sequence:1,now:1.02,values:[.padA:1],send:sink)
+    let report = output.frame(lease:x,sequence:2,now:1.03,values:[:],releasing:[.padA]) { item in
+        projection.observe(item,accepted:false)
+        return false
+    }
+    #expect(report.failedGroups == [a] && report.pendingCleanup == [a])
+    #expect(projection.activeGroups == [b] && projection.frame()?.tones.count == 1)
+    let clean = output.retryCleanup(a,send:sink)
+    #expect(clean.pendingCleanup.isEmpty && projection.activeGroups == [b])
+    _ = output.disconnectBatch([y],send:sink)
+    #expect(projection.frame() == nil)
+}
