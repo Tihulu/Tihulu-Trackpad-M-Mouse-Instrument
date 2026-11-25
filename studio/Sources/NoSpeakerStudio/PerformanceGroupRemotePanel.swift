@@ -1,0 +1,149 @@
+#if os(macOS)
+import SwiftUI
+import AppKit
+import NoSpeakerCore
+import NoSpeakerMac
+
+/// Explicit, separate mobile group setup. Never opens a listener on appearance.
+/// The parent owns saved-profile admission and controller selection.
+struct PerformanceGroupRemotePanel: View {
+    @EnvironmentObject private var studio:StudioController
+    let sources:[SensorSource]
+    let canStart:Bool
+    let start:(RemoteLoopbackTransport,RemoteLoopbackPageServer,Bool)->Void
+    @State private var identities:[RemoteTLSIdentityChoice] = []
+    @State private var identityID:UUID?
+    @State private var lan = false
+    @State private var choices:[RemoteLANChoice] = []
+    @State private var selectedLAN:String?
+    @State private var confirmedLAN = false
+    @State private var source:SensorSource = .phone
+    @State private var invitation = ""
+    @State private var invitationTask:Task<Void,Never>?
+    @State private var invitationGeneration:UUID?
+    @State private var message = ""
+
+    private var endpoint:RemoteEndpoint? {
+        lan ? choices.first(where:{ $0.id == selectedLAN })?.endpoint : .loopback
+    }
+
+    private func clearInvitation() {
+        invitationGeneration = nil
+        invitationTask?.cancel()
+        invitationTask = nil
+        invitation = ""
+        studio.cancelGroupRemoteInvitation()
+    }
+
+    private func issue() {
+        clearInvitation()
+        guard studio.groupRemoteReady,sources.contains(source) else { return }
+        do {
+            invitation = try studio.issueGroupRemoteInvitation(source:source)
+                .map { String(format:"%02x",$0) }.joined()
+            let generation = UUID()
+            invitationGeneration = generation
+            invitationTask = Task {
+                do { try await Task.sleep(for:.seconds(60)) } catch { return }
+                guard invitationGeneration == generation else { return }
+                clearInvitation()
+            }
+            message = "One-time invitation created."
+        } catch { message = "Invitation refused: slot is unavailable or already bound." }
+    }
+
+    private func begin() {
+        guard canStart,!studio.groupGamepadsRunning,
+              let identity = identities.first(where:{ $0.id == identityID }),
+              let endpoint else { return }
+        if lan {
+            guard confirmedLAN,studio.remoteLoopbackVerified,
+                  RemoteLANChoice.available().contains(where:{ $0.id == selectedLAN && $0.endpoint == endpoint }) else {
+                message = "Select and confirm a current trusted private address."
+                return
+            }
+        }
+        do {
+            let transport = try identity.makeLoopbackTransport(endpoint:endpoint)
+            let page = try identity.makeLoopbackPageServer(endpoint:endpoint)
+            start(transport,page,confirmedLAN)
+        } catch { message = "TLS setup failed. No trust bypass. " + error.localizedDescription }
+    }
+
+    var body: some View {
+        GroupBox("Mobile group controllers — experimental TLS") {
+            VStack(alignment:.leading,spacing:7) {
+                Text("One selected surface per phone/tablet slot. No MIDI addresses or custom labels shared. Trusted TLS identity required.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !studio.groupGamepadsRunning {
+                    Toggle("Private LAN (requires successful Builder loopback diagnostic)",isOn:$lan)
+                        .disabled(!studio.remoteLoopbackVerified)
+                        .onChange(of:lan) { _ in confirmedLAN = false }
+                    if lan {
+                        Button("Refresh private addresses") {
+                            choices = RemoteLANChoice.available()
+                            selectedLAN = nil
+                            confirmedLAN = false
+                        }
+                        Picker("Bind address",selection:$selectedLAN) {
+                            Text("Select address").tag(String?.none)
+                            ForEach(choices) { choice in
+                                Text(choice.interface + " · " + choice.endpoint.host).tag(Optional(choice.id))
+                            }
+                        }.onChange(of:selectedLAN) { _ in confirmedLAN = false }
+                        Toggle("I trust this private network and the matching TLS identity",isOn:$confirmedLAN)
+                    }
+                    Button("Load Keychain TLS identities") {
+                        do {
+                            identities = try RemoteTLSIdentityChoice.available()
+                            identityID = nil
+                        } catch { message = error.localizedDescription }
+                    }
+                    Picker("TLS identity",selection:$identityID) {
+                        Text("Select identity").tag(UUID?.none)
+                        ForEach(identities) { choice in Text(choice.name).tag(Optional(choice.id)) }
+                    }
+                    Button(lan ? "Start group MIDI + LAN" : "Start group MIDI + loopback") { begin() }
+                        .disabled(!canStart || identityID == nil || endpoint == nil ||
+                                  (lan && (!confirmedLAN || !studio.remoteLoopbackVerified)))
+                    Text("Do not forward ports or ignore certificate warnings. LAN remains locked until the existing local Builder diagnostic passes.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text(studio.groupRemoteStatus).font(.caption)
+                    if studio.groupRemoteReady,let endpoint = studio.groupRemoteEndpoint {
+                        Text(endpoint.pageURL).font(.caption).textSelection(.enabled)
+                        Button("Open controller page") {
+                            if let url = URL(string:endpoint.pageURL) { NSWorkspace.shared.open(url) }
+                        }
+                        Picker("Remote slot",selection:$source) {
+                            ForEach(sources,id:\.self) { slot in Text(slot.rawValue).tag(slot) }
+                        }.onChange(of:source) { _ in clearInvitation() }
+                        Button("Create one-time invitation") { issue() }.disabled(!sources.contains(source))
+                        if !invitation.isEmpty {
+                            Text(invitation).font(.system(.caption,design:.monospaced)).textSelection(.enabled)
+                            Text("Enter the secret on the controller within 60 seconds. Treat it as a password. Send a neutral snapshot before playing.")
+                                .font(.caption)
+                            Button("Cancel invitation") { clearInvitation() }
+                        }
+                    }
+                    ForEach(studio.groupRemotePeers.sorted(by:{ $0.uuidString < $1.uuidString }),id:\.self) { id in
+                        HStack {
+                            Text("Peer " + String(id.uuidString.prefix(8))).font(.caption)
+                            Button("Disconnect") { studio.revokeGroupRemote(id) }
+                        }
+                    }
+                    Button("Stop mobile listener") {
+                        clearInvitation()
+                        studio.stopGroupRemote()
+                    }.disabled(studio.groupRemoteEndpoint == nil)
+                }
+                if !message.isEmpty { Text(message).font(.caption) }
+            }.padding(4)
+        }
+        .onAppear { if !sources.contains(source),let first = sources.first { source = first } }
+        .onChange(of:studio.groupRemotePeers) { _ in if !invitation.isEmpty { clearInvitation() } }
+        .onChange(of:studio.groupRemoteReady) { ready in if !ready { clearInvitation() } }
+        .onDisappear { clearInvitation() }
+    }
+}
+#endif
