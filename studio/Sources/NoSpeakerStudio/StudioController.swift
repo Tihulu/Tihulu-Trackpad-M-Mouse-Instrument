@@ -2761,6 +2761,10 @@ final class StudioController: ObservableObject {
         liveTouchStates = states
         // Every accepted hardware frame reaches the musical path before UI.
         if touchRunning {
+            // Fixed independent pedals are committed before note edges in
+            // this same snapshot; legacy/MPE ordering remains unchanged.
+            let earlySustain = touchMIDIOutEnabled && touchIndependentDAWSustain
+            if earlySustain { updateTouchSustain(states) }
             if touchMIDIOutEnabled {
                 midi?.sendTouchStates(
                     states,
@@ -2771,7 +2775,7 @@ final class StudioController: ObservableObject {
                     separateChannels: touchSeparateChannels
                 )
             }
-            updateTouchSustain(states)
+            if !earlySustain { updateTouchSustain(states) }
         }
         guard instrumentPreviewRequested, states != touchStates,
               touchPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty) else { return }
