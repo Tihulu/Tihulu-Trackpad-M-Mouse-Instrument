@@ -61,6 +61,18 @@ struct TihuluEngineCLI {
         let channels: [Int]
     }
 
+    struct HelperStep: Decodable {
+        struct Control: Decodable {
+            let target: SensorDestination
+            let value: Int
+            let neutral: Int
+            let bendRange: Int?
+            let preserveOnRelease: Bool?
+        }
+        let owner: String
+        let controls: [Control]
+    }
+
     static func main() {
         do {
             let result = try run(Array(CommandLine.arguments.dropFirst()))
@@ -104,7 +116,7 @@ struct TihuluEngineCLI {
                 "schema":1, "hardware":false,
                 "commands":["capabilities","patch example","patch validate FILE","patch routes FILE",
                     "groups example","groups validate FILE","groups ports FILE",
-                    "groups simulate PROFILE FRAMES [--allow-layering]", "scale plan ROOT CENTS", "haptics mix FILE", "midi encode FILE", "midi melody FILE", "midi drums FILE", "sustain simulate FILE"]
+                    "groups simulate PROFILE FRAMES [--allow-layering]", "scale plan ROOT CENTS", "haptics mix FILE", "midi encode FILE", "midi melody FILE", "midi drums FILE", "sustain simulate FILE", "helper simulate FILE"]
             ]
         }
         if args == ["capabilities"] {
@@ -114,7 +126,7 @@ struct TihuluEngineCLI {
                 "maxRoutes":PerformanceGroupProfile.maximumRoutes,
                 "maxSessions":PerformanceGroupRouter.maxSessions,
                 "midiDelivery":"simulation only","mpePorts":"not implemented in CLI",
-                "scalePlanning":true,"hapticMixPreview":true,"standardMIDIFileExport":true,"sustainSimulation":true]
+                "scalePlanning":true,"hapticMixPreview":true,"standardMIDIFileExport":true,"sustainSimulation":true,"helperOwnershipSimulation":true]
         }
         if args.count == 4, args[0] == "scale", args[1] == "plan" {
             guard let root = Int(args[2]), (0...115).contains(root),
@@ -222,6 +234,42 @@ struct TihuluEngineCLI {
             }
             return ["schema":1,"simulated":true,"hardware":false,"events":events]
         }
+        if args.count == 3, args[0] == "helper", args[1] == "simulate" {
+            let steps = try JSONDecoder().decode([HelperStep].self,from:read(args[2]))
+            guard steps.count <= 4096 else { throw CLIError("Too many Helper steps") }
+            var owners = LegacyContinuousOwners()
+            var events: [[String:Any]] = []
+            for (index,step) in steps.enumerated() {
+                let owner: LegacyContinuousOwners.Owner
+                switch step.owner {
+                case "touch": owner = .touch
+                case "legacyTouch": owner = .legacyTouch
+                case "helper": owner = .helper
+                case "touchBar": owner = .touchBar
+                default: throw CLIError("Unknown Helper owner")
+                }
+                guard step.controls.count <= SensorRouter.maxMappings else {
+                    throw CLIError("Too many continuous targets")
+                }
+                var desired: [SensorDestination:LegacyContinuousOwners.Value] = [:]
+                for control in step.controls {
+                    guard desired[control.target] == nil else { throw CLIError("Repeated Helper target") }
+                    desired[control.target] = .init(control.value,neutral:control.neutral,
+                        bendRange:control.bendRange,preserveOnRelease:control.preserveOnRelease ?? false)
+                }
+                // Production ownership validates the complete snapshot before
+                // changing it. Check its postcondition to distinguish invalid
+                // input from valid no-op and hidden lower-priority updates.
+                let updates = owners.replace(owner,values:desired)
+                guard owners.values(for:owner) == desired else {
+                    throw CLIError("Invalid Helper snapshot")
+                }
+                events += updates.map { helperEvent($0,step:index) }
+                guard events.count <= 65536 else { throw CLIError("Helper output exceeds limit") }
+            }
+            events += owners.releaseAll().map { helperEvent($0,step:steps.count) }
+            return ["schema":1,"simulated":true,"hardware":false,"events":events]
+        }
         if args == ["patch","example"] {
             let data = try InstrumentPatch.starter.archive()
             guard let object = try JSONSerialization.jsonObject(with:data) as? [String:Any] else {
@@ -315,6 +363,14 @@ struct TihuluEngineCLI {
         _ = delivery.panic { events.append(event($0,index:frames.count)); return true }
         return ["schema":1,"simulated":true,"hardware":false,"frames":frames.count,
                 "cleanupComplete":delivery.pendingCleanup.isEmpty,"events":events]
+    }
+
+    static func helperEvent(_ item: LegacyContinuousOwners.Update,step: Int) -> [String:Any] {
+        var row: [String:Any] = ["step":step,"channel":item.target.channel+1,
+            "kind":item.target.kind.rawValue,"number":item.target.number,"value":item.value,
+            "neutral":item.neutral,"preserveOnRelease":item.preserveOnRelease]
+        if let range = item.bendRange { row["bendRange"] = range }
+        return row
     }
 
     static func event(_ item: PerformanceGroupCommand,index: Int) -> [String:Any] {
