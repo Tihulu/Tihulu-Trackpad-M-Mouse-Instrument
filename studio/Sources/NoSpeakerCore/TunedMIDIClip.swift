@@ -37,7 +37,9 @@ public struct TunedMIDIClip: Sendable {
     }
 
     /// Identical setup for offline export and the isolated live port.
-    public var setupCommands:[SensorCommand] {
+    public var setupCommands:[SensorCommand] { Self.setup(members:members) }
+
+    static func setup(members:[Member]) -> [SensorCommand] {
         var commands:[SensorCommand] = []
         func cc(_ channel:Int,_ number:Int,_ value:Int) {
             commands.append(.init(.init(.controlChange,channel:channel,number:number),value:value))

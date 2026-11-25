@@ -90,6 +90,30 @@ final class StudioController: ObservableObject {
         return try take.encoded()
     }
     private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
+    private let airTunedMIDI = ChordMIDIOutput(name:"TIHULU Air Strings MPE")
+    private var airTunedPlan:AirTunedOutput?
+    private var airTunedSelectors = MIDISelectorCleanup()
+    @Published private(set) var patchTunedAirActive = false
+    private func sendBuilderCommand(_ command:SensorCommand) -> Bool {
+        if let plan = airTunedPlan {
+            guard let wire = plan.translate(command) else { return false }
+            return airTunedMIDI.send(wire)
+        }
+        return patchMIDI.send(command)
+    }
+    private func releaseBuilderOutput() -> Bool {
+        let plan = airTunedPlan
+        let notes = patchLedger.releaseAll(send:{ command in
+            if let plan {
+                guard let wire = plan.translate(command) else { return false }
+                return airTunedMIDI.send(wire)
+            }
+            return patchMIDI.send(command)
+        })
+        let selectors = airTunedSelectors.releaseAll(send:{ airTunedMIDI.send($0) })
+        if notes && selectors { airTunedPlan = nil }
+        return notes && selectors
+    }
     private let ensembleClockMIDI = ChordMIDIOutput(name:"TIHULU Ensemble Clock")
     private var ensembleClockTask:Task<Void,Never>?
     private var ensembleClockToken:UUID?
@@ -430,8 +454,17 @@ final class StudioController: ObservableObject {
     func startInstrumentPatch(sendMIDI: Bool, physical: Bool = false,
                               remoteTransport: RemoteLoopbackTransport? = nil,
                               remotePage: RemoteLoopbackPageServer? = nil,
-                              synthetic:SensorSource? = nil) {
+                              synthetic:SensorSource? = nil,tunedAir:Bool = false) {
         guard !patchRunning else { return }
+        var requestedTuning:AirTunedOutput?
+        if tunedAir {
+            guard sendMIDI,remoteTransport == nil,synthetic == nil,!ensembleRecordNext,let scale = chordBank.customScale else {
+                patchStatus = "Tuned Air requires dedicated MIDI, custom scale, no Hybrid/Remote or armed nominal recording."
+                return
+            }
+            do { requestedTuning = try AirTunedOutput(patch:instrumentPatch,scale:scale,root:chordBank.root) }
+            catch { patchStatus = error.localizedDescription; return }
+        }
         guard synthetic == nil || physical else {
             patchStatus = "Hybrid requires native input mode."
             return
@@ -478,13 +511,21 @@ final class StudioController: ObservableObject {
                 }
             }
         }
-        guard patchLedger.releaseAll(send: { patchMIDI.send($0) }) else {
+        guard releaseBuilderOutput() else {
             patchStatus = "Unreleased MIDI controls. Reset the DAW and retry Stop."
             return
         }
         do {
             try patchLedger.configure(instrumentPatch)
-            if sendMIDI { try patchMIDI.open() }
+            if let requestedTuning {
+                airTunedPlan = requestedTuning
+                try airTunedMIDI.open()
+                guard airTunedSelectors.configure(requestedTuning.setupCommands,send:{ airTunedMIDI.send($0) }) else {
+                    stopInstrumentPatch()
+                    patchStatus = "Tuned Air MPE setup failed. Check DAW and retry Stop."
+                    return
+                }
+            } else if sendMIDI { try patchMIDI.open() }
             if physical {
                 try patchPhysicalRuntime.configure(instrumentPatch, allowRemote: remoteTransport != nil,synthetic:synthetic)
                 patchHybridSource = synthetic
@@ -509,6 +550,7 @@ final class StudioController: ObservableObject {
                 patchInputs = patchSimulation.inputs
             }
             patchMIDIEnabled = sendMIDI
+            patchTunedAirActive = requestedTuning != nil
             debugCameraRunToken = UUID()
             patchRunning = true
             beginEnsembleTakeIfArmed()
@@ -1061,7 +1103,14 @@ final class StudioController: ObservableObject {
         var attempted: [SensorCommand] = []
         for command in commands {
             attempted.append(command)
-            if patchMIDIEnabled && !patchLedger.deliver(command, send: { patchMIDI.send($0) }) {
+            let plan = airTunedPlan
+            if patchMIDIEnabled && !patchLedger.deliver(command, send: { command in
+                if let plan {
+                    guard let wire = plan.translate(command) else { return false }
+                    return airTunedMIDI.send(wire)
+                }
+                return patchMIDI.send(command)
+            }) {
                 if ensembleRecording {
                     ensembleTake?.interrupt(now:ProcessInfo.processInfo.systemUptime)
                     updateEnsembleTakeState()
@@ -1140,7 +1189,8 @@ final class StudioController: ObservableObject {
         debugCameraRunToken = nil
         patchRunning = false
         patchMIDIEnabled = false
-        let released = patchLedger.releaseAll(send: { patchMIDI.send($0) })
+        patchTunedAirActive = false
+        let released = releaseBuilderOutput()
         patchStatus = released ? "Builder idle" : "MIDI release failed. Reset DAW and retry Stop."
     }
 

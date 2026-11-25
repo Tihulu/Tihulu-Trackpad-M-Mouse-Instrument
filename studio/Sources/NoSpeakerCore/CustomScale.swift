@@ -23,7 +23,7 @@ public struct CustomScale: Codable, Equatable, Sendable {
     }
 
     public var isMicrotonal: Bool { centOffsets.values.contains { $0 != 0 } }
-    public var degreeCents: [Int] { intervals.map { $0*100 + (centOffsets[$0] ?? 0) } }
+    public var degreeCents: [Int] { isValid ? intervals.map { $0*100 + (centOffsets[$0] ?? 0) } : [] }
 
     /// Lossless conversion into the existing pitch-class model. Explicitly
     /// reject quarter-tone ties, duplicate anchors and degrees outside it.

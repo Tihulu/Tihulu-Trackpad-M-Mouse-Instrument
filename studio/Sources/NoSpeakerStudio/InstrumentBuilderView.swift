@@ -10,6 +10,7 @@ struct InstrumentBuilderView: View {
     @State private var draft = InstrumentPatch()
     @State private var sendMIDI = false
     @State private var physical = false
+    @State private var tunedAir = false
     @State private var syntheticSource: SensorSource?
     @State private var values: [PatchSimulation.Input: Double] = [:]
     @State private var message = ""
@@ -98,6 +99,9 @@ struct InstrumentBuilderView: View {
                                 next.routes += AirStrumPerformance.routes(bank:AirStrumPerformance.guitarBank)
                                 if next.isValid { draft = next; physical = true; message = "Select chord, pinch helper, then sweep X across strings." }
                             }.disabled(draft.routes.count + 30 > SensorRouter.maxMappings || draft.routes.contains { $0.source == .camera && !AirHandsHelper.allSignals.contains($0.signal) })
+                            Button("Replace with 3-course Air") {
+                                replaceDraft(with:.init(name:"Air three-course strings",routes:AirStrumPerformance.routes(bank:AirStrumPerformance.threeCourseBank)))
+                            }
                             Button("Add 3-course Air · experimental") {
                                 var next = draft
                                 next.routes += AirStrumPerformance.routes(bank:AirStrumPerformance.threeCourseBank)
@@ -255,6 +259,14 @@ struct InstrumentBuilderView: View {
                         }
                         Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)
                             .disabled(studio.patchRunning)
+                        if AirStrumPerformance.usesStrum(draft.routes) {
+                            Toggle("Tune Air strings from current Custom Scale (MPE)",isOn:$tunedAir)
+                                .disabled(studio.patchRunning)
+                            if tunedAir {
+                                Text("Dedicated TIHULU Air Strings MPE port. String-only camera patch, one logical MIDI channel, up to 15 distinct notes. Explicit MIDI output required. No Hybrid/Remote or nominal Ensemble take. The current bank root and offsets are frozen at Start.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                         if physical && syntheticSource != .camera && draft.routes.contains(where: { $0.source == .camera }) {
                             DisclosureGroup("Camera setup") {
                                 VStack(alignment: .leading, spacing: 5) {
@@ -290,7 +302,7 @@ struct InstrumentBuilderView: View {
                                 studio.updateInstrumentPatch(draft)
                                 values = [:]
                                 airRange = AirRangeCapture(signal: airRange.signal)
-                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical,synthetic:physical ? syntheticSource : nil)
+                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical,synthetic:physical ? syntheticSource : nil,tunedAir:tunedAir && AirStrumPerformance.usesStrum(draft.routes))
                             }.buttonStyle(.borderedProminent)
                                 .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty || (physical && !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(draft,synthetic:$0) } ?? PhysicalPatchRuntime.supports(draft))))
                             Button("Stop / Release All") { studio.stopInstrumentPatch() }
@@ -401,7 +413,7 @@ struct InstrumentBuilderView: View {
         }
         .onAppear {
             draft = studio.resumeBuilderDraft()
-            if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled; syntheticSource = studio.patchHybridSource }
+            if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled; syntheticSource = studio.patchHybridSource; tunedAir = studio.patchTunedAirActive }
         }
         .task(id:studio.patchHybridRunID) {
             guard let runID = studio.patchHybridRunID else { return }
@@ -515,6 +527,7 @@ struct InstrumentBuilderView: View {
 
     private func applyReplacement(_ replacement: InstrumentPatch) {
         draft = replacement
+        tunedAir = false
         expandedRoutes.removeAll()
         routeSource = nil
         routeSearch = ""
