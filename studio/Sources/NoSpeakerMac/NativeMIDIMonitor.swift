@@ -43,6 +43,17 @@ public enum NativeMIDIMonitor {
             accepting=false;return (callbacks,packets)
         }
     }
+    // Construct native callbacks outside MainActor. CoreMIDI delivers
+    // them on its own threads; actor-isolated closure inference would trap.
+    private nonisolated static func makeClient(_ client:inout MIDIClientRef)->OSStatus {
+        MIDIClientCreateWithBlock("TIHULU Native Observer" as CFString,&client) { @Sendable _ in }
+    }
+    private nonisolated static func makePort(_ client:MIDIClientRef,_ port:inout MIDIPortRef,
+                                              counter:Counter)->OSStatus {
+        MIDIInputPortCreateWithProtocol(client,"TIHULU Receive Only" as CFString,._1_0,&port) { @Sendable list,_ in
+            counter.record(list.pointee.numPackets)
+        }
+    }
     private static func present(_ endpoint:MIDIEndpointRef)->Bool {
         let count=MIDIGetNumberOfSources()
         guard count<=256 else { return false }
@@ -99,12 +110,9 @@ public enum NativeMIDIMonitor {
             return result
         }
         defer { _ = cleanup() }
-        var status=MIDIClientCreateWithBlock("TIHULU Native Observer" as CFString,&client) { _ in }
+        var status=makeClient(&client)
         guard status==noErr else { throw Failure.native("client",status) }
-        status=MIDIInputPortCreateWithProtocol(client,"TIHULU Receive Only" as CFString,._1_0,&port) { list,_ in
-            // Inspect only the count in the trusted CoreMIDI list header.
-            counter.record(list.pointee.numPackets)
-        }
+        status=makePort(client,&port,counter:counter)
         guard status==noErr else { throw Failure.native("input port",status) }
         guard try resolve(name:sourceName)==source else { throw Failure.sourceUnavailable }
         counter.start()

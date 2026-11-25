@@ -6,10 +6,15 @@ import Testing
 
 /// This test creates only a uniquely named virtual source on a disposable
 /// CI runner. Never emits fixture traffic into a user's local MIDI graph.
-@Test(.enabled(if:ProcessInfo.processInfo.environment["CI"] == "true"))
+private func makeObserverFixtureClient(_ client:inout MIDIClientRef)->OSStatus {
+    MIDIClientCreateWithBlock("TIHULU CI observer fixture" as CFString,&client) { @Sendable _ in }
+}
+
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
 @MainActor func nativeObserverReceivesIsolatedFixtureAndClosesItsPort() async throws {
     var client=MIDIClientRef()
-    let status=MIDIClientCreateWithBlock("TIHULU CI observer fixture" as CFString,&client) { _ in }
+    let status=makeObserverFixtureClient(&client)
     try #require(status==noErr && client != 0)
     defer { _ = MIDIClientDispose(client) }
     var source=MIDIEndpointRef()
@@ -23,7 +28,9 @@ import Testing
     let label=try #require(display).takeRetainedValue() as String
     let resolved=try NativeMIDIMonitor.resolve(name:label)
     #expect(resolved==source)
+    print("Native observer fixture: source resolved; opening receive port")
     let report=try await NativeMIDIMonitor.observe(sourceName:label,seconds:1,onConnected:{
+        print("Native observer fixture: connected; injecting isolated packet")
         // Channel pressure zero, only from the disposable virtual source.
         // No physical output or destination is opened.
         var list=MIDIPacketList()
@@ -37,6 +44,7 @@ import Testing
         let sent=MIDIReceived(source,&list)
         try #require(sent==noErr)
     })
+    print("Native observer fixture: first session closed")
     #expect(report.callbackCount>=1)
     #expect(report.packetCount>=1)
     #expect(report.sourceStillPresent && report.cleanupConfirmed)

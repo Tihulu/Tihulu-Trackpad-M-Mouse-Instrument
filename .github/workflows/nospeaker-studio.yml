@@ -62,6 +62,10 @@ jobs:
           sh -n scripts/verify-preview-dmg.sh
       - name: Unit tests
         run: swift test
+      - name: Isolated native MIDI observer fixture
+        env:
+          TIHULU_NATIVE_OBSERVER_FIXTURE: "1"
+        run: swift test --filter nativeObserverReceivesIsolatedFixtureAndClosesItsPort
       - name: Build Studio
         run: swift build
       - name: Verify standalone engine CLI and repository index
