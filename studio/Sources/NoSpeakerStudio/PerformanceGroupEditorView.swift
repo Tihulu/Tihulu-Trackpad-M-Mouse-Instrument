@@ -120,6 +120,9 @@ struct PerformanceGroupEditorView: View {
                 TextField("Group name",text:nameBinding(group.id))
                 Text((studio.groupRegisteredIDs.contains(group.id) ? "Registered port: " : "Planned port: ") + group.plannedPortName)
                     .font(.caption).textSelection(.enabled)
+                if studio.groupRetainsTuning {
+                    Text("Logical mappings only; see retained DAW setup below for wire channels.").font(.caption)
+                }
                 ForEach(DAWRoutingOverview.rows(for:group.patch)) { row in
                     Text(routeSummary(row)).font(.caption)
                 }
@@ -331,11 +334,45 @@ struct PerformanceGroupEditorView: View {
         }
     }
 
-    private func dawSetup(_ group:PerformanceInstrumentGroup) -> some View {
+    @ViewBuilder private func dawSetup(_ group:PerformanceInstrumentGroup) -> some View {
         let registered = studio.groupRegisteredIDs.contains(group.id)
         let status = registered ? registeredStatus(group.id) : "Planned group port; not registered. Start the saved profile to create it."
-        return DAWSetupAssistantView(projection:.init(patch:group.patch,sendMIDI:true),
-                                     groupPort:.init(name:group.name,port:group.plannedPortName,status:status))
+        if let dynamic = studio.groupDynamicPreview {
+            GroupBox("Dynamic MPE DAW setup") {
+                VStack(alignment:.leading,spacing:4) {
+                    Text(status)
+                    Text(group.plannedPortName).textSelection(.enabled)
+                    Text("Use the full lower MPE zone (master CH1, members CH2–16). The allocated note channel varies. Setup and receiver reception are not confirmed by this display.")
+                    if let planned = dynamic.groups.first(where:{ $0.id == group.id }) {
+                        ForEach(planned.routes,id:\.mappingID) { route in
+                            Text(route.source.rawValue + " / " + route.signal.rawValue + " → possible CH " +
+                                 route.possibleChannels.map { String($0) }.joined(separator:", "))
+                        }
+                    } else {
+                        Text("No prepared dynamic mapping for this group.").foregroundStyle(.orange)
+                    }
+                }.font(.caption)
+            }
+        } else if let tuning = studio.groupTunedConfiguration {
+            GroupBox("Retained MPE DAW setup") {
+                VStack(alignment:.leading,spacing:4) {
+                    Text(status)
+                    Text(group.plannedPortName).textSelection(.enabled)
+                    if let projection = try? PerformanceGroupDAWProjection(profile:saved,configuration:tuning),
+                       let planned = projection.groups.first(where:{ $0.id == group.id }) {
+                        Text(planned.mode == .lowerMPE ? "Use a compatible lower MPE receiver; master CH1." : "Standard MIDI sibling port.")
+                        ForEach(planned.routes,id:\.mappingID) { route in
+                            Text(route.source.rawValue + " / " + route.signal.rawValue + " → CH" + String(route.channel))
+                        }
+                    } else {
+                        Text("Retained wire routing could not be verified. Close ports before starting again.").foregroundStyle(.orange)
+                    }
+                }.font(.caption)
+            }
+        } else {
+            DAWSetupAssistantView(projection:.init(patch:group.patch,sendMIDI:true),
+                                  groupPort:.init(name:group.name,port:group.plannedPortName,status:status))
+        }
     }
 
     private var localSources: [SensorSource] {
@@ -475,6 +512,21 @@ struct PerformanceGroupEditorView: View {
                     if PerformanceGroupMIDIHost.dynamicMPEEnabled {
                         Button("Start dynamic MPE") { requestDynamicStart() }
                             .disabled(!canStartDynamic)
+                            .confirmationDialog("Start dynamic MPE pools?",isPresented:$confirmDynamic,titleVisibility:.visible) {
+                                Button("Confirm dynamic MPE Start") {
+                                    guard let consent = pendingDynamic else { return }
+                                    pendingDynamic = nil
+                                    guard consent == dynamicConsent,let dynamicPreview else {
+                                        message = "Dynamic MPE confirmation expired. Review current settings."
+                                        return
+                                    }
+                                    studio.startGroupGamepads(profile:saved,allowLayering:allowLayering,
+                                        dynamicPreview:dynamicPreview,confirmedDynamic:true)
+                                }
+                                Button("Cancel",role:.cancel) { pendingDynamic = nil }
+                            } message: {
+                                Text("This configures dedicated MPE ports. At most 15 simultaneous member channels per port; individual bend pools may fill sooner. Notes refused at capacity are not replayed. Remote and haptic output are excluded. Receiver setup must be verified manually.")
+                            }
                     }
                     Button("Stop / Release All") { studio.stopGroupGamepads() }
                         .disabled(!studio.groupGamepadsRunning)
@@ -609,21 +661,6 @@ struct PerformanceGroupEditorView: View {
         }
         .sheet(item:$mobileDraft) { draft in
             PerformanceGroupMobileDraftView(draft:draft,apply:applyMobileDraft)
-        }
-        .confirmationDialog("Start dynamic MPE pools?",isPresented:$confirmDynamic,titleVisibility:.visible) {
-            Button("Confirm dynamic MPE Start") {
-                guard let consent = pendingDynamic else { return }
-                pendingDynamic = nil
-                guard consent == dynamicConsent,let dynamicPreview else {
-                    message = "Dynamic MPE confirmation expired. Review current settings."
-                    return
-                }
-                studio.startGroupGamepads(profile:saved,allowLayering:allowLayering,
-                    dynamicPreview:dynamicPreview,confirmedDynamic:true)
-            }
-            Button("Cancel",role:.cancel) { pendingDynamic = nil }
-        } message: {
-            Text("This configures dedicated MPE ports. At most 15 simultaneous member channels per port; individual bend pools may fill sooner. Notes refused at capacity are not replayed. Remote and haptic output are excluded. Receiver setup must be verified manually.")
         }
         .confirmationDialog("Start independent group MPE?",isPresented:$confirmTunedStart,titleVisibility:.visible) {
             Button("Confirm MPE Start") {
