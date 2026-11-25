@@ -54,6 +54,13 @@ jobs:
         run: swift test
       - name: Build Studio
         run: swift build
+      - name: Compile experimental group MPE gate (no execution or packaging)
+        if: github.event_name == 'pull_request' && github.head_ref == 'feature/group-gamepad-adapter'
+        run: |
+          set -euo pipefail
+          scratch="$(mktemp -d "$RUNNER_TEMP/group-mpe-build.XXXXXX")"
+          trap 'rm -rf "$scratch"' EXIT
+          swift build --scratch-path "$scratch" --product NoSpeakerStudio -Xswiftc -DTIHULU_GROUP_MPE_LIVE
       - name: Install SVG icon renderer
         run: brew install librsvg
       - name: Build app bundle in installer mode
