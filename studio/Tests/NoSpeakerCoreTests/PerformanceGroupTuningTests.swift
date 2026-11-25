@@ -341,3 +341,56 @@ private func groupTunedSnapshot(_ down:Bool = false) throws -> GamepadFrame {
             tuning:[a.id:.init(scale:scale,root:128)])
     }
 }
+
+
+@Test func groupActivationRequiresExplicitTuningConfirmationAndCleanPorts() throws {
+    let a = tunedGroup(.gamepad1)
+    let b = tunedGroup(.gamepad2)
+    let profile = PerformanceGroupProfile(groups:[a,b])
+    let configuration = try PerformanceGroupTuningConfiguration(profile:profile,tuning:[a.id:groupTuning(-20)])
+    func request(_ mode:PerformanceGroupActivationPlan.Mode,confirmed:Bool = false,
+                 ports:Set<UUID> = [],cleanup:Set<UUID> = [],disposals:Int = 0) throws -> PerformanceGroupActivationPlan {
+        try .init(profile:profile,mode:mode,allowLayering:false,confirmedTuning:confirmed,
+                  registeredIDs:ports,cleanupIDs:cleanup,pendingDisposalCount:disposals)
+    }
+    #expect(throws:PerformanceGroupActivationPlan.AdmissionError.tuningNotConfirmed) {
+        try request(.tuned(configuration))
+    }
+    #expect(throws:PerformanceGroupActivationPlan.AdmissionError.tuningRequiresClosedPorts) {
+        try request(.tuned(configuration),confirmed:true,ports:[a.id])
+    }
+    #expect(throws:PerformanceGroupActivationPlan.AdmissionError.cleanupRequired) {
+        try request(.tuned(configuration),confirmed:true,cleanup:[b.id])
+    }
+    #expect(throws:PerformanceGroupActivationPlan.AdmissionError.cleanupRequired) {
+        try request(.standard,disposals:1)
+    }
+    let tuned = try request(.tuned(configuration),confirmed:true)
+    #expect(tuned.tuning == configuration.tuning)
+    #expect(tuned.profile == profile)
+    let standard = try request(.standard,ports:[a.id])
+    #expect(standard.tuning.isEmpty)
+    #expect(standard.mode == .standard)
+}
+
+@Test func groupActivationRejectsChangedMappingsAndUnapprovedLayering() throws {
+    let a = tunedGroup(.gamepad1)
+    let b = tunedGroup(.gamepad1)
+    let original = PerformanceGroupProfile(groups:[a])
+    let configuration = try PerformanceGroupTuningConfiguration(profile:original,tuning:[a.id:groupTuning(-20)])
+    var changed = original
+    changed.groups[0].patch.routes[0].destination.number = 67
+    #expect(throws:PerformanceGroupTuningConfiguration.ConfigurationError.staleProfile) {
+        try PerformanceGroupActivationPlan(profile:changed,mode:.tuned(configuration),
+            allowLayering:false,confirmedTuning:true,registeredIDs:[],cleanupIDs:[],pendingDisposalCount:0)
+    }
+    let layered = PerformanceGroupProfile(groups:[a,b])
+    #expect(!layered.layeredInputs.isEmpty)
+    #expect(throws:PerformanceGroupActivationPlan.AdmissionError.layeringNotApproved) {
+        try PerformanceGroupActivationPlan(profile:layered,mode:.standard,
+            allowLayering:false,confirmedTuning:false,registeredIDs:[],cleanupIDs:[],pendingDisposalCount:0)
+    }
+    let accepted = try PerformanceGroupActivationPlan(profile:layered,mode:.standard,
+        allowLayering:true,confirmedTuning:false,registeredIDs:[],cleanupIDs:[],pendingDisposalCount:0)
+    #expect(accepted.allowLayering)
+}
