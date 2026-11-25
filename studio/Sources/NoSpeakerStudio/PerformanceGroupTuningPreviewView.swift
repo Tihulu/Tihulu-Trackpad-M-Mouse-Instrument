@@ -10,7 +10,7 @@ struct PerformanceGroupTuningPreviewView: View {
     let profile: PerformanceGroupProfile
     let locked: Bool
 
-    @State private var configuration: PerformanceGroupTuningConfiguration?
+    @Binding var configuration: PerformanceGroupTuningConfiguration?
     @State private var selectedID: UUID?
     @State private var scaleName = "Custom scale"
     @State private var degrees = "0, 180, 400, 500, 700, 900, 1100"
@@ -156,7 +156,7 @@ struct PerformanceGroupTuningPreviewView: View {
     var body: some View {
         GroupBox("Independent group tuning — offline preview") {
             VStack(alignment:.leading,spacing:8) {
-                Text("Edit custom cents and preview actual MIDI wire channels per independent group. Import/export is separate from standard group settings. This preview is not connected to live Start.")
+                Text("Edit custom cents and preview actual MIDI wire channels per independent group. Import/export is separate from standard group settings. Live MPE requires a separately enabled experimental build and explicit Start confirmation.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !matchesProfile {
                     Text("Saved group mappings changed. This tuning is stale. Import a matching file or explicitly reset the preview before editing.")
