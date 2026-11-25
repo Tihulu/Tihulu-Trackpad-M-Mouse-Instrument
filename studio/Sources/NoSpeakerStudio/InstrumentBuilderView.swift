@@ -10,6 +10,8 @@ struct InstrumentBuilderView: View {
     @State private var draft = InstrumentPatch()
     @State private var sendMIDI = false
     @State private var sendHaptics = false
+    @State private var splitGamepadOutputs = false
+    @State private var gamepadOutputSelection = GamepadOutputSelection()
     @State private var physical = false
     @State private var tunedAir = false
     @State private var gamepadPresetSource:SensorSource = .gamepad1
@@ -38,6 +40,14 @@ struct InstrumentBuilderView: View {
     private var dirty: Bool { draft != studio.instrumentPatch }
     private var gamepadHapticAvailable: Bool {
         physical && syntheticSource == nil && !tunedAir && GamepadHapticVoices.supports(draft)
+    }
+
+    private var splitGamepadAvailable: Bool {
+        gamepadHapticAvailable && Set(draft.routes.map(\.source)) == GamepadFrame.sources
+    }
+    private var splitGamepadValid: Bool {
+        !splitGamepadOutputs || (splitGamepadAvailable &&
+            GamepadOutputPlan(patch:draft,selection:gamepadOutputSelection) != nil)
     }
 
     private var visibleRouteIDs: Set<String> {
@@ -318,21 +328,12 @@ struct InstrumentBuilderView: View {
                                             ForEach(studio.gamepadChoices) { Text($0.name).tag(Optional($0.id)) }
                                         }
                                     }
-                                    Text("Pair in macOS Bluetooth settings first. Release all buttons, triggers and sticks to arm. Disconnect releases only that slot; restart to bind a replacement. Polling prototype: very short taps can be missed.")
+                                    Text("Pair in macOS Bluetooth settings first. Release all buttons, triggers and sticks to arm. Disconnect releases only that slot; restart to bind a replacement. Native change callbacks plus watchdog; very short physical taps still need hardware verification.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }.padding(6).disabled(studio.patchRunning)
                             }
                         }
-                        Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)
-                            .disabled(studio.patchRunning)
-                        if gamepadHapticAvailable {
-                            Toggle("Play notes on Force Touch Trackpad",isOn:$sendHaptics)
-                                .disabled(studio.patchRunning)
-                            Text(sendHaptics ? (sendMIDI ? "Both · dedicated DAW MIDI + Trackpad" : "Trackpad only · no outgoing MIDI") : (sendMIDI ? "MIDI only" : "Monitor only · no sound output"))
-                                .font(.caption.weight(.semibold))
-                            Text("Both controller slots share this output choice. Trackpad renders up to six folded tones; sustain, pitch bend (±2 semitones), CC7 and CC11 are supported. Other CCs are DAW controls, not local effects. Stop competing haptic sessions first.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
+                        gamepadOutputPanel
                         if AirStrumPerformance.usesStrum(draft.routes) || tunedAir {
                             Toggle("Tune Air strings from current Custom Scale (MPE)",isOn:$tunedAir)
                                 .disabled(studio.patchRunning)
@@ -380,9 +381,10 @@ struct InstrumentBuilderView: View {
                                 studio.updateInstrumentPatch(draft)
                                 values = [:]
                                 airRange = AirRangeCapture(signal: airRange.signal)
-                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical,synthetic:physical ? syntheticSource : nil,tunedAir:tunedAir,sendHaptics:gamepadHapticAvailable && sendHaptics)
+                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical,synthetic:physical ? syntheticSource : nil,tunedAir:tunedAir,sendHaptics:gamepadHapticAvailable && sendHaptics,
+                                    gamepadOutputSelection:splitGamepadOutputs ? gamepadOutputSelection : nil)
                             }.buttonStyle(.borderedProminent)
-                                .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty || (physical && !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(draft,synthetic:$0) } ?? PhysicalPatchRuntime.supports(draft))))
+                                 .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty || !splitGamepadValid || (physical && !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(draft,synthetic:$0) } ?? PhysicalPatchRuntime.supports(draft))))
                             Button("Stop / Release All") { studio.stopInstrumentPatch() }
                             Spacer()
                             Text(studio.patchStatus).font(.caption)
@@ -501,10 +503,19 @@ struct InstrumentBuilderView: View {
         }
         .onAppear {
             draft = studio.resumeBuilderDraft()
-            if studio.patchRunning { physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled; sendHaptics = studio.patchHapticEnabled; syntheticSource = studio.patchHybridSource; tunedAir = studio.patchTunedAirActive }
+            if studio.patchRunning {
+                physical = studio.patchPhysical; sendMIDI = studio.patchMIDIEnabled
+                sendHaptics = studio.patchHapticEnabled; syntheticSource = studio.patchHybridSource
+                tunedAir = studio.patchTunedAirActive
+                splitGamepadOutputs = studio.patchGamepadOutputSelection != nil
+                if let selection = studio.patchGamepadOutputSelection { gamepadOutputSelection = selection }
+            }
         }
         .onChange(of:gamepadHapticAvailable) { available in
             if !available && !studio.patchRunning { sendHaptics = false }
+        }
+        .onChange(of:splitGamepadAvailable) { available in
+            if !available && !studio.patchRunning { splitGamepadOutputs = false }
         }
         .task(id:studio.patchHybridRunID) {
             guard let runID = studio.patchHybridRunID else { return }
@@ -519,6 +530,45 @@ struct InstrumentBuilderView: View {
             if !studio.patchPhysical { studio.stopInstrumentPatch() }
             else { studio.releaseHybridControls() }
             studio.rememberBuilderDraft(draft)
+        }
+    }
+
+    private var gamepadOutputPanel: some View {
+        VStack(alignment:.leading,spacing:6) {
+            if splitGamepadAvailable {
+                Toggle("Separate outputs for each controller",isOn:$splitGamepadOutputs)
+                    .disabled(studio.patchRunning)
+                    .onChange(of:splitGamepadOutputs) { enabled in
+                        if !enabled && !studio.patchRunning { sendMIDI = false; sendHaptics = false }
+                    }
+            }
+            if splitGamepadOutputs && splitGamepadAvailable {
+                Picker("Controller 1 output",selection:$gamepadOutputSelection.slot1) {
+                    ForEach(MusicalOutput.allCases) { Text($0.rawValue).tag($0) }
+                }.disabled(studio.patchRunning)
+                Picker("Controller 2 output",selection:$gamepadOutputSelection.slot2) {
+                    ForEach(MusicalOutput.allCases) { Text($0.rawValue).tag($0) }
+                }.disabled(studio.patchRunning)
+                if !splitGamepadValid {
+                    Text("Different outputs cannot share a MIDI channel. Change one controller's channel in its mapping editor.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                Text("Output selection is frozen at Start. A controller's effects and sustain use its assigned MIDI channels.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Toggle("Send controls to dedicated MIDI output",isOn:$sendMIDI)
+                    .disabled(studio.patchRunning)
+                if gamepadHapticAvailable {
+                    Toggle("Play notes on Force Touch Trackpad",isOn:$sendHaptics)
+                        .disabled(studio.patchRunning)
+                    Text(sendHaptics ? (sendMIDI ? "Both · dedicated DAW MIDI + Trackpad" : "Trackpad only · no outgoing MIDI") : (sendMIDI ? "MIDI only" : "Monitor only · no sound output"))
+                        .font(.caption.weight(.semibold))
+                }
+            }
+            if gamepadHapticAvailable {
+                Text("Trackpad renders up to six folded tones; sustain, pitch bend (±2 semitones), CC7 and CC11 are supported. Other CCs are DAW controls, not local effects. Stop competing haptic sessions first.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
