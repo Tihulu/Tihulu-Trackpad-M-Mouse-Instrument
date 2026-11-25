@@ -36,6 +36,17 @@ public struct PerformanceCaptureShortcut: Codable, Hashable, Sendable {
         (0...255).contains(code) && ![53,54,55,56,57,58,59,60,61,62,63].contains(code)
     }
 
+    /// AppKit can return blank/control-character names for special keys.
+    /// Retain the hardware code and use a printable fallback for display.
+    public static func displayLabel(keyCode:Int64,prefix:String,candidate:String?)->String {
+        let fallback=prefix+"Key "+String(keyCode)
+        guard let candidate,
+              !candidate.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
+              !candidate.unicodeScalars.contains(where:{ CharacterSet.controlCharacters.contains($0) }),
+              (prefix+candidate).utf8.count<=128 else { return fallback }
+        return prefix+candidate
+    }
+
     public var isValid: Bool {
         Self.acceptsKeyCode(keyCode) && modifiers & ~Self.allowedModifiers == 0 &&
         !displayName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && displayName.utf8.count <= 128 &&
@@ -43,7 +54,7 @@ public struct PerformanceCaptureShortcut: Codable, Hashable, Sendable {
     }
 
     public func matches(_ event: CGEvent) -> Bool {
-        isValid && event.getIntegerValueField(.keyboardEventKeycode) == keyCode &&
+        Self.acceptsKeyCode(keyCode) && event.getIntegerValueField(.keyboardEventKeycode) == keyCode &&
         (event.flags.rawValue & Self.allowedModifiers) == modifiers
     }
 }
