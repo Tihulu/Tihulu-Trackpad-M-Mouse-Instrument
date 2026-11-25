@@ -45,3 +45,13 @@ import Testing
     let attacks = [(id:"z",value:2),(id:"a",value:3),(id:"a",value:4)]
     #expect(voices.sounding(live:live,includeSustained:false,transient:attacks) == [1,3])
 }
+
+@Test func hapticSustainRequiresEveryLiveOutputAdmissionCondition() {
+    for mask in 0..<32 {
+        let permitted=HapticSustainVoices<Int>.permitsSustain(
+            requested:mask & 1 != 0,active:mask & 2 != 0,
+            localSound:mask & 4 != 0,hasValidMapping:mask & 8 != 0,
+            outputHealthy:mask & 16 != 0)
+        #expect(permitted == (mask==31))
+    }
+}

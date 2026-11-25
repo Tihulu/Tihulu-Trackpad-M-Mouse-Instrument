@@ -594,13 +594,16 @@ public final class TouchInstrumentService: @unchecked Sendable {
     /// the last finger lifts. No playback is performed while Preview is idle.
     public func setSustainActive(_ isOn: Bool) {
         lock.lock()
-        let changed = sustainActive != isOn
+        let admitted=HapticSustainVoices<TouchPerformanceState>.permitsSustain(
+            requested:isOn,active:active,localSound:configuration.localHapticSound,
+            hasValidMapping:!cachedMIDINotes.isEmpty,outputHealthy:!hapticFailureGate.retired)
+        let changed = sustainActive != admitted
         if changed {
             renderRevision &+= 1
             pendingMelodicAttacks.removeAll()
         }
-        sustainActive = isOn
-        if isOn {
+        sustainActive = admitted
+        if admitted {
             for state in liveHapticStates where configuration.output(for: state.surface).sendsHaptics && configuration.instrument(for: state.surface) != .drums {
                 sustainedHapticStates.remember(id:state.id,value:state)
             }
@@ -608,7 +611,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             sustainedHapticStates.removeAll()
         }
         lock.unlock()
-        if changed && !isOn { renderFence.drain() }
+        if changed && !admitted { renderFence.drain() }
     }
 
     public func stopPreview() {
@@ -929,6 +932,8 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 if faulted {
                     pendingMelodicAttacks.removeAll()
                     drumStrikes.discardPending()
+                    sustainedHapticStates.removeAll()
+                    sustainActive=false
                 }
                 lock.unlock()
                 if faulted { onHapticFault?(error.localizedDescription) }
