@@ -90,6 +90,13 @@ public enum PerformanceGroupRemoteSurface: String, CaseIterable, Sendable {
     }
 }
 
+/// Module-internal proof that strict wire parsing has already succeeded.
+/// No public initializer or arbitrary decoded-frame admission path.
+struct ValidatedGroupRemoteFrame: Sendable {
+    let frame:RemoteTouchFrame
+    init(bytes:Data) throws { frame = try RemoteTouchFrame.read(bytes) }
+}
+
 /// Per-binding receipt and wire sequence fence. Not a pairing or network API.
 /// Caller must first authenticate the connection and supply its host receipt.
 struct PerformanceGroupRemoteFence: Sendable {
@@ -98,10 +105,10 @@ struct PerformanceGroupRemoteFence: Sendable {
     private var windowStart:Double?
     private var count = 0
 
-    mutating func accept(_ bytes:Data,receipt:Double,now:Double) -> RemoteTouchFrame? {
+    mutating func accept(_ validated:ValidatedGroupRemoteFrame?,receipt:Double,now:Double) -> RemoteTouchFrame? {
         guard receipt.isFinite, now.isFinite, receipt >= 0, receipt <= now,
               now-receipt < 0.1, lastReceipt.map({ receipt >= $0 }) ?? true,
-              let frame = try? RemoteTouchFrame.read(bytes), frame.sequence > sequence else { return nil }
+              let frame = validated?.frame, frame.sequence > sequence else { return nil }
         if let start = windowStart, receipt-start >= 1 { windowStart = receipt; count = 0 }
         if windowStart == nil { windowStart = receipt }
         guard count < 90 else { return nil }

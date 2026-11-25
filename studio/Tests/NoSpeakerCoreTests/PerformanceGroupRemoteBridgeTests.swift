@@ -236,3 +236,57 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
         #expect(bridge.connectionIDs.isEmpty)
     }
 }
+
+@Test func groupRemoteSingleParsePreservesRateFenceInBridgeAndRawAPI() throws {
+    let phone = groupRemoteFixture(.phone,.contact,60)
+    let profile = PerformanceGroupProfile(groups:[phone])
+    var direct=try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
+    var session=try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
+    var bridge=PerformanceGroupRemoteBridge()
+    let peer=UUID(),secret=Data(repeating:5,count:32)
+    let token=try direct.bind(.phone,now:1)
+    let sink:(PerformanceGroupCommand)->Bool = { _ in Issue.record("Unexpected musical output"); return true }
+    _=bridge.process([.ready],now:1,session:&session,send:sink)
+    try bridge.issue(secret:secret,source:.phone,now:1,session:session)
+    _=bridge.process([.invitation(peer,secret,1)],now:1,session:&session,send:sink)
+    for index in 1...91 {
+        let bytes=groupRemoteWire("heartbeat",1,index)
+        let now=1+Double(index)/1000
+        let raw=direct.receiveRemote(.phone,token:token,bytes:bytes,hostTime:now,now:now,send:sink)
+        let wrapped=bridge.process([.frame(peer,bytes,now)],now:now,session:&session,send:sink)
+        #expect(raw.status == (index<=90 ? .waitingForNeutral : .lost))
+        #expect(wrapped.actions == [.acknowledge(peer,index<=90)])
+    }
+    #expect(direct.boundSources.isEmpty && session.boundSources.isEmpty && bridge.connectionIDs.isEmpty)
+}
+
+@Test func groupRemoteSingleParseRejectsMalformedWireAndReleasesOnlyOwnedNote() throws {
+    let phone=groupRemoteFixture(.phone,.contact,60)
+    let profile=PerformanceGroupProfile(groups:[phone])
+    let invalid:[Data] = [
+        Data(#"{"kind":"touch","version":1,"sequence":3,"x":0.5,"x":0.6,"y":0.5}"#.utf8),
+        Data(#"{"kind":"touch","version":1,"sequence":3,"x":0.5,"y":0.5,"extra":1}"#.utf8),
+        groupRemoteWire("touch",1,2,",\"x\":0.5,\"y\":0.5"),
+        Data(repeating:32,count:RemoteTouchFrame.maximumBytes+1)
+    ]
+    for bytes in invalid {
+        var direct=try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
+        var session=try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
+        var bridge=PerformanceGroupRemoteBridge()
+        let peer=UUID(),secret=Data(repeating:7,count:32),token=try direct.bind(.phone,now:1)
+        var a:[PerformanceGroupCommand]=[], b:[PerformanceGroupCommand]=[]
+        let rawSink:(PerformanceGroupCommand)->Bool={a.append($0);return true}
+        let bridgeSink:(PerformanceGroupCommand)->Bool={b.append($0);return true}
+        _=bridge.process([.ready],now:1,session:&session,send:bridgeSink)
+        try bridge.issue(secret:secret,source:.phone,now:1,session:session)
+        _=bridge.process([.invitation(peer,secret,1)],now:1,session:&session,send:bridgeSink)
+        for (frame,now) in [(groupRemoteWire("release",1,1),1.01),
+                            (groupRemoteWire("touch",1,2,",\"x\":0.5,\"y\":0.5"),1.02),
+                            (bytes,1.03)] {
+            _=direct.receiveRemote(.phone,token:token,bytes:frame,hostTime:now,now:now,send:rawSink)
+            _=bridge.process([.frame(peer,frame,now)],now:now,session:&session,send:bridgeSink)
+        }
+        #expect(a==b && a.count==2 && (a.first?.command.value ?? 0) > 0 && a.last?.command.value==0)
+        #expect(direct.boundSources.isEmpty && session.boundSources.isEmpty && bridge.connectionIDs.isEmpty)
+    }
+}

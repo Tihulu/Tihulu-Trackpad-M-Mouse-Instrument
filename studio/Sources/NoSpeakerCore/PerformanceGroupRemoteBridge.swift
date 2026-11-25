@@ -122,12 +122,13 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                 result.actions.append(.acknowledge(id,true))
             case .frame(let id,let bytes,let receipt):
                 guard !rejected.contains(id),var binding = bindings[id],
-                      fresh(receipt,now:now),let frame = try? RemoteTouchFrame.read(bytes) else {
+                      fresh(receipt,now:now),let validated = try? ValidatedGroupRemoteFrame(bytes:bytes) else {
                     result.reports += remove([id],session:&session,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
                     continue
                 }
+                let frame = validated.frame
                 // Redacted destination page, then optional consented label pages.
                 // No metadata refresh during or after musical performance.
                 let withinBudget = binding.metadataStartedAt.map { now-$0 < 10 } ?? true
@@ -152,8 +153,8 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                     result.actions.append(.acknowledge(id,false))
                     continue
                 }
-                let received = session.receiveRemote(binding.source,token:binding.token,bytes:bytes,
-                                                     hostTime:receipt,now:now,send:send)
+                let received = session.receiveRemoteValidated(binding.source,token:binding.token,validated:validated,
+                                                              hostTime:receipt,now:now,send:send)
                 result.reports += received.reports
                 guard received.status == .ready || received.status == .waitingForNeutral || received.status == .delivered else {
                     result.reports += remove([id],session:&session,send:send)
