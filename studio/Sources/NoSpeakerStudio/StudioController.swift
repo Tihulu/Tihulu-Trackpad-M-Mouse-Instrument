@@ -28,7 +28,7 @@ final class StudioController: ObservableObject {
             updateChordHaptics(); updateTouchBarHaptics(); updateGamepadHaptics(force:true)
             // Gain must also follow the master slider while the Touch view
             // is not mounted. Keep the armed mapping and note ownership.
-            if touchRunning {
+            if touchRunning || instrumentPreviewRequested {
                 var updated = currentTouchConfiguration
                 updated.masterLevel = masterLevel
                 updateTouchConfiguration(updated)

@@ -405,19 +405,23 @@ public final class MIDIHapticService: @unchecked Sendable {
             (configuration.instrument(for:$0.surface) != .melodic || melodicRouteAllowed) &&
             (configuration.instrument(for:$0.surface) != .fretlessStrings || configuration.strings(for:$0.surface).continuousCell(x:$0.x,y:$0.y) != nil)
         }
+        func key(for state:TouchPerformanceState) -> TouchKey {
+            TouchKey(surface:state.surface,id:state.contactID)
+        }
+        let heldKeys = Set(outgoingTouches.keys).union(physicalChordGates.contacts)
         if !multiTouchEnabled {
-            desired = Array(desired.prefix(1))
+            if let index = LegacyTouchAdmission.preferredIndex(keys:desired.map { key(for:$0) },held:heldKeys) {
+                desired = [desired[index]]
+            }
         }
         if configuration.fretless, midiMode == .standard {
-            // Melodic fretless pitch bend is channel-wide in Standard MIDI.
-            // Keep every percussion contact, but only one continuous-pitch
-            // melodic finger; they are routed to separate channels.
-            var keptMelodic = false
-            desired = desired.filter { state in
-                if configuration.instrument(for: state.surface) != .melodic { return true }
-                if keptMelodic { return false }
-                keptMelodic = true
-                return true
+            // Keep nonmelodic routes independent. Do not move a channel-wide
+            // bend to a different finger merely because native order changed.
+            let melodic = desired.filter { configuration.instrument(for:$0.surface) == .melodic }
+            let chosen = LegacyTouchAdmission.preferredIndex(keys:melodic.map { key(for:$0) },held:heldKeys)
+                .map { key(for:melodic[$0]) }
+            desired = desired.filter {
+                configuration.instrument(for:$0.surface) != .melodic || key(for:$0) == chosen
             }
         }
 

@@ -11,3 +11,11 @@ public enum LegacyTouchTransition {
             (oldMPE && sustained && oldNote != newNote)
     }
 }
+
+/// Single-voice admission is sticky for the lifetime of the admitted
+/// contact. Hardware array ordering is not a note release or onset.
+public enum LegacyTouchAdmission {
+    public static func preferredIndex<Key:Hashable>(keys:[Key],held:Set<Key>) -> Int? {
+        keys.firstIndex { held.contains($0) } ?? keys.indices.first
+    }
+}

@@ -158,6 +158,7 @@ public struct PhysicalChordGates<Contact: Hashable & Comparable> {
     private var held: [Contact: Set<SensorDestination>] = [:]
     public init() {}
     public var channels: Set<Int> { Set(held.values.flatMap { $0.map(\.channel) }) }
+    public var contacts: Set<Contact> { Set(held.keys) }
     public mutating func reconcile<Owner: Hashable>(
         _ desired: [Contact: Set<SensorDestination>], velocity: [Contact: Int],
         ledger: inout LegacyNoteOwners<Owner>, owner: (Contact, SensorDestination) -> Owner

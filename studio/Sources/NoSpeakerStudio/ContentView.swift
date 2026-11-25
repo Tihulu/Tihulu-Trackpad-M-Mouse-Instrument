@@ -1365,7 +1365,6 @@ private struct TouchInstrumentView: View {
         .onChange(of: drumLayout) { _ in syncConfiguration() }
         .onChange(of: stringLayout) { _ in syncConfiguration() }
         .onChange(of: mouseStringLayout) { _ in syncConfiguration() }
-        .onChange(of: studio.masterLevel) { _ in syncConfiguration() }
     }
 
     @ViewBuilder
