@@ -246,6 +246,18 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
     }
 }
 
+/// Aggregate counters only; no touch identifiers, coordinates or recordings.
+public struct TouchHapticMetrics: Sendable {
+    public fileprivate(set) var trackpadRawMax = 0
+    public fileprivate(set) var mouseRawMax = 0
+    public fileprivate(set) var trackpadTriggeredMax = 0
+    public fileprivate(set) var mouseTriggeredMax = 0
+    public fileprivate(set) var acceptedDrumStrikes = 0
+    public fileprivate(set) var drainedDrumStrikes = 0
+    public fileprivate(set) var motorSubmissions = 0
+    public fileprivate(set) var motorErrors = 0
+}
+
 public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
     public var id: String { "\(surface.rawValue)-\(contactID)" }
     public var contactID: Int
@@ -321,6 +333,17 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var sustainedHapticStates = HapticSustainVoices<TouchPerformanceState>()
     private var sustainActive = false
     private var drumStrikes = DrumHapticStrikeBuffer()
+    private var hapticMetrics = TouchHapticMetrics()
+
+    public func hapticDiagnosticSnapshot() -> TouchHapticMetrics {
+        lock.lock(); defer { lock.unlock() }
+        return hapticMetrics
+    }
+
+    public func resetHapticDiagnostics() {
+        lock.lock(); defer { lock.unlock() }
+        hapticMetrics = TouchHapticMetrics()
+    }
     // Grid strikes survive sample-publication invalidation, but never a
     // structural layout change or an explicit performance stop.
     private var gridDrumNotes: [TouchSurfaceKind: [Int: Int]] = [:]
@@ -675,6 +698,15 @@ public final class TouchInstrumentService: @unchecked Sendable {
             return
         }
         let liveConfig = configuration
+        let rawCount = frame.contacts.reduce(0) { $0 + ($1.isDown ? 1 : 0) }
+        let triggeredCount = states.reduce(0) { $0 + ($1.isDown ? 1 : 0) }
+        if frame.surface == .trackpad {
+            hapticMetrics.trackpadRawMax = max(hapticMetrics.trackpadRawMax,rawCount)
+            hapticMetrics.trackpadTriggeredMax = max(hapticMetrics.trackpadTriggeredMax,triggeredCount)
+        } else {
+            hapticMetrics.mouseRawMax = max(hapticMetrics.mouseRawMax,rawCount)
+            hapticMetrics.mouseTriggeredMax = max(hapticMetrics.mouseTriggeredMax,triggeredCount)
+        }
         let previousIDs = Set(liveHapticStates.map(\.id))
         liveHapticStates = combined.filter { $0.isDown }
         if liveConfig.localHapticSound {
@@ -691,11 +723,12 @@ public final class TouchInstrumentService: @unchecked Sendable {
             liveConfig.output(for: $0.surface).sendsHaptics &&
             liveConfig.instrument(for: $0.surface) == .drums
         }
-        drumStrikes.receive(contacts:drums.map(\.id),now:ProcessInfo.processInfo.systemUptime) { id in
+        let accepted = drumStrikes.receive(contacts:drums.map(\.id),now:ProcessInfo.processInfo.systemUptime) { id in
             guard let state = drums.first(where:{ $0.id == id }) else { return nil }
             return HapticPatternRenderer.drumFrame(
                 midiNote:state.quantizedMIDI,velocity:Double(state.velocity)/127)
         }
+        hapticMetrics.acceptedDrumStrikes &+= accepted
         if sustainActive {
             for state in liveHapticStates where liveConfig.output(for: state.surface).sendsHaptics && liveConfig.instrument(for: state.surface) != .drums {
                 sustainedHapticStates.remember(id:state.id,value:state)
@@ -719,6 +752,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             // one bounded local pulse. Current contact state always wins.
             let now = ProcessInfo.processInfo.systemUptime
             let hits = drumStrikes.drain(now:now)
+            hapticMetrics.drainedDrumStrikes &+= hits.count
             var current = liveHapticStates
             var liveIDs = Set(current.map(\.id))
             for attacks in pendingMelodicAttacks.drain(now:now) {
@@ -796,7 +830,14 @@ public final class TouchInstrumentService: @unchecked Sendable {
             do {
                 try driver.play(frame, masterLevel: level)
                 submitted = true
-            } catch { return }
+                lock.lock()
+                hapticMetrics.motorSubmissions &+= 1
+                lock.unlock()
+            } catch {
+                lock.lock()
+                hapticMetrics.motorErrors &+= 1
+                lock.unlock()
+            }
         }
         return submitted
     }
