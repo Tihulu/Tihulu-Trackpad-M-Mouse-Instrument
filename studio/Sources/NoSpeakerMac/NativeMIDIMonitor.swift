@@ -16,6 +16,7 @@ public enum NativeMIDIMonitor {
     }
     public enum Failure: LocalizedError {
         case invalidSelection, sourceUnavailable, ambiguousSource, sourceInventoryTooLarge
+        case capacity, recoveryRequired
         case native(String,Int32)
         public var errorDescription:String? {
             switch self {
@@ -23,10 +24,14 @@ public enum NativeMIDIMonitor {
             case .sourceUnavailable: return "Selected MIDI source is unavailable."
             case .ambiguousSource: return "More than one MIDI source has that name; observation refused."
             case .sourceInventoryTooLarge: return "MIDI source inventory exceeds the inspection limit."
+            case .capacity: return "At most four simultaneous MIDI observations are allowed."
+            case .recoveryRequired: return "A previous MIDI receive port could not be disposed. Quit and relaunch before opening another observation."
             case .native(let step,let status): return "MIDI "+step+" failed ("+String(status)+")."
             }
         }
     }
+    private static var slots=BoundedMIDIObservationSlots()
+
     // Construct native callbacks outside MainActor. CoreMIDI delivers
     // them on its own threads; actor-isolated closure inference would trap.
      private nonisolated static func makePort(_ client:MIDIClientRef,_ port:inout MIDIPortRef,
@@ -84,10 +89,16 @@ public enum NativeMIDIMonitor {
         let source=try resolve(name:sourceName)
         guard let bound=identity(source),bound.displayName==sourceName else { throw Failure.sourceUnavailable }
         let counter=BoundedMIDIObservation()
+        guard !slots.recoveryRequired else { throw Failure.recoveryRequired }
+        guard let slot=slots.reserve() else { throw Failure.capacity }
         return try await withTaskCancellationHandler {
             var port=MIDIPortRef(),connected=false
+            var disposalConfirmed=true
+            var cleanupResult:(status:OSStatus,identityValid:Bool)?
+            defer { _=slots.finish(slot,portDisposalConfirmed:disposalConfirmed) }
             // Cleanup is attempted on every exit, including setup errors and cancellation.
             @MainActor func cleanup()->(status:OSStatus,identityValid:Bool) {
+                if let cleanupResult { return cleanupResult }
                 _ = counter.stop()
                 var result:OSStatus=noErr
                 let identityValid=identity(source)==bound
@@ -102,9 +113,12 @@ public enum NativeMIDIMonitor {
                 }
                 if port != 0 {
                     let status=MIDIPortDispose(port);port=0
+                    disposalConfirmed=status==noErr
                     if status != noErr && result == noErr { result=status }
                 }
-                 return (result,identityValid && identity(source)==bound)
+                let outcome=(status:result,identityValid:identityValid && identity(source)==bound)
+                cleanupResult=outcome
+                return outcome
             }
             do {
                 // Keep the process client alive across observations and
@@ -115,6 +129,7 @@ public enum NativeMIDIMonitor {
                 catch MIDIHapticError.client(let status) { throw Failure.native("client",status) }
                 try Task.checkCancellation()
                 var status=makePort(client,&port,counter:counter)
+                disposalConfirmed=port==0
                 guard status==noErr,port != 0 else { throw Failure.native("input port",status==noErr ? -1 : status) }
                 guard try resolve(name:sourceName)==source,identity(source)==bound else { throw Failure.sourceUnavailable }
                 let clock=ContinuousClock()

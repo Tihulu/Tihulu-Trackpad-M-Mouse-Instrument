@@ -34,3 +34,26 @@ public final class BoundedMIDIObservation: @unchecked Sendable {
         return .init(callbacks:callbacks,packets:packets)
     }
 }
+
+/// Main-actor-owned admission ledger for receive-only native sessions.
+/// A failed port disposal is ambiguous: never silently free its slot and
+/// keep allocating more native ports on the retained process client.
+public struct BoundedMIDIObservationSlots:Sendable {
+    public static let capacity=4
+    private var active:Set<UUID>=[]
+    public private(set) var recoveryRequired=false
+    public init() {}
+    public var count:Int { active.count }
+    public mutating func reserve()->UUID? {
+        guard !recoveryRequired,active.count<Self.capacity else { return nil }
+        let token=UUID()
+        guard active.insert(token).inserted else { return nil }
+        return token
+    }
+    @discardableResult
+    public mutating func finish(_ token:UUID,portDisposalConfirmed:Bool)->Bool {
+        guard active.remove(token) != nil else { return false }
+        if !portDisposalConfirmed { recoveryRequired=true }
+        return true
+    }
+}
