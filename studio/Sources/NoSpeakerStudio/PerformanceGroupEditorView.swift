@@ -6,6 +6,8 @@ import NoSpeakerCore
 /// Configuration editor only. No endpoints are created and no MIDI is sent.
 struct PerformanceGroupEditorView: View {
     let currentPatch: InstrumentPatch
+    @EnvironmentObject private var studio: StudioController
+    @State private var allowLayering = false
     @State private var profile = PerformanceGroupProfile()
     @State private var saved = PerformanceGroupProfile()
     @State private var storedData: Data?
@@ -42,6 +44,7 @@ struct PerformanceGroupEditorView: View {
             UserDefaults.standard.set(data,forKey:key)
             storedData = data
             saved = profile
+            allowLayering = false
             message = "Group configuration saved. No MIDI endpoints created."
         } catch {
             message = error.localizedDescription
@@ -96,7 +99,7 @@ struct PerformanceGroupEditorView: View {
         GroupBox {
             VStack(alignment:.leading,spacing:5) {
                 TextField("Group name",text:nameBinding(group.id))
-                Text("Planned port (not registered): " + group.plannedPortName)
+                Text((studio.groupRegisteredIDs.contains(group.id) ? "Registered port: " : "Planned port: ") + group.plannedPortName)
                     .font(.caption).textSelection(.enabled)
                 ForEach(DAWRoutingOverview.rows(for:group.patch)) { row in
                     Text(routeSummary(row)).font(.caption)
@@ -108,7 +111,7 @@ struct PerformanceGroupEditorView: View {
                 Button("Replace draft mappings from Builder") { replaceMappings(group.id) }
                     .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
             }
-        }.disabled(readFailed)
+        }.disabled(readFailed || studio.groupGamepadsRunning)
     }
 
     private func groupActions(_ group: PerformanceInstrumentGroup) -> some View {
@@ -124,16 +127,103 @@ struct PerformanceGroupEditorView: View {
         }
     }
 
+    private var gamepadSources: [SensorSource] {
+        let sources = Set(saved.groups.flatMap { $0.patch.routes.map(\.source) })
+        return GamepadFrame.orderedSources.filter { sources.contains($0) }
+    }
+
+    private var gamepadOnly: Bool {
+        let routes = saved.groups.flatMap { $0.patch.routes }
+        return saved.isValid && !routes.isEmpty &&
+            routes.allSatisfy { GamepadFrame.sources.contains($0.source) && GamepadFrame.permits($0) }
+    }
+
+    private var selectedControllersValid: Bool {
+        let ids = gamepadSources.compactMap { studio.gamepadChoice(for:$0) }
+        return ids.count == gamepadSources.count && Set(ids).count == ids.count &&
+            ids.allSatisfy { id in studio.gamepadChoices.contains { $0.id == id } }
+    }
+
+    private func startSavedGroups() {
+        // A stale editor must not arm a different profile than the saved one.
+        guard let data = storedData,
+              UserDefaults.standard.data(forKey:key) == data,
+              profile == saved, gamepadOnly, selectedControllersValid else {
+            message = "Save or reload the current profile and select distinct controllers first."
+            return
+        }
+        studio.startGroupGamepads(profile:saved,allowLayering:allowLayering)
+    }
+
+    private var liveControls: some View {
+        GroupBox("Experimental group MIDI - Xbox only") {
+            VStack(alignment:.leading,spacing:8) {
+                Text("Standard MIDI only. Each nonempty saved group uses a separate virtual source. No Trackpad sound or mixed sensor profiles in this preview.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !gamepadOnly {
+                    Text("Save a gamepad-only group profile to enable Start.").font(.caption)
+                }
+                Button("Refresh controllers") { studio.refreshBuilderGamepads() }
+                    .disabled(studio.groupGamepadsRunning)
+                ForEach(gamepadSources,id:\.self) { source in
+                    Picker(GamepadFrame.slotLabel(source),selection:Binding<UUID?>(
+                        get:{ studio.gamepadChoice(for:source) },
+                        set:{ studio.setGamepadChoice($0,for:source) })) {
+                        Text("Select controller").tag(UUID?.none)
+                        ForEach(studio.gamepadChoices) { choice in
+                            Text(choice.name).tag(Optional(choice.id))
+                        }
+                    }.disabled(studio.groupGamepadsRunning)
+                }
+                if !saved.layeredInputs.isEmpty {
+                    Toggle("Allow the same controller signal to play multiple groups",isOn:$allowLayering)
+                        .disabled(studio.groupGamepadsRunning)
+                }
+                HStack {
+                    Button("Start group MIDI") { startSavedGroups() }
+                        .disabled(!didLoad || readFailed || profile != saved || !gamepadOnly ||
+                                  !selectedControllersValid || studio.groupGamepadsRunning ||
+                                  !studio.groupCleanupIDs.isEmpty || studio.groupDisposalCount != 0 ||
+                                  (!saved.layeredInputs.isEmpty && !allowLayering))
+                    Button("Stop / Release All") { studio.stopGroupGamepads() }
+                        .disabled(!studio.groupGamepadsRunning)
+                    Button("Close ports") { studio.closeGroupPorts() }
+                        .disabled(studio.groupGamepadsRunning || studio.groupRegisteredIDs.isEmpty)
+                    Button("Retry cleanup") { studio.retryGroupCleanup() }
+                        .disabled(studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0)
+                }
+                Text(studio.groupGamepadStatus).font(.caption)
+                Text("\(studio.groupRegisteredIDs.count) registered ports; \(studio.groupCleanupIDs.count) pending MIDI cleanups; \(studio.groupDisposalCount) pending port disposals.")
+                    .font(.caption)
+                ForEach(saved.groups.filter { studio.groupRegisteredIDs.contains($0.id) }) { group in
+                    HStack {
+                        VStack(alignment:.leading) {
+                            Text(group.name)
+                            Text(group.plannedPortName).font(.caption).textSelection(.enabled)
+                            Text(studio.groupFaultIDs.contains(group.id) ? "Send fault - group stopped" : "Port registered; DAW reception not verified")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Stop group") { studio.stopPerformanceGroup(group.id) }
+                            .disabled(!studio.groupGamepadsRunning || studio.groupFaultIDs.contains(group.id))
+                    }
+                }
+                Text("In Logic Pro choose this exact MIDI In Port and the mapped channel for each track. Arm the required tracks; confirm notes and pedals in the DAW. Registered does not mean sound is verified.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
     var body: some View {
-        DisclosureGroup("Performance Studio - Instrument Groups (configuration preview)") {
+        DisclosureGroup("Performance Studio - Instrument Groups (experimental)") {
             VStack(alignment:.leading,spacing:10) {
-                Text("Organize note and Helper mappings into named groups. Independent MIDI ports are planned, not active. Use the existing Builder to play music.")
+                Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox-only profiles. Other sources still use the existing Builder.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Add empty group") { add(patch:.init()) }
                     Button("Add from Builder draft") { add(patch:currentPatch) }
                         .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
-                }.disabled(!didLoad || readFailed || !profile.isValid || profile.groups.count >= PerformanceGroupProfile.maximumGroups)
+                }.disabled(studio.groupGamepadsRunning || !didLoad || readFailed || !profile.isValid || profile.groups.count >= PerformanceGroupProfile.maximumGroups)
                 ForEach(profile.groups) { group in groupCard(group) }
                 if !profile.layeredInputs.isEmpty {
                     Text("Shared inputs (future layered output requires explicit consent): " +
@@ -147,9 +237,9 @@ struct PerformanceGroupEditorView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Save groups") { save() }
-                        .disabled(!didLoad || readFailed || !profile.isValid || profile == saved)
+                        .disabled(studio.groupGamepadsRunning || !didLoad || readFailed || !profile.isValid || profile == saved)
                     Button("Revert unsaved changes") { profile = saved; message = "Draft reverted." }
-                        .disabled(readFailed || profile == saved)
+                        .disabled(studio.groupGamepadsRunning || readFailed || profile == saved)
                     Button("Copy planned port list") {
                         let lines = profile.groups.map { $0.name + " | planned only: " + $0.plannedPortName }
                         NSPasteboard.general.clearContents()
@@ -160,6 +250,7 @@ struct PerformanceGroupEditorView: View {
                     Text("Unsaved changes. Save before leaving this screen.").font(.caption).foregroundStyle(.orange)
                 }
                 if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
+                liveControls
             }.padding(6)
         }.onAppear { load() }
     }
