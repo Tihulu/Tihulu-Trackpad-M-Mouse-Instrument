@@ -62,19 +62,42 @@ jobs:
           sh -n scripts/verify-preview-dmg.sh
       - name: Unit tests
         run: swift test
-      - name: Isolated native MIDI observer fixture
-        env:
-          TIHULU_NATIVE_OBSERVER_FIXTURE: "1"
-        run: swift test --filter nativeObserverReceivesIsolatedFixtureAndClosesItsPort
-      - name: Isolated native MIDI playback fixtures
+      - name: Isolated native MIDI observer and playback fixtures
         env:
           TIHULU_NATIVE_OBSERVER_FIXTURE: "1"
         run: |
-          swift test --filter nativePlaybackUsesIsolatedSourceAndClosesIt
-          swift test --filter nativePlaybackStopBeforeRunEmitsNothing
-          swift test --filter nativePlaybackReceiverVerifiesNoteGateAndCancellation
-          swift test --filter nativePlaybackRejectsChangedAndRestoredSourceIdentity
-          swift test --filter nativePlaybackDetectsIdentityLossDuringInitialRest
+          # Keep each fixture in a separate process. Collect every result
+          # even if an early timing test fails; the step still fails.
+          status=0
+          for fixture in \
+            nativeObserverReceivesIsolatedFixtureAndClosesItsPort \
+            nativeObserverRefusesSuccessAfterIdentityLoss \
+            nativePlaybackUsesIsolatedSourceAndClosesIt \
+            nativePlaybackStopBeforeRunEmitsNothing \
+            nativePlaybackReceiverVerifiesNoteGateAndCancellation \
+            nativePlaybackRejectsChangedAndRestoredSourceIdentity \
+            nativePlaybackDetectsIdentityLossDuringInitialRest \
+            nativePlaybackStopBeforeRunCannotMaskLostIdentity \
+            nativePlaybackEmptyLedgerRetryStillChecksIdentity \
+            nativePlaybackCloseRetiresTerminalStateAfterIdentityLoss \
+            nativePlaybackRunAndCloseDisposesOnlyOwnSource \
+            nativePlaybackRunAndClosePreservesIdentityRecoveryOnFailure \
+            nativePlaybackPreparedSessionReceivesNoteGateBeforeDisposal
+          do
+            log="$(mktemp)"
+            if swift test --filter "$fixture" >"$log" 2>&1; then
+              # A missing filter or disabled fixture is not acceptance.
+              if ! grep -F "Test $fixture() passed" "$log"; then
+                echo "Fixture did not actually pass: $fixture"
+                status=1
+              fi
+            else
+              status=1
+            fi
+            cat "$log"
+            rm -f "$log"
+          done
+          exit "$status"
       - name: Build Studio
         run: swift build
       - name: Verify standalone engine CLI and repository index
