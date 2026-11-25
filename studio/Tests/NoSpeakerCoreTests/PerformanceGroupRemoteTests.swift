@@ -89,3 +89,26 @@ private func remoteGroup(_ source:SensorSource,_ signal:SensorSignal,_ target:Se
     let duplicate = session.receiveRemote(.phone,token:token,bytes:wire("touch",1,1,",\"x\":0.5,\"y\":0.5"),hostTime:2.02,now:2.02,send:{ _ in true })
     #expect(duplicate.status == .lost && session.boundSources.isEmpty)
 }
+
+
+@Test func groupRemoteActivationRequiresExplicitTransportAndMatchingProfile() throws {
+    let phone = remoteGroup(.phone,.contact,.init(.note,number:60))
+    let local = remoteGroup(.gamepad1,.padA,.init(.note,number:64))
+    let mixed = PerformanceGroupProfile(groups:[phone,local])
+    #expect(throws:PerformanceGroupActivationPlan.AdmissionError.remoteModeMismatch) {
+        try PerformanceGroupActivationPlan(profile:mixed,mode:.standard,allowLayering:false,
+            confirmedTuning:false,registeredIDs:[],cleanupIDs:[],pendingDisposalCount:0)
+    }
+    #expect(throws:PerformanceGroupActivationPlan.AdmissionError.remoteModeMismatch) {
+        try PerformanceGroupActivationPlan(profile:.init(groups:[local]),mode:.standard,allowLayering:false,
+            confirmedTuning:false,registeredIDs:[],cleanupIDs:[],pendingDisposalCount:0,allowRemote:true)
+    }
+    let accepted = try PerformanceGroupActivationPlan(profile:mixed,mode:.standard,allowLayering:false,
+        confirmedTuning:false,registeredIDs:[],cleanupIDs:[],pendingDisposalCount:0,allowRemote:true)
+    #expect(accepted.allowRemote)
+    #expect(accepted.profile == mixed)
+    #expect(throws:PerformanceGroupActivationPlan.AdmissionError.cleanupRequired) {
+        try PerformanceGroupActivationPlan(profile:mixed,mode:.standard,allowLayering:false,
+            confirmedTuning:false,registeredIDs:[],cleanupIDs:[phone.id],pendingDisposalCount:0,allowRemote:true)
+    }
+}
