@@ -57,6 +57,7 @@ public struct PerformanceGroupTunedDelivery: Sendable {
     }
 
     public mutating func disconnect(_ lease:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        guard state == .ready else { return .init() }
         let frozen = plan
         return delivery.disconnect(lease) {
             guard let translated = frozen.translate($0) else { return false }
@@ -65,6 +66,7 @@ public struct PerformanceGroupTunedDelivery: Sendable {
     }
 
     public mutating func expire(now:Double,timeout:Double,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        guard state == .ready else { return .init() }
         let frozen = plan
         return delivery.expire(now:now,timeout:timeout) {
             guard let translated = frozen.translate($0) else { return false }
@@ -73,6 +75,7 @@ public struct PerformanceGroupTunedDelivery: Sendable {
     }
 
     public mutating func stopGroup(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        guard state == .ready else { return .init() }
         let frozen = plan
         return delivery.stopGroup(id) {
             guard let translated = frozen.translate($0) else { return false }
@@ -80,6 +83,8 @@ public struct PerformanceGroupTunedDelivery: Sendable {
         }
     }
 
+    /// Returned report describes musical commands only. The authoritative
+    /// close gate is pendingCleanup, including incomplete RPN selectors.
     public mutating func panic(send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
         state = .retired
         let frozen = plan
