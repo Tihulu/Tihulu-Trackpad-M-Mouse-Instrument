@@ -38,3 +38,7 @@ Use Release my controls to cancel unsent inputs and release sent owners. Wait fo
 
 ## Report acceptance
 Use P01-P14 in [acceptance matrix](REMOTE_R9_ACCEPTANCE_MATRIX.md). Record exact artifact head/checkout, system/browser versions, control modes and observed MIDI commands. Redact secrets, addresses and private mapping text. No public release or stable replacement is authorized.
+
+### Local performance layout (experimental)
+
+In Setup, choose a mapped panel, move it earlier/later, toggle tablet full width, or select compact/normal/large playing surfaces. Release and disable controls before editing. Save stores only a versioned fixed-panel presentation preference in this browser; Reset restores the default and removes it. It never stores pairing codes, host mappings, device labels or active state. Unsupported/malformed stored data falls back to default. A different browser has its own layout. This is panel arrangement, not arbitrary new MIDI mapping or a freeform pixel editor.

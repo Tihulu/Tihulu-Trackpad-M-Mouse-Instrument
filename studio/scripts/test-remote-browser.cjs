@@ -7,14 +7,15 @@ const source=fs.readFileSync(path.join(__dirname,"../Sources/NoSpeakerMac/Remote
 const script=source.split('private static let script = #"""')[1].split('"""#')[0]
   .replaceAll("__REMOTE_ORIGIN__","https://local.test").replaceAll("__REMOTE_SOCKET__","wss://local.test");
 const fullManifest={kind:"capabilities",version:7,touch:true,tilt:true,acceleration:true,rotation:true,airDrums:true,drums:255,piano:67108863,pedals:63};
-function setup(permission="granted",manifest=fullManifest,experimental=true,autoMapping=true,groupNeutral=false){
+function setup(permission="granted",manifest=fullManifest,experimental=true,autoMapping=true,groupNeutral=false,stored=new Map()){
   let time=1000, ticker, socket, nextTimer=0;const timers=new Map();
-  function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",
-    setAttribute(){},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
+  function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",attributes:{},children:[],
+    setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
-  const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id]});
-  const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()}});
+  const elements=Object.fromEntries(["layoutSection","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
+  const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
+    getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
   class WS{
     static OPEN=1;
     constructor(){socket=this;this.readyState=1;this.bufferedAmount=0;this.protocol="tihulu-touch-v1";this.frames=[];}
@@ -706,4 +707,49 @@ test("group refuses misleading channel-only mapping details",()=>{
   const a=setup("granted",touchOnly,false,false,true);
   mappingResponse(a,[[0,1,0,74,1]],{},false);
   assert.equal(a.socket.closed,true);
+});
+
+
+test("layout presentation edits save and restore without sending MIDI",()=>{
+  const stored=new Map(),a=setup("granted",fullManifest,false,true,false,stored);
+  a.elements.navSetup.emit("click");
+  a.elements.layoutPanel.value="pianoSection";a.elements.layoutPanel.emit("change");
+  a.elements.layoutUp.emit("click");a.elements.layoutWide.emit("click");
+  a.elements.layoutSize.value="large";a.elements.layoutSize.emit("change");
+  a.elements.layoutSave.emit("click");
+  assert.equal(a.socket.frames.length,0);
+  assert.equal(a.elements.pianoSection.style.order,"1");
+  assert.equal(a.elements.pianoSection.attributes["data-wide"],"false");
+  assert.equal(a.elements.playView.attributes["data-size"],"large");
+  const data=JSON.parse(stored.get("tihulu.remote.presentation.v1"));
+  assert.deepEqual(Object.keys(data).sort(),["order","size","version","wide"]);
+  const b=setup("granted",fullManifest,false,true,false,stored);
+  assert.equal(b.elements.pianoSection.style.order,"1");
+  assert.equal(b.elements.playView.attributes["data-size"],"large");
+  b.elements.navSetup.emit("click");b.elements.layoutReset.emit("click");
+  assert.equal(stored.size,0);assert.equal(b.elements.pianoSection.style.order,"2");
+});
+
+test("layout cannot change during active or pending musical ownership",()=>{
+  const a=setup("granted",fullManifest,false);
+  a.elements.pad.emit("pointerdown",{pointerId:1,button:0,clientX:25,clientY:25,preventDefault(){}});
+  a.elements.navSetup.emit("click");a.elements.layoutPanel.value="pianoSection";
+  a.elements.layoutUp.emit("click");a.elements.layoutSize.value="large";a.elements.layoutSize.emit("change");
+  assert.equal(a.elements.pianoSection.style.order,"2");
+  assert.equal(a.elements.playView.attributes["data-size"],"normal");
+  assert.equal(a.socket.frames.length,1);
+  a.ack();a.elements.pad.emit("pointerup",{pointerId:1});a.ack();
+  a.elements.navSetup.emit("click");a.elements.layoutUp.emit("click");
+  assert.equal(a.elements.pianoSection.style.order,"1");
+});
+
+test("malformed stored layout fails closed and unmapped panels cannot be edited",()=>{
+  const stored=new Map([["tihulu.remote.presentation.v1",JSON.stringify({version:1,order:["pianoSection"],wide:[],size:"large"})]]);
+  const a=setup("granted",{...fullManifest,touch:true,drums:0,piano:0,pedals:0,tilt:false,acceleration:false,rotation:false,airDrums:false},false,true,false,stored);
+  assert.equal(a.elements.playView.attributes["data-size"],"normal");
+  a.elements.navSetup.emit("click");
+  assert.deepEqual(a.elements.layoutPanel.children.map(x=>x.value),["touchSection"]);
+  a.elements.layoutPanel.value="pianoSection";a.elements.layoutWide.emit("click");
+  assert.equal(a.elements.pianoSection.attributes["data-wide"],"true");
+  assert.equal(a.socket.frames.length,0);
 });

@@ -147,6 +147,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pedalGrid input[type=range]{padding:8px 0;accent-color:#79c9a5}
 #pedalGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5}
 @media(max-width:420px){#pedalGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+#playView>section[data-wide=true]{grid-column:1/-1}
+@media(min-width:800px){#playView>section[data-wide=false]{grid-column:span 1}}
+#playView[data-size=compact] #pad,#playView[data-size=compact] #pianoBoard{height:clamp(130px,28vh,220px)}
+#playView[data-size=large] #pad,#playView[data-size=large] #pianoBoard{height:clamp(220px,55vh,430px)}
+#playView[data-size=compact] #drumGrid button{min-height:56px}
+#playView[data-size=large] #drumGrid button{min-height:110px}
+#layoutSection select{max-width:100%;font:inherit;padding:10px;background:#252525;color:inherit}
+#layoutSection button{min-height:44px}
 </style></head>
 <body><h1>TIHULU Remote</h1><p>Local MIDI performance controller · Experimental</p>
 <div id="remoteBar"><nav aria-label="Controller views"><button id="navPlay" aria-pressed="false" disabled>Play</button><button id="navSetup" aria-pressed="false" disabled>Setup</button><button id="navConnection" aria-pressed="true">Connection</button></nav><button id="releaseAll" disabled>Release my controls</button><button id="disconnect" disabled>Disconnect / release</button><p id="navStatus" role="status"></p><p id="playWorkloadStatus" role="status"></p><p id="status" role="status" aria-live="polite">Not connected.</p><small id="ackLatency">Mac ACK round trip: no sample.</small></div>
@@ -158,7 +166,15 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <section id="workloadSection" hidden aria-labelledby="workloadTitle"><h2 id="workloadTitle">Performance combinations</h2>
 <p id="workloadStatus" role="status" aria-live="polite">Conservative combinations. No physical latency guarantee.</p>
 <button id="workloadMode" type="button" aria-pressed="false" disabled>Enable experimental combinations</button>
-<small>Conservative mode allows one touch, drum, piano or pedal surface plus up to two motion streams, or all three motion streams alone. Experimental mode permits additional mapped combinations but may interrupt performance; the same safety limits apply. Change mode only when all controls are disabled and released.</small></section></div>
+<small>Conservative mode allows one touch, drum, piano or pedal surface plus up to two motion streams, or all three motion streams alone. Experimental mode permits additional mapped combinations but may interrupt performance; the same safety limits apply. Change mode only when all controls are disabled and released.</small></section>
+<section id="layoutSection" hidden aria-labelledby="layoutTitle"><h2 id="layoutTitle">My performance layout</h2>
+<p>Arrange the mapped panels on this browser. Layout does not change Mac mappings or enable any controls.</p>
+<label for="layoutPanel">Panel</label><select id="layoutPanel"></select>
+<button id="layoutUp" type="button">Move earlier</button><button id="layoutDown" type="button">Move later</button>
+<button id="layoutWide" type="button" aria-pressed="false">Full width on tablet</button>
+<label for="layoutSize">Playing surface size</label><select id="layoutSize"><option value="normal">Normal</option><option value="compact">Compact</option><option value="large">Large</option></select>
+<button id="layoutSave" type="button">Save on this browser</button><button id="layoutReset" type="button">Reset layout</button>
+<p id="layoutStatus" role="status"></p><small>Only presentation preferences are stored locally. Release and disable controls before editing. No invitation, mapping or device name is stored.</small></section></div>
 <div id="playView" hidden><section id="touchSection" hidden><div id="pad" aria-label="XY touch surface" aria-disabled="true"><span>Touch and move</span><div id="dot" hidden></div></div>
 <p><small>X and Y control the mapped instrument. Lift to release. One contact only.</small></p></section>
 <section id="drumSection" hidden aria-labelledby="drum-title"><h2 id="drum-title">Drum Pads</h2>
@@ -222,6 +238,94 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const viewNames=["play","setup","connection"];
   const navId=v=>"nav"+v[0].toUpperCase()+v.slice(1);
   function navigationBusy(){return releasingAll||pending||workloadMask()!==0;}
+  const panelIDs=["touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection"];
+  const panelNames=["XY touch","Drum pads","Piano","Pedalboard","Tilt","Motion dynamics"];
+  const layoutKey="tihulu.remote.presentation.v1";
+  const defaultLayout=()=>({version:1,order:[...panelIDs],wide:["pianoSection","pedalSection"],size:"normal"});
+  function validLayout(value){
+    if(!value||typeof value!=="object"||Array.isArray(value)||
+       Object.keys(value).sort().join(",")!=="order,size,version,wide"||value.version!==1)return false;
+    return Array.isArray(value.order)&&value.order.length===panelIDs.length&&
+      new Set(value.order).size===panelIDs.length&&value.order.every(id=>panelIDs.includes(id))&&
+      Array.isArray(value.wide)&&value.wide.length<=panelIDs.length&&new Set(value.wide).size===value.wide.length&&
+      value.wide.every(id=>panelIDs.includes(id))&&["normal","compact","large"].includes(value.size);
+  }
+  function loadLayout(){
+    try{const raw=window.localStorage?.getItem(layoutKey);
+      if(typeof raw==="string"&&raw.length<=1024){const data=JSON.parse(raw);if(validLayout(data))return data;}
+    }catch{}
+    return defaultLayout();
+  }
+  let layout=loadLayout(),layoutMessage="",layoutOptionsKey="";
+  function availablePanels(){
+    if(!caps)return [];
+    const available=[caps.touch,Boolean(caps.drums),Boolean(caps.piano),Boolean(caps.pedals),caps.tilt,caps.acceleration||caps.rotation];
+    return layout.order.filter(id=>available[panelIDs.indexOf(id)]);
+  }
+  function canEditLayout(){return admitted&&caps&&currentView==="setup"&&!navigationBusy();}
+  function applyLayout(){
+    for(const [index,id] of layout.order.entries()){
+      const element=get(id);
+      element.style.order=String(index);
+      element.setAttribute("data-wide",String(layout.wide.includes(id)));
+    }
+    get("playView").setAttribute("data-size",layout.size);
+  }
+  function syncLayout(){
+    get("layoutSection").hidden=!caps;
+    const panel=get("layoutPanel"),available=availablePanels(),key=available.join(",");
+    if(key!==layoutOptionsKey){
+      const previous=panel.value;
+      // Known fixed identifiers/labels only; no host text enters markup.
+      panel.replaceChildren(...available.map(id=>{
+        const option=document.createElement("option");
+        option.value=id;option.textContent=panelNames[panelIDs.indexOf(id)];return option;
+      }));
+      panel.value=available.includes(previous)?previous:(available[0]||"");
+      layoutOptionsKey=key;
+    }
+    const editable=Boolean(canEditLayout()),selected=panel.value,index=available.indexOf(selected);
+    panel.disabled=!editable||available.length===0;
+    get("layoutUp").disabled=!editable||index<=0;
+    get("layoutDown").disabled=!editable||index<0||index===available.length-1;
+    get("layoutWide").disabled=!editable||index<0;
+    get("layoutWide").setAttribute("aria-pressed",String(layout.wide.includes(selected)));
+    get("layoutSize").value=layout.size;get("layoutSize").disabled=!editable;
+    get("layoutSave").disabled=get("layoutReset").disabled=!editable;
+    textIfChanged("layoutStatus",!editable&&caps?"Release and disable controls to edit.":layoutMessage);
+  }
+  function changePanelOrder(delta){
+    if(!canEditLayout())return;
+    const available=availablePanels(),id=get("layoutPanel").value,index=available.indexOf(id);
+    if(index<0||index+delta<0||index+delta>=available.length)return;
+    const a=layout.order.indexOf(id),b=layout.order.indexOf(available[index+delta]);
+    [layout.order[a],layout.order[b]]=[layout.order[b],layout.order[a]];
+    layoutMessage="Layout changed. Save to retain it.";applyLayout();syncLayout();
+  }
+  function changePanelWidth(){
+    if(!canEditLayout())return;
+    const id=get("layoutPanel").value;if(!availablePanels().includes(id))return;
+    layout.wide=layout.wide.includes(id)?layout.wide.filter(x=>x!==id):[...layout.wide,id];
+    layoutMessage="Layout changed. Save to retain it.";applyLayout();syncLayout();
+  }
+  function changeLayoutSize(){
+    if(!canEditLayout()||!["normal","compact","large"].includes(get("layoutSize").value)){syncLayout();return;}
+    layout.size=get("layoutSize").value;
+    layoutMessage="Layout changed. Save to retain it.";applyLayout();syncLayout();
+  }
+  function saveLayout(){
+    if(!canEditLayout()||!validLayout(layout))return;
+    try{window.localStorage.setItem(layoutKey,JSON.stringify(layout));layoutMessage="Saved on this browser.";}
+    catch{layoutMessage="Storage unavailable. Layout remains in this page only.";}
+    syncLayout();
+  }
+  function resetLayout(){
+    if(!canEditLayout())return;
+    layout=defaultLayout();
+    try{window.localStorage.removeItem(layoutKey);layoutMessage="Default layout restored.";}
+    catch{layoutMessage="Default layout restored for this page; saved data could not be removed.";}
+    applyLayout();syncLayout();
+  }
   function syncNavigation(){
     for(const v of viewNames){
       get(v+"View").hidden=currentView!==v;
@@ -721,7 +825,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     s.epoch++;s.mode="releasing";s.sample=null;s.status.textContent="Releasing…";syncInertialListener();syncControls();tick();
   }
   function syncControls(){
-    pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncWorkload();syncNavigation();syncLatency();
+    pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncWorkload();syncNavigation();syncLatency();syncLayout();
     releaseAll.disabled=!admitted||!caps||releasingAll;
     const asking=releasingAll||mode==="requesting"||streams.some(s=>s.mode==="requesting");
     if(releasingAll){drumEnable.disabled=true;pianoEnable.disabled=true;pedalEnable.disabled=true;}
@@ -996,6 +1100,13 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(currentView!=="setup"||releasingAll||!admitted||!caps||workloadMask()!==0||pending)return;
     experimentalWorkload=!experimentalWorkload;workloadRefusal="";syncControls();
   });
+  get("layoutPanel").addEventListener("change",syncLayout);
+  get("layoutUp").addEventListener("click",()=>changePanelOrder(-1));
+  get("layoutDown").addEventListener("click",()=>changePanelOrder(1));
+  get("layoutWide").addEventListener("click",changePanelWidth);
+  get("layoutSize").addEventListener("change",changeLayoutSize);
+  get("layoutSave").addEventListener("click",saveLayout);
+  get("layoutReset").addEventListener("click",resetLayout);
   for(const v of viewNames)get(navId(v)).addEventListener("click",()=>chooseView(v));
   releaseAll.addEventListener("click",releaseMyControls);
   motionStart.addEventListener("click",startMotion);
@@ -1008,7 +1119,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   window.addEventListener("blur",()=>{if(ws)close("Window lost focus. Reconnect explicitly.");});
   window.addEventListener("pagehide",()=>{if(ws)close("Page hidden.");});
   document.addEventListener("visibilitychange",()=>{if(document.hidden&&ws)close("Page hidden. Reconnect explicitly.");});
-  syncControls();
+  applyLayout();syncControls();
 })();
 """#
 }
