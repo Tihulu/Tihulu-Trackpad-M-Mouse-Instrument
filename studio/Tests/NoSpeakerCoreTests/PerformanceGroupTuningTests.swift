@@ -137,3 +137,67 @@ private func tunedGroup(_ source:SensorSource,id:UUID = UUID(),channel:Int = 3) 
     #expect(clean && session.pendingCleanup.isEmpty)
     #expect(wire == [.init(groupID:a.id,command:.init(.init(.note,channel:1,number:62),value:0))])
 }
+
+
+private func groupTunedSnapshot(_ down:Bool = false) throws -> GamepadFrame {
+    var buttons = Array(repeating:0.0,count:12)
+    buttons[0] = down ? 1 : 0
+    return try #require(GamepadFrame(buttons:buttons,triggers:[0,down ? 1 : 0],sticks:[0,0,0,0]))
+}
+
+@Test func groupTunedLocalSessionPreservesExistingWatchdogAndStandardSibling() throws {
+    let a = tunedGroup(.gamepad1)
+    let b = tunedGroup(.gamepad2)
+    var engine = try PerformanceGroupGamepadSession(profile:.init(groups:[a,b]),
+        tuning:[a.id:groupTuning(-20)])
+    #expect(throws:PerformanceGroupGamepadSession.AdmissionError.setupRequired) {
+        try engine.bind(.gamepad1,now:0)
+    }
+    var wire: [PerformanceGroupCommand] = []
+    let sink: (PerformanceGroupCommand)->Bool = { wire.append($0); return true }
+    let prepared = engine.prepare(send:sink)
+    #expect(prepared && wire.allSatisfy { $0.groupID == a.id && $0.command.destination.kind != .note })
+    wire.removeAll()
+    let x = try engine.bind(.gamepad1,now:0)
+    let y = try engine.bind(.gamepad2,now:0)
+    let down = try groupTunedSnapshot(true)
+    let up = try groupTunedSnapshot()
+    let held = engine.receive(.gamepad1,token:x,frame:down,now:0,send:sink)
+    #expect(held.status == .waitingForNeutral && wire.isEmpty)
+    _ = engine.receive(.gamepad1,token:x,frame:up,now:0.01,send:sink)
+    _ = engine.receive(.gamepad2,token:y,frame:up,now:0.01,send:sink)
+    _ = engine.receive(.gamepad1,token:x,frame:down,now:0.02,send:sink)
+    _ = engine.receive(.gamepad2,token:y,frame:down,now:0.02,send:sink)
+    #expect(wire.filter { $0.command.destination.kind == .note }.map { $0.command.destination.channel } == [1,3])
+    #expect(wire.filter { $0.command.destination.kind == .sustain }.map { $0.command.destination.channel } == [0,3])
+    wire.removeAll()
+    _ = engine.receive(.gamepad2,token:y,frame:down,now:0.2,send:sink)
+    _ = engine.expire(now:0.38,send:sink)
+    #expect(wire.count == 2 && wire.allSatisfy { $0.groupID == a.id && $0.command.value == 0 })
+    #expect(wire.first(where:{ $0.command.destination.kind == .note })?.command.destination.channel == 1)
+    #expect(engine.activeSessions == 1)
+    wire.removeAll()
+    let blocked = engine.receive(.gamepad1,token:x,frame:down,now:0.39,send:sink)
+    #expect(blocked.status == .waitingForNeutral && wire.isEmpty)
+    _ = engine.panic(send:sink)
+    #expect(wire.count == 2 && wire.allSatisfy { $0.groupID == b.id && $0.command.value == 0 })
+}
+
+@Test func groupTunedLocalSetupFailureRemainsTerminalWithSelectorDebt() throws {
+    let group = tunedGroup(.gamepad1)
+    var engine = try PerformanceGroupGamepadSession(profile:.init(groups:[group]),
+        tuning:[group.id:groupTuning(-20)])
+    let ready = engine.prepare { _ in false }
+    #expect(!ready && engine.retired && engine.pendingCleanup == [group.id])
+    #expect(throws:PerformanceGroupGamepadSession.AdmissionError.retired) {
+        try engine.bind(.gamepad1,now:0)
+    }
+    let stopped = engine.panic { _ in false }
+    #expect(stopped.pendingCleanup == [group.id])
+    var wire: [PerformanceGroupCommand] = []
+    let recovered = engine.retryCleanup(group.id) { wire.append($0); return true }
+    #expect(recovered.pendingCleanup.isEmpty && engine.pendingCleanup.isEmpty)
+    #expect(wire.count == 2 && wire.allSatisfy { $0.groupID == group.id && $0.command.value == 127 })
+    let retry = engine.prepare { _ in true }
+    #expect(!retry && engine.retired)
+}
