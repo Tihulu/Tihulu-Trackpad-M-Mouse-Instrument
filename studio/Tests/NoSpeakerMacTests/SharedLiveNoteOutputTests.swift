@@ -171,4 +171,36 @@ private final class SharedNoteMockSink: @unchecked Sendable {
     host.renderOnce()
     #expect(sink.read().1 == 3)
 }
+@Test func sharedRejectedGamepadArmLeavesExistingSourcesIntact() throws {
+    let sink = SharedNoteMockSink()
+    let coordinator = HapticOutputCoordinator(clock:{ 1 },sink:{ try sink.write($0) })
+    let host = SharedLiveNoteOutput(coordinator:coordinator,automaticScheduling:false,clock:{ 1 })
+    let chord = try host.begin(.chords) { _ in sink.recordFailure() }
+    let bar = try host.begin(.touchBar) { _ in sink.recordFailure() }
+    let pad = try host.begin(.gamepad) { _ in sink.recordFailure() }
+    let frame = HapticFrame(tones:[.init(frequencyHz:220)],durationMS:18,level:0.5)
+    for lease in [chord,bar,pad] { host.update(lease,frame:frame,level:1) }
+    #expect(throws: SharedLiveNoteError.self) {
+        try host.begin(.gamepad) { _ in sink.recordFailure() }
+    }
+    #expect(coordinator.sourceCount == 3)
+    host.renderOnce()
+    #expect(sink.read().0.count == 1)
+    host.release(pad)
+    #expect(coordinator.sourceCount == 2)
+    host.renderOnce()
+    #expect(sink.read().0.count == 2)
+    sink.disconnect()
+    host.renderOnce()
+    #expect(sink.read().1 == 2)
+    #expect(throws: HapticOutputCoordinatorError.retired) {
+        try host.begin(.gamepad) { _ in sink.recordFailure() }
+    }
+    #expect(coordinator.sourceCount == 0)
+    host.update(pad,frame:frame,level:1,attack:true)
+    host.renderOnce()
+    #expect(sink.read().0.count == 2)
+    #expect(sink.read().1 == 2)
+}
+
 #endif
