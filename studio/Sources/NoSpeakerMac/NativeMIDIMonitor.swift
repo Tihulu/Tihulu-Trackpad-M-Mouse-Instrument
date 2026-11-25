@@ -1,6 +1,7 @@
 #if os(macOS)
 import Foundation
 import CoreMIDI
+import NoSpeakerCore
 
 /// Explicit, bounded receive-only observation of one existing source.
 /// No packet contents, MIDI output, virtual endpoints, or automatic rebind.
@@ -26,38 +27,34 @@ public enum NativeMIDIMonitor {
             }
         }
     }
-    private final class Counter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var accepting = false
-        private var callbacks:UInt64 = 0
-        private var packets:UInt64 = 0
-        func start() { lock.lock(); accepting=true;lock.unlock() }
-        func record(_ count:UInt32) {
-            lock.lock();defer { lock.unlock() }
-            guard accepting else { return }
-            if callbacks < UInt64.max { callbacks += 1 }
-            packets += min(UInt64(count),UInt64.max-packets)
-        }
-        func stop()->(UInt64,UInt64) {
-            lock.lock();defer { lock.unlock() }
-            accepting=false;return (callbacks,packets)
-        }
-    }
     // Construct native callbacks outside MainActor. CoreMIDI delivers
     // them on its own threads; actor-isolated closure inference would trap.
     private nonisolated static func makeClient(_ client:inout MIDIClientRef)->OSStatus {
         MIDIClientCreateWithBlock("TIHULU Native Observer" as CFString,&client) { @Sendable _ in }
     }
     private nonisolated static func makePort(_ client:MIDIClientRef,_ port:inout MIDIPortRef,
-                                              counter:Counter)->OSStatus {
+                                              counter:BoundedMIDIObservation)->OSStatus {
         MIDIInputPortCreateWithProtocol(client,"TIHULU Receive Only" as CFString,._1_0,&port) { @Sendable list,_ in
-            counter.record(list.pointee.numPackets)
+            counter.record(packets:list.pointee.numPackets,now:DispatchTime.now().uptimeNanoseconds)
         }
     }
     private static func present(_ endpoint:MIDIEndpointRef)->Bool {
         let count=MIDIGetNumberOfSources()
         guard count<=256 else { return false }
         return (0..<count).contains { MIDIGetSource($0)==endpoint }
+    }
+    private struct SourceIdentity: Equatable {
+        let endpoint:MIDIEndpointRef
+        let uniqueID:Int32
+        let displayName:String
+    }
+    private static func identity(_ endpoint:MIDIEndpointRef)->SourceIdentity? {
+        guard present(endpoint) else { return nil }
+        var uid:Int32=0
+        guard MIDIObjectGetIntegerProperty(endpoint,kMIDIPropertyUniqueID,&uid)==noErr,uid != 0 else { return nil }
+        var label:Unmanaged<CFString>?
+        guard MIDIObjectGetStringProperty(endpoint,kMIDIPropertyDisplayName,&label)==noErr,let label else { return nil }
+        return .init(endpoint:endpoint,uniqueID:uid,displayName:label.takeRetainedValue() as String)
     }
     static func resolve(name:String) throws -> MIDIEndpointRef {
         guard !name.isEmpty,name.utf8.count<=512,
@@ -88,7 +85,8 @@ public enum NativeMIDIMonitor {
         guard (1...10).contains(seconds) else { throw Failure.invalidSelection }
         try Task.checkCancellation()
         let source=try resolve(name:sourceName)
-        let counter=Counter()
+        guard let bound=identity(source),bound.displayName==sourceName else { throw Failure.sourceUnavailable }
+        let counter=BoundedMIDIObservation()
         var client=MIDIClientRef(),port=MIDIPortRef(),connected=false
         // Cleanup is attempted on every exit, including setup errors and cancellation.
         func cleanup()->OSStatus {
@@ -114,19 +112,27 @@ public enum NativeMIDIMonitor {
         guard status==noErr else { throw Failure.native("client",status) }
         status=makePort(client,&port,counter:counter)
         guard status==noErr else { throw Failure.native("input port",status) }
-        guard try resolve(name:sourceName)==source else { throw Failure.sourceUnavailable }
-        counter.start()
+        guard try resolve(name:sourceName)==source,identity(source)==bound else { throw Failure.sourceUnavailable }
+        let clock=ContinuousClock()
+        let deadline=clock.now.advanced(by:.seconds(seconds))
+        guard counter.begin(now:DispatchTime.now().uptimeNanoseconds,seconds:seconds) else { throw Failure.invalidSelection }
         status=MIDIPortConnectSource(port,source,nil)
         guard status==noErr else { throw Failure.native("connect",status) }
         connected=true
         try onConnected()
-        try await Task.sleep(for:.seconds(seconds))
-        try Task.checkCancellation()
+        // Poll only the bound endpoint, never resolve/reconnect a new one.
+        // Identity loss is terminal even if the name later reappears.
+        var available=identity(source)==bound
+        while available && clock.now<deadline {
+            try await clock.sleep(until:min(deadline,clock.now.advanced(by:.milliseconds(100))))
+            try Task.checkCancellation()
+            available=identity(source)==bound
+        }
         let counts=counter.stop()
-        let available=present(source)
+        try Task.checkCancellation()
         status=cleanup()
         guard status==noErr else { throw Failure.native("cleanup",status) }
-        return .init(requestedSeconds:seconds,callbackCount:counts.0,packetCount:counts.1,
+        return .init(requestedSeconds:seconds,callbackCount:counts.callbacks,packetCount:counts.packets,
                      sourceStillPresent:available,cleanupConfirmed:true)
     }
 }
