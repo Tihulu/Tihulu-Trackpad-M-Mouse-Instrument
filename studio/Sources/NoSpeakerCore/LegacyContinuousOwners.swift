@@ -59,25 +59,33 @@ public struct LegacyContinuousOwners: Sendable {
 
     public mutating func replace(_ owner: Owner, values: [SensorDestination:Value]) -> [Update] {
         guard values.allSatisfy({ $0.value.valid(for:$0.key) }) else { return [] }
-        let targets = sorted(Set(self.values(for:owner).keys).union(values.keys))
+        let old = self.values(for:owner)
+        guard old != values else { return [] }
+        // Only destinations whose intent changed can acquire a new winner.
+        let changed = Set(old.keys).union(values.keys).filter { old[$0] != values[$0] }
+        let targets = sorted(changed)
         let before = targets.map { winner($0) }
         if values.isEmpty { owners.removeValue(forKey:owner) } else { owners[owner] = values }
         return targets.enumerated().compactMap { index,target in
-            let previous = before[index]
-            if let next = winner(target) {
-                let rangeChanged = previous?.bendRange != next.bendRange
-                guard previous?.value != next.value || previous?.neutral != next.neutral || previous?.preserveOnRelease != next.preserveOnRelease || rangeChanged else { return nil }
-                return .init(target,value:next.value,bendRange:rangeChanged ? next.bendRange : nil,neutral:next.neutral,preserveOnRelease:next.preserveOnRelease)
-            }
-            guard let previous, !previous.preserveOnRelease, previous.value != previous.neutral else { return nil }
-            return .init(target,value:previous.neutral,neutral:previous.neutral)
+            Self.transition(target, from:before[index], to:winner(target))
         }
     }
 
+    private static func transition(_ target: SensorDestination, from previous: Value?, to next: Value?) -> Update? {
+        if let next {
+            let rangeChanged = previous?.bendRange != next.bendRange
+            guard previous?.value != next.value || previous?.neutral != next.neutral || previous?.preserveOnRelease != next.preserveOnRelease || rangeChanged else { return nil }
+            return .init(target,value:next.value,bendRange:rangeChanged ? next.bendRange : nil,neutral:next.neutral,preserveOnRelease:next.preserveOnRelease)
+        }
+        guard let previous, !previous.preserveOnRelease, previous.value != previous.neutral else { return nil }
+        return .init(target,value:previous.neutral,neutral:previous.neutral)
+    }
+
     public mutating func set(_ owner: Owner, target: SensorDestination, value: Value) -> [Update] {
-        var next = values(for:owner)
-        next[target] = value
-        return replace(owner,values:next)
+        guard value.valid(for:target), owners[owner]?[target] != value else { return [] }
+        let previous = winner(target)
+        owners[owner,default:[:]][target] = value
+        return Self.transition(target,from:previous,to:winner(target)).map { [$0] } ?? []
     }
     public mutating func release(_ owner: Owner, channel: Int? = nil) -> [Update] {
         replace(owner,values:channel.map { ch in values(for:owner).filter { $0.key.channel != ch } } ?? [:])
