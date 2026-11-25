@@ -173,6 +173,52 @@ def main(binary):
         run(binary, "voice", "analyze", frames, success=False)
         frames.write_text(json.dumps({"sampleRate":16000,"samples":[1.1]*400}))
         run(binary, "voice", "analyze", frames, success=False)
+        snapshot = {"buttons":[1]+[0]*11,"triggers":[0.02,0.8],"sticks":[-1,0.1,0.5,0]}
+        frames.write_text(json.dumps(snapshot))
+        normalized = run(binary, "gamepad", "normalize", frames)
+        assert normalized["hardware"] is False
+        assert normalized["values"] == {"padA":1,"padRT":0.8,"padLSX":0,"padRSX":0.75}
+        assert "padLSX" not in normalized["releasing"] and "padLSY" in normalized["releasing"]
+        assert set(normalized["values"]).isdisjoint(normalized["releasing"])
+        assert len(normalized["values"])+len(normalized["releasing"]) == 18
+        snapshot["buttons"][0] = 0.5
+        frames.write_text(json.dumps(snapshot))
+        run(binary, "gamepad", "normalize", frames, success=False)
+        snapshot["buttons"][0] = 1
+        snapshot["sticks"][0] = 1.1
+        frames.write_text(json.dumps(snapshot))
+        run(binary, "gamepad", "normalize", frames, success=False)
+        for slot in range(1,5):
+            for role in ("drums","lead","helper"):
+                profile = run(binary, "gamepad", "patch", str(slot), role, "4")
+                assert all(r["source"] == "gamepad"+str(slot) for r in profile["payload"]["routes"])
+                assert all(r["destination"]["channel"] == 3 for r in profile["payload"]["routes"])
+                patch.write_text(json.dumps(profile))
+                assert run(binary, "patch", "validate", patch)["valid"]
+        run(binary, "gamepad", "patch", "5", "lead", "1", success=False)
+        run(binary, "gamepad", "patch", "1", "helper", "17", success=False)
+        for preset in ("expressive","guitarEffects","pedalPair"):
+            profile = run(binary, "camera", "helper-patch", preset, "3")
+            patch.write_text(json.dumps(profile))
+            assert run(binary, "patch", "validate", patch)["valid"]
+        hand = {"x":0.5,"y":0.5,"aperture":0.7}
+        pinched = {**hand,"aperture":0.1}
+        replay = [
+            {"time":0.0,"now":0.0,"left":hand},
+            {"time":0.05,"now":0.05,"left":hand},
+            {"time":0.1,"now":0.1,"left":pinched},
+            {"time":0.15,"now":0.15,"left":None},
+            {"time":0.2,"now":0.2,"left":pinched},
+            {"time":0.21,"now":0.21,"left":pinched}]
+        frames.write_text(json.dumps(replay))
+        result = run(binary, "camera", "helper-simulate", patch, frames)
+        pedal_events = [e for e in result["events"] if e["kind"] == "sustain"]
+        assert [(e["frame"],e["channel"],e["value"]) for e in pedal_events] == [(2,3,127),(3,3,0)]
+        assert not result["hardware"]
+        replay[0]["left"]["x"] = 1.1
+        frames.write_text(json.dumps(replay))
+        run(binary, "camera", "helper-simulate", patch, frames, success=False)
+        run(binary, "camera", "helper-patch", "pedalPair", "0", success=False)
         run(binary, "live", "start", success=False)
     print("Engine CLI smoke tests passed.")
 
