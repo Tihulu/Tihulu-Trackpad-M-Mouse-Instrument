@@ -3,24 +3,63 @@ import Testing
 
 @Test func touchPreviewCadenceLimitsVisualUpdatesOnly() {
     var gate = TouchPreviewCadence()
-    #expect(gate.permits(now:0,cleared:false))
-    #expect(!gate.permits(now:0.005,cleared:false))
-    #expect(!gate.permits(now:0.015,cleared:false))
-    #expect(gate.permits(now:0.017,cleared:false))
-    #expect(gate.permits(now:0.018,cleared:true))
-    #expect(!gate.permits(now:0.019,cleared:false))
+    do {
+        let allowed = gate.permits(now:0,cleared:false)
+        #expect(allowed)
+    }
+    do {
+        let allowed = gate.permits(now:0.005,cleared:false)
+        #expect(!allowed)
+    }
+    do {
+        let allowed = gate.permits(now:0.015,cleared:false)
+        #expect(!allowed)
+    }
+    do {
+        let allowed = gate.permits(now:0.017,cleared:false)
+        #expect(allowed)
+    }
+    do {
+        let allowed = gate.permits(now:0.018,cleared:true)
+        #expect(allowed)
+    }
+    do {
+        let allowed = gate.permits(now:0.019,cleared:false)
+        #expect(!allowed)
+    }
     gate.reset()
-    #expect(gate.permits(now:0.019,cleared:false))
+    do {
+        let allowed = gate.permits(now:0.019,cleared:false)
+        #expect(allowed)
+    }
 }
 
 @Test func touchPreviewCadenceHandlesClockResetAndInvalidValues() {
     var gate = TouchPreviewCadence()
-    #expect(!gate.permits(now:.nan,cleared:true))
-    #expect(!gate.permits(now:.infinity,cleared:false))
-    #expect(!gate.permits(now:-1,cleared:false))
-    #expect(gate.permits(now:1,cleared:false))
-    #expect(gate.permits(now:0,cleared:false))
-    #expect(!gate.permits(now:0.001,cleared:false))
+    do {
+        let allowed = gate.permits(now:.nan,cleared:true)
+        #expect(!allowed)
+    }
+    do {
+        let allowed = gate.permits(now:.infinity,cleared:false)
+        #expect(!allowed)
+    }
+    do {
+        let allowed = gate.permits(now:-1,cleared:false)
+        #expect(!allowed)
+    }
+    do {
+        let allowed = gate.permits(now:1,cleared:false)
+        #expect(allowed)
+    }
+    do {
+        let allowed = gate.permits(now:0,cleared:false)
+        #expect(allowed)
+    }
+    do {
+        let allowed = gate.permits(now:0.001,cleared:false)
+        #expect(!allowed)
+    }
 }
 
 @Test func touchPreviewCadenceBoundsHighRateMotion() {
