@@ -46,6 +46,7 @@ import Testing
     var values: [Int:Double] = [:]
     var lastCC: Int?
     var lastGate = false
+    var gateOwners: [String:Int] = [:]
     var sequences = Array(repeating:UInt64(0),count:16)
     for step in 0..<2048 {
         let index = (step*7)%16
@@ -63,19 +64,22 @@ import Testing
             if $0.route.id != $1.route.id { return $0.route.id < $1.route.id }
             return $0.session.uuidString < $1.session.uuidString
         }.first
-        // Gate hysteresis is checked separately in existing tests. This
-        // oracle uses binary gate levels by replaying only values 0 or 1.
+        // Independently maintain hysteresis per session and route.
+        for route in routes where route.source == sources[index%sources.count] && route.destination == note {
+            let key = "\(index):\(route.id)"
+            let threshold = gateOwners[key] != nil ? route.threshold-route.hysteresis : route.threshold
+            if value >= threshold { gateOwners[key] = route.velocity }
+            else { gateOwners.removeValue(forKey:key) }
+        }
         let cc = winner.map { Int(($0.value*127).rounded()) }
+        let gate = gateOwners.values.max() ?? 0
         var expected:[SensorCommand] = []
         if cc != lastCC, let cc { expected.append(.init(target,value:cc)) }
+        if (gate > 0) != lastGate { expected.append(.init(note,value:gate)) }
         let actual = router.ingest(.init(session:ids[index],signal:.x,value:value,
             sequence:sequences[index],timestamp:now),now:now)
-        #expect(actual.filter { $0.destination == target } == expected)
-        let noteCommands = actual.filter { $0.destination == note }
-        for command in noteCommands {
-            #expect((command.value > 0) != lastGate)
-            lastGate = command.value > 0
-        }
+        #expect(actual == expected)
+        lastGate = gate > 0
         lastCC = cc
     }
     let final = router.panic()
