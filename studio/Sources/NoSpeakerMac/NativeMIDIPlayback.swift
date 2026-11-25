@@ -27,6 +27,8 @@ public final class NativeMIDIPlayback {
         public let cleanupConfirmed:Bool
         public let outstandingNotes:Int
         public let receiverConfirmed:Bool
+        public let faultReason:String?
+        public let maximumObservedLatenessNS:UInt64
     }
 
     /// The successful close report is distinct from receiver confirmation.
@@ -235,7 +237,9 @@ public final class NativeMIDIPlayback {
     private func report(cancelled:Bool) -> Report {
         .init(state:player.state.rawValue,cancelled:cancelled,
               cleanupConfirmed:player.outstanding.isEmpty && !identityRetired && !disposalFailed,
-              outstandingNotes:player.outstanding.count,receiverConfirmed:false)
+              outstandingNotes:player.outstanding.count,receiverConfirmed:false,
+              faultReason:identityRetired ? "sourceIdentityLost" : player.fault?.rawValue,
+              maximumObservedLatenessNS:player.maximumObservedLatenessNS)
     }
 
     private nonisolated static func now() -> UInt64 {

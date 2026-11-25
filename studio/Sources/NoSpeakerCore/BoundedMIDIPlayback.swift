@@ -11,6 +11,11 @@ public struct BoundedMIDIPlayback: Sendable {
     public enum State: String, Sendable {
         case ready, playing, finished, stopped, faulted
     }
+    public enum Fault: String, Sendable {
+        case clockOverflow, clockRegression, lateEvent, expiredOnset, sendFailed, outstandingAtEnd, externalFailure
+    }
+    public private(set) var fault:Fault?
+    public private(set) var maximumObservedLatenessNS:UInt64=0
     public struct Event: Equatable, Sendable {
         public let offsetNS: UInt64
         public let command: SensorCommand
@@ -68,6 +73,7 @@ public struct BoundedMIDIPlayback: Sendable {
         guard state == .ready else { return false }
         guard now <= UInt64.max - durationNS else {
             state = .faulted
+            fault = .clockOverflow
             throw Failure.clockOverflow
         }
         start = now
@@ -99,27 +105,30 @@ public struct BoundedMIDIPlayback: Sendable {
             // Stop before admitting another note into the output ledger.
             // Cleanup bypasses this admission fence and still sends offs.
             if shouldStop() { retire(.stopped,send:send); return }
-            guard current >= last else { retire(.faulted,send:send); return }
+            guard current >= last else { retire(.faulted,fault:.clockRegression,send:send); return }
             last=current
             let elapsed=current-start
             guard next < events.count, events[next].offsetNS <= elapsed else {
                 if elapsed >= durationNS {
-                    retire(outstanding.isEmpty ? .finished : .faulted,send:send)
+                    retire(outstanding.isEmpty ? .finished : .faulted,
+                           fault:outstanding.isEmpty ? nil : .outstandingAtEnd,send:send)
                 }
                 return
             }
             let event=events[next]
-            guard elapsed-event.offsetNS <= Self.maximumLatenessNS else {
-                retire(.faulted,send:send); return
+            let lateness=elapsed-event.offsetNS
+            maximumObservedLatenessNS=max(maximumObservedLatenessNS,lateness)
+            guard lateness <= Self.maximumLatenessNS else {
+                retire(.faulted,fault:.lateEvent,send:send); return
             }
             let cmd=event.command
             if cmd.value > 0 {
                 guard let end=onsetEnds[next],end>elapsed else {
-                    retire(.faulted,send:send); return
+                    retire(.faulted,fault:.expiredOnset,send:send); return
                 }
                 outstanding.insert(cmd.destination)
             }
-            guard send(cmd) else { retire(.faulted,send:send); return }
+            guard send(cmd) else { retire(.faulted,fault:.sendFailed,send:send); return }
             if cmd.value == 0 { outstanding.remove(cmd.destination) }
             next += 1
             current=refreshNow()
@@ -133,13 +142,16 @@ public struct BoundedMIDIPlayback: Sendable {
     /// External sink/identity failure is terminal, even during silence.
     /// Keep outstanding debt; never silently return a successful stop.
     public mutating func abort(send: (SensorCommand) -> Bool) {
-        if state == .ready || state == .playing { retire(.faulted,send:send) }
+        if state == .ready || state == .playing { retire(.faulted,fault:.externalFailure,send:send) }
     }
 
     /// A terminal result can be invalidated by subsequent sink identity
     /// loss. Do not re-admit playback or retry against an unknown sink.
     public mutating func invalidateTerminalResult() {
-        if state == .finished || state == .stopped { state = .faulted }
+        if state == .finished || state == .stopped {
+            state = .faulted
+            fault = .externalFailure
+        }
     }
 
     public mutating func retryCleanup(send: (SensorCommand) -> Bool) {
@@ -147,8 +159,9 @@ public struct BoundedMIDIPlayback: Sendable {
         clean(send:send)
     }
 
-    private mutating func retire(_ terminal: State, send: (SensorCommand) -> Bool) {
+    private mutating func retire(_ terminal: State, fault:Fault?=nil,send: (SensorCommand) -> Bool) {
         state = terminal
+        self.fault=fault
         clean(send:send)
     }
 

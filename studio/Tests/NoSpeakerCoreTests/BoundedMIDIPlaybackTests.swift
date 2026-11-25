@@ -323,3 +323,39 @@ private func playbackClip() -> MIDIClip {
         }
     }
 }
+
+@Test func boundedPlaybackFaultDiagnosticsDistinguishLateEdgeFromSendAndClockFailure() throws {
+    let plan=try BoundedMIDIPlayback(clip:playbackClip())
+    for scenario in 0..<3 {
+        var player=plan
+        _=try player.begin(now:100)
+        var commands:[SensorCommand]=[]
+        if scenario==0 {
+            player.advance(now:50_000_101){commands.append($0);return true}
+            #expect(player.fault == .lateEvent && player.maximumObservedLatenessNS==50_000_001)
+            #expect(commands.isEmpty)
+        } else if scenario==1 {
+            player.advance(now:100){commands.append($0);return false}
+            #expect(player.fault == .sendFailed && player.maximumObservedLatenessNS==0)
+            #expect(!player.outstanding.isEmpty)
+        } else {
+            player.advance(now:99){commands.append($0);return true}
+            #expect(player.fault == .clockRegression && commands.isEmpty)
+        }
+        #expect(player.state == .faulted)
+        let fault=player.fault
+        player.retryCleanup{_ in true}
+        #expect(player.outstanding.isEmpty && player.fault==fault)
+    }
+}
+
+@Test func boundedPlaybackLatenessBoundaryRemainsExactlyFiftyMilliseconds() throws {
+    var player=try BoundedMIDIPlayback(clip:playbackClip())
+    _=try player.begin(now:0)
+    player.advance(now:50_000_000){_ in true}
+    #expect(player.state == .playing && player.fault==nil)
+    #expect(player.maximumObservedLatenessNS==50_000_000)
+    player.advance(now:300_000_001){_ in true}
+    #expect(player.state == .faulted && player.fault == .lateEvent)
+    #expect(player.maximumObservedLatenessNS==50_000_001 && player.outstanding.isEmpty)
+}
