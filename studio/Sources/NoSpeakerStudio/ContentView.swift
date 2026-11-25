@@ -654,6 +654,12 @@ private struct VoiceModeView: View {
     @Binding var selectedLanguage: VoiceLanguage
     @Binding var selectedVoice: String
     @State private var voices: [VoiceOption] = []
+    @State private var piperFound = false
+    @State private var piperModels = 0
+    @State private var loadingVoices = false
+    @State private var importingVoice = false
+    @State private var voiceSetupStatus = ""
+    @State private var reloadToken = UUID()
 
     var body: some View {
         ScrollView {
@@ -685,17 +691,19 @@ private struct VoiceModeView: View {
                         studio.speak(text, voice: selectedVoice.isEmpty ? nil : selectedVoice)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(voices.isEmpty)
+                    .disabled(voices.isEmpty || loadingVoices || importingVoice)
 
                     Button("Stop") { studio.stopRenderedPlayback() }
                 }
 
-                if voices.isEmpty {
+                if loadingVoices {
+                    ProgressView("Checking installed voices…").controlSize(.small)
+                } else if voices.isEmpty {
                     Text("No \(selectedLanguage.rawValue) voice is installed. Open System Settings → Accessibility → Spoken Content (or Read & Speak) → System Voice → Manage Voices to add languages and Enhanced/Premium voices.")
                         .font(.callout)
                         .foregroundStyle(.orange)
                 } else {
-                    Text("\(selectedLanguage.rawValue) · \(voices.count) available voice option\(voices.count == 1 ? "" : "s") (macOS say + Apple AVSpeech)")
+                    Text("\(selectedLanguage.rawValue) · \(voices.count) available voice option\(voices.count == 1 ? "" : "s") (native macOS + available local Piper)")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -705,26 +713,40 @@ private struct VoiceModeView: View {
                 if selectedLanguage == .turkish {
                     GroupBox("Additional Turkish Voices · Offline") {
                         VStack(alignment: .leading, spacing: 9) {
-                            Text("Add a local Piper model (.onnx and matching .onnx.json) to the app's Voice folder. Female and male voice models can coexist with Tihulu (the installed macOS Yelda voice). Models are not downloaded or redistributed automatically; check each model's license.")
+                            Text("Optional. Native Apple voices work without Piper. Use only trusted models and check their individual licenses.")
                                 .font(.caption).foregroundStyle(.secondary)
-                            HStack(spacing: 12) {
-                                Label(VoiceHapticService.piperIsInstalled()
-                                      ? "Piper engine found" : "Piper engine not installed",
-                                      systemImage: VoiceHapticService.piperIsInstalled() ? "checkmark.circle" : "exclamationmark.triangle")
-                                    .font(.caption)
+                            Label(piperFound ? "Piper executable found (not yet synthesis-tested)" : "Piper engine not installed or not found",
+                                  systemImage:piperFound ? "checkmark.circle" : "exclamationmark.triangle")
+                                .font(.caption)
+                            Text("\(piperModels) structurally valid local model pair(s). " +
+                                 (piperFound ? "Choose an available voice to test synthesis." : "Install the optional engine before selecting these models."))
+                                .font(.caption).foregroundStyle(.secondary)
+                            HStack {
+                                Link("Official Piper setup",destination:URL(string:"https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/CLI.md")!)
+                                Link("Turkish voice catalog",destination:URL(string:"https://huggingface.co/rhasspy/piper-voices/tree/main/tr/tr_TR")!)
+                            }
+                            HStack(spacing:12) {
+                                Button("Import Voice Model…") { importVoice() }
+                                    .disabled(importingVoice || loadingVoices)
                                 Button("Open Local Voice Folder") {
                                     let url = VoiceHapticService.piperVoiceDirectory()
-                                    try? FileManager.default.createDirectory(
-                                        at: url, withIntermediateDirectories: true
-                                    )
-                                    NSWorkspace.shared.open(url)
+                                    do {
+                                        try FileManager.default.createDirectory(at:url,withIntermediateDirectories:true)
+                                        if !NSWorkspace.shared.open(url) { voiceSetupStatus = "Could not open the voice folder." }
+                                    } catch { voiceSetupStatus = error.localizedDescription }
                                 }
                                 Button("Refresh Profiles") { reloadVoices() }
+                                    .disabled(loadingVoices || importingVoice)
+                            }
+                            if importingVoice { ProgressView("Importing model…").controlSize(.small) }
+                            if !voiceSetupStatus.isEmpty {
+                                Text(voiceSetupStatus).font(.caption).foregroundStyle(.secondary)
                             }
                         }.padding(8)
                     }
                 }
                 Button("Refresh Installed Voices") { reloadVoices() }
+                    .disabled(loadingVoices || importingVoice)
                     .buttonStyle(.bordered)
                     .font(.callout).foregroundStyle(.secondary)
             }.padding(28)
@@ -734,11 +756,47 @@ private struct VoiceModeView: View {
     }
 
     private func reloadVoices() {
-        voices = VoiceHapticService.voiceOptions(language: selectedLanguage)
-        if !voices.contains(where: { $0.id == selectedVoice }) {
-            selectedVoice = (selectedLanguage == .turkish
-                ? voices.first(where: { $0.id == "say:Yelda" })?.id
-                : nil) ?? voices.first?.id ?? ""
+        let token = UUID()
+        reloadToken = token
+        let language = selectedLanguage
+        loadingVoices = true
+        Task { @MainActor in
+            let result = await Task.detached(priority:.utility) {
+                (VoiceHapticService.voiceOptions(language:language),
+                 VoiceHapticService.piperIsInstalled(),
+                 language == .turkish ? VoiceHapticService.piperModelCount() : 0)
+            }.value
+            guard reloadToken == token, selectedLanguage == language else { return }
+            voices = result.0
+            piperFound = result.1
+            piperModels = result.2
+            loadingVoices = false
+            if !voices.contains(where: { $0.id == selectedVoice }) {
+                selectedVoice = (language == .turkish
+                    ? voices.first(where:{ $0.id == "say:Yelda" })?.id
+                    : nil) ?? voices.first?.id ?? ""
+            }
+        }
+    }
+
+    private func importVoice() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Select a trusted .onnx file. Keep its matching .onnx.json alongside it. Existing models will not be overwritten."
+        guard panel.runModal() == .OK, let model = panel.url else { return }
+        importingVoice = true
+        voiceSetupStatus = ""
+        Task { @MainActor in
+            do {
+                try await Task.detached(priority:.utility) {
+                    try VoiceHapticService.importPiperModel(model)
+                }.value
+                voiceSetupStatus = "Model imported. Install Piper if needed, then choose the voice and test it."
+            } catch { voiceSetupStatus = error.localizedDescription }
+            importingVoice = false
+            reloadVoices()
         }
     }
 }

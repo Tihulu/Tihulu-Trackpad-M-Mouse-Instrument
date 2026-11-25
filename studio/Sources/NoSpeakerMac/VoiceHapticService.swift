@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import Darwin
 import AVFoundation
 import NoSpeakerCore
 
@@ -9,6 +10,9 @@ public enum VoiceHapticError: LocalizedError {
     case speechTimedOut
     case piperNotInstalled
     case piperModelMissing
+    case piperTimedOut
+    case piperTextTooLong
+    case piperModelExists
 
     public var errorDescription: String? {
         switch self {
@@ -16,7 +20,10 @@ public enum VoiceHapticError: LocalizedError {
         case .audioReadFailed: return "The rendered speech audio could not be read."
         case .speechTimedOut: return "Apple Speech could not finish rendering this voice. Try a different installed voice."
         case .piperNotInstalled: return "Local Piper speech engine not found. Install Piper from its official release or Python environment, then reopen the app."
-        case .piperModelMissing: return "The selected Piper .onnx model or matching .onnx.json configuration is missing."
+        case .piperModelMissing: return "The selected Piper model pair is missing or invalid. Choose a trusted .onnx with its matching .onnx.json."
+        case .piperTimedOut: return "Piper did not finish in 90 seconds. Check its installation and try a shorter phrase."
+        case .piperTextTooLong: return "Piper supports up to 16 KiB of text per render. Split longer text into shorter phrases."
+        case .piperModelExists: return "A file with this model name already exists. Existing files were not replaced."
         }
     }
 }
@@ -129,7 +136,11 @@ public enum VoiceHapticService {
             URL(fileURLWithPath: "/usr/local/opt/piper/bin/piper"),
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/piper")
         ].compactMap { $0 }
-        return candidates.first { fileManager.isExecutableFile(atPath: $0.path) }
+        return candidates.first {
+            guard $0.path.hasPrefix("/"), fileManager.isExecutableFile(atPath:$0.path),
+                  let values = try? $0.resolvingSymlinksInPath().resourceValues(forKeys:[.isRegularFileKey]) else { return false }
+            return values.isRegularFile == true
+        }
     }
 
     public static func piperIsInstalled() -> Bool { localPiperExecutable() != nil }
@@ -141,60 +152,85 @@ public enum VoiceHapticService {
         guard let urls = try? fileManager.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
         ) else { return [] }
-        return urls.filter { $0.pathExtension.lowercased() == "onnx" }
-            .filter {
-                fileManager.fileExists(atPath: $0.path + ".json")
-            }
-            .map { model in
-                let name = model.deletingPathExtension().lastPathComponent
-                let gender: String
-                if name.localizedCaseInsensitiveContains("dfki") ||
-                    name.localizedCaseInsensitiveContains("fahrettin") {
-                    gender = " · Male"
-                } else if name.localizedCaseInsensitiveContains("ilkiz") ||
-                            name.localizedCaseInsensitiveContains("female") {
-                    gender = " · Female"
-                } else {
-                    // Voice-gender metadata can conflict between model catalogs;
-                    // do not label an unknown model by an inferred gender.
-                    gender = ""
-                }
-                return VoiceOption(
-                    id: "piper:" + model.lastPathComponent,
-                    title: name + gender + " · Piper (local)",
-                    language: "tr_TR", backend: .piper
-                )
-            }
+        return urls.filter { LocalVoiceModel.validPair($0) }.map { model in
+            VoiceOption(id:"piper:"+model.lastPathComponent,
+                title:model.deletingPathExtension().lastPathComponent+" · Piper (local)",
+                language:"tr_TR",backend:.piper)
+        }
+    }
+
+    public static func piperModelCount() -> Int { localPiperVoices(language:.turkish).count }
+
+    /// Explicit import only. Never execute or download a model during import.
+    public static func importPiperModel(_ model: URL) throws {
+        guard LocalVoiceModel.validPair(model) else { throw VoiceHapticError.piperModelMissing }
+        let fm = FileManager.default
+        let directory = piperVoiceDirectory()
+        try fm.createDirectory(at:directory,withIntermediateDirectories:true)
+        let dest = directory.appendingPathComponent(model.lastPathComponent)
+        let config = URL(fileURLWithPath:model.path+".json")
+        let destConfig = URL(fileURLWithPath:dest.path+".json")
+        guard !fm.fileExists(atPath:dest.path), !fm.fileExists(atPath:destConfig.path) else {
+            throw VoiceHapticError.piperModelExists
+        }
+        let staging = directory.appendingPathComponent(".import-"+UUID().uuidString,isDirectory:true)
+        try fm.createDirectory(at:staging,withIntermediateDirectories:false)
+        defer { try? fm.removeItem(at:staging) }
+        let stagedModel = staging.appendingPathComponent(model.lastPathComponent)
+        let stagedConfig = URL(fileURLWithPath:stagedModel.path+".json")
+        try fm.copyItem(at:config,to:stagedConfig)
+        try fm.copyItem(at:model,to:stagedModel)
+        guard LocalVoiceModel.validPair(stagedModel) else { throw VoiceHapticError.piperModelMissing }
+        // Publish the complete model last. FileManager.moveItem refuses
+        // existing destinations; never overwrite a preexisting voice.
+        try fm.moveItem(at:stagedConfig,to:destConfig)
+        do { try fm.moveItem(at:stagedModel,to:dest) }
+        catch {
+            try? fm.removeItem(at:destConfig)
+            throw error
+        }
     }
 
     private static func renderLocalPiper(text: String, filename: String) throws -> [ScheduledHapticEvent] {
         let modelURL = piperVoiceDirectory().appendingPathComponent(filename)
         // Never execute an arbitrary path as an audio model. Only local voice
         // files stored directly inside the dedicated application directory.
-        guard filename == modelURL.lastPathComponent,
-              filename.hasSuffix(".onnx"),
-              FileManager.default.fileExists(atPath: modelURL.path),
-              FileManager.default.fileExists(atPath: modelURL.path + ".json") else {
+        guard LocalVoiceModel.validName(filename), filename == modelURL.lastPathComponent,
+              LocalVoiceModel.validPair(modelURL) else {
             throw VoiceHapticError.piperModelMissing
         }
         guard let executable = localPiperExecutable() else {
             throw VoiceHapticError.piperNotInstalled
         }
-        let output = FileManager.default.temporaryDirectory
-            .appendingPathComponent("tihulu-voice-" + UUID().uuidString + ".wav")
-        defer { try? FileManager.default.removeItem(at: output) }
+        guard text.utf8.count <= 16*1024 else { throw VoiceHapticError.piperTextTooLong }
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tihulu-voice-" + UUID().uuidString,isDirectory:true)
+        try FileManager.default.createDirectory(at:temporary,withIntermediateDirectories:false,
+            attributes:[.posixPermissions:0o700])
+        defer { try? FileManager.default.removeItem(at:temporary) }
+        let output = temporary.appendingPathComponent("voice.wav")
+        let inputURL = temporary.appendingPathComponent("input.txt")
+        try Data((text+"\n").utf8).write(to:inputURL)
+        let input = try FileHandle(forReadingFrom:inputURL)
+        defer { try? input.close() }
 
         let process = Process()
         process.executableURL = executable
-        process.arguments = ["--model", modelURL.path, "--output_file", output.path]
-        let input = Pipe()
+        // Short flags are supported by the legacy and current Piper CLI.
+        process.arguments = ["-m", modelURL.path, "-f", output.path]
         process.standardInput = input
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        let finished = DispatchSemaphore(value:0)
+        process.terminationHandler = { _ in finished.signal() }
         try process.run()
-        input.fileHandleForWriting.write(Data((text + "\n").utf8))
-        try? input.fileHandleForWriting.close()
-        process.waitUntilExit()
+        if finished.wait(timeout:.now()+90) == .timedOut {
+            if process.isRunning { process.terminate() }
+            if finished.wait(timeout:.now()+2) == .timedOut, process.isRunning {
+                _ = Darwin.kill(process.processIdentifier,SIGKILL)
+            }
+            throw VoiceHapticError.piperTimedOut
+        }
         guard process.terminationStatus == 0,
               FileManager.default.fileExists(atPath: output.path) else {
             throw VoiceHapticError.voiceRenderFailed
@@ -280,7 +316,8 @@ public enum VoiceHapticService {
                 ))
             }
         }
-        options.append(contentsOf: localPiperVoices(language: language))
+        // Do not offer a selectable backend which cannot be started.
+        if piperIsInstalled() { options.append(contentsOf: localPiperVoices(language: language)) }
         // Deduplicate by ID while preserving the distinct speech backends.
         var seen = Set<String>()
         return options.filter { seen.insert($0.id).inserted }
