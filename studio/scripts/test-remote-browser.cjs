@@ -13,7 +13,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){this.children=this.children.filter(x=>x!==child);this.children.push(child);return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
@@ -870,4 +870,47 @@ test("invalid detail data cannot override mapped controls or layout",()=>{
   a.elements.panelSize.value="large";a.elements.panelSize.emit("change");
   assert.equal(a.elements.tiltSection.attributes["data-size"],"normal");
   assert.equal(a.socket.frames.length,0);
+});
+
+function setHoldPedal(a,i){
+  a.elements.navSetup.emit("click");
+  a.elements["pedalMode"+i].value="hold";a.elements["pedalMode"+i].emit("change");
+  a.elements.navPlay.emit("click");a.elements.pedalEnable.emit("click");
+}
+test("hold pedal queues short press and lift without synthetic click retrigger",()=>{
+  const a=setup("granted",fullManifest,false);setHoldPedal(a,3);
+  const b=a.elements.pedalToggle3;
+  b.emit("pointerdown",drumEvent(1));b.emit("pointerup",drumEvent(1));b.emit("click");
+  assert.equal(a.socket.frames.length,1);assert.equal(a.socket.frames[0].mask,8);
+  a.ack();a.step();assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  assert.equal(a.socket.frames.length,2);
+});
+test("hold pedal retains independent fingers and toggle FX",()=>{
+  const a=setup("granted",fullManifest,false);setHoldPedal(a,3);
+  const b=a.elements.pedalToggle3;
+  b.emit("pointerdown",drumEvent(1));a.ack();
+  b.emit("pointerdown",drumEvent(2));b.emit("pointerup",drumEvent(1));
+  a.elements.pedalToggle4.emit("click");a.step();assert.equal(a.socket.frames.at(-1).mask,24);a.ack();
+  b.emit("pointercancel",drumEvent(2));a.step();assert.equal(a.socket.frames.at(-1).mask,16);a.ack();
+  a.elements.pedalToggle4.emit("click");a.step();assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+});
+test("release all clears held pedal owners before stale pointer up",()=>{
+  const a=setup("granted",fullManifest,false);setHoldPedal(a,5);
+  const b=a.elements.pedalToggle5;
+  b.emit("pointerdown",drumEvent(3));
+  a.elements.releaseAll.emit("click");
+  a.ack();a.step();assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  b.emit("pointerup",drumEvent(3));b.emit("click");
+  assert.equal(a.socket.frames.length,2);
+});
+test("hold mode persists and keyboard repeat cannot latch a pedal",()=>{
+  const stored=new Map(),a=setup("granted",fullManifest,false,true,false,stored);
+  a.elements.navSetup.emit("click");a.elements.pedalMode4.value="hold";a.elements.pedalMode4.emit("change");
+  a.elements.layoutSave.emit("click");
+  const b=setup("granted",fullManifest,false,true,false,stored);
+  b.elements.pedalEnable.emit("click");
+  const p=b.elements.pedalToggle4,key={key:" ",preventDefault(){}};
+  p.emit("keydown",key);p.emit("keydown",{...key,repeat:true});a.elements.pedalMode4.value="toggle";
+  b.ack();p.emit("blur");b.step();assert.equal(b.socket.frames.at(-1).mask,0);b.ack();
+  assert.deepEqual(b.socket.frames.map(x=>x.mask),[16,0]);
 });

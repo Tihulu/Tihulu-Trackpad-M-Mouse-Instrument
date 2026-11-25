@@ -46,3 +46,5 @@ In Setup, choose a mapped panel, move it earlier/later, toggle tablet full width
 Panel handles also accept touch/pointer drag to reorder mapped sections; move buttons remain a keyboard-accessible alternative. Reordering happens only on a completed idle drag. Cancellation, disconnect or leaving Setup discards the gesture. This does not create new controls or change their host assignments.
 
 In Setup, panel-specific size and drum/pedal grid column preferences can override the overall size. Existing saved panel arrangements remain compatible. These are presentation-only; narrow screens retain a two-column fallback. Save/Reset includes the additional preferences. No new MIDI mappings, controls or wire messages are created.
+
+Sustain and the two FX switches now have separate Hold/Toggle preferences in Setup (only mapped switches may be edited). Hold supports pointer and keyboard release, including cancellation and multiple fingers on one switch. Release All and disconnection clear local hold ownership. This is input behavior, not a change to the Mac mapping. The existing pedal snapshot protocol and safety deadlines are unchanged. Default remains Toggle.
