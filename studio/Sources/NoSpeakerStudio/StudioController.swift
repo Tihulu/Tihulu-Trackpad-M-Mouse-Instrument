@@ -161,6 +161,11 @@ final class StudioController: ObservableObject {
     private var groupGamepadTokens: [SensorSource:UUID] = [:]
     private var groupSurfaceMailbox: PatchSurfaceMailbox?
     private var groupHinge: MacBookHingeAngleSource?
+    private var groupCamera: BuilderCameraSource?
+    private var groupCameraLastFrame = 0.0
+    private var groupCameraReceivedFrame = false
+    private var groupCameraOrientation: AirControlOrientation = .upright
+    private var groupCameraMirrorX = false
     private var groupNativeBar = false
     private var groupSurfaceOrientation: SurfaceOrientation = .horizontal
     private var groupRunToken: UUID?
@@ -191,10 +196,27 @@ final class StudioController: ObservableObject {
         }
         let routes = profile.groups.flatMap { $0.patch.routes }
         let sources = Set(routes.map(\.source))
-        guard PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true,allowScalars:true),
+        guard PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true,allowScalars:true,allowCamera:true),
               (allowLayering || profile.layeredInputs.isEmpty) else {
             groupGamepadStatus = "Use a valid saved local group profile and explicitly approve shared signals."
             return
+        }
+        if sources.contains(.camera) {
+            if let retiringPatchCamera, !retiringPatchCamera.isStopped {
+                groupGamepadStatus = "Previous camera is stopping. Restart after release."
+                return
+            }
+            retiringPatchCamera = nil
+            switch BuilderCameraSource.authorization {
+            case .authorized: break
+            case .notDetermined:
+                groupGamepadStatus = "Grant camera permission, then explicitly Start again."
+                AVCaptureDevice.requestAccess(for:.video) { _ in }
+                return
+            default:
+                groupGamepadStatus = "Camera permission denied or restricted. Check System Settings."
+                return
+            }
         }
         cancelStartupGreeting()
         let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
@@ -213,7 +235,7 @@ final class StudioController: ObservableObject {
             return
         }
         do {
-            try groupHost.startGamepads(profile:profile,allowLayering:allowLayering,allowSurfaces:true,allowScalars:true)
+            try groupHost.startGamepads(profile:profile,allowLayering:allowLayering,allowSurfaces:true,allowScalars:true,allowCamera:true)
         } catch {
             builderGamepads.stop()
             refreshGroupOutputState()
@@ -261,7 +283,7 @@ final class StudioController: ObservableObject {
             sensor.onLoss = { [weak self, weak sensor] reason in
                 guard let self, let sensor, self.groupHinge === sensor, self.groupRunToken == token else { return }
                 self.groupHinge = nil
-                self.retireGroupScalar(.lid,reason:reason,run:token)
+                self.retireGroupSource(.lid,reason:reason,run:token)
             }
             let started = sensor.start()
             guard groupRunToken == token else { sensor.stop(); return }
@@ -271,6 +293,15 @@ final class StudioController: ObservableObject {
                 groupGamepadStatus = "Lid input could not start: " + reason
                 return
             }
+        }
+        if sources.contains(.camera) {
+            let camera = BuilderCameraSource()
+            groupCamera = camera
+            groupCameraLastFrame = ProcessInfo.processInfo.systemUptime
+            groupCameraReceivedFrame = false
+            groupCameraOrientation = patchCameraOrientation
+            groupCameraMirrorX = patchCameraMirrorX
+            camera.start(deviceID:patchCameraDeviceID)
         }
         refreshGroupOutputState()
         groupGamepadStatus = "Group ports registered. Release controller controls and lift each touch surface before playing."
@@ -288,6 +319,8 @@ final class StudioController: ObservableObject {
                 self.consumeGroupReports(self.groupHost.expireGamepads(now:ProcessInfo.processInfo.systemUptime))
                 guard self.groupRunToken == token else { return }
                 self.drainGroupSurfaces(run:token)
+                guard self.groupRunToken == token else { return }
+                self.drainGroupCamera(run:token)
                 for source in GamepadFrame.orderedSources where self.groupGamepadTokens[source] != nil {
                     guard self.groupRunToken == token else { return }
                     self.receiveGroupGamepad(source:source,frame:self.builderGamepads.read(source),run:token)
@@ -330,15 +363,64 @@ final class StudioController: ObservableObject {
         if source == .lid, result.status == .lost || result.status == .waitingForNeutral {
             groupHinge?.stop()
             groupHinge = nil
-            retireGroupScalar(source,reason:"Lid input lost or stalled. Restart to rebind.",run:run)
+            retireGroupSource(source,reason:"Lid input lost or stalled. Restart to rebind.",run:run)
         }
     }
 
-    private func retireGroupScalar(_ source:SensorSource,reason:String,run:UUID) {
+    private func retireGroupSource(_ source:SensorSource,reason:String,run:UUID) {
         guard groupRunToken == run, let token = groupGamepadTokens.removeValue(forKey:source) else { return }
         consumeGroupReports(groupHost.unbindGamepad(source,token:token))
         if groupGamepadTokens.isEmpty { stopGroupGamepads() }
         groupGamepadStatus = reason + (groupCleanupIDs.isEmpty ? "" : " MIDI cleanup pending.")
+    }
+
+    private func stopGroupCamera(reason:String,run:UUID) {
+        guard groupRunToken == run, let camera = groupCamera else { return }
+        groupCamera = nil
+        // Retire the source and release its MIDI before tearing down capture.
+        retiringPatchCamera = camera
+        retireGroupSource(.camera,reason:reason,run:run)
+        camera.stop()
+    }
+
+    private func drainGroupCamera(run:UUID) {
+        guard groupRunToken == run, let camera = groupCamera,
+              let token = groupGamepadTokens[.camera] else { return }
+        guard BuilderCameraSource.authorization == .authorized else {
+            stopGroupCamera(reason:"Camera permission lost; restart explicitly.",run:run)
+            return
+        }
+        for event in camera.drain() {
+            guard groupRunToken == run, groupCamera === camera else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            switch event {
+            case .ready:
+                break
+            case .fault(let reason):
+                stopGroupCamera(reason:reason,run:run)
+                return
+            case .frame(let hand,let time):
+                guard time.isFinite, time >= groupCameraLastFrame, now >= time,
+                      now-time < PhysicalPatchRuntime.timeout else {
+                    stopGroupCamera(reason:"Stale camera input; restart explicitly.",run:run)
+                    return
+                }
+                groupCameraLastFrame = time
+                groupCameraReceivedFrame = true
+                let oriented = hand?.oriented(groupCameraOrientation,mirrorX:groupCameraMirrorX)
+                if let result = groupHost.receiveCamera(token:token,hand:oriented,hostTime:time,now:now) {
+                    consumeGroupReports(result.reports)
+                }
+            default:
+                stopGroupCamera(reason:"Unexpected camera frame type; restart explicitly.",run:run)
+                return
+            }
+        }
+        guard groupRunToken == run, groupCamera === camera else { return }
+        let limit = groupCameraReceivedFrame ? 2.0 : 8.0
+        if ProcessInfo.processInfo.systemUptime-groupCameraLastFrame >= limit {
+            stopGroupCamera(reason:"Camera stopped delivering fresh frames; restart explicitly.",run:run)
+        }
     }
 
     private func drainGroupSurfaces(run:UUID) {
@@ -394,6 +476,11 @@ final class StudioController: ObservableObject {
         builderGamepads.stop()
         groupHinge?.stop()
         groupHinge = nil
+        if let camera = groupCamera {
+            groupCamera = nil
+            retiringPatchCamera = camera
+            camera.stop()
+        }
         if groupNativeBar {
             groupNativeBar = false
             installTouchBar()
