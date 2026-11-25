@@ -167,4 +167,13 @@ import NoSpeakerCore
     next.zoneWidth = 1.5
     #expect(next.requiresSampleInvalidation(comparedTo:initial))
 }
+@Test func coreMIDIClientFailureDoesNotClaimAnEstablishedSessionOrReconnect() {
+    for status in [Int32(-2),Int32(-304)] {
+        let text=MIDIHapticError.client(status).errorDescription ?? ""
+        #expect(text.contains("OSStatus \(status)"))
+        #expect(text.contains("session was not started"))
+        #expect(text.contains("No automatic reconnect"))
+    }
+    #expect(MIDIHapticError.client(-1).errorDescription?.contains("OSStatus -1")==true)
+}
 #endif

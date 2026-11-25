@@ -36,8 +36,8 @@ public enum MIDIHapticError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .client(let status):
-            if status == -2 {
-                return "CoreMIDI lost its MIDIServer connection (OSStatus -2). Restart the instrument app. The MIDI client will now be kept alive across mode switches to prevent recurrence."
+            if status == -2 || status == -304 {
+                return "CoreMIDI client creation failed (OSStatus \(status)). The MIDI session was not started. If the error persists, quit and relaunch the app; check Audio MIDI Setup. No automatic reconnect is attempted."
             }
             return "CoreMIDI client creation failed (OSStatus \(status))."
         case .destination(let status): return "CoreMIDI virtual input creation failed (OSStatus \(status))."
@@ -52,7 +52,7 @@ public enum MIDIHapticError: LocalizedError {
 /// process disposes its last MIDI client. After that, subsequent creation can
 /// return OSStatus -2 until process restart. Keep exactly one client alive for
 /// the lifetime of the app, including across MIDI mode switches and reconnects.
-private final class MIDIProcessClient: @unchecked Sendable {
+final class MIDIProcessClient: @unchecked Sendable {
     static let shared = MIDIProcessClient()
     private let lock = NSLock()
     private var retainedClient = MIDIClientRef()
@@ -61,6 +61,11 @@ private final class MIDIProcessClient: @unchecked Sendable {
     func registerIsolatedSource(_ source: MIDIEndpointRef) {
         lock.lock(); defer { lock.unlock() }
         isolatedSources.insert(source)
+    }
+
+    func unregisterIsolatedSource(_ source: MIDIEndpointRef) {
+        lock.lock(); defer { lock.unlock() }
+        isolatedSources.remove(source)
     }
 
     func isIsolatedSource(_ source: MIDIEndpointRef) -> Bool {
@@ -75,8 +80,12 @@ private final class MIDIProcessClient: @unchecked Sendable {
         var newClient = MIDIClientRef()
         let status = MIDIClientCreateWithBlock(
             "Tihulu Trackpad & M. Mouse Instrument" as CFString, &newClient
-        ) { _ in }
-        guard status == noErr else { throw MIDIHapticError.client(status) }
+        ) { @Sendable _ in }
+        guard status == noErr,newClient != 0 else {
+            // A successful status with a null handle is not an admitted
+            // client. Do not cache it or attempt to use it.
+            throw MIDIHapticError.client(status == noErr ? -1 : status)
+        }
         retainedClient = newClient
         return newClient
     }
