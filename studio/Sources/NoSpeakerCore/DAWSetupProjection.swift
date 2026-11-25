@@ -20,9 +20,12 @@ public struct DAWSetupProjection: Equatable, Sendable {
     }
 
     public init(patch: InstrumentPatch, sendMIDI: Bool, tunedAir: Bool = false,
-                splitRequested: Bool = false, splitPlan: GamepadOutputPlan? = nil) {
+                splitRequested: Bool = false, splitSelection: GamepadOutputSelection? = nil,
+                tunedAirValidated: Bool = false) {
+        let splitPlan = splitSelection.flatMap { GamepadOutputPlan(patch: patch, selection: $0) }
         guard patch.isValid, !patch.routes.isEmpty,
-              !splitRequested || (splitPlan != nil && !tunedAir) else {
+              !splitRequested || (splitPlan != nil && !tunedAir),
+              !tunedAir || tunedAirValidated else {
             status = .invalid; channels = []; return
         }
         let routes = patch.routes.filter {
@@ -48,7 +51,7 @@ public struct DAWSetupProjection: Equatable, Sendable {
                 case .controlChange: label = "CC " + String(target.number)
                 case .sustain: label = "CC 64 (Sustain)"
                 case .pitchBend: label = "Pitch Bend"
-                default: label = target.kind.rawValue + " " + String(target.number)
+                case .note: label = "Note " + String(target.number)
                 }
                 return route.source.rawValue + " / " + route.signal.rawValue + ": " + label
             })
