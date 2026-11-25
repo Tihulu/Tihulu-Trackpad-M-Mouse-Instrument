@@ -144,6 +144,20 @@ struct GamepadMappingPanel: View {
                     Stepper("Pedalboard Ch \(presetChannel+1)",value:$presetChannel,in:0...15)
                     Button("Load effect pedalboard…") { preparePedalboard() }
                 }
+                .confirmationDialog("Replace selected controller with a pedalboard?",isPresented:$confirmPreset,titleVisibility:.visible) {
+                    Button("Replace selected controller",role:.destructive) {
+                        if let base = presetBase, let next = pendingPreset, patch == base {
+                            patch = next
+                            physical = true
+                            message = "Pedalboard loaded. Other device routes preserved."
+                        } else { message = "Draft changed. Review and try again." }
+                        presetBase = nil
+                        pendingPreset = nil
+                    }
+                    Button("Cancel",role:.cancel) { presetBase = nil; pendingPreset = nil }
+                } message: {
+                    Text("Only the selected controller's old map will be replaced. Other devices and the saved patch remain unchanged until you save.")
+                }
                 Text("A/B/X/Y and RB: Toggle · LB: Hold · LT: Wah CC74 · RT: Sustain · sticks: Bend / Expression. Learn CC80–85 in your DAW; this preset does not select plug-ins automatically.")
                     .font(.caption).foregroundStyle(.secondary)
                 LazyVGrid(columns:[GridItem(.adaptive(minimum:150),spacing:6)],spacing:6) {
@@ -233,20 +247,6 @@ struct GamepadMappingPanel: View {
         .onAppear { loadSelection() }
         .onChange(of:slot) { _ in loadSelection() }
         .onChange(of:patch) { _ in loadSelection() }
-        .confirmationDialog("Replace selected controller with a pedalboard?",isPresented:$confirmPreset,titleVisibility:.visible) {
-            Button("Replace selected controller",role:.destructive) {
-                if let base = presetBase, let next = pendingPreset, patch == base {
-                    patch = next
-                    physical = true
-                    message = "Pedalboard loaded. Other device routes preserved."
-                } else { message = "Draft changed. Review and try again." }
-                presetBase = nil
-                pendingPreset = nil
-            }
-            Button("Cancel",role:.cancel) { presetBase = nil; pendingPreset = nil }
-        } message: {
-            Text("Only the selected controller's old map will be replaced. Other devices and the saved patch remain unchanged until you save.")
-        }
         .confirmationDialog("Replace the other controller map?",isPresented:$confirmCopy,titleVisibility:.visible) {
             Button("Replace destination map",role:.destructive) { copyMap(replace:true) }
             Button("Cancel",role:.cancel) {}
