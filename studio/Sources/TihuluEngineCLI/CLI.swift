@@ -145,7 +145,7 @@ struct TihuluEngineCLI {
                 "schema":1, "hardware":false,
                 "commands":["capabilities","patch example","patch validate FILE","patch routes FILE",
                     "groups example","groups validate FILE","groups ports FILE",
-                    "groups simulate PROFILE FRAMES [--allow-layering]", "scale plan ROOT CENTS", "haptics mix FILE", "midi encode FILE", "midi melody FILE", "midi drums FILE", "sustain simulate FILE", "helper simulate FILE", "midi tuned FILE", "midi groove FILE", "voice analyze FILE"]
+                    "groups simulate PROFILE FRAMES [--allow-layering]", "scale plan ROOT CENTS", "haptics mix FILE", "midi encode FILE", "midi melody FILE", "midi drums FILE", "sustain simulate FILE", "helper simulate FILE", "midi tuned FILE", "midi groove FILE", "voice analyze FILE", "gamepad normalize FILE", "gamepad patch SLOT ROLE CHANNEL", "camera helper-patch PRESET CHANNEL", "camera helper-simulate PATCH FRAMES"]
             ]
         }
         if args == ["capabilities"] {
@@ -155,8 +155,9 @@ struct TihuluEngineCLI {
                 "maxRoutes":PerformanceGroupProfile.maximumRoutes,
                 "maxSessions":PerformanceGroupRouter.maxSessions,
                 "midiDelivery":"simulation only","mpePorts":"not implemented in CLI",
-                "scalePlanning":true,"hapticMixPreview":true,"standardMIDIFileExport":true,"sustainSimulation":true,"helperOwnershipSimulation":true,"tunedMIDIFileExport":true,"grooveExport":true,"voiceAnalysisPreview":true]
+                "scalePlanning":true,"hapticMixPreview":true,"standardMIDIFileExport":true,"sustainSimulation":true,"helperOwnershipSimulation":true,"tunedMIDIFileExport":true,"grooveExport":true,"voiceAnalysisPreview":true,"gamepadSnapshotNormalization":true,"cameraHelperReplay":true]
         }
+        if let device = try deviceCommand(args) { return device }
         if args.count == 4, args[0] == "scale", args[1] == "plan" {
             guard let root = Int(args[2]), (0...115).contains(root),
                   let scale = CustomScale.fromDegreeCents(args[3],name:"CLI scale") else {
