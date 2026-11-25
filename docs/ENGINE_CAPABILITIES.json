@@ -164,22 +164,25 @@
         "NoteSequence",
         "DrumSequence",
         "TunedMIDIClip",
-        "GrooveSettings"
+        "GrooveSettings",
+        "BoundedMIDIPlayback"
       ],
       "source": [
         "studio/Sources/NoSpeakerCore/MIDIClip.swift",
         "studio/Sources/NoSpeakerCore/Sequencer.swift",
         "studio/Sources/NoSpeakerCore/TunedMIDIClip.swift",
-        "studio/Sources/NoSpeakerCore/GrooveSettings.swift"
+        "studio/Sources/NoSpeakerCore/GrooveSettings.swift",
+        "studio/Sources/NoSpeakerCore/BoundedMIDIPlayback.swift"
       ],
       "cli": [
         "midi encode",
         "midi melody",
         "midi drums",
         "midi tuned",
-        "midi groove"
+        "midi groove",
+        "midi playback-plan"
       ],
-      "status": "offline SMF0 nominal and dedicated single-instrument MPE exports; no live MIDI"
+      "status": "offline SMF0 nominal and dedicated single-instrument MPE exports, bounded nominal playback timing and scoped cleanup core; no native live MIDI CLI"
     },
     {
       "id": "voice-analysis",
