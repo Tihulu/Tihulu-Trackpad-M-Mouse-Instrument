@@ -6,12 +6,18 @@ on:
     paths:
       - 'install-studio.sh'
       - 'studio/**'
+      - 'tools/**'
+      - 'docs/DEVELOPER_SDK_AI_INDEX.md'
+      - 'docs/ENGINE_CAPABILITIES.json'
       - '.github/workflows/nospeaker-studio.yml'
   workflow_dispatch:
   pull_request:
     paths:
       - 'install-studio.sh'
       - 'studio/**'
+      - 'tools/**'
+      - 'docs/DEVELOPER_SDK_AI_INDEX.md'
+      - 'docs/ENGINE_CAPABILITIES.json'
       - '.github/workflows/nospeaker-studio.yml'
 
 permissions:
@@ -54,6 +60,10 @@ jobs:
         run: swift test
       - name: Build Studio
         run: swift build
+      - name: Verify standalone engine CLI and repository index
+        run: |
+          python3 ../tools/test_engine_cli.py "$(swift build --show-bin-path)/tihulu-engine"
+          python3 ../tools/test_repo_index.py
       - name: Install SVG icon renderer
         run: brew install librsvg
       - name: Build app bundle in installer mode
