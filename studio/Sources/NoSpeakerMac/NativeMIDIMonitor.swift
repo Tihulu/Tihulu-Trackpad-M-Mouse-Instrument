@@ -68,6 +68,12 @@ public enum NativeMIDIMonitor {
         return endpoint
     }
     public static func observe(sourceName:String,seconds:Int) async throws -> Report {
+        try await observe(sourceName:sourceName,seconds:seconds,onConnected:{})
+    }
+
+    // Internal readiness seam for the isolated CI fixture. No hook is
+    // exposed through the public API or native CLI.
+    static func observe(sourceName:String,seconds:Int,onConnected:() throws -> Void) async throws -> Report {
         guard (1...10).contains(seconds) else { throw Failure.invalidSelection }
         try Task.checkCancellation()
         let source=try resolve(name:sourceName)
@@ -105,6 +111,7 @@ public enum NativeMIDIMonitor {
         status=MIDIPortConnectSource(port,source,nil)
         guard status==noErr else { throw Failure.native("connect",status) }
         connected=true
+        try onConnected()
         try await Task.sleep(for:.seconds(seconds))
         try Task.checkCancellation()
         let counts=counter.stop()
