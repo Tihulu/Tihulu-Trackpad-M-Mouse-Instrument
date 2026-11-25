@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .library(name: "NoSpeakerCore", targets: ["NoSpeakerCore"]),
+        .library(name: "NoSpeakerMac", targets: ["NoSpeakerMac"]),
         .executable(name: "tihulu-engine", targets: ["TihuluEngineCLI"]),
         .executable(name: "NoSpeakerStudio", targets: ["NoSpeakerStudio"])
     ],
