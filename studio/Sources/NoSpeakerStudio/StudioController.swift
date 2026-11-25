@@ -4322,7 +4322,7 @@ final class StudioController: ObservableObject {
     ) {
         guard !armed || !groupGamepadsRunning else { lastError = "Stop group MIDI before arming Capture."; return }
         guard shortcut.isValid else {
-            lastError = "Escape is reserved for Panic Stop. Choose another key or key combination."
+            lastError = PerformanceCaptureError.invalidShortcut.localizedDescription
             return
         }
         captureShortcut = shortcut
