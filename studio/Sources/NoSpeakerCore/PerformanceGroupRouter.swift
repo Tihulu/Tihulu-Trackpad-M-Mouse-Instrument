@@ -93,7 +93,12 @@ public struct PerformanceGroupRouter: Sendable {
                 return .init(session:member,signal:signal,value:value,
                              sequence:base+UInt64(index),timestamp:now)
             }
-            let commands = group.router.ingestFrame(session:member,releasing:releasing,events:events,now:now)
+            let raw = group.router.ingestFrame(session:member,releasing:releasing,events:events,now:now)
+            // Release old notes first, establish pedal/bend/CC state, then
+            // start new notes. Never depend on alphabetical destination keys.
+            let commands = raw.filter { $0.destination.kind == .note && $0.value == 0 } +
+                raw.filter { $0.destination.kind != .note } +
+                raw.filter { $0.destination.kind == .note && $0.value > 0 }
             group.router.heartbeat(member,now:now)
             groups[groupID] = group
             result += commands.map { .init(groupID:groupID,command:$0) }
