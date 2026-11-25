@@ -34,7 +34,8 @@ for command in [("start",), ("midi", "send"), ("preflight", "--request-permissio
 if mac:
     # Unique missing source must fail without attaching any input port.
     import uuid
-    assert "unavailable" in invoke("midi", "monitor", "TIHULU-absent-"+str(uuid.uuid4()), "1", "--confirm", success=False)
+    missing = invoke("midi", "monitor", "TIHULU-absent-"+str(uuid.uuid4()), "1", "--confirm", success=False)
+    assert missing.strip() == "tihulu-mac-instrument-native: Selected MIDI source is unavailable.", missing
     def midi_shape(midi, named):
         for count, names in [("sourceCount", "sourceNames"), ("destinationCount", "destinationNames")]:
             assert type(midi[count]) is int and midi[count] >= 0

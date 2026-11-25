@@ -78,7 +78,8 @@ struct TihuluNativeCLI {
             throw CLIError("Native inspection requires macOS. Use the offline engine for portable analysis.")
             #endif
         } catch {
-            FileHandle.standardError.write(Data(("tihulu-mac-instrument-native: " + String(describing:error) + "\n").utf8))
+            let description=(error as? LocalizedError)?.errorDescription ?? String(describing:error)
+            FileHandle.standardError.write(Data(("tihulu-mac-instrument-native: " + description + "\n").utf8))
             exit(2)
         }
     }

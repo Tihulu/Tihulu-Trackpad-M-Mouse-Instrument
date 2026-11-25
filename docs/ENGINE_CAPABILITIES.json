@@ -234,12 +234,14 @@
       "id": "native-diagnostics",
       "api": [
         "NativeEngineDiagnostics",
-        "NativeMIDIMonitor"
+        "NativeMIDIMonitor",
+        "BoundedMIDIObservation"
       ],
       "source": [
         "studio/Sources/NoSpeakerMac/NativeEngineDiagnostics.swift",
         "studio/Sources/TihuluNativeCLI/NativeCLI.swift",
-        "studio/Sources/NoSpeakerMac/NativeMIDIMonitor.swift"
+        "studio/Sources/NoSpeakerMac/NativeMIDIMonitor.swift",
+        "studio/Sources/NoSpeakerCore/BoundedMIDIObservation.swift"
       ],
       "cli": [
         "capabilities",
