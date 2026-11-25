@@ -13,7 +13,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){this.children=this.children.filter(x=>x!==child);this.children.push(child);return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
@@ -913,4 +913,32 @@ test("hold mode persists and keyboard repeat cannot latch a pedal",()=>{
   p.emit("keydown",key);p.emit("keydown",{...key,repeat:true});a.elements.pedalMode4.value="toggle";
   b.ack();p.emit("blur");b.step();assert.equal(b.socket.frames.at(-1).mask,0);b.ack();
   assert.deepEqual(b.socket.frames.map(x=>x.mask),[16,0]);
+});
+
+test("individual drum order retains unmapped slots and original wire identity",()=>{
+  const stored=new Map(),manifest={...fullManifest,drums:5};
+  const a=setup("granted",manifest,false,true,false,stored);
+  a.elements.navSetup.emit("click");a.elements.layoutPanel.value="drumSection";a.elements.layoutPanel.emit("change");
+  assert.deepEqual(a.elements.gridControl.children.map(x=>x.value),["0","2"]);
+  a.elements.gridControl.value="2";a.elements.gridControl.emit("change");a.elements.gridControlUp.emit("click");
+  assert.equal(a.elements.drumGrid.children[0],a.elements.drum2);
+  assert.equal(a.elements.drumGrid.children[1],a.elements.drum1);
+  a.elements.layoutSave.emit("click");
+  const b=setup("granted",manifest,false,true,false,stored);
+  assert.equal(b.elements.drumGrid.children[0],b.elements.drum2);
+  b.elements.drumEnable.emit("click");b.elements.drum2.emit("pointerdown",drumEvent(4));
+  assert.equal(b.socket.frames.at(-1).mask,4);b.ack();
+  b.elements.drum2.emit("pointerup",drumEvent(4));b.step();b.ack();
+  assert.equal(b.socket.frames.at(-1).mask,0);
+});
+test("individual pedal order never changes logical switch or unmapped admission",()=>{
+  const a=setup("granted",{...fullManifest,pedals:40},false);
+  assert.equal(a.elements.pedalCell0.hidden,true);
+  a.elements.navSetup.emit("click");a.elements.layoutPanel.value="pedalSection";a.elements.layoutPanel.emit("change");
+  assert.deepEqual(a.elements.gridControl.children.map(x=>x.value),["3","5"]);
+  a.elements.gridControl.value="5";a.elements.gridControl.emit("change");a.elements.gridControlUp.emit("click");
+  assert.equal(a.elements.pedalGrid.children[3],a.elements.pedalCell5);
+  a.elements.navPlay.emit("click");a.elements.pedalEnable.emit("click");
+  a.elements.pedalToggle0.emit("click");assert.equal(a.socket.frames.length,0);
+  a.elements.pedalToggle5.emit("click");assert.equal(a.socket.frames.at(-1).mask,32);
 });

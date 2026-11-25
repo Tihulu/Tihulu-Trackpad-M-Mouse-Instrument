@@ -187,6 +187,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <label for="layoutSize">Playing surface size</label><select id="layoutSize"><option value="normal">Normal</option><option value="compact">Compact</option><option value="large">Large</option></select>
 <label for="panelSize">Selected panel size</label><select id="panelSize"><option value="inherit">Use overall size</option><option value="compact">Compact</option><option value="normal">Normal</option><option value="large">Large</option></select>
 <label for="panelColumns">Selected grid columns</label><select id="panelColumns"><option value="auto">Automatic</option><option value="2">2 columns</option><option value="3">3 columns</option><option value="4">4 columns</option></select>
+<fieldset id="gridOrderEditor" hidden><legend>Individual mapped controls</legend>
+<label for="gridControl">Control</label><select id="gridControl"></select>
+<button id="gridControlUp" type="button">Move control earlier</button><button id="gridControlDown" type="button">Move control later</button>
+<small>Control identities and Mac assignments stay unchanged.</small></fieldset>
 <fieldset id="pedalBehavior"><legend>Pedal switch behavior</legend><label for="pedalMode3">Sustain</label><select id="pedalMode3"><option value="toggle">Toggle</option><option value="hold">Hold</option></select>
 <label for="pedalMode4">Switch A</label><select id="pedalMode4"><option value="toggle">Toggle</option><option value="hold">Hold</option></select>
 <label for="pedalMode5">Switch B</label><select id="pedalMode5"><option value="toggle">Toggle</option><option value="hold">Hold</option></select>
@@ -216,7 +220,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <p>Only pedals mapped for this paired device are available. These are MIDI controls, not audio effects. Labels identify logical controls; actual destinations depend on the Mac mapping.</p>
 <button id="pedalEnable" disabled>Enable pedalboard</button><button id="pedalRelease" disabled>Release all pedals</button>
 <p id="pedalStatus" role="status">Off.</p>
-<div id="pedalGrid"><section><label for="pedalLevel0">Expression</label><button id="pedalToggle0" type="button" aria-pressed="false" disabled>Activate</button><input id="pedalLevel0" type="range" min="0" max="100" step="1" value="100" disabled><output id="pedalValue0" for="pedalLevel0">100%</output></section><section><label for="pedalLevel1">Volume</label><button id="pedalToggle1" type="button" aria-pressed="false" disabled>Activate</button><input id="pedalLevel1" type="range" min="0" max="100" step="1" value="100" disabled><output id="pedalValue1" for="pedalLevel1">100%</output></section><section><label for="pedalLevel2">Wah / Filter</label><button id="pedalToggle2" type="button" aria-pressed="false" disabled>Activate</button><input id="pedalLevel2" type="range" min="0" max="100" step="1" value="0" disabled><output id="pedalValue2" for="pedalLevel2">0%</output></section><section><p>Sustain</p><button id="pedalToggle3" type="button" aria-pressed="false" disabled>Off</button></section><section><p>Switch A</p><button id="pedalToggle4" type="button" aria-pressed="false" disabled>Off</button></section><section><p>Switch B</p><button id="pedalToggle5" type="button" aria-pressed="false" disabled>Off</button></section></div>
+<div id="pedalGrid"><section id="pedalCell0"><label for="pedalLevel0">Expression</label><button id="pedalToggle0" type="button" aria-pressed="false" disabled>Activate</button><input id="pedalLevel0" type="range" min="0" max="100" step="1" value="100" disabled><output id="pedalValue0" for="pedalLevel0">100%</output></section><section id="pedalCell1"><label for="pedalLevel1">Volume</label><button id="pedalToggle1" type="button" aria-pressed="false" disabled>Activate</button><input id="pedalLevel1" type="range" min="0" max="100" step="1" value="100" disabled><output id="pedalValue1" for="pedalLevel1">100%</output></section><section id="pedalCell2"><label for="pedalLevel2">Wah / Filter</label><button id="pedalToggle2" type="button" aria-pressed="false" disabled>Activate</button><input id="pedalLevel2" type="range" min="0" max="100" step="1" value="0" disabled><output id="pedalValue2" for="pedalLevel2">0%</output></section><section id="pedalCell3"><p>Sustain</p><button id="pedalToggle3" type="button" aria-pressed="false" disabled>Off</button></section><section id="pedalCell4"><p>Switch A</p><button id="pedalToggle4" type="button" aria-pressed="false" disabled>Off</button></section><section id="pedalCell5"><p>Switch B</p><button id="pedalToggle5" type="button" aria-pressed="false" disabled>Off</button></section></div>
 <small>Each control is explicitly activated; sliders retain their position until released. Sustain and FX switches use the Hold or Toggle behavior selected in Setup. Release sends the Mac-defined neutral or restores another owner's value. For motion-controlled wah, map tilt pitch to CC74 on the Mac and use Pocket Wah below instead of activating the manual wah slider. If both are mapped, existing host priority rules apply.</small></section>
 <section id="tiltSection" hidden aria-labelledby="tilt-title"><h2 id="tilt-title">Pocket Wah / Tilt</h2>
 <p>First map a phone or tablet tilt axis on the Mac. Hold the phone comfortably, nearly upright or flat but away from extreme angles, then enable and calibrate. Touch and tilt can be used together. Release either control independently.</p>
@@ -279,23 +283,28 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const detailKey="tihulu.remote.panel-details.v1";
   const sizedPanels=["touchSection","drumSection","pianoSection","pedalSection"];
   const gridPanels=["drumSection","pedalSection"];
-  const defaultDetails=()=>({version:1,sizes:{},columns:{},holds:[]});
+  const indices=n=>Array.from({length:n},(_,i)=>i);
+  const defaultDetails=()=>({version:1,sizes:{},columns:{},holds:[],drumOrder:indices(8),pedalOrder:indices(6)});
+  function validOrder(order,n){
+    return Array.isArray(order)&&order.length===n&&new Set(order).size===n&&order.every(i=>Number.isInteger(i)&&i>=0&&i<n);
+  }
   function validDetails(d){
     const record=v=>v&&typeof v==="object"&&!Array.isArray(v);
-    return record(d)&&["columns,sizes,version","columns,holds,sizes,version"].includes(Object.keys(d).sort().join(","))&&d.version===1&&
+    return record(d)&&Object.keys(d).every(k=>["columns","sizes","version","holds","drumOrder","pedalOrder"].includes(k))&&d.version===1&&
+      (d.drumOrder===undefined||validOrder(d.drumOrder,8))&&(d.pedalOrder===undefined||validOrder(d.pedalOrder,6))&&
       (d.holds===undefined||(Array.isArray(d.holds)&&d.holds.length<=3&&new Set(d.holds).size===d.holds.length&&d.holds.every(i=>[3,4,5].includes(i))))&&
       record(d.sizes)&&Object.entries(d.sizes).every(([k,v])=>sizedPanels.includes(k)&&["compact","normal","large"].includes(v))&&
       record(d.columns)&&Object.entries(d.columns).every(([k,v])=>gridPanels.includes(k)&&["2","3","4"].includes(v));
   }
   function loadDetails(){
     try{const raw=window.localStorage?.getItem(detailKey);
-      if(typeof raw==="string"&&raw.length<=1024){const d=JSON.parse(raw);if(validDetails(d))return {...d,holds:d.holds??[]};}
+      if(typeof raw==="string"&&raw.length<=1024){const d=JSON.parse(raw);if(validDetails(d))return {...defaultDetails(),...d};}
     }catch{}
     return defaultDetails();
   }
   let details=loadDetails();
   let layout=loadLayout(),layoutMessage="",layoutOptionsKey="",layoutSyncKey="";
-  let layoutDrag=null,layoutHandles=[],layoutHandleEpoch=0;
+  let layoutDrag=null,layoutHandles=[],layoutHandleEpoch=0,gridOptionsKey="";
   function availablePanels(){
     if(!caps)return [];
     const available=[caps.touch,Boolean(caps.drums),Boolean(caps.piano),Boolean(caps.pedals),caps.tilt,caps.acceleration||caps.rotation];
@@ -321,6 +330,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     play.setAttribute("data-size",layout.size);
     get("drumGrid").setAttribute("data-columns",details.columns.drumSection??"auto");
     get("pedalGrid").setAttribute("data-columns",details.columns.pedalSection??"auto");
+    for(const i of details.drumOrder)get("drumGrid").appendChild(get("drum"+i));
+    for(const i of details.pedalOrder)get("pedalGrid").appendChild(get("pedalCell"+i));
     syncPedals();
   }
   function clearLayoutDrag(){
@@ -391,6 +402,42 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("layoutPanel").value=id;
     layoutMessage="Layout changed. Save to retain it.";applyLayout();syncLayout();
   }
+  function gridChoice(){
+    const panel=get("layoutPanel").value;
+    if(panel==="drumSection"&&caps?.drums)return {kind:"drums",order:"drumOrder",label:9};
+    if(panel==="pedalSection"&&caps?.pedals)return {kind:"pedals",order:"pedalOrder",label:43};
+    return null;
+  }
+  function visibleGrid(choice){return choice?details[choice.order].filter(i=>has(choice.kind,i)):[];}
+  function syncGridEditor(editable){
+    const choice=gridChoice(),available=visibleGrid(choice),control=get("gridControl");
+    get("gridOrderEditor").hidden=!choice;
+    const key=choice?JSON.stringify([choice.kind,available,available.map(i=>labelFor(choice.label+i))]):"";
+    if(key!==gridOptionsKey){
+      const before=control.value;
+      control.replaceChildren(...available.map(i=>{
+        const option=document.createElement("option");
+        option.value=String(i);option.textContent=labelFor(choice.label+i);return option;
+      }));
+      control.value=available.map(String).includes(before)?before:(available.length?String(available[0]):"");
+      gridOptionsKey=key;
+    }
+    const index=available.map(String).indexOf(control.value);
+    control.disabled=!editable||index<0;
+    get("gridControlUp").disabled=!editable||index<=0;
+    get("gridControlDown").disabled=!editable||index<0||index===available.length-1;
+  }
+  function moveGridControl(delta){
+    if(!canEditLayout())return;
+    const choice=gridChoice(),available=visibleGrid(choice);
+    const index=available.map(String).indexOf(get("gridControl").value);
+    if(!choice||index<0||index+delta<0||index+delta>=available.length)return;
+    clearLayoutDrag();
+    [available[index],available[index+delta]]=[available[index+delta],available[index]];
+    const mapped=new Set(available);let offset=0;
+    details[choice.order]=details[choice.order].map(i=>mapped.has(i)?available[offset++]:i);
+    layoutMessage="Control order changed. Save to retain it.";applyLayout();syncLayout();
+  }
   function syncLayout(){
     const visible=Boolean(caps)&&currentView==="setup";
     get("layoutSection").hidden=!visible;
@@ -405,6 +452,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         get("layoutDragList").replaceChildren();
         get("layoutPanel").replaceChildren();
       }
+      if(!caps&&gridOptionsKey){gridOptionsKey="";get("gridControl").replaceChildren();}
       return;
     }
     const panel=get("layoutPanel"),available=availablePanels(),key=available.join(",");
@@ -421,6 +469,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }
     const editable=Boolean(canEditLayout()),selected=panel.value,index=available.indexOf(selected);
     if(!editable&&layoutDrag)clearLayoutDrag();
+    syncGridEditor(editable);
     const stateKey=JSON.stringify([editable,key,selected,layout.wide,layout.size,details,layoutMessage]);
     if(stateKey===layoutSyncKey)return;
     layoutSyncKey=stateKey;
@@ -925,6 +974,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pedalRelease.disabled=!admitted||!pedalBusy();
     pedalToggles.forEach((b,i)=>{
       const active=Boolean(pedalMask&(1<<i));
+      get("pedalCell"+i).hidden=!has("pedals",i);
       b.disabled=!admitted||!pedalEnabled||!has("pedals",i)||pedalEmergency;
       const hold=isHoldPedal(i);
       b.textContent=(groupNeutralHandshake&&mappingLabels.has(43+i)?mappingLabels.get(43+i)+" · ":"")+(hold?(active?"Held":"Hold to activate"):i<3?(active?"Release":"Activate"):(active?"On":"Off"));
@@ -1321,6 +1371,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("layoutSize").addEventListener("change",changeLayoutSize);
   get("panelSize").addEventListener("change",()=>changePanelDetail("sizes"));
   get("panelColumns").addEventListener("change",()=>changePanelDetail("columns"));
+  get("gridControl").addEventListener("change",()=>syncGridEditor(Boolean(canEditLayout())));
+  get("gridControlUp").addEventListener("click",()=>moveGridControl(-1));
+  get("gridControlDown").addEventListener("click",()=>moveGridControl(1));
   for(const i of [3,4,5])get("pedalMode"+i).addEventListener("change",()=>changePedalBehavior(i));
   get("layoutSave").addEventListener("click",saveLayout);
   get("layoutReset").addEventListener("click",resetLayout);
