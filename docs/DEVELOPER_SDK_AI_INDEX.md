@@ -47,6 +47,26 @@ swift run --skip-build tihulu-engine groups simulate groups.json frames.json
 
 Replay is bounded, uses one logical lease per source kind, rejects invalid frames and sequences, and emits final cleanup. It is not real-time timing, hardware discovery, remote authentication, watchdog or MPE acceptance. Intentional shared signals require `--allow-layering`. There is no live-start CLI command in this slice.
 
+### Additional offline engine commands
+
+```sh
+swift run --skip-build tihulu-engine scale plan 60 "0, 180, 400, 700, 1200"
+```
+
+Returns MIDI anchors, pitch bend values, bend range and tuned frequencies using the existing CustomScale model. Unsupported quarter-tone ties or out-of-model degree layouts are rejected, not approximated. This is pitch planning, not a live MPE session.
+
+```sh
+cat > mix.json <<'JSON'
+[
+  {"source":"touch","frame":{"tones":[{"frequencyHz":220,"amplitude":1}],"durationMS":18,"level":0.4}},
+  {"source":"gamepad","frame":{"tones":[{"frequencyHz":330,"amplitude":1}],"durationMS":18,"level":0.4}}
+]
+JSON
+swift run --skip-build tihulu-engine haptics mix mix.json
+```
+
+Returns a bounded mixed haptic frame as data, using the existing HapticFrameMixer. No motor activation or physical vibration claim.
+
 ## AI retrieval / vector index
 
 Run from the repository root:
