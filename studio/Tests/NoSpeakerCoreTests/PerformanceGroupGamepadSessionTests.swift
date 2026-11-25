@@ -138,3 +138,60 @@ private func gamepadGroup(_ source: SensorSource) -> PerformanceInstrumentGroup 
     let waiting = engine.receive(.gamepad1,token:token,frame:held,now:1.02,send:{ output.append($0); return true })
     #expect(waiting.status == .waitingForNeutral && output.count == 1)
 }
+
+
+@Test func groupGamepadToggleSurvivesOrdinaryLiftButNotDeviceLoss() throws {
+    let target = SensorDestination(.sustain)
+    let group = PerformanceInstrumentGroup(name:"Pedal",patch:.init(routes:[
+        .init(id:"toggle",source:.gamepad1,signal:.padRT,destination:target,pedalMode:.toggle)
+    ]))
+    var engine = try PerformanceGroupGamepadSession(profile:.init(groups:[group]))
+    let token = try engine.bind(.gamepad1,now:0)
+    let neutral = try gamepadSnapshot()
+    let down = try gamepadSnapshot(trigger:1)
+    var values: [Int] = []
+    let sink: (PerformanceGroupCommand) -> Bool = { values.append($0.command.value); return true }
+    _ = engine.receive(.gamepad1,token:token,frame:neutral,now:0,send:sink)
+    _ = engine.receive(.gamepad1,token:token,frame:down,now:0.01,send:sink)
+    _ = engine.receive(.gamepad1,token:token,frame:neutral,now:0.02,send:sink)
+    #expect(values == [127])
+    _ = engine.receive(.gamepad1,token:token,frame:nil,now:0.03,send:sink)
+    #expect(values == [127,0])
+    _ = engine.receive(.gamepad1,token:token,frame:down,now:0.04,send:sink)
+    #expect(values == [127,0])
+}
+
+@Test func groupGamepadRapidEdgesAreNotCoalescedAcrossFourControllers() throws {
+    let sources = GamepadFrame.orderedSources
+    let groups = sources.map(gamepadGroup)
+    var engine = try PerformanceGroupGamepadSession(profile:.init(groups:groups))
+    let neutral = try gamepadSnapshot()
+    let down = try gamepadSnapshot(true)
+    var tokens: [SensorSource:UUID] = [:]
+    var counts: [UUID:Int] = [:]
+    var bad = 0
+    let sink: (PerformanceGroupCommand) -> Bool = { event in
+        let count = counts[event.groupID,default:0]
+        if event.command.destination.kind != .note || event.command.value != (count % 2 == 0 ? 100 : 0) { bad += 1 }
+        counts[event.groupID] = count+1
+        return true
+    }
+    for source in sources {
+        let token = try engine.bind(source,now:0)
+        tokens[source] = token
+        _ = engine.receive(source,token:token,frame:neutral,now:0,send:sink)
+    }
+    for step in 1...1000 {
+        let now = Double(step)*0.004
+        for source in sources {
+            let token = try #require(tokens[source])
+            let frame = step % 2 == 1 ? down : neutral
+            _ = engine.receive(source,token:token,frame:frame,now:now,send:sink)
+            _ = engine.receive(source,token:token,frame:frame,now:now,send:sink)
+        }
+    }
+    #expect(bad == 0)
+    #expect(groups.allSatisfy { counts[$0.id] == 1000 })
+    let final = engine.panic(send:sink)
+    #expect(final.accepted == 0 && final.pendingCleanup.isEmpty)
+}
