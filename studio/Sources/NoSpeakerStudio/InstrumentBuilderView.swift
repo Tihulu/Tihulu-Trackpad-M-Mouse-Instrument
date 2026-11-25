@@ -20,6 +20,7 @@ struct InstrumentBuilderView: View {
     @State private var syntheticSource: SensorSource?
     @State private var values: [PatchSimulation.Input: Double] = [:]
     @State private var message = ""
+    @State private var performanceReport = ""
     @State private var showPatchbay = false
     @State private var showLayout = false
     @State private var airRange = AirRangeCapture()
@@ -478,6 +479,24 @@ struct InstrumentBuilderView: View {
                             Text(item.element).font(.system(.caption, design: .monospaced))
                         }
                         if studio.patchMessages.isEmpty { Text("Move an input after starting the test.").foregroundStyle(.secondary) }
+                        DisclosureGroup("Performance diagnostics · manual snapshot") {
+                            HStack {
+                                Button("Reset timing") {
+                                    studio.resetBuilderPerformanceMetrics()
+                                    performanceReport = ""
+                                }
+                                Button("Refresh timing") { performanceReport = studio.builderPerformanceReport() }
+                                Button("Copy report") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(performanceReport,forType:.string)
+                                }.disabled(performanceReport.isEmpty)
+                            }
+                            if !performanceReport.isEmpty {
+                                Text(performanceReport).font(.system(.caption,design:.monospaced)).textSelection(.enabled)
+                            }
+                            Text("Timing resets on Start. Refresh after playing; no live timing UI or background timer is added.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
                 Text(message).font(.caption).foregroundStyle(.secondary)
@@ -511,6 +530,9 @@ struct InstrumentBuilderView: View {
                 splitGamepadOutputs = studio.patchGamepadOutputSelection != nil
                 if let selection = studio.patchGamepadOutputSelection { gamepadOutputSelection = selection }
             }
+        }
+        .onChange(of:studio.patchRunning) { running in
+            if running { performanceReport = "" }
         }
         .onChange(of:gamepadHapticAvailable) { available in
             if !available && !studio.patchRunning { sendHaptics = false }

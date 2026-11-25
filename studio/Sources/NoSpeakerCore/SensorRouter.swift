@@ -201,13 +201,21 @@ public struct SensorRouter: Sendable {
 
     public static let maxSessions = 16
     public static let maxMappings = 64
+    private struct InputKey: Hashable, Sendable {
+        let source: SensorSource
+        let signal: SensorSignal
+    }
+
     private var mappings: [SensorMapping] = []
+    private var mappingsByInput: [InputKey:[SensorMapping]] = [:]
+    private var orderedTargets: [SensorDestination] = []
     private var sessions: [UUID: Session] = [:]
     private var contributions: [Owner: Contribution] = [:]
     private var emitted: [SensorDestination: Int] = [:]
     private var releaseValues: [SensorDestination: Int] = [:]
     private var sharedSwitches: Set<SensorDestination> = []
     private var pedalPressed: Set<Owner> = []
+    private var needsReconcile = false
 
     public init() {}
     public var sessionCount: Int { sessions.count }
@@ -224,6 +232,10 @@ public struct SensorRouter: Sendable {
             throw SensorRouterError.invalidMappings
         }
         mappings = proposed
+        mappingsByInput = Dictionary(grouping:proposed) {
+            InputKey(source:$0.source,signal:$0.signal)
+        }
+        orderedTargets = releases.keys.sorted { $0.sortKey < $1.sortKey }
         releaseValues = releases
         sharedSwitches = switches.union(pedalSwitches)
         pedalPressed.removeAll()
@@ -261,7 +273,7 @@ public struct SensorRouter: Sendable {
         session.lastSeen = now
         sessions[event.session] = session
 
-        for mapping in mappings where mapping.source == session.source && mapping.signal == event.signal {
+        for mapping in mappingsByInput[.init(source:session.source,signal:event.signal)] ?? [] {
             guard let normalized = mapping.calibration.apply(event.value) else { continue }
             let owner = Owner(session: event.session, mapping: mapping.id)
             let value: Int
@@ -291,9 +303,12 @@ public struct SensorRouter: Sendable {
                 }
                 value = response.output(filtered, target: mapping.destination)
             }
-            contributions[owner] = Contribution(owner: owner, destination: mapping.destination,
-                                                priority: mapping.priority, value: value,
-                                                filtered: filtered, timestamp: event.timestamp)
+            let previous = contributions.updateValue(
+                Contribution(owner:owner,destination:mapping.destination,priority:mapping.priority,
+                             value:value,filtered:filtered,timestamp:event.timestamp),forKey:owner)
+            // Keep smoothing state and the accepted timestamp even when the
+            // quantized wire value is unchanged. Only output ownership is dirty.
+            if previous?.value != value { needsReconcile = true }
         }
         return true
     }
@@ -309,11 +324,13 @@ public struct SensorRouter: Sendable {
             prior = event.sequence
         }
         guard session.timestamp.map({ now >= $0 }) ?? true else { return [] }
-        let released = mappings.filter { $0.source == session.source && signals.contains($0.signal) }
-        let ids = Set(released.map(\.id))
-        let unlatched = Set(released.filter { $0.pedalMode != .toggle }.map(\.id))
-        pedalPressed = pedalPressed.filter { $0.session != id || !ids.contains($0.mapping) }
-        contributions = contributions.filter { $0.key.session != id || !unlatched.contains($0.key.mapping) }
+        for signal in signals {
+            for mapping in mappingsByInput[.init(source:session.source,signal:signal)] ?? [] {
+                let owner = Owner(session:id,mapping:mapping.id)
+                pedalPressed.remove(owner)
+                if mapping.pedalMode != .toggle { removeContribution(owner) }
+            }
+        }
         for event in events { _ = accept(event,now:now) }
         return reconcile()
     }
@@ -327,9 +344,13 @@ public struct SensorRouter: Sendable {
 
     public mutating func releaseSignals(session id: UUID, signals: Set<SensorSignal>) -> [SensorCommand] {
         guard let session = sessions[id] else { return [] }
-        let ids = Set(mappings.filter { $0.source == session.source && signals.contains($0.signal) }.map(\.id))
-        pedalPressed = pedalPressed.filter { $0.session != id || !ids.contains($0.mapping) }
-        contributions = contributions.filter { $0.key.session != id || !ids.contains($0.key.mapping) }
+        for signal in signals {
+            for mapping in mappingsByInput[.init(source:session.source,signal:signal)] ?? [] {
+                let owner = Owner(session:id,mapping:mapping.id)
+                pedalPressed.remove(owner)
+                removeContribution(owner)
+            }
+        }
         return reconcile()
     }
 
@@ -346,7 +367,8 @@ public struct SensorRouter: Sendable {
         guard !removed.isEmpty else { return [] }
         for id in removed { sessions.removeValue(forKey:id) }
         pedalPressed = pedalPressed.filter { !removed.contains($0.session) }
-        contributions = contributions.filter { !removed.contains($0.key.session) }
+        let departing = contributions.keys.filter { removed.contains($0.session) }
+        for owner in departing { removeContribution(owner) }
         return reconcile()
     }
 
@@ -360,30 +382,45 @@ public struct SensorRouter: Sendable {
     public mutating func panic() -> [SensorCommand] {
         sessions.removeAll()
         pedalPressed.removeAll()
+        if !contributions.isEmpty { needsReconcile = true }
         contributions.removeAll()
         return reconcile()
     }
 
+    private mutating func removeContribution(_ owner: Owner) {
+        if contributions.removeValue(forKey:owner) != nil { needsReconcile = true }
+    }
+
+    private static func precedes(_ a: Contribution, _ b: Contribution) -> Bool {
+        if a.priority != b.priority { return a.priority > b.priority }
+        if a.owner.mapping != b.owner.mapping { return a.owner.mapping < b.owner.mapping }
+        return a.owner.session.uuidString < b.owner.session.uuidString
+    }
+
     private mutating func reconcile() -> [SensorCommand] {
-        let grouped = Dictionary(grouping: contributions.values, by: \.destination)
-        var next: [SensorDestination: Int] = [:]
-        for (target, owners) in grouped {
+        guard needsReconcile else { return [] }
+        needsReconcile = false
+        // A single pass selects the same gate maxima and continuous
+        // winners as the previous grouped-and-sorted implementation.
+        var next: [SensorDestination:Int] = [:]
+        var winners: [SensorDestination:Contribution] = [:]
+        for contribution in contributions.values {
+            let target = contribution.destination
             if target.isGate || sharedSwitches.contains(target) {
-                let level = owners.map(\.value).max() ?? 0
-                if level > 0 { next[target] = level }
+                if contribution.value > (next[target] ?? 0) {
+                    next[target] = contribution.value
+                }
+            } else if let previous = winners[target] {
+                if Self.precedes(contribution,previous) { winners[target] = contribution }
             } else {
-                // Higher priority wins. Stable route ID, then session ID break ties.
-                let winner = owners.sorted { a, b in
-                    if a.priority != b.priority { return a.priority > b.priority }
-                    if a.owner.mapping != b.owner.mapping { return a.owner.mapping < b.owner.mapping }
-                    return a.owner.session.uuidString < b.owner.session.uuidString
-                }.first
-                if let winner { next[target] = winner.value }
+                winners[target] = contribution
             }
         }
-        let targets = Set(emitted.keys).union(next.keys).sorted { $0.sortKey < $1.sortKey }
+        for (target,winner) in winners { next[target] = winner.value }
         var result: [SensorCommand] = []
-        for target in targets {
+        // Configuration is frozen while sessions exist, so target order
+        // can be computed once without changing emitted command ordering.
+        for target in orderedTargets where emitted[target] != nil || next[target] != nil {
             let neutral = releaseValues[target] ?? target.neutral
             let before = emitted[target] ?? neutral
             let after = next[target] ?? neutral
