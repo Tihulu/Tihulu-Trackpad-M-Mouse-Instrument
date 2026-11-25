@@ -3443,18 +3443,17 @@ final class StudioController: ObservableObject {
     }
 
     private func handleSharedSurfaceStates(_ states: [TouchPerformanceState]) {
-        if instrumentPreviewRequested || touchRunning {
-            let instrumentStates = states.filter {
-                currentTouchConfiguration.surfaceSelection.accepts($0.surface)
-            }
-            handleTouchStates(instrumentStates)
-        }
-        if helperPreviewRequested || midiHelperRunning {
-            let helperStates = states.filter {
-                helperSurfaceSelection.accepts($0.surface)
-            }
-            handleMIDIHelperStates(helperStates,freshFrame:true)
-        }
+        let instrumentStates = (instrumentPreviewRequested || touchRunning) ? states.filter {
+            currentTouchConfiguration.surfaceSelection.accepts($0.surface)
+        } : nil
+        let helperStates = (helperPreviewRequested || midiHelperRunning) ? states.filter {
+            helperSurfaceSelection.accepts($0.surface)
+        } : nil
+        // Commit both pedal intents before any note release. An owner
+        // handoff in one frame must not pulse CC64 off and back on.
+        let pedal = applyPhysicalPedalFrame(touchStates:instrumentStates,helperStates:helperStates,freshFrame:true)
+        if let instrumentStates { handleTouchStates(instrumentStates,pedal:pedal) }
+        if let helperStates { handleMIDIHelperStates(helperStates) }
     }
 
     /// Explicitly copy the current bank scale. Live performances never retune
@@ -3650,14 +3649,10 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func handleTouchStates(_ states: [TouchPerformanceState]) {
+    private func handleTouchStates(_ states: [TouchPerformanceState],pedal:MIDIHelperSustainSnapshot?) {
         liveTouchStates = states
-        // Every accepted hardware frame reaches the musical path before UI.
+        // Pedals were already evaluated and settled by the shared frame.
         if touchRunning {
-            // Evaluate the pedal exactly once. Existing voices must see CC64
-            // before same-frame Note Off; do not reserve a fallback MPE
-            // channel before the new voices have been allocated.
-            let pedal = updateTouchSustain(states,freshFrame:true,allowIdleFallback:false)
             if touchMIDIOutEnabled {
                 midi?.sendTouchStates(
                     states,
@@ -3956,24 +3951,13 @@ final class StudioController: ObservableObject {
         stopCaptureMonitorIfIdle()
     }
 
-    private func handleMIDIHelperStates(_ states: [TouchPerformanceState],freshFrame:Bool = false) {
-        liveHelperStates = states
-        defer {
-            if helperPreviewRequested, states != midiHelperStates,
-               helperPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
-                   contactEdge:previewContactEdge(midiHelperStates,states)) {
-                midiHelperStates = states
-            }
-        }
-        guard midiHelperRunning else { return }
-
+    private func evaluateHelperSustain(_ states: [TouchPerformanceState],freshFrame:Bool) -> Bool? {
+        guard midiHelperRunning else { return nil }
         let selectedClick = helperClickFence.permits(receipt:physicalClickReceipt,
             now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false)
         let touching = states.contains { $0.isTouching && helperSurfaceSelection.accepts($0.surface) }
-        let pedalReady = helperRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame)
-        let effectsReady = helperEffectsRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame)
+        guard helperRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame) else { return nil }
         let active = states.filter { $0.isTouching && helperSurfaceSelection.accepts($0.surface) && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
-        if pedalReady {
         let snapshot = helperSustainState.update(
             trackpadContactSizes: active
                 .filter { $0.surface == .trackpad }
@@ -3991,12 +3975,26 @@ final class StudioController: ObservableObject {
         let helperSustained = snapshot.isActive && helperSendToDAW
         if midiHelperSustainActive != helperSustained { midiHelperSustainActive = helperSustained }
 
-        if helperSendToDAW { midi?.setHelperSustain(snapshot.isActive,channel:helperTargetChannel) }
-        else { midi?.releaseHelperSustain() }
+        return helperSustained
+    }
+
+    private func handleMIDIHelperStates(_ states: [TouchPerformanceState]) {
+        liveHelperStates = states
+        defer {
+            if helperPreviewRequested, states != midiHelperStates,
+               helperPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
+                   contactEdge:previewContactEdge(midiHelperStates,states)) {
+                midiHelperStates = states
+            }
         }
-        // Physical click/pressure callbacks update sustain only; expressive
-        // output is driven exclusively by accepted multitouch frames.
-        guard freshFrame,helperSendToDAW,effectsReady else { return }
+        guard midiHelperRunning else { return }
+        let selectedClick = helperClickFence.permits(receipt:physicalClickReceipt,
+            now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false)
+        let touching = states.contains { $0.isTouching && helperSurfaceSelection.accepts($0.surface) }
+        let effectsReady = helperEffectsRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:true)
+        // This path receives accepted multitouch frames only.
+        guard helperSendToDAW,effectsReady else { return }
+        let active = states.filter { $0.isTouching && helperSurfaceSelection.accepts($0.surface) && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
         // Sustain-only is a strict gate path. No pitch, CC7/11, pressure,
         // note or RPN generation from these contacts.
         guard helperAssignments.hasEffects else { return }
@@ -4353,20 +4351,33 @@ final class StudioController: ObservableObject {
             clickedSurface = nil
             trackpadClickPressure = nil
         }
-        if midiHelperRunning { handleMIDIHelperStates(liveHelperStates) }
-        if touchRunning { updateTouchSustain(liveTouchStates) }
+        applyPhysicalPedalFrame(touchStates:touchRunning ? liveTouchStates : nil,
+            helperStates:midiHelperRunning ? liveHelperStates : nil,freshFrame:false)
     }
 
     private func handlePhysicalPressure(_ pressure: Double) {
         guard clickedSurface == .trackpad else { return }
         trackpadClickPressure = pressure.isFinite && (0...1).contains(pressure) ? pressure : nil
-        if midiHelperRunning { handleMIDIHelperStates(liveHelperStates) }
-        if touchRunning { updateTouchSustain(liveTouchStates) }
+        applyPhysicalPedalFrame(touchStates:touchRunning ? liveTouchStates : nil,
+            helperStates:midiHelperRunning ? liveHelperStates : nil,freshFrame:false)
     }
 
     @discardableResult
-    private func updateTouchSustain(_ states: [TouchPerformanceState],freshFrame:Bool = false,
-                                    allowIdleFallback:Bool = true) -> MIDIHelperSustainSnapshot? {
+    private func applyPhysicalPedalFrame(touchStates:[TouchPerformanceState]?,
+                                         helperStates:[TouchPerformanceState]?,
+                                         freshFrame:Bool) -> MIDIHelperSustainSnapshot? {
+        let touchPedal = touchRunning ? touchStates.flatMap { evaluateTouchSustain($0,freshFrame:freshFrame) } : nil
+        let helperPedal = midiHelperRunning ? helperStates.flatMap { evaluateHelperSustain($0,freshFrame:freshFrame) } : nil
+        let midiTouch = touchMIDIOutEnabled ? touchPedal : nil
+        if midiTouch != nil || helperPedal != nil {
+            midi?.setPhysicalSustainFrame(touch:midiTouch,separateChannels:touchSeparateChannels,
+                independent:touchIndependentDAWSustain,baseChannel:touchMIDIChannel,
+                helper:helperPedal,helperChannel:helperTargetChannel,allowIdleFallback:!freshFrame)
+        }
+        return touchPedal
+    }
+
+    private func evaluateTouchSustain(_ states: [TouchPerformanceState],freshFrame:Bool) -> MIDIHelperSustainSnapshot? {
         let selected = states.filter { currentTouchConfiguration.surfaceSelection.accepts($0.surface) }
         let active = selected.filter { $0.isTouching && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
         let selectedClick = touchClickFence.permits(receipt:physicalClickReceipt,
@@ -4392,13 +4403,6 @@ final class StudioController: ObservableObject {
         let instrumentSustained = snapshot.isActive && (touchMIDIOutEnabled || hapticsEnabled)
         if touchInstrumentSustainActive != instrumentSustained { touchInstrumentSustainActive = instrumentSustained }
         touch?.setSustainActive(snapshot.isActive && hapticsEnabled)
-        if touchMIDIOutEnabled {
-            if let split = touchSeparateChannels {
-                midi?.setTouchSustainChannels(split.sustainTargets(snapshot,independent:touchIndependentDAWSustain))
-            } else {
-                midi?.setTouchSustain(snapshot.isActive,baseChannel:touchMIDIChannel,allowIdleFallback:allowIdleFallback)
-            }
-        }
         return snapshot
     }
 

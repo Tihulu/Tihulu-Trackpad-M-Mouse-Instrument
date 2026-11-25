@@ -625,6 +625,36 @@ public final class MIDIHapticService: @unchecked Sendable {
         if canSend { sendSustainTransitions(commands) }
     }
 
+    /// One accepted physical frame may change both pedal owners. Emit
+    /// only the final union transition, never an intermediate OFF/ON.
+    public func setPhysicalSustainFrame(touch: MIDIHelperSustainSnapshot?,
+                                        separateChannels: DAWSurfaceChannels?,
+                                        independent:Bool,baseChannel:Int,
+                                        helper:Bool?,helperChannel:Int,
+                                        allowIdleFallback:Bool) {
+        lock.lock()
+        let canSend = enabled && virtualSource != 0
+        var updates: [LegacySustainOwners.Owner:Set<Int>] = [:]
+        if let touch {
+            if !canSend {
+                updates[.touch] = []
+            } else if let separateChannels {
+                updates[.touch] = separateChannels.sustainTargets(touch,independent:independent)
+            } else {
+                let current = Set(outgoingTouches.values.map(\.channel)).union(physicalChordGates.channels)
+                updates[.touch] = LegacyTouchSustainTargets.resolve(active:touch.isActive,
+                    previous:sustainOwners.channels(for:.touch),current:current,
+                    baseChannel:baseChannel,allowIdleFallback:allowIdleFallback)
+            }
+        }
+        if let helper {
+            updates[.helper] = helper && canSend ? [max(0,min(15,helperChannel))] : []
+        }
+        let commands = sustainOwners.replaceFrame(updates)
+        lock.unlock()
+        if canSend { sendSustainTransitions(commands) }
+    }
+
     public func setHelperSustain(_ active: Bool, channel: Int) {
         replaceSustain(.helper,channels:active ? [max(0,min(15,channel))] : [])
     }

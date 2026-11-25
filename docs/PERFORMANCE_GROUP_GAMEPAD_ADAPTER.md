@@ -196,3 +196,7 @@ Each bounded capture event now retains its own monotonic host receipt, including
 ### Same-frame Touch CC64 ordering
 
 A Touch hardware frame evaluates sustain once before note edges, applies the result to already allocated legacy/MPE voices (or fixed split channels), and extends the same admitted state to new shared-route channels after allocation. No idle fallback is inserted in the pre-allocation phase. Existing sustained MPE channels remain reserved through release; pedal-off still uses scoped owners. Three core regressions model the target planner and owner/pool transitions. They do not prove the native call order or Logic receiver behavior; verify those with a MIDI trace on the candidate Mac. Separate Helper callback ordering is unchanged. Physical acceptance remains HOLD.
+
+### Shared physical pedal handoff
+
+Touch and Helper pedal evaluations now produce optional intents. The native endpoint commits both admitted owner changes atomically before note edges (including cached click callbacks, which remain sustain-only). An absent intent leaves that owner's state untouched. Shared-route new Touch channels are added after voice allocation, and the separate TouchBar owner is not changed. Three core regressions cover bidirectional handoff, omitted owners and retired MPE member retention. Native integration and receiver-level tests remain required.

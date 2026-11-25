@@ -8,11 +8,18 @@ public struct LegacySustainOwners: Sendable {
     public var active: Set<Int> { owners.values.reduce(into:Set<Int>()) { $0.formUnion($1) } }
 
     public mutating func replace(_ owner: Owner, channels: Set<Int>) -> [SensorCommand] {
-        let valid = channels.filter { (0...15).contains($0) }
-        guard self.channels(for:owner) != valid else { return [] }
+        replaceFrame([owner:channels])
+    }
+
+    /// Commit all admitted owners of one input frame before calculating
+    /// wire transitions. An omitted owner is unchanged, not released.
+    public mutating func replaceFrame(_ updates: [Owner:Set<Int>]) -> [SensorCommand] {
         let before = active
-        if valid.isEmpty { owners.removeValue(forKey:owner) }
-        else { owners[owner] = valid }
+        for (owner,channels) in updates {
+            let valid = channels.filter { (0...15).contains($0) }
+            if valid.isEmpty { owners.removeValue(forKey:owner) }
+            else { owners[owner] = valid }
+        }
         let after = active
         return before.subtracting(after).sorted().map { .init(.init(.sustain,channel:$0),value:0) }
             + after.subtracting(before).sorted().map { .init(.init(.sustain,channel:$0),value:127) }

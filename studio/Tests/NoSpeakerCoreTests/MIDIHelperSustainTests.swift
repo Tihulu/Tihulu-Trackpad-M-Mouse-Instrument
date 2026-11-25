@@ -431,3 +431,43 @@ import Testing
     #expect(owners.replace(.touch,channels:off) == [.init(.init(.sustain,channel:1),value:0)])
     #expect(owners.active == [2])
 }
+
+@Test func sameFrameSustainHandoffIsSilentInBothDirections() {
+    var owners = LegacySustainOwners()
+    _ = owners.replace(.touch,channels:[2])
+    #expect(owners.replaceFrame([.touch:[],.helper:[2]]).isEmpty)
+    #expect(owners.channels(for:.touch).isEmpty && owners.channels(for:.helper) == [2])
+    #expect(owners.replaceFrame([.helper:[],.touch:[2]]).isEmpty)
+    #expect(owners.active == [2])
+    #expect(owners.replaceFrame([.touch:[],.helper:[]]) == [.init(.init(.sustain,channel:2),value:0)])
+}
+
+@Test func frameSustainUpdatesDoNotReleaseOmittedOwners() {
+    var owners = LegacySustainOwners()
+    _ = owners.replace(.touchBar,channels:[1,4])
+    _ = owners.replace(.helper,channels:[2])
+    _ = owners.replace(.touch,channels:[1,3])
+    let delta = owners.replaceFrame([.touch:[2,5],.helper:[3]])
+    #expect(delta == [.init(.init(.sustain,channel:5),value:127)])
+    #expect(owners.active == [1,2,3,4,5])
+    #expect(owners.channels(for:.touchBar) == [1,4])
+    #expect(owners.replaceFrame([:]).isEmpty)
+    #expect(owners.replaceFrame([.touch:[],.helper:[]]) == [
+        .init(.init(.sustain,channel:2),value:0),
+        .init(.init(.sustain,channel:3),value:0),
+        .init(.init(.sustain,channel:5),value:0)])
+    #expect(owners.active == [1,4])
+}
+
+@Test func frameHandoffPreservesRetiredMPEMemberUntilLastOwnerReleases() {
+    var owners = LegacySustainOwners()
+    var pool = LegacyMPEChannelPool()
+    _ = owners.replace(.helper,channels:[1])
+    _ = pool.retire(channel:1,sustained:true,fretless:true)
+    #expect(owners.replaceFrame([.helper:[],.touch:[1]]).isEmpty)
+    #expect(pool.pedalChanged(sustained:owners.active).isEmpty)
+    #expect(pool.reserved == [1])
+    _ = owners.replaceFrame([.touch:[]])
+    #expect(pool.pedalChanged(sustained:owners.active) == [1])
+    #expect(pool.reserved.isEmpty)
+}
