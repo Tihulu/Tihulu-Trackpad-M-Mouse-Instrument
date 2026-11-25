@@ -33,6 +33,7 @@ final class StudioController: ObservableObject {
     @Published private(set) var patchInputs: [PatchSimulation.Input] = []
     @Published private(set) var patchMessages: [String] = []
     private var patchMonitorBuffer = BuilderCommandMonitor.Buffer()
+    private var builderPerformanceMetrics = BuilderPerformanceMetrics()
     @Published private(set) var patchStatus = "Builder idle"
     private var patchSimulation = PatchSimulation()
     private var debugCameraRunToken:UUID?
@@ -645,6 +646,7 @@ final class StudioController: ObservableObject {
             patchRunning = true
             beginEnsembleTakeIfArmed()
             patchMonitorBuffer = BuilderCommandMonitor.Buffer()
+            builderPerformanceMetrics = BuilderPerformanceMetrics()
             patchMessages = []
             patchStatus = physical ? (synthetic == nil ? "Native input requested · waiting for a physical contact" : "Hybrid · explicit synthetic source · waiting for input") :
                 (sendMIDI ? "Simulated inputs · live TIHULU Instrument Builder MIDI" : "Simulation only · no MIDI output")
@@ -967,8 +969,14 @@ final class StudioController: ObservableObject {
     }
 
     private func drainPhysicalPatch(_ mailbox: PatchSurfaceMailbox) {
-        defer { flushPatchMonitor() }
+        let tickStart = ProcessInfo.processInfo.systemUptime
         let batch = mailbox.drain()
+        let oldest = batch.samples.min(by:{ $0.time < $1.time })?.time
+        defer {
+            flushPatchMonitor()
+            builderPerformanceMetrics.recordTick(start:tickStart,end:ProcessInfo.processInfo.systemUptime,
+                                                 oldestSample:oldest)
+        }
         let now = ProcessInfo.processInfo.systemUptime
         if batch.overflow || batch.samples.contains(where: { now - $0.time >= PhysicalPatchRuntime.timeout }) {
             stopInstrumentPatch()
@@ -1222,17 +1230,26 @@ final class StudioController: ObservableObject {
         guard !commands.isEmpty else { return }
         var attempted: [SensorCommand] = []
         var hapticAttack = false
+        let batchStart = ProcessInfo.processInfo.systemUptime
+        var midiAttempts = 0
+        var midiFailures = 0
+        defer {
+            builderPerformanceMetrics.recordBatch(start:batchStart,end:ProcessInfo.processInfo.systemUptime,
+                commands:attempted.count,attempts:midiAttempts,failures:midiFailures)
+        }
         for command in commands {
             attempted.append(command)
             let plan = airTunedPlan
             if patchMIDIEnabled && (gamepadOutputPlan?.sendsMIDI(command.destination) ?? true) &&
                 !patchLedger.deliver(command, send: { command in
+                midiAttempts += 1
                 if let plan {
                     guard let wire = plan.translate(command) else { return false }
                     return airTunedMIDI.send(wire)
                 }
                 return patchMIDI.send(command)
             }) {
+                midiFailures += 1
                 if ensembleRecording {
                     ensembleTake?.interrupt(now:ProcessInfo.processInfo.systemUptime)
                     updateEnsembleTakeState()
@@ -1256,6 +1273,23 @@ final class StudioController: ObservableObject {
         // Physical playback publishes at watchdog cadence, not per event.
         // Simulation and failure/stop paths still show the last attempted data.
         if !patchPhysical || !patchRunning { flushPatchMonitor() }
+    }
+
+    func resetBuilderPerformanceMetrics() { builderPerformanceMetrics = BuilderPerformanceMetrics() }
+
+    func builderPerformanceReport() -> String {
+        let m = builderPerformanceMetrics
+        func ms(_ seconds:Double) -> String { String(format:"%.2f ms",seconds*1000) }
+        return """
+        Native watchdog ticks: \(m.ticks)
+        Max tick gap: \(ms(m.maxTickGap)); gaps ≥40 ms: \(m.gapsOver40MS)
+        Max watchdog work: \(ms(m.maxTickDuration))
+        Max queued surface age: \(ms(m.maxSurfaceQueueAge))
+        Logical command batches / commands: \(m.commandBatches) / \(m.logicalCommands)
+        MIDI attempts / failures: \(m.midiAttempts) / \(m.midiFailures)
+        Max command batch work: \(ms(m.maxBatchDuration))
+        Host timing only; not measured audio or physical latency. Cleanup retries excluded.
+        """
     }
 
     private func flushPatchMonitor() {
