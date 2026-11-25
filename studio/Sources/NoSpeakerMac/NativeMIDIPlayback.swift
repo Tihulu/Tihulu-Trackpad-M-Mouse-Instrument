@@ -174,6 +174,8 @@ public final class NativeMIDIPlayback {
         let source=endpoint
         guard !identityRetired,Self.matches(source:source,id:sourceID,name:sourceName) else {
             identityRetired=true
+            player.abort { _ in false }
+            player.invalidateTerminalResult()
             throw Failure.sourceIdentityLost
         }
         if player.state == .ready { player.stop { _ in false } }

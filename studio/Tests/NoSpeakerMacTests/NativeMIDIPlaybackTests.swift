@@ -244,4 +244,25 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     #expect(throws:NativeMIDIPlayback.Failure.self) { _=try player.retryCleanup() }
     #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
 }
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackCloseRetiresTerminalStateAfterIdentityLoss() async throws {
+    let player=try NativeMIDIPlayback(clip:nativePlaybackClip())
+    try player.open()
+    let source=try NativeMIDIMonitor.resolve(name:player.sourceName)
+    defer {
+        _=MIDIEndpointDispose(source)
+        MIDIProcessClient.shared.unregisterIsolatedSource(source)
+    }
+    player.requestStop()
+    let stopped=try await player.run()
+    #expect(stopped.state=="stopped" && stopped.cleanupConfirmed)
+    let replacement="TIHULU close identity fixture "+UUID().uuidString
+    try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,replacement as CFString)==noErr)
+    #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
+    #expect(player.lifecycle.state=="faulted" && player.lifecycle.identityRetired && player.lifecycle.recoveryRequired)
+    #expect(player.lifecycle.sourceOpen && player.lifecycle.outstandingNotes==0)
+    try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,player.sourceName as CFString)==noErr)
+    #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
+}
 #endif

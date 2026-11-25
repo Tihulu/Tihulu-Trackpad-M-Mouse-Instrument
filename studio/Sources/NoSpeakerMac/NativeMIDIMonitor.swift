@@ -90,13 +90,14 @@ public enum NativeMIDIMonitor {
         return try await withTaskCancellationHandler {
             var client=MIDIClientRef(),port=MIDIPortRef(),connected=false
             // Cleanup is attempted on every exit, including setup errors and cancellation.
-            @MainActor func cleanup()->OSStatus {
+            @MainActor func cleanup()->(status:OSStatus,identityValid:Bool) {
                 _ = counter.stop()
                 var result:OSStatus=noErr
+                let identityValid=identity(source)==bound
                 if connected {
                     // Never disconnect using a retired/reused source handle.
                     // Disposing our own input port removes its subscriptions.
-                    if identity(source)==bound {
+                    if identityValid {
                         let status=MIDIPortDisconnectSource(port,source)
                         if status != noErr { result=status }
                     }
@@ -110,7 +111,7 @@ public enum NativeMIDIMonitor {
                     let status=MIDIClientDispose(client);client=0
                     if status != noErr && result == noErr { result=status }
                 }
-                return result
+                return (result,identityValid && identity(source)==bound)
             }
             do {
                 var status=makeClient(&client)
@@ -144,16 +145,17 @@ public enum NativeMIDIMonitor {
                 let counts=counter.stop()
                 try Task.checkCancellation()
                 guard available else { throw Failure.sourceUnavailable }
-                status=cleanup()
-                guard status==noErr else { throw Failure.native("cleanup",status) }
+                let cleaned=cleanup()
+                guard cleaned.status==noErr else { throw Failure.native("cleanup",cleaned.status) }
+                guard cleaned.identityValid else { throw Failure.sourceUnavailable }
                 try Task.checkCancellation()
                 return .init(requestedSeconds:seconds,callbackCount:counts.callbacks,packetCount:counts.packets,
-                             sourceStillPresent:available,cleanupConfirmed:true)
+                             sourceStillPresent:true,cleanupConfirmed:true)
             } catch {
                 // Preserve a cleanup failure even when the primary error
                 // was cancellation or identity loss; never claim clean exit.
-                let status=cleanup()
-                guard status==noErr else { throw Failure.native("cleanup after interruption",status) }
+                let cleaned=cleanup()
+                guard cleaned.status==noErr else { throw Failure.native("cleanup after interruption",cleaned.status) }
                 throw error
             }
         } onCancel: {

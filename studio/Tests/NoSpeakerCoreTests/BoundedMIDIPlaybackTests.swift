@@ -247,3 +247,79 @@ private func playbackClip() -> MIDIClip {
     #expect(report.noteOns==256 && report.noteOffs==256 && report.peakConcurrentNotes==256)
     #expect(report.outstandingNotes==0 && report.durationNS==10_000_000_000 && report.completed)
 }
+
+@Test func boundedPlaybackCancellationAtEveryEdgeNeverEmitsUnadmittedOnset() throws {
+    let plan=try BoundedMIDIPlayback(clip:playbackClip())
+    for cutoff in 0...plan.events.count {
+        var player=plan
+        _=try player.begin(now:0)
+        var attempted=0,valid=true
+        var sounding:Set<SensorDestination>=[]
+        var ons:[SensorCommand]=[]
+        while let deadline=player.nextDeadline {
+            player.advance(now:deadline,refreshNow:{deadline},shouldStop:{attempted>=cutoff}) { command in
+                if attempted<cutoff { attempted+=1 }
+                if command.value>0 {
+                    valid = sounding.insert(command.destination).inserted && valid
+                    ons.append(command)
+                } else {
+                    valid = (sounding.remove(command.destination) != nil) && valid
+                }
+                return true
+            }
+        }
+        let expected=plan.events.prefix(cutoff).map(\.command).filter{$0.value>0}
+        #expect(ons==expected && valid)
+        #expect(player.state == .stopped && sounding.isEmpty && player.outstanding.isEmpty)
+        #expect(attempted==cutoff)
+    }
+}
+
+@Test func boundedPlaybackAmbiguousFailureAtEveryEdgePreservesOnlyOwnedCleanupDebt() throws {
+    let plan=try BoundedMIDIPlayback(clip:playbackClip())
+    for edge in plan.events.indices {
+        for delivered in [false,true] {
+            var player=plan
+            _=try player.begin(now:0)
+            var attempted=0,failed=false
+            var sounding:Set<SensorDestination>=[]
+            var admitted:Set<SensorDestination>=[]
+            var ons:[SensorCommand]=[]
+            var cleanup:[SensorCommand]=[]
+            func receive(_ command:SensorCommand) {
+                if command.value>0 { sounding.insert(command.destination) }
+                else { sounding.remove(command.destination) }
+            }
+            while let deadline=player.nextDeadline {
+                player.advance(now:deadline) { command in
+                    if failed {
+                        cleanup.append(command)
+                        return false
+                    }
+                    if command.value>0 { admitted.insert(command.destination);ons.append(command) }
+                    if attempted==edge {
+                        failed=true
+                        if delivered { receive(command) }
+                        return false
+                    }
+                    attempted+=1
+                    receive(command)
+                    return true
+                }
+            }
+            #expect(failed && player.state == .faulted)
+            #expect(ons==plan.events.prefix(edge+1).map(\.command).filter{$0.value>0})
+            #expect(cleanup.allSatisfy{$0.value==0 && admitted.contains($0.destination)})
+            let debt=player.outstanding
+            #expect(sounding.isSubset(of:debt))
+            var retries:Set<SensorDestination>=[]
+            player.retryCleanup { command in
+                #expect(command.value==0 && debt.contains(command.destination))
+                retries.insert(command.destination)
+                receive(command)
+                return true
+            }
+            #expect(retries==debt && player.outstanding.isEmpty && sounding.isEmpty)
+        }
+    }
+}
