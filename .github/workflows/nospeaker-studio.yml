@@ -73,6 +73,7 @@ jobs:
           swift test --filter nativePlaybackUsesIsolatedSourceAndClosesIt
           swift test --filter nativePlaybackStopBeforeRunEmitsNothing
           swift test --filter nativePlaybackReceiverVerifiesNoteGateAndCancellation
+          swift test --filter nativePlaybackRejectsChangedAndRestoredSourceIdentity
       - name: Build Studio
         run: swift build
       - name: Verify standalone engine CLI and repository index
