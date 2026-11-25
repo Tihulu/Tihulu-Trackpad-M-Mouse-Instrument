@@ -113,19 +113,20 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
         try #require(makePlaybackFixturePort(client,&port,trace:trace)==noErr && port != 0)
         defer { _=MIDIPortDispose(port) }
         try #require(MIDIPortConnectSource(port,source,nil)==noErr)
-        defer { _=MIDIPortDisconnectSource(port,source) }
+        var connected=true
+        defer { if connected { _=MIDIPortDisconnectSource(port,source) } }
         let running=Task { @MainActor in try await player.run() }
         if cancel {
             // Wait for the actual receiver onset, not an arbitrary start delay.
-            let deadline=ContinuousClock.now.advanced(by:.seconds(1))
-            while trace.snapshot().isEmpty && ContinuousClock.now<deadline {
+            let deadline=ContinuousClock().now.advanced(by:.seconds(1))
+            while trace.snapshot().isEmpty && ContinuousClock().now<deadline {
                 try await Task.sleep(nanoseconds:5_000_000)
             }
             running.cancel()
         }
         let report=try await running.value
-        let deadline=ContinuousClock.now.advanced(by:.milliseconds(250))
-        while trace.snapshot().count<2 && ContinuousClock.now<deadline {
+        let deadline=ContinuousClock().now.advanced(by:.milliseconds(250))
+        while trace.snapshot().count<2 && ContinuousClock().now<deadline {
             try await Task.sleep(nanoseconds:5_000_000)
         }
         let rows=trace.snapshot()
@@ -148,6 +149,8 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
         }
         #expect(report.cleanupConfirmed && report.outstandingNotes==0)
         #expect(!report.receiverConfirmed)
+        try #require(MIDIPortDisconnectSource(port,source)==noErr)
+        connected=false
         try player.close()
     }
 }
