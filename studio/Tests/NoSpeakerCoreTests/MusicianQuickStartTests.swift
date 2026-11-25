@@ -37,5 +37,10 @@ import Testing
     #expect(Set(mobile.routes.map(\.source)) == [.phone, .tablet])
     #expect(Set(mobile.routes.filter { $0.source == .phone }.map { $0.destination.channel }) == [9])
     #expect(Set(mobile.routes.filter { $0.source == .tablet }.map { $0.destination.channel }) == [1])
-    #expect(MusicianQuickStart.fullParty.patch() == PartyJamPreset.patch())
+    var quickParty = try #require(MusicianQuickStart.fullParty.patch())
+    var originalParty = try #require(PartyJamPreset.patch())
+    // Existing mobile/camera factories generate fresh route IDs on every call.
+    for index in quickParty.routes.indices { quickParty.routes[index].id = String(index) }
+    for index in originalParty.routes.indices { originalParty.routes[index].id = String(index) }
+    #expect(quickParty == originalParty)
 }
