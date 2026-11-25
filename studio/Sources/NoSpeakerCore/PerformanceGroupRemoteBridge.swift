@@ -70,20 +70,22 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         }
         if session.retired { return stop(session:&session,send:send) }
         var result = PerformanceGroupRemoteBatch()
-        result.reports += session.expire(now:now,send:send)
+        let disconnected = Set(events.compactMap { event -> UUID? in
+            if case .disconnected(let id) = event { return id }; return nil
+        })
+        var departing:[SensorSource:UUID] = [:]
+        for id in disconnected {
+            if let binding = bindings.removeValue(forKey:id) { departing[binding.source] = binding.token }
+        }
+        result.reports += session.expire(now:now,removingRemote:departing,send:send)
         let expired = Set(bindings.compactMap { id,binding in
             session.matchesRemoteBinding(binding.source,token:binding.token) ? nil : id
         })
-        var rejected = expired
+        var rejected = expired.union(disconnected)
         for id in expired.sorted(by:{ $0.uuidString < $1.uuidString }) {
             bindings.removeValue(forKey:id)
             result.actions.append(.revoke(id))
         }
-        let disconnected = Set(events.compactMap { event -> UUID? in
-            if case .disconnected(let id) = event { return id }; return nil
-        })
-        rejected.formUnion(disconnected)
-        result.reports += remove(disconnected,session:&session,send:send)
         for event in events {
             switch event {
             case .ready: ready = true
