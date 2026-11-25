@@ -85,6 +85,24 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
         ).isValid)
     }
 
+    func testInvalidCaptureShortcutNeverStartsOrConsumesModifierEvents() {
+        let monitor = PerformanceCaptureMonitor()
+        for code in [Int64(53),54,55,56,57,58,59,60,61,62,63,-1,256] {
+            let shortcut = PerformanceCaptureShortcut(keyCode:code,modifiers:0,displayName:"Invalid")
+            XCTAssertFalse(shortcut.isValid)
+            XCTAssertThrowsError(try monitor.start(shortcut:shortcut)) { error in
+                guard case PerformanceCaptureError.invalidShortcut = error else {
+                    XCTFail("Unexpected error: \(error)"); return
+                }
+            }
+        }
+        XCTAssertFalse(monitor.diagnosticSnapshot().eventTapCreated)
+        XCTAssertFalse(monitor.isCaptured)
+        for code in [Int64(0),36,49,96,105,122,126] {
+            XCTAssertTrue(PerformanceCaptureShortcut.acceptsKeyCode(code))
+        }
+    }
+
     func testPointerReleasePairingAcrossCaptureChanges() {
         var edges = CapturePointerEdges()
         XCTAssertFalse(edges.suppress(button:0,edge:.down,captured:false))
