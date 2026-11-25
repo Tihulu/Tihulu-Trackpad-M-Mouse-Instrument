@@ -1634,8 +1634,13 @@ private struct NoteSequencerView: View {
                 Toggle("Loop", isOn: $loop).toggleStyle(.switch)
                 Spacer()
                 Button("Play Pattern") { play() }.buttonStyle(.borderedProminent).disabled(studio.sequenceRunning)
-                MIDIClipExportButton(filename: "TIHULU Notes") {
+                MIDIClipExportButton(filename: "TIHULU Notes",title:studio.chordBank.customScale?.isMicrotonal == true ? "Export MIDI (12-TET)" : "Export MIDI") {
                     try makeClip()
+                }
+                if let scale = studio.chordBank.customScale,scale.isMicrotonal {
+                    MIDIClipExportButton(filename:"TIHULU Tuned Notes",title:"Export tuned MPE",makeData:{
+                        try TunedMIDIClip(makeClip(),scale:scale,root:studio.chordBank.root).encoded()
+                    })
                 }
                 Button("Clear") { notes = Array(repeating: nil, count: 16) }
             }
