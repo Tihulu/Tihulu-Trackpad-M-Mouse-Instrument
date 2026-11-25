@@ -79,6 +79,51 @@ struct PerformanceGroupEditorView: View {
                 })
     }
 
+    private func routeSummary(_ row: DAWRoutingOverview.Row) -> String {
+        let channel = String(row.channel + 1)
+        let notes = row.noteSources.map { $0.rawValue }.joined(separator:", ")
+        let controls = row.controlSources.map { $0.rawValue }.joined(separator:", ")
+        return "CH \(channel) | Notes: \(notes) | Helpers: \(controls)"
+    }
+
+    private var capacitySummary: String {
+        let count = profile.groups.count
+        let routes = profile.groups.reduce(0) { $0 + $1.patch.routes.count }
+        return "\(count) / \(PerformanceGroupProfile.maximumGroups) groups; \(routes) / \(PerformanceGroupProfile.maximumRoutes) mappings"
+    }
+
+    private func groupCard(_ group: PerformanceInstrumentGroup) -> some View {
+        GroupBox {
+            VStack(alignment:.leading,spacing:5) {
+                TextField("Group name",text:nameBinding(group.id))
+                Text("Planned port (not registered): " + group.plannedPortName)
+                    .font(.caption).textSelection(.enabled)
+                ForEach(DAWRoutingOverview.rows(for:group.patch)) { row in
+                    Text(routeSummary(row)).font(.caption)
+                }
+                if group.patch.routes.isEmpty {
+                    Text("No mappings yet.").font(.caption).foregroundStyle(.secondary)
+                }
+                groupActions(group)
+                Button("Replace draft mappings from Builder") { replaceMappings(group.id) }
+                    .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
+            }
+        }.disabled(readFailed)
+    }
+
+    private func groupActions(_ group: PerformanceInstrumentGroup) -> some View {
+        HStack {
+            Button("Copy group") {
+                message = profile.duplicate(group.id) ? "Group copied with a new identity." : "Cannot copy: invalid profile or capacity."
+            }.disabled(!profile.isValid || profile.groups.count >= PerformanceGroupProfile.maximumGroups)
+            Button("Move up") { moveUp(group.id) }
+                .disabled(profile.groups.first?.id == group.id)
+            Button("Delete from draft") {
+                profile.groups.removeAll { $0.id == group.id }
+            }
+        }
+    }
+
     var body: some View {
         DisclosureGroup("Performance Studio - Instrument Groups (configuration preview)") {
             VStack(alignment:.leading,spacing:10) {
@@ -89,36 +134,7 @@ struct PerformanceGroupEditorView: View {
                     Button("Add from Builder draft") { add(patch:currentPatch) }
                         .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
                 }.disabled(!didLoad || readFailed || !profile.isValid || profile.groups.count >= PerformanceGroupProfile.maximumGroups)
-                ForEach(profile.groups) { group in
-                    GroupBox {
-                        VStack(alignment:.leading,spacing:5) {
-                            TextField("Group name",text:nameBinding(group.id))
-                            Text("Planned port (not registered): " + group.plannedPortName)
-                                .font(.caption).textSelection(.enabled)
-                            ForEach(DAWRoutingOverview.rows(for:group.patch)) { row in
-                                Text("CH " + String(row.channel+1) + " | Notes: " +
-                                     row.noteSources.map(\.rawValue).joined(separator:", ") + " | Helpers: " +
-                                     row.controlSources.map(\.rawValue).joined(separator:", "))
-                                    .font(.caption)
-                            }
-                            if group.patch.routes.isEmpty {
-                                Text("No mappings yet.").font(.caption).foregroundStyle(.secondary)
-                            }
-                            HStack {
-                                Button("Copy group") {
-                                    message = profile.duplicate(group.id) ? "Group copied with a new identity." : "Cannot copy: invalid profile or capacity."
-                                }.disabled(!profile.isValid || profile.groups.count >= PerformanceGroupProfile.maximumGroups)
-                                Button("Move up") { moveUp(group.id) }
-                                    .disabled(profile.groups.first?.id == group.id)
-                                Button("Delete from draft") {
-                                    profile.groups.removeAll { $0.id == group.id }
-                                }
-                            }
-                            Button("Replace draft mappings from Builder") { replaceMappings(group.id) }
-                                .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
-                        }
-                    }.disabled(readFailed)
-                }
+                ForEach(profile.groups) { group in groupCard(group) }
                 if !profile.layeredInputs.isEmpty {
                     Text("Shared inputs (future layered output requires explicit consent): " +
                          profile.layeredInputs.map(\.id).joined(separator:", "))
@@ -127,9 +143,7 @@ struct PerformanceGroupEditorView: View {
                 if !profile.isValid {
                     Text("Fix invalid names or mapping capacity before saving.").font(.caption).foregroundStyle(.orange)
                 }
-                Text(String(profile.groups.count) + " / " + String(PerformanceGroupProfile.maximumGroups) + " groups; " +
-                     String(profile.groups.reduce(0) { $0 + $1.patch.routes.count }) + " / " +
-                     String(PerformanceGroupProfile.maximumRoutes) + " mappings")
+                Text(capacitySummary)
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Save groups") { save() }
