@@ -11,6 +11,9 @@ swift build
 echo "==> Testing standalone engine CLI"
 python3 ../tools/test_engine_cli.py "$(swift build --show-bin-path)/tihulu-engine"
 
+echo "==> Building separate external SDK consumer"
+swift run --package-path ../examples/EngineConsumer engine-consumer
+
 echo "==> Testing repository index"
 python3 ../tools/test_repo_index.py
 index_dir="$(mktemp -d)"
