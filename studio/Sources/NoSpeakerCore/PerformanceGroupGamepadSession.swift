@@ -54,6 +54,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
         var lastActive: [SensorSignal:Double]?
         var remoteFence = PerformanceGroupRemoteFence()
         var remoteLastReceipt: Double?
+        var remoteNeutral: Set<PerformanceGroupRemoteSurface> = []
+        var remoteActive: [PerformanceGroupRemoteSurface:Double] = [:]
         mutating func reset() {
             armed = false; lease = nil; lastSeen = nil; sequence = 0; lastActive = nil
         }
@@ -63,7 +65,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     private var delivery: any LocalGroupOutput
     private let mapped: [SensorSource:Set<SensorSignal>]
     private let smoothed: Set<SensorSource>
-    private let remoteModes: [SensorSource:PerformanceGroupRemoteSurface]
+    private let remoteModes: [SensorSource:Set<PerformanceGroupRemoteSurface>]
     private var bindings: [SensorSource:Binding] = [:]
     private var cameraTracking = AirTrackingGate()
     private var clock = 0.0
@@ -89,16 +91,16 @@ public struct PerformanceGroupGamepadSession: Sendable {
 
     /// Logical capabilities only; no group identity, labels or MIDI addresses.
     public func remoteCapabilities(_ source:SensorSource) -> RemoteCapabilities? {
-        guard let mode = remoteModes[source], let signals = mapped[source] else { return nil }
+        guard let modes = remoteModes[source], let signals = mapped[source] else { return nil }
         func mask(_ candidates:[SensorSignal]) -> Int {
             candidates.enumerated().reduce(0) { result,item in
                 signals.contains(item.element) ? result | (1 << item.offset) : result
             }
         }
-        return .init(touch:mode == .xy,tilt:false,acceleration:false,rotation:false,airDrums:false,
-                     drums:mode == .drums ? mask(RemoteDrumPads.signals) : 0,
-                     piano:mode == .piano ? mask(RemotePiano.signals) : 0,
-                     pedals:mode == .pedalboard ? mask(RemotePedalboard.signals) : 0)
+        return .init(touch:modes.contains(.xy),tilt:false,acceleration:false,rotation:false,airDrums:false,
+                     drums:modes.contains(.drums) ? mask(RemoteDrumPads.signals) : 0,
+                     piano:modes.contains(.piano) ? mask(RemotePiano.signals) : 0,
+                     pedals:modes.contains(.pedalboard) ? mask(RemotePedalboard.signals) : 0)
     }
 
     /// Retire multiple remote owners atomically, never a local source or a
@@ -131,7 +133,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
                                 allowRemote:Bool = false) -> Bool {
         let routes = profile.groups.flatMap { $0.patch.routes }
         let remote = Dictionary(grouping:routes.filter { $0.source == .phone || $0.source == .tablet },by:{ $0.source })
-        guard remote.isEmpty || (allowRemote && remote.values.allSatisfy({ PerformanceGroupRemoteSurface.mode(for:$0) != nil })) else { return false }
+        guard remote.isEmpty || (allowRemote && remote.values.allSatisfy({ PerformanceGroupRemoteSurface.modes(for:$0) != nil })) else { return false }
         return profile.isValid && !routes.isEmpty && routes.allSatisfy {
             guard permitsLiveControl($0) else { return false }
             if GamepadFrame.sources.contains($0.source) { return GamepadFrame.permits($0) }
@@ -157,7 +159,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         let routes = profile.groups.flatMap { $0.patch.routes }
         mapped = Dictionary(grouping:routes,by:{ $0.source }).mapValues { Set($0.map(\.signal)) }
         remoteModes = Dictionary(grouping:routes.filter { $0.source == .phone || $0.source == .tablet },by:{ $0.source })
-            .compactMapValues { PerformanceGroupRemoteSurface.mode(for:$0) }
+            .compactMapValues { PerformanceGroupRemoteSurface.modes(for:$0) }
         smoothed = Set(routes.filter { ($0.response?.smoothingMS ?? 0) > 0 }.map(\.source))
         if tuning.isEmpty {
             delivery = try PerformanceGroupDelivery(profile:profile,allowLayering:allowLayering)
@@ -455,7 +457,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     public mutating func receiveRemote(_ source:SensorSource,token:UUID,bytes:Data,
                                        hostTime:Double,now:Double,
                                        send:(PerformanceGroupCommand)->Bool) -> Result {
-        guard !retired, let mode = remoteModes[source], bindings[source]?.token == token else {
+        guard !retired, let modes = remoteModes[source], bindings[source]?.token == token else {
             return .init(status:.ignored,reports:[])
         }
         guard now.isFinite, now >= clock else {
@@ -478,8 +480,12 @@ public struct PerformanceGroupGamepadSession: Sendable {
             bindings[source] = binding
             return .init(status:binding.armed ? .ready : .waitingForNeutral,reports:reports)
         }
-        let signals = mapped[source] ?? []
-        guard let values = mode.snapshot(frame,mapped:signals) else {
+        guard let family = PerformanceGroupRemoteSurface.family(for:frame),modes.contains(family) else {
+            reports += reset([source],send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        let signals = (mapped[source] ?? []).intersection(family.signals)
+        guard let values = family.snapshot(frame,mapped:signals) else {
             reports += reset([source],send:send)
             return .init(status:.lost,reports:reports)
         }
@@ -488,18 +494,23 @@ public struct PerformanceGroupGamepadSession: Sendable {
             return .init(status:.lost,reports:reports)
         }
         if !binding.armed {
-            binding.armed = values.isEmpty
+            if values.isEmpty { binding.remoteNeutral.insert(family) }
+            else { binding.remoteNeutral.remove(family) }
+            binding.armed = binding.remoteNeutral == modes
             bindings[source] = binding
             return .init(status:binding.armed ? .ready : .waitingForNeutral,reports:reports)
         }
-        if values.isEmpty {
+        if values.isEmpty { binding.remoteActive.removeValue(forKey:family) }
+        else { binding.remoteActive[family] = hostTime }
+        if binding.remoteActive.isEmpty {
             if let lease = binding.lease { reports.append(delivery.disconnect(lease,send:send)) }
             binding.reset()
             binding.armed = true
             bindings[source] = binding
             return .init(status:.ready,reports:reports)
         }
-        binding.lastSeen = hostTime
+        // Only this family's signals are updated/released. Other families
+        // retain ownership, not synthetic refreshes or smoothing samples.
         if binding.lease == nil {
             do { binding.lease = try delivery.connect(source,now:now) }
             catch {
@@ -567,6 +578,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     private func staleSources(now: Double) -> Set<SensorSource> {
         Set(bindings.compactMap { source,binding in
             if let last = binding.lastSeen, now-last >= Self.timeout { return source }
+            if binding.remoteActive.values.contains(where:{ now-$0 >= Self.timeout }) { return source }
             if let last = binding.remoteLastReceipt, now-last >= 2 { return source }
             return nil
         })
