@@ -45,7 +45,7 @@ struct PerformanceGroupEditorView: View {
             storedData = data
             saved = profile
             allowLayering = false
-            message = "Group configuration saved. No MIDI endpoints created."
+            message = "Group configuration saved. No new MIDI endpoints created."
         } catch {
             message = error.localizedDescription
         }
@@ -155,6 +155,32 @@ struct PerformanceGroupEditorView: View {
         studio.startGroupGamepads(profile:saved,allowLayering:allowLayering)
     }
 
+    private var canStartGroups: Bool {
+        didLoad && !readFailed && profile == saved && gamepadOnly &&
+        selectedControllersValid && !studio.groupGamepadsRunning &&
+        studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
+        (saved.layeredInputs.isEmpty || allowLayering)
+    }
+
+    private func registeredStatus(_ id:UUID) -> String {
+        if studio.groupFaultIDs.contains(id) { return "Send fault - group stopped" }
+        if studio.groupStoppedIDs.contains(id) { return "Stopped - port retained" }
+        return "Port registered; DAW reception not verified"
+    }
+
+    private func registeredGroupRow(_ group:PerformanceInstrumentGroup) -> some View {
+        HStack {
+            VStack(alignment:.leading) {
+                Text(group.name)
+                Text(group.plannedPortName).font(.caption).textSelection(.enabled)
+                Text(registeredStatus(group.id)).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Stop group") { studio.stopPerformanceGroup(group.id) }
+                .disabled(!studio.groupGamepadsRunning || studio.groupStoppedIDs.contains(group.id))
+        }
+    }
+
     private var liveControls: some View {
         GroupBox("Experimental group MIDI - Xbox only") {
             VStack(alignment:.leading,spacing:8) {
@@ -181,10 +207,7 @@ struct PerformanceGroupEditorView: View {
                 }
                 HStack {
                     Button("Start group MIDI") { startSavedGroups() }
-                        .disabled(!didLoad || readFailed || profile != saved || !gamepadOnly ||
-                                  !selectedControllersValid || studio.groupGamepadsRunning ||
-                                  !studio.groupCleanupIDs.isEmpty || studio.groupDisposalCount != 0 ||
-                                  (!saved.layeredInputs.isEmpty && !allowLayering))
+                        .disabled(!canStartGroups)
                     Button("Stop / Release All") { studio.stopGroupGamepads() }
                         .disabled(!studio.groupGamepadsRunning)
                     Button("Close ports") { studio.closeGroupPorts() }
@@ -196,17 +219,7 @@ struct PerformanceGroupEditorView: View {
                 Text("\(studio.groupRegisteredIDs.count) registered ports; \(studio.groupCleanupIDs.count) pending MIDI cleanups; \(studio.groupDisposalCount) pending port disposals.")
                     .font(.caption)
                 ForEach(saved.groups.filter { studio.groupRegisteredIDs.contains($0.id) }) { group in
-                    HStack {
-                        VStack(alignment:.leading) {
-                            Text(group.name)
-                            Text(group.plannedPortName).font(.caption).textSelection(.enabled)
-                            Text(studio.groupFaultIDs.contains(group.id) ? "Send fault - group stopped" : "Port registered; DAW reception not verified")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Stop group") { studio.stopPerformanceGroup(group.id) }
-                            .disabled(!studio.groupGamepadsRunning || studio.groupFaultIDs.contains(group.id))
-                    }
+                    registeredGroupRow(group)
                 }
                 Text("In Logic Pro choose this exact MIDI In Port and the mapped channel for each track. Arm the required tracks; confirm notes and pedals in the DAW. Registered does not mean sound is verified.")
                     .font(.caption).foregroundStyle(.secondary)
