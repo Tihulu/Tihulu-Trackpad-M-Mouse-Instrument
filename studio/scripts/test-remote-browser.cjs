@@ -618,10 +618,49 @@ test("group browser neutral handshake covers drum piano and pedal masks",()=>{
     assert.equal(a.elements.playView.hidden,false);
   }
 });
-test("group browser rejects multi-surface and missing neutral ACK",()=>{
-  const mixed=setup("granted",{...touchOnly,drums:1},false,true,true);
+test("group browser rejects more than two families and missing neutral ACK",()=>{
+  const mixed=setup("granted",{...touchOnly,drums:1,piano:1},false,true,true);
   assert.equal(mixed.socket.closed,true);
   const a=setup("granted",touchOnly,false,true,true);
+  a.step(221);
+  assert.equal(a.socket.closed,true);
+  assert.equal(a.elements.playView.hidden,true);
+});
+
+
+test("group browser arms two families before Play and preserves explicit workload consent",()=>{
+  const a=setup("granted",{...touchOnly,drums:1},false,true,true);
+  assert.equal(a.socket.frames.at(-1).kind,"release");
+  a.ack();
+  assert.equal(a.socket.frames.at(-1).kind,"drumPads");
+  assert.equal(a.socket.frames.at(-1).mask,0);
+  assert.equal(a.elements.playView.hidden,true);
+  a.ack();
+  assert.equal(a.elements.playView.hidden,false);
+  a.elements.navSetup.emit("click");
+  a.elements.workloadMode.emit("click");
+  a.elements.navPlay.emit("click");
+  a.elements.drumEnable.emit("click");
+  a.elements.drum0.emit("pointerdown",drumEvent(1));
+  a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"drumPads");
+  assert.equal(a.socket.frames.at(-1).mask,1);
+  a.ack();
+  a.elements.pad.emit("pointerdown",xyEvent(2));
+  a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"touch");
+  a.ack();
+  a.elements.pad.emit("pointerup",xyEvent(2));
+  a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"release");
+  a.ack();
+  assert.equal(a.socket.closed,undefined);
+});
+
+test("group browser cannot enter Play when second neutral ACK is missing",()=>{
+  const a=setup("granted",{...touchOnly,pedals:8},false,true,true);
+  a.ack();
+  assert.equal(a.socket.frames.at(-1).kind,"pedalboard");
   a.step(221);
   assert.equal(a.socket.closed,true);
   assert.equal(a.elements.playView.hidden,true);
