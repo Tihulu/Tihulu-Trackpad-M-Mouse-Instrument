@@ -50,3 +50,58 @@ public enum NoteHapticRenderer {
                                   level: Double(velocity) / 127 * expression))
     }
 }
+
+
+/// Local Touch voicing only. MIDI notes and DAW pitch remain unchanged.
+/// Fold out-of-band frequencies by octaves, never flatten bass to 98 Hz.
+/// Distribute the six available motor tones fairly across contacts/chords.
+public enum TouchHapticVoicing {
+    public struct Voice:Sendable {
+        public let frequencies:[Double]
+        public let gain:Double
+        public init(frequencies:[Double],gain:Double) {
+            self.frequencies = frequencies; self.gain = gain
+        }
+    }
+
+    public static func foldedFrequency(_ frequency:Double) -> Double? {
+        let safety = HapticSafetyPolicy()
+        guard frequency.isFinite,frequency > 0 else { return nil }
+        var result = frequency
+        for _ in 0..<16 {
+            if result < safety.minFrequencyHz { result *= 2 }
+            else if result > safety.maxFrequencyHz { result /= 2 }
+            else { return result }
+        }
+        return (safety.minFrequencyHz...safety.maxFrequencyHz).contains(result) ? result : nil
+    }
+
+    public static func frame(_ voices:[Voice],durationMS:Double = 28) -> HapticFrame? {
+        let safety = HapticSafetyPolicy()
+        guard durationMS.isFinite,(0.5...120).contains(durationMS) else { return nil }
+        let contributions = voices.prefix(6).compactMap { voice -> [HapticTone]? in
+            guard voice.gain.isFinite,voice.gain > 0,voice.gain <= 1 else { return nil }
+            var seen:Set<Double> = []
+            let pitches = voice.frequencies.prefix(32).compactMap(foldedFrequency).filter { seen.insert($0).inserted }
+            guard !pitches.isEmpty else { return nil }
+            return pitches.map { .init(frequencyHz:$0,amplitude:voice.gain/Double(pitches.count)) }
+        }
+        var order:[Double] = []
+        var weights:[Double:Double] = [:]
+        for index in 0..<safety.maxTonesPerFrame {
+            for source in contributions where source.count > index {
+                let tone = source[index]
+                if let prior = weights[tone.frequencyHz] {
+                    weights[tone.frequencyHz] = max(prior,tone.amplitude)
+                } else if order.count < safety.maxTonesPerFrame {
+                    order.append(tone.frequencyHz)
+                    weights[tone.frequencyHz] = tone.amplitude
+                }
+            }
+        }
+        let sum = order.reduce(0.0) { $0+(weights[$1] ?? 0) }
+        guard sum.isFinite,sum > 0 else { return nil }
+        return .init(tones:order.map { .init(frequencyHz:$0,amplitude:(weights[$0] ?? 0)/sum) },
+                     durationMS:durationMS,level:min(safety.maxLevel,sum))
+    }
+}

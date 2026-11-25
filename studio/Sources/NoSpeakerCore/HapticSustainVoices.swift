@@ -20,6 +20,7 @@ public struct HapticSustainVoices<Value: Sendable>: Sendable {
     /// Input order is normalized for deterministic live selection. Retained
     /// voices fill remaining slots newest-first; duplicate IDs never sound twice.
     public func sounding(live: [(id: String, value: Value)], includeSustained: Bool,
+                         transient:[(id:String,value:Value)] = [],
                          permits: (Value) -> Bool = { _ in true }) -> [Value] {
         var result: [Value] = []
         var seen: Set<String> = []
@@ -32,8 +33,15 @@ public struct HapticSustainVoices<Value: Sendable>: Sendable {
             for entry in retained.reversed() {
                 guard permits(entry.value),seen.insert(entry.id).inserted else { continue }
                 result.append(entry.value)
-                if result.count == Self.capacity { break }
+                if result.count == Self.capacity { return result }
             }
+        }
+        // Released sub-tick attacks may fill spare capacity but must not
+        // displace a currently sounding finger or sustained voice.
+        for entry in transient {
+            guard permits(entry.value),seen.insert(entry.id).inserted else { continue }
+            result.append(entry.value)
+            if result.count == Self.capacity { break }
         }
         return result
     }

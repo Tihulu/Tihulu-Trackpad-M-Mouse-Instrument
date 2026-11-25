@@ -814,7 +814,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     }
 
     private func renderHapticFrame(token: UUID) {
-        var snapshot: (TouchInstrumentConfiguration, [TouchPerformanceState],
+        var snapshot: (TouchInstrumentConfiguration, [TouchPerformanceState], [TouchPerformanceState],
                         HapticSustainVoices<TouchPerformanceState>, Bool, [HapticFrame], UInt64)?
         renderFence.submit(token) {
             lock.lock()
@@ -825,15 +825,16 @@ public final class TouchInstrumentService: @unchecked Sendable {
             let now = ProcessInfo.processInfo.systemUptime
             let hits = drumStrikes.drain(now:now)
             hapticMetrics.drainedDrumStrikes &+= hits.count
-            var current = liveHapticStates
-            var liveIDs = Set(current.map(\.id))
-            for attacks in pendingMelodicAttacks.drain(now:now) {
-                current += attacks.filter { liveIDs.insert($0.id).inserted }
+            let current = liveHapticStates
+            var seen = Set(current.map(\.id))
+            var transients:[TouchPerformanceState] = []
+            for attacks in pendingMelodicAttacks.drain(now:now).reversed() {
+                transients += attacks.filter { seen.insert($0.id).inserted }
             }
-            snapshot = (configuration, current, sustainedHapticStates,
+            snapshot = (configuration, current, transients, sustainedHapticStates,
                         sustainActive, hits, renderRevision)
         }
-        guard let (config, current, sustained, isSustained, hits, revision) = snapshot else { return }
+        guard let (config, current, transients, sustained, isSustained, hits, revision) = snapshot else { return }
         if drumRenderToken != token || drumRenderRevision != revision {
             drumRenderToken = token
             drumRenderRevision = revision
@@ -841,27 +842,24 @@ public final class TouchInstrumentService: @unchecked Sendable {
         }
 
         let now = ProcessInfo.processInfo.systemUptime
-         let sounding = sustained.sounding(
+        let sounding = sustained.sounding(
             live:current.map { (id:$0.id,value:$0) },
-            includeSustained:isSustained
+            includeSustained:isSustained,
+            transient:transients.map { (id:$0.id,value:$0) }
         ) { state in
             config.output(for:state.surface).sendsHaptics &&
             config.instrument(for:state.surface) != .drums
         }
-        var tones: [HapticTone] = []
-        var chordFrequencies = Set<Double>()
-        var level = 0.0
+        var voices:[TouchHapticVoicing.Voice] = []
         for state in sounding {
+            let gain = Double(state.velocity)/127
             if config.instrument(for:state.surface) == .chords {
                 guard let slot = state.chordSlot, let bank = config.physicalChordBank,
                       let pad = bank.pad(at:slot) else { continue }
-                for note in pad.notes {
-                    let frequency = bank.customScale?.tunedFrequency(midi:note,root:bank.root) ?? (try? MusicTheory.frequency(midi:note))
-                    if let frequency, chordFrequencies.insert(frequency).inserted {
-                        tones.append(.init(frequencyHz:frequency))
-                    }
+                let pitches = pad.notes.compactMap { note in
+                    bank.customScale?.tunedFrequency(midi:note,root:bank.root) ?? (try? MusicTheory.frequency(midi:note))
                 }
-                level = max(level,Double(state.velocity)/127)
+                voices.append(.init(frequencies:pitches,gain:gain))
                 continue
             }
             let baseFrequency: Double
@@ -880,12 +878,10 @@ public final class TouchInstrumentService: @unchecked Sendable {
             }
             // Y selects the string; it must not simultaneously add vibrato.
             let vibrato = config.instrument(for:state.surface).isStringSurface ? 0 : 0.5 * state.vibrato * sin(now * 6 * 2 * Double.pi)
-            tones.append(.init(frequencyHz: baseFrequency * pow(2, vibrato / 12)))
-            level = max(level, Double(state.velocity) / 127)
+            voices.append(.init(frequencies:[baseFrequency * pow(2,vibrato/12)],gain:gain))
         }
 
-        let melody: HapticFrame? = tones.isEmpty ? nil : .init(
-            tones: tones,durationMS:28,level:min(1,max(0.15,level)))
+        let melody = TouchHapticVoicing.frame(voices)
         if let frame = mixedHapticPlan.next(hits:hits,melody:melody,now:now) {
             submitFrame(frame,level:config.masterLevel,token:token,revision:revision)
         }
