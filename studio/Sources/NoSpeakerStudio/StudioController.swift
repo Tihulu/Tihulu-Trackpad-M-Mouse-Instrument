@@ -113,11 +113,40 @@ final class StudioController: ObservableObject {
     @Published private(set) var gamepadChoices:[BuilderGamepadSource.Choice] = []
     @Published var gamepadSlot1:UUID?
     @Published var gamepadSlot2:UUID?
+    @Published var gamepadSlot3:UUID?
+    @Published var gamepadSlot4:UUID?
+    func gamepadChoice(for source:SensorSource) -> UUID? {
+        switch source {
+        case .gamepad1: return gamepadSlot1
+        case .gamepad2: return gamepadSlot2
+        case .gamepad3: return gamepadSlot3
+        case .gamepad4: return gamepadSlot4
+        default: return nil
+        }
+    }
+    func setGamepadChoice(_ choice:UUID?,for source:SensorSource) {
+        guard !patchRunning else { return }
+        switch source {
+        case .gamepad1: gamepadSlot1 = choice
+        case .gamepad2: gamepadSlot2 = choice
+        case .gamepad3: gamepadSlot3 = choice
+        case .gamepad4: gamepadSlot4 = choice
+        default: break
+        }
+    }
+    var gamepadBindings: [SensorSource:UUID] {
+        var result: [SensorSource:UUID] = [:]
+        for source in GamepadFrame.orderedSources { result[source] = gamepadChoice(for:source) }
+        return result
+    }
     func refreshBuilderGamepads() {
         guard !patchRunning else { return }
         gamepadChoices = builderGamepads.refresh()
-        if !gamepadChoices.contains(where:{ $0.id == gamepadSlot1 }) { gamepadSlot1 = nil }
-        if !gamepadChoices.contains(where:{ $0.id == gamepadSlot2 }) { gamepadSlot2 = nil }
+        for source in GamepadFrame.orderedSources {
+            if let choice = gamepadChoice(for:source), !gamepadChoices.contains(where:{ $0.id == choice }) {
+                setGamepadChoice(nil,for:source)
+            }
+        }
     }
     private let patchMIDI = ChordMIDIOutput(name: "TIHULU Instrument Builder")
     private let airTunedMIDI = ChordMIDIOutput(name:"TIHULU Air Strings MPE")
@@ -502,7 +531,7 @@ final class StudioController: ObservableObject {
         if let selection = gamepadOutputSelection {
             guard physical,synthetic == nil,remoteTransport == nil,!tunedAir,
                   let plan = GamepadOutputPlan(patch:instrumentPatch,selection:selection) else {
-                patchStatus = "Separate controller outputs require two native gamepad slots and no shared channels with different output choices."
+                patchStatus = "Separate controller outputs require 2–4 native gamepad slots and no shared channels with different output choices."
                 return
             }
             requestedPlan = plan
@@ -587,7 +616,7 @@ final class StudioController: ObservableObject {
         }
         do {
             try patchLedger.configure(instrumentPatch)
-            if physical && !builderGamepads.bind(required:sources,slot1:gamepadSlot1,slot2:gamepadSlot2) {
+            if physical && !builderGamepads.bind(required:sources,choices:gamepadBindings) {
                 patchStatus = "Select distinct connected gamepads for all mapped slots, then Start again."
                 return
             }
