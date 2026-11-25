@@ -86,6 +86,18 @@ struct TihuluEngineCLI {
         return data
     }
 
+    // Reject fields that a nominal SMF exporter would otherwise silently
+    // discard, such as tuning, per-note bend, or unsupported timing data.
+    static func requireMIDIShape(_ data: Data, fields: Set<String>,
+                                 list: String, rowFields: Set<String>) throws {
+        guard let object = try JSONSerialization.jsonObject(with:data) as? [String:Any],
+              Set(object.keys) == fields,
+              let rows = object[list] as? [[String:Any]],
+              rows.allSatisfy({ Set($0.keys).isSubset(of:rowFields) }) else {
+            throw CLIError("Unsupported MIDI input fields or shape")
+        }
+    }
+
     static func run(_ args: [String]) throws -> [String: Any] {
         if args == ["help"] || args == ["--help"] || args.isEmpty {
             return [
@@ -151,8 +163,12 @@ struct TihuluEngineCLI {
             let clip: MIDIClip
             switch args[1] {
             case "encode":
+                try requireMIDIShape(data,fields:["bpm","length","notes"],list:"notes",
+                    rowFields:["start","duration","channel","pitch","velocity"])
                 clip = try JSONDecoder().decode(MIDIClip.self,from:data).validated()
             case "melody":
+                try requireMIDIShape(data,fields:["bpm","stepsPerBeat","length","channel","steps"],list:"steps",
+                    rowFields:["index","midi","velocity","gate"])
                 let grid = try JSONDecoder().decode(NoteGrid.self,from:data)
                 guard (0...15).contains(grid.channel), grid.steps.count <= 4096,
                       grid.steps.allSatisfy({ (0..<max(0,grid.length)).contains($0.index) &&
@@ -166,6 +182,8 @@ struct TihuluEngineCLI {
                     steps:grid.steps.map { .init(index:$0.index,midi:$0.midi,velocity:$0.velocity,gate:$0.gate) })
                 clip = try MIDIClip.melody(sequence,channel:grid.channel)
             case "drums":
+                try requireMIDIShape(data,fields:["bpm","stepsPerBeat","length","hits"],list:"hits",
+                    rowFields:["index","voice","velocity"])
                 let grid = try JSONDecoder().decode(DrumGrid.self,from:data)
                 let sequence = DrumSequence(bpm:grid.bpm,stepsPerBeat:grid.stepsPerBeat,length:grid.length,
                     hits:grid.hits.map { .init(index:$0.index,voice:$0.voice,velocity:$0.velocity) })
