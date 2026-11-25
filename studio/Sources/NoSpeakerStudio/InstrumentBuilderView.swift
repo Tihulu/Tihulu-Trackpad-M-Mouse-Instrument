@@ -97,6 +97,12 @@ struct InstrumentBuilderView: View {
                                 }
                             }
                         }
+                        Button("Load multi-device Party Jam") {
+                            guard let next = PartyJamPreset.patch() else { message = "Invalid party template."; return }
+                            replaceDraft(with:next)
+                        }
+                        Text("Phone drums + XY ch 10; tablet piano ch 2; Controller 1 lead ch 4; Controller 2 piano helper ch 2; Trackpad bass, Mouse pedal, lid and ribbon ch 3; camera modulation ch 4. Optional hardware may remain idle, but mapped controller slots must be explicitly bound. Multiple phones of the same role share mappings.")
+                            .font(.caption).foregroundStyle(.secondary)
                         Text("Templates configure host-side routes only. Choose Native inputs, then start Remote TLS explicitly for mobile players. Assign separate DAW tracks to the indicated MIDI channels; no automatic playback or network listener.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
