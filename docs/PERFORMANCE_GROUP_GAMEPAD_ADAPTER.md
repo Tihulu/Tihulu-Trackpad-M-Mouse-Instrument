@@ -240,3 +240,7 @@ A native captured Escape releases the pointer synchronously, latches panic and d
 ### Native route start admission
 
 Legacy Touch, Helper, group and physical Builder startup now require every explicitly selected native surface to have been registered by the current monitor. Missing routes refuse start (or stop a changed live Helper) with an explicit reconnection/reopen instruction, rather than advertise an unplayable session. Synthetic Builder routes are excluded. Inventory-loss cleanup no longer stops a physical Builder with only unrelated sources. Two portable admission regressions added. Registered presence is not proof of usable touch delivery; native/hardware verification remains HOLD.
+
+### Preview DMG verification retry
+
+CI run 45670775580 reached DMG verification and failed with the explicit transient DiskImages error "Resource temporarily unavailable". The preview pipeline now uses one shared, bounded retry helper for create/verify only, with exact final-error matching and at most three attempts. Checksum, readonly attach, bundle identity, strict code signature, detach and provenance checks remain mandatory. Duplicate standalone verification was removed; the inspection script performs mandatory verification after checksum. Five mock cases exercise transient create/verify, permanent corruption, misleading output and exhausted retries. The stable release workflow is unchanged.

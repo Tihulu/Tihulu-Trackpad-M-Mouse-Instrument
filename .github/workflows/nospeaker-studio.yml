@@ -92,25 +92,16 @@ jobs:
           mkdir -p dist/preview-dmg-staging
           ditto "$APP" "dist/preview-dmg-staging/Tihulu Trackpad & M. Mouse Instrument Preview.app"
           ln -s /Applications dist/preview-dmg-staging/Applications
-          # DiskImages can transiently report Resource busy on hosted macOS.
-          # Retry only that specific error, never publish a partial image.
+          # Only explicitly recognized transient DiskImages errors may retry.
+          # Verification and read-only mounted inspection remain mandatory.
+          . ./scripts/diskimage-retry.sh
           DMG="dist/Tihulu-0.3.0-preview.dmg"
-          LOG="$(mktemp)"
-          trap 'rm -f "$LOG"' EXIT
-          for attempt in 1 2 3; do
-            if hdiutil create -volname "TIHULU 0.3.0 Preview" -srcfolder dist/preview-dmg-staging -format UDZO -ov "$DMG" >"$LOG" 2>&1; then
-              cat "$LOG"
-              break
-            fi
-            cat "$LOG" >&2
-            rm -f "$DMG"
-            if [ "$attempt" -eq 3 ] || ! grep -Fq 'Resource busy' "$LOG"; then
-              exit 1
-            fi
-            sleep "$((attempt * 3))"
-          done
+          preview_create() {
+            rm -f "$DMG" || return 1
+            hdiutil create -volname "TIHULU 0.3.0 Preview" -srcfolder dist/preview-dmg-staging -format UDZO -ov "$DMG"
+          }
+          diskimage_retry preview_create || { rm -f "$DMG"; exit 1; }
           test -s "$DMG"
-          hdiutil verify "$DMG"
           cd dist
           shasum -a 256 Tihulu-0.3.0-preview.dmg > PREVIEW-SHA256SUMS
           cd ..

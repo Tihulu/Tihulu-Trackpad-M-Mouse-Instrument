@@ -2,6 +2,9 @@
 set -eu
 cd "$(dirname "$0")/.."
 
+echo "==> Disk image retry policy tests (no disk image operations)"
+sh scripts/test-diskimage-retry.sh
+
 echo "==> Running shared-core tests"
 swift test
 
