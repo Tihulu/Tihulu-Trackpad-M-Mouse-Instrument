@@ -265,15 +265,29 @@ public enum VoiceHapticService {
 
     private static func installedVoiceRecords() -> [(name: String, locale: String)] {
         let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
-        process.arguments = ["-v", "?"]
-        process.standardOutput = pipe
-        guard (try? process.run()) != nil else { return [] }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let text = String(data: data, encoding: .utf8) ?? ""
+        // File-backed stdout avoids pipe backpressure during bounded waits.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tihulu-voice-list-"+UUID().uuidString,isDirectory:true)
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        } catch { return [] }
+        defer { try? fm.removeItem(at:directory) }
+        let output = directory.appendingPathComponent("voices.txt")
+        guard fm.createFile(atPath:output.path,contents:nil),
+              let handle = try? FileHandle(forWritingTo:output) else { return [] }
+        defer { try? handle.close() }
+        process.executableURL = URL(fileURLWithPath:"/usr/bin/say")
+        process.arguments = ["-v","?"]
+        process.standardOutput = handle
+        process.standardError = FileHandle.nullDevice
+        do { try VoiceProcessRunner.run(process,cancellation:.init(),timeout:10) }
+        catch { return [] }
+        guard process.terminationStatus == 0,
+              let size = (try? fm.attributesOfItem(atPath:output.path))?[.size] as? NSNumber,
+              size.int64Value <= 1024*1024,
+              let data = try? Data(contentsOf:output) else { return [] }
+        let text = String(data:data,encoding:.utf8) ?? ""
 
         return text.split(separator: "\n").compactMap { rawLine in
             let spokenPart = rawLine.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? rawLine
@@ -378,13 +392,21 @@ public enum VoiceHapticService {
         }
         let sayVoice: String? = voice?.hasPrefix("say:") == true
             ? String(voice!.dropFirst(4)) : voice
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("nospeaker-studio-\(UUID().uuidString).wav")
-        defer { try? FileManager.default.removeItem(at: url) }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tihulu-say-"+UUID().uuidString,isDirectory:true)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,
+            attributes:[.posixPermissions:0o700])
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let url = directory.appendingPathComponent("voice.wav")
+        let textFile = directory.appendingPathComponent("input.txt")
+        try Data(text.utf8).write(to:textFile)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
         process.arguments = ["-o", url.path, "--file-format=WAVE", "--data-format=LEF32@16000"]
-            + (sayVoice.map { ["-v", $0] } ?? []) + [text]
+            + (sayVoice.map { ["-v", $0] } ?? []) + ["-f",textFile.path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         try VoiceProcessRunner.run(process,cancellation:cancellation)
         guard process.terminationStatus == 0 else { throw VoiceHapticError.voiceRenderFailed }
 
