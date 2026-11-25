@@ -17,3 +17,12 @@ public struct TouchSnapshotCursor: Sendable {
     }
     public mutating func reset() { last = nil }
 }
+public struct TouchConsumerPublicationFence: Sendable {
+    private var excludedThrough: UInt64 = 0
+    public init() {}
+    public mutating func begin(after sequence:UInt64) { excludedThrough = sequence }
+    public func permits(_ stamp:TouchSnapshotStamp,selectedSource:Bool) -> Bool {
+        selectedSource && stamp.sequence > excludedThrough
+    }
+    public mutating func reset() { excludedThrough = 0 }
+}

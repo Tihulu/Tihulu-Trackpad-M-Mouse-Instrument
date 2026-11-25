@@ -1050,6 +1050,8 @@ final class StudioController: ObservableObject {
     private var surfaceMonitorToken: UUID?
     private var surfaceInbox: OrderedTouchInbox<QueuedTouchSnapshot>?
     private var surfaceSnapshotCursor = TouchSnapshotCursor()
+    private var helperPedalPublicationFence = TouchConsumerPublicationFence()
+    private var helperEffectsPublicationFence = TouchConsumerPublicationFence()
     private var touchDispatchMetrics = TouchDispatchMetrics()
     private var touchPreviewCadence = TouchPreviewCadence()
     private var helperPreviewCadence = TouchPreviewCadence()
@@ -2962,6 +2964,8 @@ final class StudioController: ObservableObject {
         helperPreviewRequested = false
         midiHelperRunning = false
         helperSustainState.reset()
+        helperPedalPublicationFence.reset()
+        helperEffectsPublicationFence.reset()
         touchSustainState.reset()
         touchSustainRearmGate.reset()
         touchInstrumentSustainActive = false
@@ -3420,7 +3424,7 @@ final class StudioController: ObservableObject {
             clickTouchingSurfaces = Set(sample.states.filter(\.isTouching).map(\.surface))
             clickSnapshotRevision = sample.stamp.revision
             clickSnapshotReceivedAt = sample.queuedAt
-            handleSharedSurfaceStates(sample.states)
+            handleSharedSurfaceStates(sample)
             touchDispatchMetrics.record(queuedAt:sample.queuedAt,startedAt:startedAt,
                 endedAt:ProcessInfo.processInfo.systemUptime)
         }
@@ -3449,7 +3453,8 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func handleSharedSurfaceStates(_ states: [TouchPerformanceState]) {
+    private func handleSharedSurfaceStates(_ sample:QueuedTouchSnapshot) {
+        let states = sample.states
         let instrumentStates = (instrumentPreviewRequested || touchRunning) ? states.filter {
             currentTouchConfiguration.surfaceSelection.accepts($0.surface)
         } : nil
@@ -3458,9 +3463,15 @@ final class StudioController: ObservableObject {
         } : nil
         // Commit both pedal intents before any note release. An owner
         // handoff in one frame must not pulse CC64 off and back on.
-        let pedal = applyPhysicalPedalFrame(touchStates:instrumentStates,helperStates:helperStates,freshFrame:true)
+        let selectedSource = helperSurfaceSelection.accepts(sample.sourceSurface)
+        let pedalAdmitted = helperPedalPublicationFence.permits(sample.stamp,selectedSource:selectedSource)
+        let effectsAdmitted = helperEffectsPublicationFence.permits(sample.stamp,selectedSource:selectedSource)
+        let pedal = applyPhysicalPedalFrame(touchStates:instrumentStates,
+            helperStates:pedalAdmitted ? helperStates : nil,freshFrame:true)
         if let instrumentStates { handleTouchStates(instrumentStates,pedal:pedal) }
-        if let helperStates { handleMIDIHelperStates(helperStates) }
+        if let helperStates {
+            handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:effectsAdmitted)
+        }
     }
 
     /// Explicitly copy the current bank scale. Live performances never retune
@@ -3810,7 +3821,9 @@ final class StudioController: ObservableObject {
 
     func updateMIDIHelperSurface(_ surfaceSelection: TouchSurfaceSelection) {
         if midiHelperRunning && surfaceSelection != helperSurfaceSelection {
-            touch?.invalidatePendingSamples()
+            let sequence = touch?.consumerPublicationBoundary().sequence ?? 0
+            helperPedalPublicationFence.begin(after:sequence)
+            helperEffectsPublicationFence.begin(after:sequence)
             helperClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
             liveHelperStates = []
             helperSustainState.reset()
@@ -3879,8 +3892,12 @@ final class StudioController: ObservableObject {
         if !midiHelperRunning || transition.pedalChanged {
             helperClickFence.begin(now:ProcessInfo.processInfo.systemUptime)
         }
-        if !midiHelperRunning || transition.pedalChanged || transition.effectsChanged {
-            touch?.invalidatePendingSamples()
+        let boundary = touch?.consumerPublicationBoundary()
+        if !midiHelperRunning || transition.pedalChanged {
+            helperPedalPublicationFence.begin(after:boundary?.sequence ?? 0)
+        }
+        if !midiHelperRunning || transition.effectsChanged {
+            helperEffectsPublicationFence.begin(after:boundary?.sequence ?? 0)
         }
         // An effects-only edit must not clear an independent held pedal.
         if !midiHelperRunning || transition.pedalChanged { liveHelperStates = [] }
@@ -3903,6 +3920,12 @@ final class StudioController: ObservableObject {
         } else {
             helperRearmGate.reset()
             helperEffectsRearmGate.reset()
+            // Do not turn a pre-start held contact into a new pedal or
+            // expressive onset. An explicitly idle start is immediately ready.
+            if boundary?.touching.contains(where: { surfaceSelection.accepts($0) }) == true {
+                helperRearmGate.invalidate()
+                helperEffectsRearmGate.invalidate()
+            }
         }
         helperSustainSettings = newSustainSettings
         helperAssignments = assignments
@@ -3936,7 +3959,10 @@ final class StudioController: ObservableObject {
     func stopMIDIHelper() {
         guard midiHelperRunning else { return }
         helperClickFence.end()
-        touch?.invalidatePendingSamples()
+        let sequence = touch?.consumerPublicationBoundary().sequence ?? 0
+        helperPedalPublicationFence.begin(after:sequence)
+        helperEffectsPublicationFence.begin(after:sequence)
+        liveHelperStates = []
         midi?.releaseHelperSustain()
         helperRearmGate.reset()
         helperEffectsRearmGate.reset()
@@ -3999,8 +4025,8 @@ final class StudioController: ObservableObject {
         return helperSustained
     }
 
-    private func handleMIDIHelperStates(_ states: [TouchPerformanceState]) {
-        liveHelperStates = states
+    private func handleMIDIHelperStates(_ states: [TouchPerformanceState],pedalAdmitted:Bool,effectsAdmitted:Bool) {
+        if pedalAdmitted || !midiHelperRunning { liveHelperStates = states }
         defer {
             if helperPreviewRequested, states != midiHelperStates,
                helperPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
@@ -4008,7 +4034,7 @@ final class StudioController: ObservableObject {
                 midiHelperStates = states
             }
         }
-        guard midiHelperRunning else { return }
+        guard midiHelperRunning,effectsAdmitted else { return }
         let selectedClick = helperClickFence.permits(receipt:physicalClickReceipt,
             now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false)
         let touching = states.contains { $0.isTouching && helperSurfaceSelection.accepts($0.surface) }

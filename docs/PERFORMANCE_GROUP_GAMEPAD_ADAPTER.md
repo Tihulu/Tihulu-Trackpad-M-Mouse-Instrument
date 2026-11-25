@@ -216,3 +216,7 @@ While Touch is playing, full view configuration updates now project only the con
 ### Sticky legacy single-voice admission
 
 The legacy native MIDI path now retains an eligible sounding contact in single-touch mode, including physical chord owners. Standard fretless melodic selection also retains its sounding contact without removing independent nonmelodic routes. No note is reselected solely because a hardware snapshot reordered contacts. Three portable regressions exercise reordered, removed, duplicate and surface-qualified contact identities. A global gain change now follows one controller-owned update path instead of replaying the whole view configuration. Native performance and haptic single-touch behavior remain separate acceptance work.
+
+### Independent Helper publication boundaries
+
+Helper start, stop, surface and routing edits no longer invalidate the common native sample revision or discard Touch's ordered pending edges. Independent pedal/effects publication watermarks exclude pre-edit samples from only the affected consumer, and Helper evaluates new samples only when their native source belongs to the selected surface. Effects-only changes preserve pedal admission; a pre-start observed held surface requires neutral rearm. Three portable regressions cover queued Touch down/up retention, effect-only transitions and source-qualified boundaries across revisions. The global native mapping/reset path (Touch edits, activation, backlog) remains unchanged; it needs separate review. No physical behavior is claimed from these model tests.

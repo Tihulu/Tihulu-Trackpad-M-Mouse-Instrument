@@ -329,6 +329,7 @@ public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
 public struct QueuedTouchSnapshot: Sendable {
     public let states: [TouchPerformanceState]
     public let stamp: TouchSnapshotStamp
+    public let sourceSurface: TouchSurfaceKind
     public let queuedAt: Double
 }
 
@@ -486,6 +487,13 @@ public final class TouchInstrumentService: @unchecked Sendable {
     public var currentSampleRevision: UInt64 {
         lock.lock(); defer { lock.unlock() }
         return sampleRevision
+    }
+
+    /// Sample the publication watermark and observed held surfaces under
+    /// the same lock as publication. No global revision/cache invalidation.
+    public func consumerPublicationBoundary() -> (sequence:UInt64,touching:Set<TouchSurfaceKind>) {
+        lock.lock(); defer { lock.unlock() }
+        return (publicationSequence,Set(latestStatesBySurface.filter { $0.value.contains(where: { $0.isTouching }) }.keys))
     }
 
     public func invalidatePendingSamples() {
@@ -718,7 +726,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         // A preview is never a percussion trigger.
         guard isActive && active else {
             let inbox = queuedInbox, notify = queuedReady
-            let ready = inbox?.submit(.init(states:combined,stamp:stamp,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
+            let ready = inbox?.submit(.init(states:combined,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
             lock.unlock()
             if inbox != nil { if ready { notify?() } }
             else { callback?(combined,stamp) }
@@ -762,7 +770,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             }
         }
         let inbox = queuedInbox, notify = queuedReady
-        let ready = inbox?.submit(.init(states:combined,stamp:stamp,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
+        let ready = inbox?.submit(.init(states:combined,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
         lock.unlock()
         if inbox != nil { if ready { notify?() } }
         else { callback?(combined,stamp) }
