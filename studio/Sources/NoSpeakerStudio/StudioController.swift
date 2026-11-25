@@ -245,6 +245,11 @@ final class StudioController: ObservableObject {
     private var patchPadTokens: [PatchSimulation.Input: UUID] = [:]
     private var surfaceMonitorToken: UUID?
     private var surfaceSnapshotCursor = TouchSnapshotCursor()
+    private var touchPreviewCadence = TouchPreviewCadence()
+    private var helperPreviewCadence = TouchPreviewCadence()
+    // Unthrottled state for musical processing and physical-click attribution.
+    private var liveTouchStates: [TouchPerformanceState] = []
+    private var liveHelperStates: [TouchPerformanceState] = []
     private var clickTouchingSurfaces: Set<TouchSurfaceKind> = []
     private var clickSnapshotRevision: UInt64?
     private var clickSnapshotReceivedAt: Double?
@@ -1980,6 +1985,10 @@ final class StudioController: ObservableObject {
         touchContact = TrackpadContact()
         touchStates = []
         midiHelperStates = []
+        liveTouchStates = []
+        liveHelperStates = []
+        touchPreviewCadence.reset()
+        helperPreviewCadence.reset()
         activeMIDINotes = []
         activeMIDINoteMap.removeAll()
         midiRunning = false
@@ -2356,6 +2365,10 @@ final class StudioController: ObservableObject {
             let token = UUID()
             surfaceMonitorToken = token
             surfaceSnapshotCursor.reset()
+            touchPreviewCadence.reset()
+            helperPreviewCadence.reset()
+            liveTouchStates = []
+            liveHelperStates = []
             clearClickAttribution()
             try touch.startStampedPreview(configuration: monitoringConfiguration) { [weak self] states,stamp in
                 Task { @MainActor in
@@ -2440,7 +2453,11 @@ final class StudioController: ObservableObject {
     func stopTouchPreview() {
         // Navigation drops only the UI preview request, never a live session.
         instrumentPreviewRequested = false
+        touchPreviewCadence.reset()
+        if !touchStates.isEmpty { touchStates = [] }
+        if touchContact.isDown { touchContact = TrackpadContact() }
         guard !touchRunning else { return }
+        liveTouchStates = []
         midi?.releaseTouchSustain()
         touchSustainState.reset()
         touchInstrumentSustainActive = false
@@ -2534,6 +2551,8 @@ final class StudioController: ObservableObject {
         midi?.endAllTouchOutput()
         touchRunning = false
         touchMIDIOutEnabled = false
+        liveTouchStates = []
+        touchPreviewCadence.reset()
         if !instrumentPreviewRequested {
             touchStates = []
             touchContact = TrackpadContact()
@@ -2546,30 +2565,28 @@ final class StudioController: ObservableObject {
     }
 
     private func handleTouchStates(_ states: [TouchPerformanceState]) {
+        liveTouchStates = states
+        // Every accepted hardware frame reaches the musical path before UI.
+        if touchRunning {
+            if touchMIDIOutEnabled {
+                midi?.sendTouchStates(
+                    states,
+                    configuration: currentTouchConfiguration,
+                    midiMode: touchMIDIMode,
+                    baseChannel: touchMIDIChannel,
+                    multiTouchEnabled: touchMultiTouchEnabled
+                )
+            }
+            updateTouchSustain(states)
+        }
+        guard instrumentPreviewRequested, states != touchStates,
+              touchPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty) else { return }
         touchStates = states
-        if let firstTrackpad = states.first(where: { $0.surface == .trackpad && $0.isTouching }) {
-            touchContact = TrackpadContact(
-                id: firstTrackpad.contactID,
-                isDown: firstTrackpad.isTouching,
-                x: Float(firstTrackpad.x),
-                y: Float(firstTrackpad.y),
-                size: Float(firstTrackpad.pressure)
-            )
-        } else {
+        if let first = states.first(where: { $0.surface == .trackpad && $0.isTouching }) {
+            touchContact = TrackpadContact(id:first.contactID,isDown:true,x:Float(first.x),y:Float(first.y),size:Float(first.pressure))
+        } else if touchContact.isDown {
             touchContact = TrackpadContact()
         }
-
-        guard touchRunning else { return }
-        if touchMIDIOutEnabled {
-            midi?.sendTouchStates(
-                states,
-                configuration: currentTouchConfiguration,
-                midiMode: touchMIDIMode,
-                baseChannel: touchMIDIChannel,
-                multiTouchEnabled: touchMultiTouchEnabled
-            )
-        }
-        updateTouchSustain(states)
     }
 
     func startMIDI() {
@@ -2804,14 +2821,23 @@ final class StudioController: ObservableObject {
 
     func stopMIDIHelperPreview() {
         helperPreviewRequested = false
+        helperPreviewCadence.reset()
+        if !midiHelperStates.isEmpty { midiHelperStates = [] }
         guard !midiHelperRunning else { return }
+        liveHelperStates = []
         midiHelperStates = []
         refreshSharedSurfaceMonitoring()
         stopCaptureMonitorIfIdle()
     }
 
     private func handleMIDIHelperStates(_ states: [TouchPerformanceState],freshFrame:Bool = false) {
-        midiHelperStates = states
+        liveHelperStates = states
+        defer {
+            if helperPreviewRequested, states != midiHelperStates,
+               helperPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty) {
+                midiHelperStates = states
+            }
+        }
         guard midiHelperRunning else { return }
 
         let selectedClick = clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false
@@ -2831,9 +2857,10 @@ final class StudioController: ObservableObject {
             trackpadClickPressure: trackpadClickPressure,
             magicMouseContactSizes: active.filter { $0.surface == .magicMouse }.map(\.pressure)
         )
-        midiHelperTrackpadSustainActive = snapshot.trackpadActive
-        midiHelperMagicMouseSustainActive = snapshot.magicMouseActive
-        midiHelperSustainActive = snapshot.isActive && helperSendToDAW
+        if midiHelperTrackpadSustainActive != snapshot.trackpadActive { midiHelperTrackpadSustainActive = snapshot.trackpadActive }
+        if midiHelperMagicMouseSustainActive != snapshot.magicMouseActive { midiHelperMagicMouseSustainActive = snapshot.magicMouseActive }
+        let helperSustained = snapshot.isActive && helperSendToDAW
+        if midiHelperSustainActive != helperSustained { midiHelperSustainActive = helperSustained }
 
         if helperSendToDAW { midi?.setHelperSustain(snapshot.isActive,channel:helperTargetChannel) }
         else { midi?.releaseHelperSustain() }
@@ -3144,15 +3171,15 @@ final class StudioController: ObservableObject {
             clickedSurface = nil
             trackpadClickPressure = nil
         }
-        if midiHelperRunning { handleMIDIHelperStates(midiHelperStates) }
-        if touchRunning { updateTouchSustain(touchStates) }
+        if midiHelperRunning { handleMIDIHelperStates(liveHelperStates) }
+        if touchRunning { updateTouchSustain(liveTouchStates) }
     }
 
     private func handlePhysicalPressure(_ pressure: Double) {
         guard clickedSurface == .trackpad else { return }
         trackpadClickPressure = pressure.isFinite && (0...1).contains(pressure) ? pressure : nil
-        if midiHelperRunning { handleMIDIHelperStates(midiHelperStates) }
-        if touchRunning { updateTouchSustain(touchStates) }
+        if midiHelperRunning { handleMIDIHelperStates(liveHelperStates) }
+        if touchRunning { updateTouchSustain(liveTouchStates) }
     }
 
     private func updateTouchSustain(_ states: [TouchPerformanceState]) {
@@ -3172,8 +3199,8 @@ final class StudioController: ObservableObject {
             currentTouchConfiguration.selectedSurfaces.contains {
                 currentTouchConfiguration.output(for: $0).sendsHaptics
             }
-        touchInstrumentSustainActive = snapshot.isActive &&
-            (touchMIDIOutEnabled || hapticsEnabled)
+        let instrumentSustained = snapshot.isActive && (touchMIDIOutEnabled || hapticsEnabled)
+        if touchInstrumentSustainActive != instrumentSustained { touchInstrumentSustainActive = instrumentSustained }
         touch?.setSustainActive(snapshot.isActive && hapticsEnabled)
         if touchMIDIOutEnabled {
             midi?.setTouchSustain(
