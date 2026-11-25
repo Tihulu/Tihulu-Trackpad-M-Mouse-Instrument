@@ -19,7 +19,7 @@ struct TihuluNativeCLI {
         let platformSupported:Bool
         let liveOutput = false
         let permissionRequests = false
-        let commands = ["capabilities","preflight","midi endpoints [--names]","gamepad devices [--names]","midi monitor NAME SECONDS --confirm"]
+        let commands = ["capabilities","preflight","midi endpoints [--names]","gamepad devices [--names]","gamepad sample --confirm","midi monitor NAME SECONDS --confirm"]
     }
     struct Envelope<Payload:Encodable>: Encodable {
         let schema = 1
@@ -56,6 +56,14 @@ struct TihuluNativeCLI {
                 #if os(macOS)
                 let result=try await NativeMIDIMonitor.observe(sourceName:args[2],seconds:seconds)
                 try emit(Envelope(command:"midi monitor",result:result))
+                #else
+                throw CLIError("Native inspection requires macOS.")
+                #endif
+                return
+            }
+            if args == ["gamepad","sample","--confirm"] {
+                #if os(macOS)
+                try emit(Envelope(command:"gamepad sample",result:NativeEngineDiagnostics.sampleGamepads()))
                 #else
                 throw CLIError("Native inspection requires macOS.")
                 #endif
