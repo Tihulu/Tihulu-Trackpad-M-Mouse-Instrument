@@ -20,6 +20,12 @@
       "kind": "json-cli",
       "platform": "SwiftPM offline",
       "path": "studio/Sources/TihuluEngineCLI/CLI.swift"
+    },
+    {
+      "name": "tihulu-mac-instrument-native",
+      "kind": "read-only-native-json-cli",
+      "platform": "macOS inspection; portable unsupported status",
+      "path": "studio/Sources/TihuluNativeCLI/NativeCLI.swift"
     }
   ],
   "features": [
@@ -223,6 +229,22 @@
         "camera helper-simulate"
       ],
       "status": "offline normalized hand samples and Helper-only patch replay; no camera access"
+    },
+    {
+      "id": "native-diagnostics",
+      "api": [
+        "NativeEngineDiagnostics"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerMac/NativeEngineDiagnostics.swift",
+        "studio/Sources/TihuluNativeCLI/NativeCLI.swift"
+      ],
+      "cli": [
+        "capabilities",
+        "preflight",
+        "midi endpoints [--names]"
+      ],
+      "status": "read-only native CoreMIDI inventory, connected gamepad count and permission preflight; no hardware activation, event tap or live output"
     }
   ],
   "constraints": {

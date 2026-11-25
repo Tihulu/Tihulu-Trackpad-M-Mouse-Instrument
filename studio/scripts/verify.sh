@@ -11,6 +11,7 @@ swift build
 echo "==> Testing standalone engine CLI"
 python3 ../tools/test_engine_cli.py "$(swift build --show-bin-path)/tihulu-mac-instrument-engine"
 python3 ../tools/test_engine_catalog.py "$(swift build --show-bin-path)/tihulu-mac-instrument-engine"
+python3 ../tools/test_native_engine_cli.py "$(swift build --show-bin-path)/tihulu-mac-instrument-native"
 python3 ../tools/test_app_engine_boundary.py
 
 echo "==> Building separate external SDK consumer"

@@ -7,6 +7,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = "tihulu-mac-instrument-engine"
+NATIVE = "tihulu-mac-instrument-native"
 APP = "Tihulu Trackpad & M. Mouse Instrument.app"
 STUDIO = "NoSpeakerStudio"
 
@@ -25,6 +26,7 @@ def check_sources():
     require(package["name"] == STUDIO, "Swift package identity changed")
     require(products[STUDIO]["targets"] == [STUDIO], "App executable product changed")
     require(products[ENGINE]["targets"] == ["TihuluEngineCLI"], "Engine product changed")
+    require(products[NATIVE]["targets"] == ["TihuluNativeCLI"], "Native product changed")
     require("tihulu-engine" not in products, "Generic engine alias is not allowed")
     def names(target):
         result = set()
@@ -36,6 +38,7 @@ def check_sources():
             result.add(value[0])
         return result
     require(names("TihuluEngineCLI") == {"NoSpeakerCore"}, "CLI must not depend on native/UI code")
+    require(names("TihuluNativeCLI") == {"NoSpeakerMac"}, "Native CLI must not depend on Studio")
     require(names(STUDIO) == {"NoSpeakerCore", "NoSpeakerMac"}, "App target dependencies changed")
     require(names("NoSpeakerMac") == {"NoSpeakerCore"}, "Native dependency boundary changed")
     require(not names("NoSpeakerCore"), "Core dependency boundary changed")
@@ -44,7 +47,7 @@ def check_sources():
     require('APP_NAME="' + APP + '"' in installer, "Installer app name changed")
     require('CLI_DEST="$BIN_ROOT/tihulu-trackpad-instrument"' in installer, "App launcher changed")
     require('Contents/MacOS/NoSpeakerStudio' in installer, "App launcher target changed")
-    require(ENGINE not in installer, "Installer references developer executable")
+    require(ENGINE not in installer and NATIVE not in installer, "Installer references developer executable")
     require('swift build -c release --product NoSpeakerStudio' in builder, "App release build must select Studio only")
     require('BUNDLE_ID="com.tihulu.trackpadmmouseinstrument"' in builder, "Stable bundle ID changed")
     require('BUNDLE_ID="com.tihulu.trackpadmmouseinstrument.preview"' in builder, "Preview bundle ID changed")
@@ -63,7 +66,7 @@ def check_bundle(path):
     require(info["CFBundleExecutable"] == STUDIO, "Built executable changed")
     require({p.name for p in (contents / "MacOS").iterdir()} == {STUDIO}, "Unexpected bundled executable")
     require((contents / "MacOS" / STUDIO).is_file(), "Missing application executable")
-    require(not any(p.name == ENGINE for p in contents.rglob("*")), "Developer engine leaked into app bundle")
+    require(not any(p.name in {ENGINE, NATIVE} for p in contents.rglob("*")), "Developer engine leaked into app bundle")
     print("Built application contains only its original executable and bundle identity.")
 
 

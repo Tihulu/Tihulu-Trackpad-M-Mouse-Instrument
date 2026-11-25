@@ -184,3 +184,18 @@ The semantic backend generates normalized model embeddings, uses cosine ranking,
 - Physical acceptance: existing historical complaint ledger remains authoritative. No merge/release/install from this branch without acceptance. No automatic training, model fine-tuning, cloud uploads or stable runtime changes.
 
 CI tests index fixtures and a real commit-pinned lexical index, plus the offline CLI. Real embedding generation requires a local model and is not exercised by dependency-free CI.
+
+## Independent native diagnostics CLI
+
+The new `tihulu-mac-instrument-native` executable is a separate SwiftPM product, not an app launcher or a dependency of the pure offline engine. It exposes an initial read-only native API in NoSpeakerMac. Build it explicitly:
+
+```sh
+cd studio
+swift build --product tihulu-mac-instrument-native
+swift run --skip-build tihulu-mac-instrument-native capabilities
+swift run --skip-build tihulu-mac-instrument-native preflight
+swift run --skip-build tihulu-mac-instrument-native midi endpoints
+swift run --skip-build tihulu-mac-instrument-native midi endpoints --names
+```
+
+Preflight returns current process Accessibility/Input Monitoring checks, connected controller count and CoreMIDI source/destination counts. These are observations, not verified device readiness or DAW reception. Endpoint names are omitted by default; the explicit names flag returns at most 256 display names per direction, without IDs or serial numbers. Names may reveal local device labels: keep the output local unless you choose to share it. No permissions are requested, no event tap or native MIDI client/port is created, no MIDI is sent and no haptic/camera/microphone session is opened. Linux capabilities return an unsupported platform flag; native queries fail with a nonzero exit and no fabricated inventory. Neither developer binary is bundled with Studio. Black-box tests cover command/flag rejection, JSON shape, platform handling and app boundary; actual hardware remains HOLD. Live CLI activation is still deliberately not supported.

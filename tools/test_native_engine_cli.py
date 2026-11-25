@@ -1,0 +1,56 @@
+"""Black-box native CLI boundary: no live sends or permission requests."""
+import json
+import platform
+import subprocess
+import sys
+
+binary = sys.argv[1]
+
+
+def invoke(*args, success=True):
+    result = subprocess.run([binary, *args], capture_output=True, text=True, timeout=20)
+    if success:
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+    assert result.returncode != 0 and not result.stdout and result.stderr
+    return result.stderr
+
+
+mac = platform.system() == "Darwin"
+help_doc = invoke("--help")
+assert help_doc == invoke("capabilities") == invoke()
+assert help_doc["schema"] == 1
+assert help_doc["product"] == "tihulu-mac-instrument-native"
+assert help_doc["platformSupported"] == mac
+assert help_doc["liveOutput"] is False and help_doc["permissionRequests"] is False
+assert set(help_doc["commands"]) == {"capabilities", "preflight", "midi endpoints [--names]"}
+for command in [("start",), ("midi", "send"), ("preflight", "--request-permissions"),
+                ("midi", "endpoints", "--names", "--send"), ("--unknown",)]:
+    invoke(*command, success=False)
+
+if mac:
+    def midi_shape(midi, named):
+        for count, names in [("sourceCount", "sourceNames"), ("destinationCount", "destinationNames")]:
+            assert type(midi[count]) is int and midi[count] >= 0
+            if named:
+                assert len(midi[names]) == min(midi[count], 256)
+                assert all(isinstance(n, str) and 0 < len(n) <= 128 for n in midi[names])
+            else:
+                assert names not in midi
+        assert type(midi["namesTruncated"]) is bool
+
+    pre = invoke("preflight")
+    assert pre["schema"] == 1 and pre["liveOutput"] is False
+    assert pre["command"] == "preflight"
+    for key in ("accessibilityGranted", "inputMonitoringGranted"):
+        assert type(pre["result"][key]) is bool
+    assert type(pre["result"]["connectedGamepadCount"]) is int
+    midi_shape(pre["result"]["midi"], False)
+    midi_shape(invoke("midi", "endpoints")["result"], False)
+    # Explicit names flag; never print device names in CI.
+    midi_shape(invoke("midi", "endpoints", "--names")["result"], True)
+else:
+    for command in [("preflight",), ("midi", "endpoints"), ("midi", "endpoints", "--names")]:
+        assert "requires macOS" in invoke(*command, success=False)
+
+print("Native CLI capability, read-only boundary and platform tests passed.")

@@ -8,11 +8,15 @@ let package = Package(
         .library(name: "NoSpeakerCore", targets: ["NoSpeakerCore"]),
         .library(name: "NoSpeakerMac", targets: ["NoSpeakerMac"]),
         .executable(name: "tihulu-mac-instrument-engine", targets: ["TihuluEngineCLI"]),
+        .executable(name: "tihulu-mac-instrument-native", targets: ["TihuluNativeCLI"]),
         .executable(name: "NoSpeakerStudio", targets: ["NoSpeakerStudio"])
     ],
     targets: [
         .target(name: "NoSpeakerCore"),
         .executableTarget(name: "TihuluEngineCLI", dependencies: ["NoSpeakerCore"]),
+        .executableTarget(name: "TihuluNativeCLI", dependencies: [
+            .target(name: "NoSpeakerMac", condition: .when(platforms: [.macOS]))
+        ]),
         .target(
             name: "NoSpeakerMac",
             dependencies: ["NoSpeakerCore"],

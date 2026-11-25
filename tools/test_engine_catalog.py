@@ -12,7 +12,7 @@ def main(binary):
     catalog = json.loads((ROOT / "docs/ENGINE_CAPABILITIES.json").read_text())
     assert catalog["schema"] == 1 and catalog["status"] == "experimental"
     names = [p["name"] for p in catalog["products"]]
-    assert NAME in names and "tihulu-engine" not in names
+    assert NAME in names and "tihulu-mac-instrument-native" in names and "tihulu-engine" not in names
     assert len(names) == len(set(names))
     features = catalog["features"]
     assert len({f["id"] for f in features}) == len(features)
@@ -21,7 +21,7 @@ def main(binary):
         for source in feature["source"]:
             path = (ROOT / source).resolve()
             assert path.is_relative_to(ROOT) and path.is_file(), source
-        if feature["id"] != "source-retrieval":
+        if feature["id"] not in {"source-retrieval", "native-diagnostics"}:
             assert len(feature["cli"]) == len(set(feature["cli"])), feature["id"]
             commands.update(feature["cli"])
     help_doc = json.loads(subprocess.check_output([binary, "--help"], timeout=20))
@@ -32,6 +32,11 @@ def main(binary):
         text=True, timeout=20)
     retrieval = next(f for f in features if f["id"] == "source-retrieval")
     assert all(cmd in index_help for cmd in retrieval["cli"])
+    native = next(f for f in features if f["id"] == "native-diagnostics")
+    native_binary = str(Path(binary).with_name("tihulu-mac-instrument-native"))
+    native_help = json.loads(subprocess.check_output([native_binary, "--help"], timeout=20))
+    assert set(native["cli"]) == set(native_help["commands"])
+    assert native_help["liveOutput"] is False
     assert catalog["constraints"]["automaticHardwareActivation"] is False
     print("Engine catalog matches executable command help and source paths.")
 
