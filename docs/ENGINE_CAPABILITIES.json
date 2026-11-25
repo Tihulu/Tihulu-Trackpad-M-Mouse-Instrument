@@ -75,8 +75,10 @@
         "studio/Sources/NoSpeakerCore/LegacyContinuousOwners.swift",
         "studio/Sources/NoSpeakerCore/HelperRoutingSnapshot.swift"
       ],
-      "cli": [],
-      "status": "library; dedicated CLI planned"
+      "cli": [
+        "sustain simulate"
+      ],
+      "status": "offline sustain simulation; expressive Helper CLI planned"
     },
     {
       "id": "tuning-mpe",
@@ -142,9 +144,29 @@
       ],
       "cli": [
         "build",
-        "search"
+        "search",
+        "verify"
       ],
-      "status": "lexical offline; semantic requires trusted local embedding model"
+      "status": "commit-pinned lexical retrieval and source verification; semantic requires trusted local model"
+    },
+    {
+      "id": "midi-file",
+      "api": [
+        "MIDIClip",
+        "MIDIClipWriter",
+        "NoteSequence",
+        "DrumSequence"
+      ],
+      "source": [
+        "studio/Sources/NoSpeakerCore/MIDIClip.swift",
+        "studio/Sources/NoSpeakerCore/Sequencer.swift"
+      ],
+      "cli": [
+        "midi encode",
+        "midi melody",
+        "midi drums"
+      ],
+      "status": "offline nominal SMF0 export; tuning fields rejected; no live MIDI"
     }
   ],
   "constraints": {
