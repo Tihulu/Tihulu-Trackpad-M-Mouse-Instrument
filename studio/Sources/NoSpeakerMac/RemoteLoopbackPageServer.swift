@@ -202,7 +202,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <p>Combine up to eight mapped pads and pedal controls. Controls move from their original panels; Mac mappings do not change.</p>
 <label for="customColumns">Custom panel columns</label><select id="customColumns"><option value="1">1 column</option><option value="2">2 columns</option><option value="3">3 columns</option></select>
 <label for="customAddChoice">Available control</label><select id="customAddChoice"></select><button id="customAdd" type="button">Add to custom panel</button>
-<label for="customChoice">Custom panel control</label><select id="customChoice"></select><button id="customUp" type="button">Move earlier</button><button id="customDown" type="button">Move later</button><button id="customRemove" type="button">Return to original panel</button></fieldset>
+<label for="customChoice">Custom panel control</label><select id="customChoice"></select><button id="customUp" type="button">Move earlier</button><button id="customDown" type="button">Move later</button><button id="customRemove" type="button">Return to original panel</button>
+<label for="customAlias">Local control label</label><input id="customAlias" type="text" maxlength="32" autocomplete="off"><button id="customAliasApply" type="button">Apply label</button><button id="customAliasClear" type="button">Use Mac label</button><small>Only changes the name displayed on this browser, not the MIDI mapping.</small></fieldset>
 <fieldset id="gridOrderEditor" hidden><legend>Individual mapped controls</legend>
 <label for="gridControl">Control</label><select id="gridControl"></select>
 <button id="gridControlUp" type="button">Move control earlier</button><button id="gridControlDown" type="button">Move control later</button>
@@ -311,16 +312,22 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const gridPanels=["drumSection","pedalSection"];
   const indices=n=>Array.from({length:n},(_,i)=>i);
   const customIDs=[...indices(8).map(i=>"d"+i),...indices(6).map(i=>"p"+i)];
-  const defaultDetails=()=>({version:1,sizes:{},columns:{},holds:[],drumOrder:indices(8),pedalOrder:indices(6),custom:[],customColumns:"2",sliderDefaults:[100,100,0],vertical:[]});
+  const defaultDetails=()=>({version:1,sizes:{},columns:{},holds:[],drumOrder:indices(8),pedalOrder:indices(6),custom:[],customColumns:"2",customAliases:{},sliderDefaults:[100,100,0],vertical:[]});
   function validOrder(order,n){
     return Array.isArray(order)&&order.length===n&&new Set(order).size===n&&order.every(i=>Number.isInteger(i)&&i>=0&&i<n);
   }
+  function validAlias(v){
+    return typeof v==="string"&&v.length>=1&&v.length<=32&&v.trim()===v&&
+      !/[\p{Cc}\p{Cf}]/u.test(v)&&/[^\p{White_Space}]/u.test(v);
+  }
   function validDetails(d){
     const record=v=>v&&typeof v==="object"&&!Array.isArray(v);
-    return record(d)&&Object.keys(d).every(k=>["columns","sizes","version","holds","drumOrder","pedalOrder","custom","customColumns","sliderDefaults","vertical"].includes(k))&&d.version===1&&
+    return record(d)&&Object.keys(d).every(k=>["columns","sizes","version","holds","drumOrder","pedalOrder","custom","customColumns","customAliases","sliderDefaults","vertical"].includes(k))&&d.version===1&&
       (d.sliderDefaults===undefined||(Array.isArray(d.sliderDefaults)&&d.sliderDefaults.length===3&&d.sliderDefaults.every(v=>Number.isInteger(v)&&v>=0&&v<=100)))&&
       (d.vertical===undefined||(Array.isArray(d.vertical)&&d.vertical.length<=3&&new Set(d.vertical).size===d.vertical.length&&d.vertical.every(i=>[0,1,2].includes(i))))&&
       (d.customColumns===undefined||["1","2","3"].includes(d.customColumns))&&
+      (d.customAliases===undefined||(record(d.customAliases)&&Object.keys(d.customAliases).length<=8&&
+        Object.entries(d.customAliases).every(([id,v])=>(d.custom??[]).includes(id)&&validAlias(v))))&&
       (d.custom===undefined||(Array.isArray(d.custom)&&d.custom.length<=8&&new Set(d.custom).size===d.custom.length&&d.custom.every(id=>customIDs.includes(id))))&&
       (d.drumOrder===undefined||validOrder(d.drumOrder,8))&&(d.pedalOrder===undefined||validOrder(d.pedalOrder,6))&&
       (d.holds===undefined||(Array.isArray(d.holds)&&d.holds.length<=3&&new Set(d.holds).size===d.holds.length&&d.holds.every(i=>[3,4,5].includes(i))))&&
@@ -329,13 +336,13 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function loadDetails(){
     try{const raw=window.localStorage?.getItem(detailKey);
-      if(typeof raw==="string"&&raw.length<=1024){const d=JSON.parse(raw);if(validDetails(d))return {...defaultDetails(),...d};}
+      if(typeof raw==="string"&&raw.length<=4096){const d=JSON.parse(raw);if(validDetails(d))return {...defaultDetails(),...d};}
     }catch{}
     return defaultDetails();
   }
   let details=loadDetails();
   let layout=loadLayout(),layoutMessage="",layoutOptionsKey="",layoutSyncKey="";
-  let layoutDrag=null,layoutHandles=[],layoutHandleEpoch=0,gridOptionsKey="",customOptionsKey="",customActive=[],sliderOptionsKey="",sliderValueKey="";
+  let layoutDrag=null,layoutHandles=[],layoutHandleEpoch=0,gridOptionsKey="",customOptionsKey="",customActive=[],sliderOptionsKey="",sliderValueKey="",aliasInputKey="";
   function availablePanels(){
     if(!caps)return [];
     const available=[caps.touch,Boolean(caps.drums),Boolean(caps.piano),Boolean(caps.pedals),caps.tilt,caps.acceleration||caps.rotation];
@@ -374,7 +381,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       slider.setAttribute("data-vertical",String(vertical));
       slider.setAttribute("aria-orientation",vertical?"vertical":"horizontal");
     }
-    syncSections();syncPedals();syncCustom();
+    syncSections();syncPedals();syncCustom();renderMapping();
   }
   function clearLayoutDrag(){
     layoutDrag=null;
@@ -449,6 +456,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function customNode(id){return get((id[0]==="d"?"drum":"pedalCell")+id[1]);}
   function customLabel(id){return labelFor((id[0]==="d"?9:43)+Number(id[1]));}
+  function localAlias(id){return customActive.includes(id)?(details.customAliases[id]??""):"";}
+  function customEditorLabel(id){const original=customLabel(id);return details.customAliases[id]?details.customAliases[id]+" · "+original:original;}
   function syncCustom(){
     const drums=Boolean(caps)&&customActive.some(id=>id[0]==="d");
     const pedals=Boolean(caps)&&customActive.some(id=>id[0]==="p");
@@ -466,7 +475,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const columns=get("customColumns");columns.disabled=!editable;columns.value=details.customColumns;
     const available=customIDs.filter(id=>customMapped(id)&&!details.custom.includes(id));
     const chosen=details.custom;
-    const chosenLabel=id=>customMapped(id)?customLabel(id):((id[0]==="d"?"Pad ":"Pedal ")+(Number(id[1])+1)+" (not mapped)");
+    const chosenLabel=id=>customMapped(id)?customEditorLabel(id):((id[0]==="d"?"Pad ":"Pedal ")+(Number(id[1])+1)+" (not mapped)");
     const key=JSON.stringify([available,chosen,available.map(customLabel),chosen.map(chosenLabel)]);
     if(key!==customOptionsKey){
       for(const [id,ids] of [["customAddChoice",available],["customChoice",chosen]]){
@@ -485,6 +494,17 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("customRemove").disabled=!editable||index<0;
     get("customUp").disabled=!editable||index<=0;
     get("customDown").disabled=!editable||index<0||index===chosen.length-1;
+    const alias=get("customAlias"),selected=chosen[index],aliasKey=JSON.stringify([selected,details.customAliases[selected]??""]);
+    if(aliasInputKey!==aliasKey){aliasInputKey=aliasKey;alias.value=details.customAliases[selected]??"";}
+    alias.disabled=get("customAliasApply").disabled=!editable||index<0;
+    get("customAliasClear").disabled=!editable||index<0||!details.customAliases[selected];
+  }
+  function changeCustomAlias(clear){
+    const id=get("customChoice").value,input=get("customAlias"),value=input.value.trim();
+    if(!canEditLayout()||!details.custom.includes(id))return;
+    if(!clear&&!validAlias(value)){layoutMessage="Use 1–32 printable characters for the local label.";syncLayout();return;}
+    if(clear)delete details.customAliases[id];else details.customAliases[id]=value;
+    aliasInputKey="";clearLayoutDrag();layoutMessage="Local label changed. Save to retain it.";applyLayout();syncLayout();
   }
   function changeCustomColumns(){
     const control=get("customColumns"),value=control.value;
@@ -500,7 +520,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if(!customMapped(id)||details.custom.includes(id)||details.custom.length>=8)return;
       details.custom.push(id);
     }else if(action==="remove"){
-      if(index<0)return;details.custom=details.custom.filter(x=>x!==id);
+      if(index<0)return;details.custom=details.custom.filter(x=>x!==id);delete details.customAliases[id];
     }else if(action==="up"||action==="down"){
       const next=index+(action==="up"?-1:1);
       if(index<0||next<0||next>=chosen.length)return;
@@ -595,7 +615,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         get("layoutPanel").replaceChildren();
       }
       if(!caps&&gridOptionsKey){gridOptionsKey="";get("gridControl").replaceChildren();}
-      if(!caps&&customOptionsKey){customOptionsKey="";get("customAddChoice").replaceChildren();get("customChoice").replaceChildren();}
+      if(!caps&&customOptionsKey){customOptionsKey="";aliasInputKey="";get("customAlias").value="";get("customAddChoice").replaceChildren();get("customChoice").replaceChildren();}
       if(!caps&&sliderOptionsKey){sliderOptionsKey="";sliderValueKey="";get("sliderChoice").replaceChildren();}
       return;
     }
@@ -857,7 +877,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("mappingStatus").textContent=!caps?"":mappingRows?"Shared by the Mac. MIDI output is not confirmed by this display.":groupNeutralHandshake&&mappingLabels.size?"Custom control labels shared. MIDI addresses remain hidden.":"Mapping details hidden by the Mac.";
     get("mappingDetails").textContent=mappingRows?mappingRows.map(r=>labelFor(r[0])+" · "+targetText(r)).join("\n"):groupNeutralHandshake?[...mappingLabels.keys()].map(labelFor).join("\n"):"";
     for(let i=0;i<8;i++){
-      const r=targets(9+i);get("drum"+i).textContent=labelFor(9+i)+(r.length===1?" · "+targetText(r[0]):r.length>1?" · "+r.length+" targets":"");
+      const r=targets(9+i),alias=localAlias("d"+i),original=labelFor(9+i);
+      const button=get("drum"+i);
+      button.textContent=(alias||original)+(r.length===1?" · "+targetText(r[0]):r.length>1?" · "+r.length+" targets":"");
+      button.setAttribute("aria-label",alias?alias+" · "+original:button.textContent);
     }
   }
   function clearMapping(){
@@ -1126,7 +1149,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       get("pedalCell"+i).hidden=!has("pedals",i);
       b.disabled=!admitted||!pedalEnabled||!has("pedals",i)||pedalEmergency;
       const hold=isHoldPedal(i);
-      b.textContent=(groupNeutralHandshake&&mappingLabels.has(43+i)?mappingLabels.get(43+i)+" · ":"")+(hold?(active?"Held":"Hold to activate"):i<3?(active?"Release":"Activate"):(active?"On":"Off"));
+      const alias=localAlias("p"+i);
+      b.textContent=(alias?alias+" · ":groupNeutralHandshake&&mappingLabels.has(43+i)?mappingLabels.get(43+i)+" · ":"")+(hold?(active?"Held":"Hold to activate"):i<3?(active?"Release":"Activate"):(active?"On":"Off"));
       b.setAttribute("data-hold",String(hold));
       b.setAttribute("aria-pressed",String(active));
     });
@@ -1531,6 +1555,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("panelSize").addEventListener("change",()=>changePanelDetail("sizes"));
   get("panelColumns").addEventListener("change",()=>changePanelDetail("columns"));
   get("customColumns").addEventListener("change",changeCustomColumns);
+  get("customAliasApply").addEventListener("click",()=>changeCustomAlias(false));
+  get("customAliasClear").addEventListener("click",()=>changeCustomAlias(true));
   get("gridControl").addEventListener("change",()=>syncGridEditor(Boolean(canEditLayout())));
   for(const [id,action] of [["customAdd","add"],["customRemove","remove"],["customUp","up"],["customDown","down"]])get(id).addEventListener("click",()=>changeCustom(action));
   for(const id of ["customAddChoice","customChoice"])get(id).addEventListener("change",()=>syncCustomEditor(Boolean(canEditLayout())));
