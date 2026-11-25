@@ -526,10 +526,20 @@ public struct PerformanceGroupGamepadSession: Sendable {
     /// Host must call at the existing watchdog cadence. No change to the
     /// physical deadline, and no timeout renewal by unrelated controllers.
     public mutating func expire(now: Double, send: (PerformanceGroupCommand) -> Bool) -> [PerformanceGroupDelivery.Report] {
+        expire(now:now,removingRemote:[:],send:send)
+    }
+
+    /// Combine known disconnects with watchdog expiry before reconciling
+    /// shared targets; never briefly restore another departing owner.
+    public mutating func expire(now:Double,removingRemote tokens:[SensorSource:UUID],
+                                send:(PerformanceGroupCommand)->Bool) -> [PerformanceGroupDelivery.Report] {
         guard !retired else { return [] }
         guard now.isFinite, now >= clock else { return reset(Set(bindings.keys),send:send) }
         clock = now
-        return reset(staleSources(now:now),send:send)
+        let departing = Set(tokens.compactMap { source,token in
+            matchesRemoteBinding(source,token:token) ? source : nil
+        })
+        return reset(staleSources(now:now).union(departing),send:send)
     }
 
     /// Actual unplug or deliberate detach retires the binding token; a new
