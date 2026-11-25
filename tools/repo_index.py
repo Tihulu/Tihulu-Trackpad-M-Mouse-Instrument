@@ -321,7 +321,12 @@ def search(args):
         model, identity = model_for(args.model_dir)
         if identity != meta["model_sha256"]:
             raise ValueError("Embedding model differs from index")
-        query = normalized(model.encode([args.query], show_progress_bar=False, convert_to_numpy=True)[0])
+        if len(model.tokenizer.encode(args.query, add_special_tokens=True, truncation=False)) > int(model.max_seq_length) - 16:
+            raise ValueError("Query exceeds embedding model context")
+        vectors = model.encode([args.query], show_progress_bar=False, convert_to_numpy=True)
+        if len(vectors) != 1:
+            raise ValueError("Query embedding count mismatch")
+        query = normalized(vectors[0])
         if fingerprint(args.model_dir)[1] != identity:
             raise ValueError("Model changed during query")
         if len(query) != meta["dimension"]:
