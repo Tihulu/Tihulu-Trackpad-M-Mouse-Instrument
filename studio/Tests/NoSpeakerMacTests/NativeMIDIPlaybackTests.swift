@@ -203,4 +203,44 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     #expect(!player.lifecycle.running && player.lifecycle.sourceOpen)
     #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
 }
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackStopBeforeRunCannotMaskLostIdentity() async throws {
+    let player=try NativeMIDIPlayback(clip:nativePlaybackClip())
+    try player.open()
+    let source=try NativeMIDIMonitor.resolve(name:player.sourceName)
+    defer {
+        _=MIDIEndpointDispose(source)
+        MIDIProcessClient.shared.unregisterIsolatedSource(source)
+    }
+    player.requestStop()
+    try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,("TIHULU cancelled fixture "+UUID().uuidString) as CFString)==noErr)
+    await #expect(throws:NativeMIDIPlayback.Failure.self) { _=try await player.run() }
+    #expect(player.lifecycle.state=="faulted")
+    #expect(player.lifecycle.identityRetired && player.lifecycle.recoveryRequired)
+    #expect(player.lifecycle.outstandingNotes==0 && !player.lifecycle.running)
+    #expect(throws:NativeMIDIPlayback.Failure.self) { _=try player.retryCleanup() }
+    #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
+}
+
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackEmptyLedgerRetryStillChecksIdentity() async throws {
+    let player=try NativeMIDIPlayback(clip:nativePlaybackClip())
+    try player.open()
+    let source=try NativeMIDIMonitor.resolve(name:player.sourceName)
+    defer {
+        _=MIDIEndpointDispose(source)
+        MIDIProcessClient.shared.unregisterIsolatedSource(source)
+    }
+    player.requestStop()
+    let report=try await player.run()
+    #expect(report.state=="stopped" && report.cleanupConfirmed)
+    try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,("TIHULU cleanup fixture "+UUID().uuidString) as CFString)==noErr)
+    #expect(throws:NativeMIDIPlayback.Failure.self) { _=try player.retryCleanup() }
+    #expect(player.lifecycle.identityRetired && player.lifecycle.recoveryRequired)
+    try #require(MIDIObjectSetStringProperty(source,kMIDIPropertyName,player.sourceName as CFString)==noErr)
+    #expect(throws:NativeMIDIPlayback.Failure.self) { _=try player.retryCleanup() }
+    #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
+}
 #endif

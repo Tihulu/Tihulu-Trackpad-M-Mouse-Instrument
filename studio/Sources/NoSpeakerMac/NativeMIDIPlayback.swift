@@ -99,13 +99,15 @@ public final class NativeMIDIPlayback {
         // Capture the identity gate separately from the mutable playback ledger.
         let gate=IdentityGate(source:source,id:id,name:name,retired:identityRetired)
         defer { identityRetired=gate.retired;wasCancelled=wasCancelled || stopRequested || Task.isCancelled }
-        if stopRequested || Task.isCancelled {
-            player.stop { gate.send($0) }
-            return report(cancelled:true)
-        }
+        // Validate even when a stop was requested before the first note.
+        // Cancellation must not disguise a retired source as a clean stop.
         guard gate.validate() else {
             player.abort { gate.send($0) }
             throw Failure.sourceIdentityLost
+        }
+        if stopRequested || Task.isCancelled {
+            player.stop { gate.send($0) }
+            return report(cancelled:true)
         }
         _=try player.begin(now:Self.now())
         while player.state == .playing {
@@ -145,6 +147,10 @@ public final class NativeMIDIPlayback {
               player.state != .playing else { throw Failure.invalidLifecycle }
         let gate=IdentityGate(source:endpoint,id:sourceID,name:sourceName,retired:identityRetired)
         defer { identityRetired=gate.retired }
+        // An empty note ledger is not evidence that the endpoint still
+        // belongs to this session. Do not report successful recovery
+        // against a retired or replaced source.
+        guard gate.validate() else { throw Failure.sourceIdentityLost }
         player.retryCleanup { gate.send($0) }
         return report(cancelled:wasCancelled)
     }
