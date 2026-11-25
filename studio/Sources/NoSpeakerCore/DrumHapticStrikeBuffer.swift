@@ -13,17 +13,21 @@ public struct DrumHapticStrikeBuffer: Sendable {
     public init() {}
     public var hasPending: Bool { !pending.isEmpty }
 
+    @discardableResult
     public mutating func receive(contacts: [String], now: Double,
-                                 makeFrame: (String) -> HapticFrame?) {
-        guard now.isFinite, now >= 0 else { return }
+                                 makeFrame: (String) -> HapticFrame?) -> Int {
+        guard now.isFinite, now >= 0 else { return 0 }
         prune(now:now)
         var next: Set<String> = []
+        var accepted = 0
         for id in contacts where next.insert(id).inserted {
             guard !down.contains(id), let frame = makeFrame(id) else { continue }
             if pending.count == Self.capacity { pending.removeFirst() }
             pending.append(.init(frame:frame,time:now))
+            accepted += 1
         }
         down = next
+        return accepted
     }
 
     private mutating func prune(now: Double) {
