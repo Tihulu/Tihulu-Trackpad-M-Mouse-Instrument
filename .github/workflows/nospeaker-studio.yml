@@ -41,10 +41,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-')) && github.event.pull_request.head.sha || github.sha }}
       - name: Record and verify checkout provenance
+        id: provenance
         env:
-          EXPECTED_SHA: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_SHA: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-')) && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
@@ -69,10 +70,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-')) && github.event.pull_request.head.sha || github.sha }}
       - name: Record and verify checkout provenance
+        id: provenance
         env:
-          EXPECTED_SHA: ${{ github.head_ref == 'qa/app-sdk-integration-20261125' && github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_SHA: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-')) && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
@@ -169,7 +171,9 @@ jobs:
           python3 ../tools/test_repo_index.py
           swift run --package-path ../examples/EngineConsumer engine-consumer
       - name: Compile experimental group MPE and remote gates (no execution or packaging)
-        if: github.event_name == 'pull_request' && (github.head_ref == 'feature/group-gamepad-adapter' || github.head_ref == 'qa/app-sdk-integration-20261125')
+        # Compile-only evidence remains useful even when a native fixture
+        # failed. The job still fails and packaging/upload stay success-gated.
+        if: ${{ !cancelled() && steps.provenance.outcome == 'success' && github.event_name == 'pull_request' && (github.head_ref == 'feature/group-gamepad-adapter' || (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-'))) }}
         run: |
           set -euo pipefail
           scratch="$(mktemp -d "$RUNNER_TEMP/group-mpe-build.XXXXXX")"
@@ -221,7 +225,7 @@ jobs:
           shasum -a 256 Tihulu-0.3.0-preview.dmg > PREVIEW-SHA256SUMS
           cd ..
           ./scripts/verify-preview-dmg.sh dist/Tihulu-0.3.0-preview.dmg dist/PREVIEW-SHA256SUMS "$TIHULU_CHECKOUT_SHA"
-          printf 'checkout_sha=%s\nhead_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$TIHULU_CHECKOUT_SHA" "$PREVIEW_HEAD_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > dist/PREVIEW-PROVENANCE.txt
+          printf 'checkout_sha=%s\ncheckout_tree=%s\nhead_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$TIHULU_CHECKOUT_SHA" "$(git rev-parse HEAD^{tree})" "$PREVIEW_HEAD_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > dist/PREVIEW-PROVENANCE.txt
       - name: Upload preview DMG without publishing a release
         if: github.ref != 'refs/heads/main'
         uses: actions/upload-artifact@v4
