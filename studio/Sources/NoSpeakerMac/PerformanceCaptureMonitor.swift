@@ -119,6 +119,8 @@ public enum CapturePhysicalInput:Equatable,Sendable {
 public struct CapturePhysicalInputBatch:Sendable {
     public let events:[CapturePhysicalInput]
     public let invalidated:Bool
+    public let epoch:UInt64
+    public let oldestReceipt:Double?
 }
 
 /// One notification until drained. Edge order is preserved; consecutive
@@ -126,13 +128,20 @@ public struct CapturePhysicalInputBatch:Sendable {
 /// and disarms physical sustain until a fresh click after the drain.
 struct CapturePhysicalMailbox {
     static let capacity = 32
+    static let maximumAge:Double = 0.1
+    private var oldestReceipt:Double?
+    private var lastReceipt:Double?
+    private(set) var epoch:UInt64 = 0
     private var events:[CapturePhysicalInput] = []
     private var invalidated = false
     private var pending = false
     private(set) var coalesced:UInt64 = 0
     private(set) var overflows:UInt64 = 0
-    mutating func append(_ event:CapturePhysicalInput) -> Bool {
+    mutating func append(_ event:CapturePhysicalInput,now:Double = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard now.isFinite,now >= 0,lastReceipt.map({ now >= $0 }) ?? true else { return invalidate() }
+        lastReceipt = now
         if !invalidated {
+            if oldestReceipt == nil { oldestReceipt = now }
             if case .pressure = event, case .pressure? = events.last {
                 events[events.count-1] = event
                 if coalesced < UInt64.max { coalesced += 1 }
@@ -141,6 +150,7 @@ struct CapturePhysicalMailbox {
             } else {
                 events.removeAll(keepingCapacity:true)
                 invalidated = true
+                epoch &+= 1
                 if overflows < UInt64.max { overflows += 1 }
             }
         }
@@ -149,6 +159,8 @@ struct CapturePhysicalMailbox {
     mutating func invalidate() -> Bool {
         events.removeAll(keepingCapacity:true)
         invalidated = true
+        epoch &+= 1
+        oldestReceipt = nil
         return notify()
     }
     private mutating func notify() -> Bool {
@@ -156,12 +168,22 @@ struct CapturePhysicalMailbox {
         pending = true
         return true
     }
-    mutating func drain() -> CapturePhysicalInputBatch {
-        let batch = CapturePhysicalInputBatch(events:events,invalidated:invalidated)
+    mutating func drain(now:Double = ProcessInfo.processInfo.systemUptime) -> CapturePhysicalInputBatch {
+        if !now.isFinite || now < 0 || lastReceipt.map({ now < $0 }) == true ||
+            oldestReceipt.map({ now-$0 >= Self.maximumAge }) == true {
+            _ = invalidate()
+        }
+        let batch = CapturePhysicalInputBatch(events:events,invalidated:invalidated,epoch:epoch,oldestReceipt:oldestReceipt)
         events.removeAll(keepingCapacity:true)
+        oldestReceipt = nil
         invalidated = false
         pending = false
         return batch
+    }
+    func accepts(_ batch:CapturePhysicalInputBatch,now:Double) -> Bool {
+        guard !invalidated,!batch.invalidated,batch.epoch == epoch,now.isFinite,now >= 0,
+              let receipt = batch.oldestReceipt else { return false }
+        return now >= receipt && now-receipt < Self.maximumAge
     }
 }
 
@@ -288,6 +310,10 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return physicalMailbox.drain()
     }
+    public func acceptsPhysicalInput(_ batch:CapturePhysicalInputBatch) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return listening && !stopped && physicalMailbox.accepts(batch,now:ProcessInfo.processInfo.systemUptime)
+    }
     public var onMonitorFailed: (@Sendable () -> Void)?
     public var onMonitorRecovered: (@Sendable () -> Void)?
 
@@ -303,8 +329,8 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
     public func setCaptureHotkeyEnabled(_ enabled: Bool) {
         lock.lock()
-        captureHotkeyEnabled = enabled
-        if !enabled { captured = false }
+        captureHotkeyEnabled = enabled && !stopped
+        if !captureHotkeyEnabled { captured = false }
         lock.unlock()
         if !enabled { onCaptureChanged?(false) }
     }
@@ -467,8 +493,12 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         CFRunLoopRemoveSource(loop, source, CFRunLoopMode.commonModes)
         CFMachPortInvalidate(port)
         lock.lock()
+        var notifyExit = false
+        var notifyPhysical = false
         if generation == inputGeneration {
             let unexpectedExit = listening
+            notifyExit = unexpectedExit
+            notifyPhysical = physicalMailbox.invalidate()
             inputRunLoop = nil
             inputThread = nil
             eventTap = nil
@@ -481,6 +511,8 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             if unexpectedExit { lastEventTapStatus = "Dedicated event loop exited" }
         }
         lock.unlock()
+        if notifyPhysical { onPhysicalInputAvailable?() }
+        if notifyExit { onCaptureChanged?(false); onMonitorFailed?() }
     }
 
     public func stop() {
@@ -592,15 +624,19 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
                                          matches:shortcut.matches(event),armed:listening && captureHotkeyEnabled,
                                          captured:captured)
             var changed: Bool?
+            var invalidateSignal = false
             if action == .toggle {
                 shortcutMatches &+= 1
                 captured.toggle()
                 changed = captured
             } else if action == .panic {
                 captured = false
+                captureHotkeyEnabled = false
+                invalidateSignal = physicalMailbox.invalidate()
                 changed = false
             }
             lock.unlock()
+            if invalidateSignal { onPhysicalInputAvailable?() }
             if let changed { onCaptureChanged?(changed) }
             if action == .panic { onPanic?() }
             if action != .pass { return nil }

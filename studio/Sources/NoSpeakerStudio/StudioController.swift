@@ -4129,6 +4129,10 @@ final class StudioController: ObservableObject {
                 }
                 for event in batch.events {
                     guard self.captureGeneration == generation else { return }
+                    guard monitor.acceptsPhysicalInput(batch) else {
+                        self.invalidatePhysicalClickState()
+                        return
+                    }
                     switch event {
                     case .click(let down,let pressure): self.handlePhysicalClick(down,pressure:pressure)
                     case .pressure(let pressure): self.handlePhysicalPressure(pressure)

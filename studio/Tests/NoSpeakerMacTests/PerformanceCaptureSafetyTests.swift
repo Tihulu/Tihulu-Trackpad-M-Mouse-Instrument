@@ -142,6 +142,37 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
         XCTAssertFalse(monitor.diagnosticSnapshot().eventTapCreated)
     }
 
+    func testPhysicalMailboxOldClickCannotBeRefreshedByNewPressure() {
+        var mailbox = CapturePhysicalMailbox()
+        XCTAssertTrue(mailbox.append(.click(true,0.5),now:1))
+        XCTAssertFalse(mailbox.append(.pressure(0.7),now:1.09))
+        let batch = mailbox.drain(now:1.101)
+        XCTAssertTrue(batch.invalidated)
+        XCTAssertTrue(batch.events.isEmpty)
+        XCTAssertTrue(mailbox.append(.click(false,0),now:1.11))
+        XCTAssertFalse(mailbox.drain(now:1.12).invalidated)
+    }
+
+    func testPhysicalMailboxDrainedBatchCannotSurviveInvalidationOrExpiry() {
+        var mailbox = CapturePhysicalMailbox()
+        _ = mailbox.append(.click(true,0.5),now:2)
+        let batch = mailbox.drain(now:2.01)
+        XCTAssertTrue(mailbox.accepts(batch,now:2.02))
+        XCTAssertFalse(mailbox.accepts(batch,now:2.11))
+        _ = mailbox.invalidate()
+        _ = mailbox.drain(now:2.03)
+        XCTAssertFalse(mailbox.accepts(batch,now:2.04))
+    }
+
+    func testPhysicalMailboxInvalidAndReversedReceiptFailOpen() {
+        var mailbox = CapturePhysicalMailbox()
+        _ = mailbox.append(.click(true,0.5),now:3)
+        _ = mailbox.append(.click(false,0),now:2.99)
+        XCTAssertTrue(mailbox.drain(now:3.01).invalidated)
+        _ = mailbox.append(.click(true,0.5),now:3.02)
+        XCTAssertTrue(mailbox.drain(now:.nan).invalidated)
+    }
+
     func testCapturePhysicalMailboxTimeoutDiscardsAlreadyQueuedEdges() {
         var mailbox = CapturePhysicalMailbox()
         XCTAssertTrue(mailbox.append(.click(true,0.5)))
