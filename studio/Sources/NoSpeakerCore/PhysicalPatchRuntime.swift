@@ -21,6 +21,14 @@ public struct PhysicalPatchRuntime: Sendable {
     private var sessions: [SensorSource: UUID] = [:]
     private var seen: [SensorSource: Double] = [:]
     private var gamepadArmed:Set<SensorSource> = []
+    private var gamepadMappedSignals: [SensorSource:[SensorSignal]] = [:]
+    private var gamepadSmoothedSources: Set<SensorSource> = []
+    private var lastGamepadActive: [SensorSource:[SensorSignal:Double]] = [:]
+    public private(set) var gamepadSnapshotMetrics = GamepadSnapshotMetrics()
+
+    public mutating func resetGamepadSnapshotMetrics() {
+        gamepadSnapshotMetrics = GamepadSnapshotMetrics()
+    }
     public var reservedGamepadSessions:Int { supported.intersection(GamepadFrame.sources).count }
     public var remoteSessionLimit:Int { Self.maximumRemoteSessions-reservedGamepadSessions }
     private var sequence: UInt64 = 0
@@ -149,6 +157,18 @@ public struct PhysicalPatchRuntime: Sendable {
         pairing.clear()
         seen = [:]
         gamepadArmed = []
+        gamepadMappedSignals = [:]
+        gamepadSmoothedSources = []
+        lastGamepadActive = [:]
+        resetGamepadSnapshotMetrics()
+        for source in supported.intersection(GamepadFrame.sources) {
+            let routes = patch.routes.filter { $0.source == source }
+            let signals = Set(routes.map(\.signal))
+            gamepadMappedSignals[source] = GamepadFrame.signals.filter { signals.contains($0) }
+            if routes.contains(where:{ ($0.response?.smoothingMS ?? 0) > 0 }) {
+                gamepadSmoothedSources.insert(source)
+            }
+        }
         sequence = 0
     }
 
@@ -240,18 +260,31 @@ public struct PhysicalPatchRuntime: Sendable {
             sessions[source] = try? router.connect(source,now:now)
         }
         guard let session = sessions[source] else { return [] }
+        router.heartbeat(session,now:now)
+        // Duplicate callback/poll snapshots must still renew the lease.
+        // Smoothing is time-based and must continue receiving held samples.
+        if !gamepadSmoothedSources.contains(source), lastGamepadActive[source] == frame.active {
+            gamepadSnapshotMetrics.record(skipped:true,events:0)
+            return []
+        }
+        lastGamepadActive[source] = frame.active
         var events:[SensorEvent] = []
-        for signal in GamepadFrame.signals {
-            guard let value = frame.active[signal] else { continue }
+        var releasing: Set<SensorSignal> = []
+        for signal in gamepadMappedSignals[source] ?? [] {
+            guard let value = frame.active[signal] else {
+                releasing.insert(signal)
+                continue
+            }
             sequence &+= 1
             events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:now))
         }
-        router.heartbeat(session,now:now)
-        return router.ingestFrame(session:session,releasing:Set(GamepadFrame.signals).subtracting(frame.active.keys),events:events,now:now)
+        gamepadSnapshotMetrics.record(skipped:false,events:events.count)
+        return router.ingestFrame(session:session,releasing:releasing,events:events,now:now)
     }
     public mutating func releaseGamepad(_ source:SensorSource) -> [SensorCommand] {
         guard GamepadFrame.sources.contains(source) else { return [] }
         gamepadArmed.remove(source); seen.removeValue(forKey:source)
+        lastGamepadActive.removeValue(forKey:source)
         return disconnect(source)
     }
 
@@ -685,7 +718,10 @@ public struct PhysicalPatchRuntime: Sendable {
         }.sorted { $0.rawValue < $1.rawValue }
         var removed: Set<UUID> = []
         for source in stale {
-            if GamepadFrame.sources.contains(source) { gamepadArmed.remove(source); seen.removeValue(forKey:source) }
+            if GamepadFrame.sources.contains(source) {
+                gamepadArmed.remove(source); seen.removeValue(forKey:source)
+                lastGamepadActive.removeValue(forKey:source)
+            }
             if let id = sessions.removeValue(forKey:source) { removed.insert(id) }
         }
         let expiredPeers = remotePeers.filter { $0.value.expired(now:now) }.map(\.key)
@@ -729,6 +765,9 @@ public struct PhysicalPatchRuntime: Sendable {
         hybridSource = nil; hybridInputs = []; hybridSession = nil; hybridReceipt = nil
         seen = [:]
         gamepadArmed = []
+        gamepadMappedSignals = [:]
+        gamepadSmoothedSources = []
+        lastGamepadActive = [:]
         supported = []
         motionSources = []
         touchSources = []
