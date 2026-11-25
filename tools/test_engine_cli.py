@@ -113,6 +113,29 @@ def main(binary):
         assert all(e["cc"] == 64 for e in pedal["events"])
         frames.write_text(json.dumps([{"owner":"helper","channels":[16]}]))
         run(binary, "sustain", "simulate", frames, success=False)
+        target = {"kind":"controlChange","channel":0,"number":7}
+        touch = {"target":target,"value":35,"neutral":127}
+        helper = {"target":target,"value":48,"neutral":127,"preserveOnRelease":True}
+        frames.write_text(json.dumps([
+            {"owner":"touch","controls":[touch]},
+            {"owner":"helper","controls":[helper]},
+            {"owner":"touch","controls":[]},
+            {"owner":"helper","controls":[]}]))
+        controls = run(binary, "helper", "simulate", frames)["events"]
+        assert [(e["step"],e["value"]) for e in controls] == [(0,35),(2,48)]
+        assert controls[-1]["preserveOnRelease"] is True
+        bend = {"target":{"kind":"pitchBend","channel":2,"number":0},
+                "value":9000,"neutral":8192,"bendRange":12}
+        frames.write_text(json.dumps([{"owner":"helper","controls":[bend]}]))
+        controls = run(binary, "helper", "simulate", frames)["events"]
+        assert controls[0]["bendRange"] == 12 and controls[0]["channel"] == 3
+        assert controls[-1]["value"] == 8192
+        for number in (6, 64, 101, 120):
+            invalid = {**touch,"target":{**target,"number":number}}
+            frames.write_text(json.dumps([{"owner":"helper","controls":[invalid]}]))
+            run(binary, "helper", "simulate", frames, success=False)
+        frames.write_text(json.dumps([{"owner":"helper","controls":[touch,touch]}]))
+        run(binary, "helper", "simulate", frames, success=False)
         run(binary, "live", "start", success=False)
     print("Engine CLI smoke tests passed.")
 
