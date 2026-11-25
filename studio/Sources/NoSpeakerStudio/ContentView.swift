@@ -906,6 +906,7 @@ private struct TouchInstrumentView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!studio.touchRunning && separateMouseMIDIChannel != nil && (!canSplitDAWChannels || separateDAWChannels == nil))
                 }
 
                 if needsFretlessMPE && !studio.touchRunning {
@@ -1130,7 +1131,7 @@ private struct TouchInstrumentView: View {
                             .font(.caption).foregroundStyle(.secondary).padding(6)
                     }
                 }
-                if configuration.hasMIDIOutput {
+                if configuration.hasMIDIOutput || separateMouseMIDIChannel != nil {
                     GroupBox("Logic Pro / DAW MIDI Out") {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 14) {
