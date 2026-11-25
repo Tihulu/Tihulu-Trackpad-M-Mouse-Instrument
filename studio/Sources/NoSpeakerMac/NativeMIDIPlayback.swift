@@ -85,6 +85,7 @@ public final class NativeMIDIPlayback {
             player.stop { gate.send($0) }
             return report(cancelled:true)
         }
+        guard gate.validate() else { throw Failure.sourceIdentityLost }
         _=try player.begin(now:Self.now())
         while player.state == .playing {
             if stopRequested || Task.isCancelled {
@@ -164,11 +165,15 @@ public final class NativeMIDIPlayback {
         init(source:MIDIEndpointRef,id:Int32,name:String,retired:Bool) {
             self.source=source;self.id=id;self.name=name;self.retired=retired
         }
-        func send(_ command:SensorCommand)->Bool {
+        func validate()->Bool {
             guard !retired,NativeMIDIPlayback.matches(source:source,id:id,name:name) else {
                 retired=true
                 return false
             }
+            return true
+        }
+        func send(_ command:SensorCommand)->Bool {
+            guard validate() else { return false }
             return NativeMIDIPlayback.send(command,source:source)
         }
     }
