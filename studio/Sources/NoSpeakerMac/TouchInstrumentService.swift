@@ -179,6 +179,15 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
 
     /// Only MIDI-routed melodic contacts require independent bend channels.
     /// Haptic-only surfaces and GM drums do not require an MPE receiver.
+    /// A conservative first split: two pitched, Standard MIDI surfaces.
+    /// Drums, MPE and shared fretless restrictions keep their existing paths.
+    public var permitsSeparateDAWSurfaceChannels: Bool {
+        surfaceSelection == .both && !fretless &&
+            selectedSurfaces.allSatisfy {
+                output(for:$0).sendsMIDI && instrument(for:$0) != .drums
+            }
+    }
+
     public func requiresPolyphonicFretlessMPE(multiTouch: Bool) -> Bool {
         multiTouch && fretless && selectedSurfaces.contains {
             instrument(for: $0) == .melodic && output(for: $0).sendsMIDI
