@@ -76,7 +76,7 @@ public struct PhysicalPatchRuntime: Sendable {
         patch.isValid && !patch.routes.isEmpty && patch.routes.allSatisfy {
             switch $0.source {
             case .trackpad, .magicMouse: return supportedSignals.contains($0.signal)
-            case .gamepad1,.gamepad2: return GamepadFrame.permits($0)
+            case .gamepad1,.gamepad2,.gamepad3,.gamepad4: return GamepadFrame.permits($0)
             case .lid: return $0.signal == .angle
             case .touchBar: return $0.signal == .x
             case .camera: return [.x,.y,.gesture,.contact].contains($0.signal) || AirDualHandPerformance.signals.contains($0.signal) || AirStrumPerformance.isStringSignal($0.signal) || AirHandsHelper.allSignals.contains($0.signal)

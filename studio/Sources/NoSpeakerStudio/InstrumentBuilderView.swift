@@ -44,7 +44,7 @@ struct InstrumentBuilderView: View {
     }
 
     private var splitGamepadAvailable: Bool {
-        gamepadHapticAvailable && Set(draft.routes.map(\.source)) == GamepadFrame.sources
+        gamepadHapticAvailable && Set(draft.routes.map(\.source)).count >= 2
     }
     private var splitGamepadValid: Bool {
         !splitGamepadOutputs || (splitGamepadAvailable &&
@@ -87,8 +87,9 @@ struct InstrumentBuilderView: View {
                     VStack(alignment:.leading,spacing:8) {
                         HStack {
                             Picker("Slot",selection:$gamepadPresetSource) {
-                                Text("Controller 1").tag(SensorSource.gamepad1)
-                                Text("Controller 2").tag(SensorSource.gamepad2)
+                                ForEach(GamepadFrame.orderedSources,id:\.self) { source in
+                                    Text(GamepadFrame.slotLabel(source)).tag(source)
+                                }
                             }
                             Picker("Role",selection:$gamepadPresetRole) {
                                 ForEach(GamepadFrame.Role.allCases) { Text($0.rawValue.capitalized).tag($0) }
@@ -317,18 +318,19 @@ struct InstrumentBuilderView: View {
                             GroupBox("Bind paired gamepads") {
                                 VStack(alignment:.leading,spacing:6) {
                                     Button("Refresh connected controllers") { studio.refreshBuilderGamepads() }
-                                    if draft.routes.contains(where:{$0.source == .gamepad1}) {
-                                        Picker("Controller 1",selection:$studio.gamepadSlot1) {
+                                    ForEach(GamepadFrame.orderedSources.filter { source in
+                                        draft.routes.contains(where:{ $0.source == source })
+                                    },id:\.self) { source in
+                                        Picker(GamepadFrame.slotLabel(source),selection:Binding(
+                                            get:{ studio.gamepadChoice(for:source) },
+                                            set:{ studio.setGamepadChoice($0,for:source) }
+                                        )) {
                                             Text("Select controller").tag(nil as UUID?)
                                             ForEach(studio.gamepadChoices) { Text($0.name).tag(Optional($0.id)) }
                                         }
                                     }
-                                    if draft.routes.contains(where:{$0.source == .gamepad2}) {
-                                        Picker("Controller 2",selection:$studio.gamepadSlot2) {
-                                            Text("Select controller").tag(nil as UUID?)
-                                            ForEach(studio.gamepadChoices) { Text($0.name).tag(Optional($0.id)) }
-                                        }
-                                    }
+                                    Text("Up to four distinct controllers. Each mapped slot reserves one of the existing 16 router sessions; remote capacity is reduced accordingly.")
+                                        .font(.caption).foregroundStyle(.secondary)
                                     Text("Pair in macOS Bluetooth settings first. Release all buttons, triggers and sticks to arm. Disconnect releases only that slot; restart to bind a replacement. Native change callbacks plus watchdog; very short physical taps still need hardware verification.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }.padding(6).disabled(studio.patchRunning)
@@ -599,12 +601,16 @@ struct InstrumentBuilderView: View {
                     }
             }
             if splitGamepadOutputs && splitGamepadAvailable {
-                Picker("Controller 1 output",selection:$gamepadOutputSelection.slot1) {
-                    ForEach(MusicalOutput.allCases) { Text($0.rawValue).tag($0) }
-                }.disabled(studio.patchRunning)
-                Picker("Controller 2 output",selection:$gamepadOutputSelection.slot2) {
-                    ForEach(MusicalOutput.allCases) { Text($0.rawValue).tag($0) }
-                }.disabled(studio.patchRunning)
+                ForEach(GamepadFrame.orderedSources.filter { source in
+                    draft.routes.contains(where:{ $0.source == source })
+                },id:\.self) { source in
+                    Picker(GamepadFrame.slotLabel(source)+" output",selection:Binding(
+                        get:{ gamepadOutputSelection.output(for:source) ?? .midi },
+                        set:{ gamepadOutputSelection.setOutput($0,for:source) }
+                    )) {
+                        ForEach(MusicalOutput.allCases) { Text($0.rawValue).tag($0) }
+                    }.disabled(studio.patchRunning)
+                }
                 if !splitGamepadValid {
                     Text("Different outputs cannot share a MIDI channel. Change one controller's channel in its mapping editor.")
                         .font(.caption).foregroundStyle(.orange)

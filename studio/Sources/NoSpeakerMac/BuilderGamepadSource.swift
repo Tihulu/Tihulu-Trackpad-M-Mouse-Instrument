@@ -27,11 +27,18 @@ import NoSpeakerCore
         return result
     }
     public func bind(required:Set<SensorSource>,slot1:UUID?,slot2:UUID?) -> Bool {
+        var choices: [SensorSource:UUID] = [:]
+        choices[.gamepad1] = slot1
+        choices[.gamepad2] = slot2
+        return bind(required:required,choices:choices)
+    }
+
+    public func bind(required:Set<SensorSource>,choices:[SensorSource:UUID]) -> Bool {
         guard bound.isEmpty else { return false }
         let connected = GCController.controllers()
         var next:[SensorSource:GCController] = [:]
         for source in required.intersection(GamepadFrame.sources) {
-            guard let id = source == .gamepad1 ? slot1 : slot2,let controller = available[id],
+            guard let id = choices[source],let controller = available[id],
                   controller.extendedGamepad != nil,connected.contains(where:{ $0 === controller }),
                   !next.values.contains(where:{ $0 === controller }) else { return false }
             next[source] = controller
