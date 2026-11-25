@@ -334,6 +334,7 @@ struct InstrumentBuilderView: View {
                             }
                         }
                         gamepadOutputPanel
+                        dawRoutingPanel
                         if AirStrumPerformance.usesStrum(draft.routes) || tunedAir {
                             Toggle("Tune Air strings from current Custom Scale (MPE)",isOn:$tunedAir)
                                 .disabled(studio.patchRunning)
@@ -530,6 +531,39 @@ struct InstrumentBuilderView: View {
             if !studio.patchPhysical { studio.stopInstrumentPatch() }
             else { studio.releaseHybridControls() }
             studio.rememberBuilderDraft(draft)
+        }
+    }
+
+    private var dawRoutingPanel: some View {
+        let rows = DAWRoutingOverview.rows(for:draft)
+        return DisclosureGroup("DAW routing · Logic track setup") {
+            VStack(alignment:.leading,spacing:6) {
+                Text(tunedAir ? "Tuned Air uses a dedicated MPE port. The rows below are logical routes, not MPE member channels." :
+                    "Standard Builder MIDI port: TIHULU Instrument Builder. These are logical routes; only enabled MIDI outputs reach the DAW.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(rows) { row in
+                    VStack(alignment:.leading,spacing:2) {
+                        Text("Channel \(row.channel+1)").font(.headline)
+                        Text("Notes: " + (row.noteSources.isEmpty ? "—" : row.noteSources.map(\.rawValue).joined(separator:", "))).font(.caption)
+                        Text("Controls: " + (row.controlSources.isEmpty ? "—" : row.controlSources.map(\.rawValue).joined(separator:", "))).font(.caption)
+                        if row.sharesNotes {
+                            Text("Shared note channel: these sources play the same receiving instrument. Separate channels for different instruments.")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
+                    }
+                }
+                if rows.isEmpty { Text("Add valid mappings first.").font(.caption) }
+                Text("In Logic, create one Software Instrument track per desired sound. Set Track Inspector MIDI Input and MIDI In Channel, record-enable each track, then test one controller at a time. Controls-only sources can intentionally share a target.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Copy logical routing summary") {
+                    let header = tunedAir ? "Logical routes only — Tuned Air MPE" : "TIHULU Instrument Builder — logical routes; check enabled MIDI outputs"
+                    let report = rows.map { row in
+                        "Ch \(row.channel+1) | notes: \(row.noteSources.map(\.rawValue).joined(separator:", ")) | controls: \(row.controlSources.map(\.rawValue).joined(separator:", "))"
+                    }.joined(separator:"\n")
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(header+"\n"+report,forType:.string)
+                }.disabled(rows.isEmpty)
+            }.padding(6)
         }
     }
 
