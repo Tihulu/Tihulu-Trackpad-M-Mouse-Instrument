@@ -1164,7 +1164,11 @@ final class StudioController: ObservableObject {
     func releasePatchInput(_ input: PatchSimulation.Input) {
         guard patchRunning, (!patchPhysical || patchHybridSource != nil),patchInputs.contains(input) else { return }
         cancelPatchPulse(input)
-        let commands = patchPhysical ? patchPhysicalRuntime.releaseHybrid(input) : patchSimulation.release(input)
+        let commands: [SensorCommand]
+        if patchPhysical { commands = patchPhysicalRuntime.releaseHybrid(input) }
+        else if GamepadFrame.sources.contains(input.source) {
+            commands = patchSimulation.liftGamepadControl(input,now:ProcessInfo.processInfo.systemUptime)
+        } else { commands = patchSimulation.release(input) }
         recordPatchCommands(commands)
     }
 
