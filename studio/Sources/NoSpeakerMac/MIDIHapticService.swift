@@ -1168,21 +1168,39 @@ public final class PerformanceGroupMIDIHost {
         groupHapticProjection = nil
     }
 
+    public static var dynamicMPEEnabled:Bool {
+        #if TIHULU_GROUP_DYNAMIC_MPE_LIVE
+        true
+        #else
+        false
+        #endif
+    }
+
     /// Only a caller owning the frozen physical controller bindings may use
     /// this entry point. The caller must provide the existing watchdog cadence.
     /// No automatic activation, device polling or handler installation here.
     public func startGamepads(profile: PerformanceGroupProfile, allowLayering: Bool = false,
                               allowSurfaces: Bool = false, allowScalars: Bool = false, allowCamera: Bool = false,
                               tuning:[UUID:PerformanceGroupTuningPlan.Specification] = [:], allowRemote:Bool = false,
-                              hapticGroups:Set<UUID> = [],allowTunedHaptics:Bool = false) throws {
+                              hapticGroups:Set<UUID> = [],allowTunedHaptics:Bool = false,
+                              dynamicMPE:Bool = false,confirmedDynamicMPE:Bool = false) throws {
         guard canStart else { throw HostError.activeOrCleanupRequired }
         // Never retune retained ports during another session's release tails
         // or silently switch a previously configured receiver to standard mode.
         guard !retainedTunedPorts, tuning.isEmpty || registeredIDs.isEmpty else {
             throw HostError.closeRequiredForTuning
         }
+        if dynamicMPE {
+            guard Self.dynamicMPEEnabled else { throw DynamicMPEActivationPlan.AdmissionError.incompatibleMode }
+            _ = try DynamicMPEActivationPlan(profile:profile,tuning:tuning,confirmed:confirmedDynamicMPE,
+                allowLayering:allowLayering,registeredIDs:registeredIDs,cleanupIDs:pendingCleanup,
+                pendingDisposalCount:pendingDisposalCount,allowSurfaces:allowSurfaces,
+                allowScalars:allowScalars,allowCamera:allowCamera,allowRemote:allowRemote,hapticGroups:hapticGroups)
+        } else if confirmedDynamicMPE {
+            throw DynamicMPEActivationPlan.AdmissionError.incompatibleMode
+        }
         var next = try PerformanceGroupGamepadSession(profile:profile,allowLayering:allowLayering,
-            allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera,tuning:tuning,allowRemote:allowRemote)
+            allowSurfaces:allowSurfaces,allowScalars:allowScalars,allowCamera:allowCamera,tuning:tuning,allowRemote:allowRemote,dynamicMPE:dynamicMPE)
         let projection:PerformanceGroupHapticProjection?
         if hapticGroups.isEmpty { projection = nil }
         else if tuning.isEmpty {
