@@ -183,6 +183,8 @@ public struct TouchInstrumentConfiguration: Sendable, Equatable {
     /// Drums, MPE and shared fretless restrictions keep their existing paths.
     public var permitsSeparateDAWSurfaceChannels: Bool {
         surfaceSelection == .both && !fretless &&
+            permitsStringMIDI(isMPE:false) && permitsMelodicMIDI(isMPE:false) &&
+            permitsPhysicalChordMIDI(isMPE:false) &&
             selectedSurfaces.allSatisfy {
                 output(for:$0).sendsMIDI && instrument(for:$0) != .drums
             }
