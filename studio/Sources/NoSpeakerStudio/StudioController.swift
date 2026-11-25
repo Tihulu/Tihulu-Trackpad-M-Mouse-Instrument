@@ -1049,7 +1049,7 @@ final class StudioController: ObservableObject {
     private var patchPadTokens: [PatchSimulation.Input: UUID] = [:]
     private var surfaceMonitorToken: UUID?
     private var surfaceInbox: OrderedTouchInbox<QueuedTouchSnapshot>?
-    private var surfaceSnapshotCursor = TouchSnapshotCursor()
+    private var surfaceSnapshotCursor = TouchPublicationCursor()
     private var helperPedalPublicationFence = TouchConsumerPublicationFence()
     private var helperEffectsPublicationFence = TouchConsumerPublicationFence()
     private var touchDispatchMetrics = TouchDispatchMetrics()
@@ -1057,7 +1057,7 @@ final class StudioController: ObservableObject {
     private var helperPreviewCadence = TouchPreviewCadence()
     // Unthrottled state for musical processing and physical-click attribution.
     private var liveTouchStates: [TouchPerformanceState] = []
-    private var liveHelperStates: [TouchPerformanceState] = []
+    private var liveHelperStates: [HelperSurfaceContact] = []
     private var clickTouchingSurfaces: Set<TouchSurfaceKind> = []
     private var clickSnapshotRevision: UInt64?
     private var clickSnapshotReceivedAt: Double?
@@ -1153,7 +1153,7 @@ final class StudioController: ObservableObject {
     @Published var touchContact = TrackpadContact()
     @Published var magicMouseOrientation = SurfaceOrientation(rawValue: UserDefaults.standard.string(forKey: "TIHULU.magicMouseOrientation") ?? "") ?? .horizontal
     @Published var touchStates: [TouchPerformanceState] = []
-    @Published var midiHelperStates: [TouchPerformanceState] = []
+    @Published var midiHelperStates: [HelperSurfaceContact] = []
     @Published var midiHelperRunning = false
     @Published var midiHelperSustainActive = false
     @Published var midiHelperTrackpadSustainActive = false
@@ -3316,6 +3316,16 @@ final class StudioController: ObservableObject {
 
     func setMagicMouseOrientation(_ newOrientation: SurfaceOrientation) {
         guard magicMouseOrientation != newOrientation else { return }
+        // Coordinates are transformed at Helper admission. Do not apply a
+        // pre-orientation queued contact to a new expressive mapping.
+        if midiHelperRunning && helperSurfaceSelection.accepts(.magicMouse) {
+            helperEffectsPublicationFence.begin(after:touch?.consumerPublicationBoundary().sequence ?? 0)
+            helperEffectsRearmGate.invalidate()
+            if helperSendToDAW {
+                midi?.resetHelperControls(assignments:helperAssignments,channel:helperTargetChannel,
+                    vibratoCC:helperVibratoCC,expressionCC:helperExpressionCC)
+            }
+        }
         magicMouseOrientation = newOrientation
         UserDefaults.standard.set(newOrientation.rawValue, forKey: "TIHULU.magicMouseOrientation")
         var updated = currentTouchConfiguration
@@ -3401,7 +3411,15 @@ final class StudioController: ObservableObject {
             guard surfaceMonitorToken == token, surfaceInbox === inbox, touchPreviewRunning else { return }
             let startedAt = ProcessInfo.processInfo.systemUptime
             guard let revision = touch?.currentSampleRevision,
-                  surfaceSnapshotCursor.accept(sample.stamp,currentRevision:revision) else {
+                  surfaceSnapshotCursor.accept(sample.stamp) else {
+                touchDispatchMetrics.reject()
+                continue
+            }
+            let mappedCurrent = sample.stamp.revision == revision
+            let helperNeeded = (helperPreviewRequested || midiHelperRunning) && helperSurfaceSelection.accepts(sample.sourceSurface)
+            // Old note maps cannot sound, but their ordered physical
+            // releases still belong to an independently running Helper.
+            guard mappedCurrent || helperNeeded else {
                 touchDispatchMetrics.reject()
                 continue
             }
@@ -3421,10 +3439,12 @@ final class StudioController: ObservableObject {
                 }
                 continue
             }
-            clickTouchingSurfaces = Set(sample.states.filter(\.isTouching).map(\.surface))
-            clickSnapshotRevision = sample.stamp.revision
-            clickSnapshotReceivedAt = sample.queuedAt
-            handleSharedSurfaceStates(sample)
+            if mappedCurrent {
+                clickTouchingSurfaces = Set(sample.helperContacts.map(\.surface))
+                clickSnapshotRevision = sample.stamp.revision
+                clickSnapshotReceivedAt = sample.queuedAt
+            }
+            handleSharedSurfaceStates(sample,admitTouch:mappedCurrent)
             touchDispatchMetrics.record(queuedAt:sample.queuedAt,startedAt:startedAt,
                 endedAt:ProcessInfo.processInfo.systemUptime)
         }
@@ -3453,14 +3473,13 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func handleSharedSurfaceStates(_ sample:QueuedTouchSnapshot) {
-        let states = sample.states
-        let instrumentStates = (instrumentPreviewRequested || touchRunning) ? states.filter {
+    private func handleSharedSurfaceStates(_ sample:QueuedTouchSnapshot,admitTouch:Bool) {
+        let instrumentStates = admitTouch && (instrumentPreviewRequested || touchRunning) ? sample.states.filter {
             currentTouchConfiguration.surfaceSelection.accepts($0.surface)
         } : nil
-        let helperStates = (helperPreviewRequested || midiHelperRunning) ? states.filter {
+        let helperStates = (helperPreviewRequested || midiHelperRunning) ? sample.helperContacts.filter {
             helperSurfaceSelection.accepts($0.surface)
-        } : nil
+        }.map { $0.oriented(magicMouseOrientation) } : nil
         // Commit both pedal intents before any note release. An owner
         // handoff in one frame must not pulse CC64 off and back on.
         let selectedSource = helperSurfaceSelection.accepts(sample.sourceSurface)
@@ -3997,13 +4016,13 @@ final class StudioController: ObservableObject {
         stopCaptureMonitorIfIdle()
     }
 
-    private func evaluateHelperSustain(_ states: [TouchPerformanceState],freshFrame:Bool) -> Bool? {
+    private func evaluateHelperSustain(_ states: [HelperSurfaceContact],freshFrame:Bool) -> Bool? {
         guard midiHelperRunning else { return nil }
         let selectedClick = helperClickFence.permits(receipt:physicalClickReceipt,
             now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false)
-        let touching = states.contains { $0.isTouching && helperSurfaceSelection.accepts($0.surface) }
+        let touching = states.contains { helperSurfaceSelection.accepts($0.surface) }
         guard helperRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:freshFrame) else { return nil }
-        let active = states.filter { $0.isTouching && helperSurfaceSelection.accepts($0.surface) && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
+        let active = states.filter { helperSurfaceSelection.accepts($0.surface) && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
         let snapshot = helperSustainState.update(
             trackpadContactSizes: active
                 .filter { $0.surface == .trackpad }
@@ -4025,23 +4044,23 @@ final class StudioController: ObservableObject {
         return helperSustained
     }
 
-    private func handleMIDIHelperStates(_ states: [TouchPerformanceState],pedalAdmitted:Bool,effectsAdmitted:Bool) {
+    private func handleMIDIHelperStates(_ states: [HelperSurfaceContact],pedalAdmitted:Bool,effectsAdmitted:Bool) {
         if pedalAdmitted || !midiHelperRunning { liveHelperStates = states }
         defer {
             if helperPreviewRequested, states != midiHelperStates,
                helperPreviewCadence.permits(now:ProcessInfo.processInfo.systemUptime,cleared:states.isEmpty,
-                   contactEdge:previewContactEdge(midiHelperStates,states)) {
+                   contactEdge:midiHelperStates.map(\.id) != states.map(\.id)) {
                 midiHelperStates = states
             }
         }
         guard midiHelperRunning,effectsAdmitted else { return }
         let selectedClick = helperClickFence.permits(receipt:physicalClickReceipt,
             now:ProcessInfo.processInfo.systemUptime,selected:clickedSurface.map { helperSurfaceSelection.accepts($0) } ?? false)
-        let touching = states.contains { $0.isTouching && helperSurfaceSelection.accepts($0.surface) }
+        let touching = states.contains { helperSurfaceSelection.accepts($0.surface) }
         let effectsReady = helperEffectsRearmGate.permits(touching:touching,clicking:selectedClick,freshFrame:true)
         // This path receives accepted multitouch frames only.
         guard helperSendToDAW,effectsReady else { return }
-        let active = states.filter { $0.isTouching && helperSurfaceSelection.accepts($0.surface) && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
+        let active = states.filter { helperSurfaceSelection.accepts($0.surface) && HelperPerformancePolicy.validContact(x:$0.x,y:$0.y,size:$0.pressure) }
         // Sustain-only is a strict gate path. No pitch, CC7/11, pressure,
         // note or RPN generation from these contacts.
         guard helperAssignments.hasEffects else { return }
@@ -4412,7 +4431,7 @@ final class StudioController: ObservableObject {
 
     @discardableResult
     private func applyPhysicalPedalFrame(touchStates:[TouchPerformanceState]?,
-                                         helperStates:[TouchPerformanceState]?,
+                                         helperStates:[HelperSurfaceContact]?,
                                          freshFrame:Bool) -> MIDIHelperSustainSnapshot? {
         let touchPedal = touchRunning ? touchStates.flatMap { evaluateTouchSustain($0,freshFrame:freshFrame) } : nil
         let helperPedal = midiHelperRunning ? helperStates.flatMap { evaluateHelperSustain($0,freshFrame:freshFrame) } : nil

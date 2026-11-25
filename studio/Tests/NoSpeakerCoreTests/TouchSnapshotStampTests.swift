@@ -61,3 +61,45 @@ import Testing
     fence.reset()
     #expect(fence.permits(.init(revision:0,sequence:1),selectedSource:true))
 }
+
+@Test func physicalPublicationOrderSurvivesNoteMappingRevisionAndRejectsReplay() {
+    var cursor = TouchPublicationCursor()
+    let a = cursor.accept(.init(revision:1,sequence:10))
+    let b = cursor.accept(.init(revision:2,sequence:11))
+    let duplicate = cursor.accept(.init(revision:2,sequence:11))
+    let late = cursor.accept(.init(revision:1,sequence:9))
+    #expect(a && b && !duplicate && !late)
+    cursor.reset()
+    let restarted = cursor.accept(.init(revision:0,sequence:1))
+    #expect(restarted)
+}
+
+@Test func physicalSurfaceCacheDoesNotTreatOtherSurfaceFrameAsRelease() {
+    var raw = PhysicalSurfaceSnapshotCache<Int,Int>()
+    raw.replace(0,contacts:[11])
+    raw.replace(1,contacts:[22])
+    #expect(raw.combined(order:[0,1]) == [11,22])
+    // A musical mapping cache is reset independently.
+    var mapped = PhysicalSurfaceSnapshotCache<Int,Int>()
+    mapped.replace(0,contacts:[60])
+    mapped.reset()
+    #expect(mapped.touchingSurfaces.isEmpty)
+    #expect(raw.touchingSurfaces == [0,1])
+    raw.replace(0,contacts:[])
+    #expect(raw.combined(order:[0,1]) == [22])
+    #expect(raw.touchingSurfaces == [1])
+    raw.reset()
+    #expect(raw.touchingSurfaces.isEmpty)
+}
+
+@Test func rawHelperReleaseCanPassWhileObsoleteMusicalMapIsRejected() {
+    var physical = TouchPublicationCursor()
+    var musical = TouchSnapshotCursor()
+    let down = TouchSnapshotStamp(revision:4,sequence:1)
+    let up = TouchSnapshotStamp(revision:4,sequence:2)
+    let rawDown = physical.accept(down)
+    let noteDown = musical.accept(down,currentRevision:4)
+    let rawUp = physical.accept(up)
+    let oldNoteUp = musical.accept(up,currentRevision:5)
+    #expect(rawDown && noteDown && rawUp && !oldNoteUp)
+}

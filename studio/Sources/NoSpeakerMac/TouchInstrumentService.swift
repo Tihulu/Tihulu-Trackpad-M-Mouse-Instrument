@@ -326,8 +326,31 @@ public struct TouchPerformanceState: Sendable, Equatable, Identifiable {
     }
 }
 
+/// A physical Helper contact has no note, trigger, chord or scale identity.
+public struct HelperSurfaceContact: Sendable, Equatable, Identifiable {
+    public let contactID:Int
+    public let surface:TouchSurfaceKind
+    public let x,y,pressure:Double
+    public var id:String { "\(surface.rawValue)-\(contactID)" }
+    public init?(contactID:Int,surface:TouchSurfaceKind,x:Double,y:Double,pressure:Double) {
+        guard let sample = TouchSampleDomain.normalize(x:x,y:y,pressure:pressure) else { return nil }
+        self.contactID = contactID; self.surface = surface
+        self.x = sample.x; self.y = sample.y; self.pressure = sample.pressure
+    }
+    private init(contactID:Int,surface:TouchSurfaceKind,orientedX:Double,orientedY:Double,pressure:Double) {
+        self.contactID = contactID; self.surface = surface
+        self.x = orientedX; self.y = orientedY; self.pressure = pressure
+    }
+    public func oriented(_ orientation:SurfaceOrientation) -> Self {
+        guard surface == .magicMouse else { return self }
+        let (x,y) = orientation.transformed(x:self.x,y:self.y)
+        return .init(contactID:contactID,surface:surface,orientedX:x,orientedY:y,pressure:pressure)
+    }
+}
+
 public struct QueuedTouchSnapshot: Sendable {
     public let states: [TouchPerformanceState]
+    public let helperContacts: [HelperSurfaceContact]
     public let stamp: TouchSnapshotStamp
     public let sourceSurface: TouchSurfaceKind
     public let queuedAt: Double
@@ -353,6 +376,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var queuedInbox: OrderedTouchInbox<QueuedTouchSnapshot>?
     private var queuedReady: (@Sendable () -> Void)?
     private var latestStatesBySurface: [TouchSurfaceKind: [TouchPerformanceState]] = [:]
+    private var helperContactCache = PhysicalSurfaceSnapshotCache<TouchSurfaceKind,HelperSurfaceContact>()
     private var liveHapticStates: [TouchPerformanceState] = []
     private var sustainedHapticStates = HapticSustainVoices<TouchPerformanceState>()
     private var sustainActive = false
@@ -437,6 +461,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 queuedInbox = nil
                 queuedReady = nil
                 latestStatesBySurface.removeAll()
+                helperContactCache.reset()
             }
             lock.unlock()
             throw error
@@ -493,7 +518,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     /// the same lock as publication. No global revision/cache invalidation.
     public func consumerPublicationBoundary() -> (sequence:UInt64,touching:Set<TouchSurfaceKind>) {
         lock.lock(); defer { lock.unlock() }
-        return (publicationSequence,Set(latestStatesBySurface.filter { $0.value.contains(where: { $0.isTouching }) }.keys))
+        return (publicationSequence,helperContactCache.touchingSurfaces)
     }
 
     public func invalidatePendingSamples() {
@@ -574,6 +599,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         queuedInbox = nil
         queuedReady = nil
         latestStatesBySurface.removeAll()
+        helperContactCache.reset()
         lock.unlock()
         driver.stopSurfaceMonitoring()
     }
@@ -691,6 +717,13 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lastFrameBySurface[frame.surface] = frameID
         publicationSequence &+= 1
         let stamp = TouchSnapshotStamp(revision:revision,sequence:publicationSequence)
+        let physical = frame.contacts.compactMap { contact -> HelperSurfaceContact? in
+            guard contact.surface == frame.surface,contact.isDown else { return nil }
+            return HelperSurfaceContact(contactID:contact.id,surface:contact.surface,
+                x:Double(contact.x),y:Double(contact.y),pressure:Double(contact.size))
+        }
+        helperContactCache.replace(frame.surface,contacts:physical)
+        let helperContacts = helperContactCache.combined(order:TouchSurfaceKind.allCases)
         if instrument == .drums && config.drumLayout.isGrid {
             let previous = gridDrumNotes[frame.surface] ?? [:]
             var next: [Int: Int] = [:]
@@ -726,7 +759,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         // A preview is never a percussion trigger.
         guard isActive && active else {
             let inbox = queuedInbox, notify = queuedReady
-            let ready = inbox?.submit(.init(states:combined,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
+            let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
             lock.unlock()
             if inbox != nil { if ready { notify?() } }
             else { callback?(combined,stamp) }
@@ -770,7 +803,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             }
         }
         let inbox = queuedInbox, notify = queuedReady
-        let ready = inbox?.submit(.init(states:combined,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
+        let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
         lock.unlock()
         if inbox != nil { if ready { notify?() } }
         else { callback?(combined,stamp) }

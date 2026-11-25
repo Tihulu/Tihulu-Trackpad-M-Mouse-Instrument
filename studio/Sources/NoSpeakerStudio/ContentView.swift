@@ -2104,7 +2104,7 @@ private struct MIDIHelperView: View {
                                 magicMouseEnabled: $magicMouseSustainEnabled,
                                 magicMouseGesture: $magicMouseSustainGesture,
                                 magicMouseTapThreshold: $magicMouseTapThreshold,
-                                mouseContactSize: studio.midiHelperStates.filter { $0.surface == .magicMouse && $0.isTouching }.map(\.pressure).max()
+                                mouseContactSize: studio.midiHelperStates.filter { $0.surface == .magicMouse }.map(\.pressure).max()
                             )
                         }
 
@@ -2421,7 +2421,7 @@ private struct CaptureSettingsPanel: View {
 }
 
 private struct HelperSurfaceMap: View {
-    let states: [TouchPerformanceState]
+    let states: [HelperSurfaceContact]
     let assignments: MIDIHelperAssignments
     let surfaceSelection: TouchSurfaceSelection
     let active: Bool

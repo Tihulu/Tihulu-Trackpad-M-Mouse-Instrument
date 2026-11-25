@@ -231,4 +231,15 @@ import NoSpeakerCore
     #expect(live.fixedVelocity == 81)
     #expect(live.requiresSampleInvalidation(comparedTo:armed))
 }
+
+@Test func helperPhysicalContactIsIndependentOfMusicalMapping() throws {
+    let mouse = try #require(HelperSurfaceContact(contactID:7,surface:.magicMouse,x:0.25,y:0.75,pressure:0.6))
+    let vertical = mouse.oriented(.vertical)
+    #expect(vertical.id == mouse.id)
+    #expect(vertical.x == 0.75 && vertical.y == 0.75 && vertical.pressure == 0.6)
+    let pad = try #require(HelperSurfaceContact(contactID:7,surface:.trackpad,x:0.25,y:0.75,pressure:0.6))
+    #expect(pad.oriented(.vertical) == pad)
+    #expect(pad.id != mouse.id)
+    #expect(HelperSurfaceContact(contactID:8,surface:.magicMouse,x:.nan,y:0.5,pressure:0.5) == nil)
+}
 #endif
