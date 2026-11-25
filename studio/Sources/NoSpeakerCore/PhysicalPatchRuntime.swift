@@ -211,12 +211,19 @@ public struct PhysicalPatchRuntime: Sendable {
         return []
     }
 
+    /// Shared admission policy for a local receipt and the actual
+    /// processing instant. A batch-start timestamp is not sufficient
+    /// after earlier synchronous MIDI sends have consumed time.
+    public static func admitsPhysicalReceipt(_ hostTime:Double,now:Double)->Bool {
+        hostTime.isFinite && now.isFinite && hostTime>=0 && now>=hostTime && now-hostTime<Self.timeout
+    }
+
     /// hostTime is local receipt time, not the undocumented driver timestamp.
     /// An empty frame or invalid sample releases the entire physical source.
     public mutating func receive(source: SensorSource, x: Double?, y: Double?, size: Double?,
                                  hostTime: Double, now: Double) -> [SensorCommand] {
-        guard (source == .trackpad || source == .magicMouse), supported.contains(source), hostTime.isFinite, now.isFinite,
-              hostTime >= 0, hostTime <= now, now - hostTime < Self.timeout,
+        guard (source == .trackpad || source == .magicMouse), supported.contains(source),
+              Self.admitsPhysicalReceipt(hostTime,now:now),
               hostTime >= (seen[source] ?? 0) else { return [] }
         seen[source] = hostTime
         guard let x, let y, let size, [x,y,size].allSatisfy({ $0.isFinite && (0...1).contains($0) })

@@ -723,8 +723,7 @@ final class StudioController: ObservableObject {
         for sample in batch.samples {
             let source:SensorSource = sample.frame.surface == .trackpad ? .trackpad : .magicMouse
             guard groupGamepadTokens[source] != nil else { continue }
-            if !sample.time.isFinite || sample.time < 0 || sample.time > now ||
-               now-sample.time >= PhysicalPatchRuntime.timeout ||
+            if !PhysicalPatchRuntime.admitsPhysicalReceipt(sample.time,now:now) ||
                sample.frame.contacts.contains(where:{ $0.isDown && (!$0.x.isFinite || !$0.y.isFinite || !$0.size.isFinite) }) {
                 bad.insert(source)
             }
@@ -736,6 +735,13 @@ final class StudioController: ObservableObject {
             guard groupRunToken == run else { return }
             let source: SensorSource = sample.frame.surface == .trackpad ? .trackpad : .magicMouse
             guard let token = groupGamepadTokens[source] else { continue }
+            // The earlier group sends may have blocked. Retire only this
+            // expired surface; other devices and owners remain active.
+            let admissionNow=ProcessInfo.processInfo.systemUptime
+            guard PhysicalPatchRuntime.admitsPhysicalReceipt(sample.time,now:admissionNow) else {
+                retireGroupSurfaces([source],reason:"Surface input expired during processing; restart affected surface explicitly.",run:run)
+                continue
+            }
             let contact = sample.frame.contacts.lazy.filter { $0.isDown }.min { $0.id < $1.id }
             var x: Double?
             var y: Double?
@@ -747,7 +753,7 @@ final class StudioController: ObservableObject {
                 x = point.0; y = point.1; size = min(1,max(0,Double(contact.size)))
             }
             if let result = groupHost.receiveSurface(source,token:token,x:x,y:y,size:size,
-                                                    hostTime:sample.time,now:ProcessInfo.processInfo.systemUptime) {
+                                                    hostTime:sample.time,now:admissionNow) {
                 consumeGroupReports(result.reports)
             }
         }
@@ -1794,13 +1800,21 @@ final class StudioController: ObservableObject {
                                                  oldestSample:oldest)
         }
         let now = ProcessInfo.processInfo.systemUptime
-        if batch.overflow || batch.samples.contains(where: { now - $0.time >= PhysicalPatchRuntime.timeout }) {
+        if batch.overflow || batch.samples.contains(where: { !PhysicalPatchRuntime.admitsPhysicalReceipt($0.time,now:now) }) {
             stopInstrumentPatch()
             patchStatus = "Native input backlog or stale frames. Output released; restart explicitly."
             return
         }
         for sample in batch.samples {
             guard patchRunning else { return }
+            // Earlier synchronous MIDI sends may consume most of the
+            // receipt budget. Revalidate before every physical frame.
+            let admissionNow=ProcessInfo.processInfo.systemUptime
+            guard PhysicalPatchRuntime.admitsPhysicalReceipt(sample.time,now:admissionNow) else {
+                stopInstrumentPatch()
+                patchStatus = "Native input expired during processing. Output released; restart explicitly."
+                return
+            }
             let surface = sample.frame.surface
             let source: SensorSource = surface == .trackpad ? .trackpad : .magicMouse
             let contact = sample.frame.contacts.lazy.filter { $0.isDown }.min { $0.id < $1.id }
@@ -1816,11 +1830,11 @@ final class StudioController: ObservableObject {
                 size = min(1,max(0,Double(contact.size)))
             }
             let commands = patchPhysicalRuntime.receive(source: source, x: x, y: y, size: size,
-                                                        hostTime: sample.time, now: now)
+                                                        hostTime: sample.time, now: admissionNow)
             recordPatchCommands(commands)
         }
         guard patchRunning else { return }
-        drainBuilderCamera(now: now)
+        drainBuilderCamera(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
         drainBuilderRemote(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
@@ -3528,7 +3542,7 @@ final class StudioController: ObservableObject {
                 continue
             }
             // Never replay a late musical onset after a blocked main actor.
-            if startedAt - sample.queuedAt >= 0.150 {
+            if !TouchPublicationAdmission.permits(queuedAt:sample.queuedAt,now:startedAt) {
                 touchDispatchMetrics.reject()
                 if touchRunning || midiHelperRunning {
                     handleTouchInputBacklog()

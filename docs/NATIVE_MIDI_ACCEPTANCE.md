@@ -19,3 +19,13 @@ Gate: on an exact candidate, all portable tests, the mandatory complete native f
 Runs 45703200935 (12/13), 45703789700 (13/14), and 45704230294 (13/14) failed with -304 during client creation, in different isolated fixtures. Their other timing and identity fixtures passed. Apple's MIDIClientDispose documentation states that MIDIServer may exit when the last client is disposed: https://developer.apple.com/documentation/coremidi/midiclientdispose%28_%3A%29?changes=_5&language=objc . A third-party CoreMusic troubleshooting note reports similar -2/-304 failures: https://shakfu.github.io/coremusic/tutorials/midi_basics/ . This is a hypothesis, not a confirmed root cause on our runners.
 
 The new CI-only experiment holds one endpoint-free CoreMIDI client alive for the entire isolated fixture loop, leaving each test in a fresh process and retaining all original assertions and deadlines. It explicitly requires CI and fixture opt-in, verifies readiness and liveness, and terminates its own helper at step exit. No device I/O, daemon restart, retry or status override. Compare full results on exact new candidate(s) before drawing conclusions.
+
+## Keepalive experiment results (verified 2026-11-25)
+
+| Exact candidate | CI run | Portable | macOS general | Isolated fixtures |
+| --- | --- | --- | --- | --- |
+| 3a6a288b4ab84d1db9b192d3dfaf5b65d074541d | 45705607767 | 515 PASS | 555 PASS | 15/15 PASS |
+| abeabe924e7de52c78cb10ff4a97d1dac60e2e61 | 45706759067 | 516 PASS | 556 PASS | 15/15 PASS |
+| 47e07fbb9839c00cb6e42f5a699281498f101dbe | 45707053397 | 518 PASS | 558 PASS | 15/15 PASS |
+
+All three completed macOS jobs contain the actual keepalive readiness line, each fixture's individual PASS line and the native CLI boundary test PASS. No -304 or timing failure was reported in these 45 isolated fixture runs. This supports the idle-server hypothesis in the CI environment; it does not prove a physical Mac or DAW cannot experience client creation failure. Preserve historical failures; keep live CLI activation and physical acceptance separate. These exact candidates are preserved; later code must pass again.

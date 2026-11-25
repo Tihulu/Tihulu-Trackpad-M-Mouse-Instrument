@@ -18,3 +18,11 @@ All shared tests, native fixture inventory and each isolated fixture, CLI and co
 ## First integration failure and remediation
 
 Run 45709143202 used the initial main-target PR merge checkout (3365bf2, main base c504a8430e1a6d55573c8cd9f10f6a7465d3cbc6), before retargeting to the frozen QA base. The macOS compiler also exposed a real private-access mismatch in the integrated head: MIDIProcessClient was private while the SDK monitor and playback need module-internal access. The integrated source was re-read and corrected, with no widening to a public API. For this QA branch both jobs explicitly check out the event's exact PR head SHA and assert the checkout identity, then use it for bundle and DMG provenance. Original development branches and main are unaffected. Do not erase the failed run or classify the fix as passed before its own CI.
+
+## First exact integrated PASS and successor overlay
+
+The exact integration commit `b12317d102b52f97d6e63307cee203d3fef9797b` (tree `a0686a18418db75734b9a33ab41d3b973744b79c`) passed run 45709457115: 709 portable tests, 756 macOS general tests and all 15 isolated native fixtures, plus CLI, consumer, experimental compile and preview packaging. Both jobs recorded the exact checkout and tree. The previous failed integration run is retained.
+
+The later standalone app head `a23d3d563bd61367f8fa1cda10bafeefdbf4ce99` passed CI 45708563510 (674 portable, 702 macOS general). The later standalone SDK head `fcda27b6d2d962d153d840f4063bd4a4c7d06d59` passed CI 45708478779 (519 portable, 560 macOS general, 16/16 isolated native fixtures). Their five application and seven non-workflow SDK changed paths are overlaid by exact blob SHA. The integration workflow retains exact checkout, experimental compile and preview provenance, and adds the sixteenth required fixture. This new tree is a successor, not covered by the earlier PASS. Do not advance either original draft or main, publish, install, or enable live CLI.
+
+Two independent review tracks are proposed: integrated packaging/provenance and MIDI/input runtime regressions. Reviewers must work on frozen commits, report reproducible evidence and not modify the review head.
