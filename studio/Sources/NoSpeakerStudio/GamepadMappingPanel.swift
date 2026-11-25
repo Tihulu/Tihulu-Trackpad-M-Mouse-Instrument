@@ -32,6 +32,11 @@ struct GamepadMappingPanel: View {
     @State private var complexSelection = false
     @State private var velocity = 100
     @State private var message = ""
+    @State private var axisCalibration = SensorCalibration()
+    @State private var axisResponse: ContinuousResponse?
+    @State private var xyBase: InstrumentPatch?
+    @State private var pendingXY: InstrumentPatch?
+    @State private var confirmXY = false
     private var analog: Bool { GamepadFrame.sticks.contains(signal) }
     private var allowed: [Action] { analog ? [.bend,.cc,.clear] : Action.allCases }
     private var selectedRoutes: [SensorMapping] {
@@ -72,6 +77,8 @@ struct GamepadMappingPanel: View {
     private func loadSelection() {
         let routes = selectedRoutes
         complexSelection = false
+        axisCalibration = .init()
+        axisResponse = nil
         guard let first = routes.first else {
             action = analog ? .bend : .note
             return
@@ -84,6 +91,10 @@ struct GamepadMappingPanel: View {
             complexSelection = true
             action = analog ? .bend : .note
             return
+        }
+        if analog {
+            axisCalibration = first.calibration
+            axisResponse = first.response
         }
         if let mode = first.pedalMode {
             action = .pedal
@@ -139,6 +150,62 @@ struct GamepadMappingPanel: View {
         } catch { message = "Pedalboard refused: conflicting targets or route capacity. Existing map preserved." }
     }
 
+    private func prepareXY() {
+        do {
+            let occupied = patch.routes.contains { $0.source == slot && GamepadFrame.sticks.contains($0.signal) }
+            let next = try GamepadXYMapping.installExpression(in:patch,source:slot,channel:presetChannel,replaceExisting:occupied)
+            if occupied {
+                xyBase = patch; pendingXY = next; confirmXY = true
+            } else {
+                patch = next; physical = true
+                message = "Four joystick axes assigned. Buttons and triggers preserved."
+            }
+        } catch { message = "XY preset refused: conflicting release values or route capacity." }
+    }
+
+    private var axisPanel: some View {
+        VStack(alignment:.leading,spacing:5) {
+            Toggle("Invert axis",isOn:$axisCalibration.inverted)
+            HStack {
+                Text("Input min \(axisCalibration.minimum,format:.number.precision(.fractionLength(2)))").font(.caption)
+                Slider(value:$axisCalibration.minimum,in:0...0.99,step:0.01)
+            }
+            HStack {
+                Text("Input max \(axisCalibration.maximum,format:.number.precision(.fractionLength(2)))").font(.caption)
+                Slider(value:$axisCalibration.maximum,in:0.01...1,step:0.01)
+            }
+            HStack {
+                Text("Response curve \(axisCalibration.exponent,format:.number.precision(.fractionLength(2)))").font(.caption)
+                Slider(value:$axisCalibration.exponent,in:0.25...4,step:0.05)
+            }
+            HStack {
+                Text("Endpoint trim \(axisCalibration.deadZone,format:.number.precision(.fractionLength(2)))").font(.caption)
+                Slider(value:$axisCalibration.deadZone,in:0...0.45,step:0.01)
+            }
+            if let target = destinations?.first {
+                ContinuousResponsePanel(response:$axisResponse,target:target)
+                HStack {
+                    Button("Full range") { axisCalibration = .init(); axisResponse = nil }
+                    Button("Release at midpoint") {
+                        axisResponse = axisResponse ?? .init()
+                        axisResponse?.release = 0.5
+                    }
+                    if target.kind == .controlChange {
+                        Button("Positive half · CC") {
+                            axisCalibration = .init(minimum:0.5)
+                            axisResponse = .init(release:0)
+                        }
+                    }
+                }
+            }
+            Text("Physical center deadband is unchanged. Release is sent immediately when this axis returns to neutral or its last owner disconnects. Shared targets must agree on release.")
+                .font(.caption).foregroundStyle(.secondary)
+            if !axisCalibration.isValid || !(axisResponse?.isValid ?? true) {
+                Text("Invalid input or output range. Correct before assigning.").font(.caption).foregroundStyle(.orange)
+            }
+        }.padding(5)
+    }
+
     var body: some View {
         GroupBox("Xbox / Gamepad · custom control map") {
             VStack(alignment:.leading,spacing:10) {
@@ -161,6 +228,7 @@ struct GamepadMappingPanel: View {
                 HStack {
                     Stepper("Pedalboard Ch \(presetChannel+1)",value:$presetChannel,in:0...15)
                     Button("Load effect pedalboard…") { preparePedalboard() }
+                    Button("Load XY expression…") { prepareXY() }
                 }
                 .confirmationDialog("Replace selected controller with a pedalboard?",isPresented:$confirmPreset,titleVisibility:.visible) {
                     Button("Replace selected controller",role:.destructive) {
@@ -175,6 +243,25 @@ struct GamepadMappingPanel: View {
                     Button("Cancel",role:.cancel) { presetBase = nil; pendingPreset = nil }
                 } message: {
                     Text("Only the selected controller's old map will be replaced. Other devices and the saved patch remain unchanged until you save.")
+                }
+                HStack {
+                    ForEach(GamepadFrame.sticks,id:\.self) { axis in
+                        Button(GamepadMappingEditor.label(axis)) {
+                            signal = axis; loadSelection()
+                        }.buttonStyle(.bordered).tint(signal == axis ? .accentColor : .secondary)
+                    }
+                }
+                .confirmationDialog("Replace selected controller’s four axes?",isPresented:$confirmXY,titleVisibility:.visible) {
+                    Button("Replace axes only",role:.destructive) {
+                        if let base = xyBase, let next = pendingXY, patch == base {
+                            patch = next; physical = true
+                            message = "XY preset loaded. Other controls preserved."
+                        } else { message = "Draft changed. Review and try again." }
+                        xyBase = nil; pendingXY = nil
+                    }
+                    Button("Cancel",role:.cancel) { xyBase = nil; pendingXY = nil }
+                } message: {
+                    Text("Left X bend, left Y vibrato, right X pan, right Y resonance (CC71). Only joystick axes on the selected controller will be replaced.")
                 }
                 Text("A/B/X/Y and RB: Toggle · LB: Hold · LT: Wah CC74 · RT: Sustain · sticks: Bend / Expression. Learn CC80–85 in your DAW; this preset does not select plug-ins automatically.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -222,6 +309,9 @@ struct GamepadMappingPanel: View {
                             Button("Filter / Wah") { number = 74 }
                         }
                     }
+                    if analog && (action == .bend || action == .cc) {
+                        axisPanel
+                    }
                     if action == .pedal {
                         Picker("Behavior",selection:$pedalMode) {
                             ForEach(GamepadPedalMode.allCases) { Text($0.rawValue).tag($0) }
@@ -248,13 +338,19 @@ struct GamepadMappingPanel: View {
                     Button(selectedRoutes.isEmpty ? "Assign control" : "Replace this control") {
                         guard let destinations else { return }
                         do {
-                            patch = try GamepadMappingEditor.replace(in:patch,source:slot,signal:signal,destinations:destinations,velocity:velocity,pedalMode:action == .pedal ? pedalMode : nil)
+                            if analog, let target = destinations.first {
+                                patch = try GamepadXYMapping.replaceAxis(in:patch,source:slot,signal:signal,target:target,
+                                    calibration:axisCalibration,response:axisResponse)
+                            } else {
+                                patch = try GamepadMappingEditor.replace(in:patch,source:slot,signal:signal,destinations:destinations,velocity:velocity,pedalMode:action == .pedal ? pedalMode : nil)
+                            }
                             physical = true
                             loadSelection()
                             message = "Mapping updated. Save or start explicitly."
                         } catch { message = "Invalid mapping, reserved CC, mixed analog/switch target or route capacity. Previous map preserved." }
                     }.buttonStyle(.borderedProminent)
-                        .disabled(destinations == nil || !allowed.contains(action))
+                        .disabled(destinations == nil || !allowed.contains(action) ||
+                            (analog && action != .clear && (!axisCalibration.isValid || !(axisResponse?.isValid ?? true))))
                     Text("\(patch.routes.count)/\(SensorRouter.maxMappings) routes").font(.caption)
                 }
                 Text(message).font(.caption).foregroundStyle(.secondary)
