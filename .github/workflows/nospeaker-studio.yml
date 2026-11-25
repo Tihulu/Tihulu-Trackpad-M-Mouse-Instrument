@@ -40,6 +40,8 @@ jobs:
         run: swift --version
       - name: Remote browser lifecycle tests
         run: node --test scripts/test-remote-browser.cjs
+      - name: Verify native fixture inventory
+        run: python3 ../tools/test_native_fixture_inventory.py
       - name: Verify
         run: ./scripts/verify.sh
 
