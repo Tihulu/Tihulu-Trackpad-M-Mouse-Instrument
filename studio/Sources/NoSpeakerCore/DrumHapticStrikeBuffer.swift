@@ -38,6 +38,9 @@ public struct DrumHapticStrikeBuffer: Sendable {
         return result
     }
 
+    /// Invalidate queued pulses without re-triggering still-held fingers.
+    public mutating func discardPending() { pending.removeAll(keepingCapacity:true) }
+
     public mutating func reset() {
         down.removeAll(keepingCapacity:true)
         pending.removeAll(keepingCapacity:true)
