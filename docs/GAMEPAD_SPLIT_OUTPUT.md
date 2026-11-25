@@ -1,0 +1,7 @@
+# Independent controller output selection
+
+Native two-controller gamepad-only patches can explicitly choose MIDI, Trackpad, or Both for each slot. Shared output/monitor-only mode remains available. The selection is frozen at Start and restored when revisiting an active Builder. It is session setup, not part of the saved mapping JSON.
+
+The existing router reconciles note, sustain and controller ownership before emitting a destination-only command. Different output policies therefore require disjoint MIDI channels; a shared channel is allowed only when its output policy is identical. This rejects ambiguous configurations rather than assigning source identity to a merged command. MIDI cleanup ledger receives only actual MIDI attempts. Haptic voices receive only admitted local channels, using the existing exclusive scoped actuator. The ensemble recorder still captures logical performance commands, not a filtered DAW-only recording. Stop/Panic, fault cleanup and native slot identity remain unchanged.
+
+Three regression tests authored: routing notes/pedals, conflicting/shared channels and unsupported sources, and independent disconnect through the actual physical runtime and haptic state. CI and physical test pending. No expansion beyond two controllers/64 routes, no mixed-device haptic mixing, no additional runtime. Trackpad has six-tone actuator limit; short local haptic attacks remain a hardware acceptance gate. Stable application untouched.

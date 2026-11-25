@@ -99,6 +99,8 @@ final class StudioController: ObservableObject {
     private var gamepadHapticVoices = GamepadHapticVoices()
     private var lastGamepadHapticFrame: HapticFrame?
     @Published private(set) var patchHapticEnabled = false
+    @Published private(set) var patchGamepadOutputSelection: GamepadOutputSelection?
+    private var gamepadOutputPlan: GamepadOutputPlan?
 
     private func updateGamepadHaptics(force:Bool = false) {
         guard let gamepadHaptics else { return }
@@ -481,8 +483,20 @@ final class StudioController: ObservableObject {
     func startInstrumentPatch(sendMIDI: Bool, physical: Bool = false,
                               remoteTransport: RemoteLoopbackTransport? = nil,
                               remotePage: RemoteLoopbackPageServer? = nil,
-                              synthetic:SensorSource? = nil,tunedAir:Bool = false, sendHaptics:Bool = false) {
+                              synthetic:SensorSource? = nil,tunedAir:Bool = false, sendHaptics:Bool = false,
+                              gamepadOutputSelection:GamepadOutputSelection? = nil) {
         guard !patchRunning else { return }
+        var requestedPlan: GamepadOutputPlan?
+        if let selection = gamepadOutputSelection {
+            guard physical,synthetic == nil,remoteTransport == nil,!tunedAir,
+                  let plan = GamepadOutputPlan(patch:instrumentPatch,selection:selection) else {
+                patchStatus = "Separate controller outputs require two native gamepad slots and no shared channels with different output choices."
+                return
+            }
+            requestedPlan = plan
+        }
+        let sendMIDI = requestedPlan?.hasMIDI ?? sendMIDI
+        let sendHaptics = requestedPlan?.hasHaptics ?? sendHaptics
         if sendHaptics {
             guard physical, synthetic == nil, remoteTransport == nil, !tunedAir,
                   GamepadHapticVoices.supports(instrumentPatch) else {
@@ -612,6 +626,8 @@ final class StudioController: ObservableObject {
                     }
                 }
             }
+            gamepadOutputPlan = requestedPlan
+            patchGamepadOutputSelection = gamepadOutputSelection
             patchHapticEnabled = sendHaptics
             patchMIDIEnabled = sendMIDI
             patchTunedAirActive = requestedTuning != nil
@@ -1194,7 +1210,8 @@ final class StudioController: ObservableObject {
         for command in commands {
             attempted.append(command)
             let plan = airTunedPlan
-            if patchMIDIEnabled && !patchLedger.deliver(command, send: { command in
+            if patchMIDIEnabled && (gamepadOutputPlan?.sendsMIDI(command.destination) ?? true) &&
+                !patchLedger.deliver(command, send: { command in
                 if let plan {
                     guard let wire = plan.translate(command) else { return false }
                     return airTunedMIDI.send(wire)
@@ -1209,7 +1226,9 @@ final class StudioController: ObservableObject {
                 patchStatus = "MIDI delivery failed. Check DAW and retry Stop."
                 break
             }
-            if patchHapticEnabled { gamepadHapticVoices.apply(command) }
+            if patchHapticEnabled && (gamepadOutputPlan?.sendsHaptics(command.destination) ?? true) {
+                gamepadHapticVoices.apply(command)
+            }
             if ensembleRecording {
                 if ensembleTake?.append(command,now:ProcessInfo.processInfo.systemUptime) != true { updateEnsembleTakeState() }
             }
@@ -1237,6 +1256,8 @@ final class StudioController: ObservableObject {
         gamepadHapticVoices = GamepadHapticVoices()
         lastGamepadHapticFrame = nil
         patchHapticEnabled = false
+        patchGamepadOutputSelection = nil
+        gamepadOutputPlan = nil
         builderGamepads.stop()
         stopEnsembleTake()
         stopEnsembleClock()
