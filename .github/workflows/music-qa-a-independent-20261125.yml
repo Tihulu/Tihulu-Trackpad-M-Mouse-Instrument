@@ -1,0 +1,202 @@
+name: MUSIC-QA-A independent frozen acceptance
+on:
+  push:
+    branches: [qa/music-qa-a-independent-20261125]
+permissions:
+  contents: read
+env:
+  FROZEN_SHA: 03b2b12c50545f9f0ed6b670d5b66c8f44c9a9c2
+  FROZEN_TREE: 1bcd3ba5591d7840671d3fc1ea25ae2b65814e74
+jobs:
+  portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 03b2b12c50545f9f0ed6b670d5b66c8f44c9a9c2
+          persist-credentials: false
+      - name: Independent exact source identity
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$FROZEN_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$FROZEN_TREE"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git log -1 --format='%H %T'
+          swift --version
+          node --version
+          python3 --version
+      - name: Portable browser lifecycle
+        working-directory: studio
+        run: node --test scripts/test-remote-browser.cjs
+      - name: Native inventory static coverage
+        run: python3 tools/test_native_fixture_inventory.py
+      - name: Full portable source acceptance
+        working-directory: studio
+        run: ./scripts/verify.sh
+      - name: Tracked source remains unchanged
+        if: always()
+        run: git diff --exit-code && git diff --cached --exit-code
+  native:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 03b2b12c50545f9f0ed6b670d5b66c8f44c9a9c2
+          persist-credentials: false
+      - name: Independent exact source identity
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$FROZEN_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$FROZEN_TREE"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git log -1 --format='%H %T'
+          xcodebuild -version
+          swift --version
+          sh -n install-studio.sh
+          sh -n studio/scripts/build-app.sh
+          sh -n studio/scripts/verify-preview-dmg.sh
+      - name: macOS general suite without fixture opt-in
+        working-directory: studio
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset TIHULU_NATIVE_OBSERVER_FIXTURE
+          swift test
+      - name: All sixteen individually isolated fixtures
+        working-directory: studio
+        shell: bash
+        env:
+          TIHULU_NATIVE_OBSERVER_FIXTURE: "1"
+        run: |
+          set -euo pipefail
+          scratch="$(mktemp -d)"
+          keeper=""
+          cleanup() {
+            if [ -n "$keeper" ]; then
+              kill "$keeper" 2>/dev/null || true
+              wait "$keeper" 2>/dev/null || true
+            fi
+            rm -rf "$scratch"
+          }
+          trap cleanup EXIT
+          swiftc ../tools/fixtures/native_midi_ci_keepalive.swift -o "$scratch/keeper"
+          "$scratch/keeper" >"$scratch/keeper.log" 2>&1 &
+          keeper=$!
+          for attempt in {1..100}; do
+            kill -0 "$keeper" 2>/dev/null || break
+            if grep -Fxq 'CoreMIDI CI keepalive ready' "$scratch/keeper.log"; then break; fi
+            sleep 0.1
+          done
+          cat "$scratch/keeper.log"
+          kill -0 "$keeper"
+          grep -Fxq 'CoreMIDI CI keepalive ready' "$scratch/keeper.log"
+          python3 ../tools/test_native_fixture_inventory.py
+          status=0
+          total=0
+          passed=0
+          for name in nativeObserverReceivesIsolatedFixtureAndClosesItsPort nativeObserverRefusesSuccessAfterIdentityLoss nativeObserverSharedClientSurvivesIndependentPortCleanup nativePlaybackUsesIsolatedSourceAndClosesIt nativePlaybackStopBeforeRunEmitsNothing nativePlaybackReceiverVerifiesNoteGateAndCancellation nativePlaybackRejectsChangedAndRestoredSourceIdentity nativePlaybackDetectsIdentityLossDuringInitialRest nativePlaybackStopBeforeRunCannotMaskLostIdentity nativePlaybackEmptyLedgerRetryStillChecksIdentity nativePlaybackCloseRetiresTerminalStateAfterIdentityLoss nativePlaybackRunAndCloseDisposesOnlyOwnSource nativePlaybackRunAndClosePreservesIdentityRecoveryOnFailure nativePlaybackPreparedSessionReceivesNoteGateBeforeDisposal nativePlaybackOpenQuarantinesUnverifiedSourceWithoutDisposal nativePlaybackSourceCapacityReleasesOnlyVerifiedClosedSlots; do
+            total=$((total+1))
+            if kill -0 "$keeper" && swift test --filter "$name" >"$scratch/test.log" 2>&1; then
+              cat "$scratch/test.log"
+              if grep -Fq "Test $name() passed" "$scratch/test.log" && kill -0 "$keeper"; then
+                echo "QA-A PASS $name"
+                passed=$((passed+1))
+              else
+                echo "QA-A FAIL missing actual PASS or keepalive lost: $name"
+                status=1
+              fi
+            else
+              cat "$scratch/test.log" 2>/dev/null || true
+              echo "QA-A FAIL $name"
+              status=1
+            fi
+          done
+          echo "QA-A isolated fixtures: $passed/$total"
+          test "$total" -eq 16 && test "$passed" -eq 16 && test "$status" -eq 0
+      - name: Build available products
+        working-directory: studio
+        run: swift build
+      - name: Offline CLI contract and cancellation
+        working-directory: studio
+        shell: bash
+        run: |
+          set -euxo pipefail
+          bin="$(swift build --show-bin-path)"
+          python3 ../tools/test_engine_cli.py "$bin/tihulu-mac-instrument-engine"
+          python3 ../tools/test_engine_catalog.py "$bin/tihulu-mac-instrument-engine"
+          python3 ../tools/test_native_engine_cli.py "$bin/tihulu-mac-instrument-native"
+          python3 ../tools/test_repo_index.py
+      - name: External SDK consumer
+        working-directory: studio
+        run: swift run --package-path ../examples/EngineConsumer engine-consumer
+      - name: All six experimental flags compile only
+        working-directory: studio
+        shell: bash
+        run: |
+          set -euxo pipefail
+          scratch="$(mktemp -d "$RUNNER_TEMP/music-qa-a-flags.XXXXXX")"
+          trap 'rm -rf "$scratch"' EXIT
+          swift build --scratch-path "$scratch" --product NoSpeakerStudio -Xswiftc -DTIHULU_GROUP_MPE_LIVE -Xswiftc -DTIHULU_GROUP_REMOTE_LIVE -Xswiftc -DTIHULU_GROUP_HAPTIC_LIVE -Xswiftc -DTIHULU_GROUP_MPE_HAPTIC_LIVE -Xswiftc -DTIHULU_GROUP_DYNAMIC_MPE_LIVE -Xswiftc -DTIHULU_GROUP_DYNAMIC_MPE_HAPTIC_LIVE
+      - name: Prepare renderer on disposable runner
+        run: command -v rsvg-convert || brew install librsvg
+      - name: Build preview only (no installer invocation)
+        working-directory: studio
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TIHULU_BUILD_CHANNEL=preview NOSPEAKER_STUDIO_SKIP_TESTS=1 NOSPEAKER_STUDIO_BUILD_SHA="$FROZEN_SHA" NOSPEAKER_STUDIO_SIGNING_IDENTITY=- ./scripts/build-app.sh
+          APP="dist/Tihulu Trackpad & M. Mouse Instrument.app"
+          test -s "$APP/Contents/Resources/TihuluInstrument.icns"
+          test -s "$APP/Contents/Resources/TihuluTrackpadMouseIcon.svg"
+          plutil -lint "$APP/Contents/Info.plist"
+          python3 ../tools/test_app_engine_boundary.py --bundle "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+      - name: Independent read-only preview image and provenance
+        working-directory: studio
+        shell: bash
+        run: |
+          set -euxo pipefail
+          scratch="$(mktemp -d "$RUNNER_TEMP/music-qa-a-dmg.XXXXXX")"
+          mkdir "$scratch/stage" "$scratch/mount" dist/qa-a-evidence
+          mounted=no
+          cleanup() {
+            status=$?
+            trap - EXIT
+            if [ "$mounted" = yes ]; then hdiutil detach "$scratch/mount" || status=1; fi
+            if [ "$status" -eq 0 ]; then rm -rf "$scratch"; fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+          APP="dist/Tihulu Trackpad & M. Mouse Instrument.app"
+          NAME="Tihulu Trackpad & M. Mouse Instrument Preview.app"
+          ditto "$APP" "$scratch/stage/$NAME"
+          ln -s /Applications "$scratch/stage/Applications"
+          DMG="dist/qa-a-evidence/Tihulu-0.3.0-preview.dmg"
+          hdiutil create -volname 'TIHULU 0.3.0 Preview' -srcfolder "$scratch/stage" -format UDZO "$DMG"
+          (cd dist/qa-a-evidence && shasum -a 256 Tihulu-0.3.0-preview.dmg > PREVIEW-SHA256SUMS)
+          ./scripts/verify-preview-dmg.sh "$DMG" dist/qa-a-evidence/PREVIEW-SHA256SUMS "$FROZEN_SHA"
+          hdiutil attach "$DMG" -readonly -nobrowse -mountpoint "$scratch/mount" -quiet
+          mounted=yes
+          test "$(readlink "$scratch/mount/Applications")" = /Applications
+          test -d "$scratch/mount/$NAME"
+          test ! -e "$scratch/mount/Tihulu Trackpad & M. Mouse Instrument.app"
+          python3 ../tools/test_app_engine_boundary.py --bundle "$scratch/mount/$NAME"
+          codesign --verify --deep --strict --verbose=2 "$scratch/mount/$NAME"
+          hdiutil detach "$scratch/mount"
+          mounted=no
+          printf 'checkout_sha=%s\ntree_sha=%s\nworkflow_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$FROZEN_SHA" "$FROZEN_TREE" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > dist/qa-a-evidence/PREVIEW-PROVENANCE.txt
+          cat dist/qa-a-evidence/PREVIEW-PROVENANCE.txt dist/qa-a-evidence/PREVIEW-SHA256SUMS
+          (cd dist/qa-a-evidence && shasum -a 256 -c PREVIEW-SHA256SUMS)
+      - name: Retain QA artifact only (no release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MUSIC-QA-A-frozen-preview-evidence
+          path: studio/dist/qa-a-evidence/
+          if-no-files-found: error
+      - name: Tracked source remains unchanged
+        if: always()
+        run: git diff --exit-code && git diff --cached --exit-code
