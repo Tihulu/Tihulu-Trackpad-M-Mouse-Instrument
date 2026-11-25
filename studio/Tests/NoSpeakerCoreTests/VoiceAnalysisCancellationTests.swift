@@ -4,8 +4,10 @@ import Testing
 
 @Test func cancellableVoiceAnalysisMatchesExistingEntryPoint() throws {
     let input: [Float] = (0..<4800).map { i in
-        let t = Double(i)/16000
-        return Float(0.15*sin(2*Double.pi*120*t)+0.08*sin(2*Double.pi*840*t))
+        let t = Double(i)/16000.0
+        let fundamental = 0.15*sin(2.0*Double.pi*120.0*t)
+        let harmonic = 0.08*sin(2.0*Double.pi*840.0*t)
+        return Float(fundamental+harmonic)
     }
     let legacy = HapticVoiceAnalyzer.analyze(input)
     let current = try HapticVoiceAnalyzer.analyze(input,cancellation:.init())
@@ -31,5 +33,16 @@ import Testing
     DispatchQueue.global().asyncAfter(deadline:.now()+0.02) { token.cancel() }
     #expect(throws: CancellationError.self) {
         try HapticVoiceAnalyzer.analyze(input,cancellation:token)
+    }
+}
+
+@Test func voiceAnalysisRejectsInvalidPCMWithoutMotorEvents() {
+    for value in [Float.nan,.infinity,-.infinity] {
+        var samples = Array(repeating:Float(0.1),count:800)
+        samples[420] = value
+        #expect(throws: VoiceAnalysisError.self) {
+            try HapticVoiceAnalyzer.analyze(samples,cancellation:.init())
+        }
+        #expect(HapticVoiceAnalyzer.analyze(samples).isEmpty)
     }
 }
