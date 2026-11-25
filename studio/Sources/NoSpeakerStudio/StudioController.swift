@@ -2402,17 +2402,7 @@ final class StudioController: ObservableObject {
               surfaceInbox === inbox, touchPreviewRunning else { return }
         let batch = inbox.take()
         if batch.overflow {
-            // A missing release is a fault, not permission to replay stale notes.
-            touch?.invalidatePendingSamples()
-            clearClickAttribution()
-            if touchRunning { stopTouch() }
-            if midiHelperRunning { stopMIDIHelper() }
-            liveTouchStates = []
-            liveHelperStates = []
-            touchStates = []
-            midiHelperStates = []
-            touchContact = TrackpadContact()
-            lastError = "Touch input backlog. Touch Instrument and Helper stopped; restart explicitly."
+            handleTouchInputBacklog()
             return
         }
         for sample in batch.samples {
@@ -2421,6 +2411,22 @@ final class StudioController: ObservableObject {
             guard let revision = touch?.currentSampleRevision,
                   surfaceSnapshotCursor.accept(sample.stamp,currentRevision:revision) else {
                 touchDispatchMetrics.reject()
+                continue
+            }
+            // Never replay a late musical onset after a blocked main actor.
+            if startedAt - sample.queuedAt >= 0.150 {
+                touchDispatchMetrics.reject()
+                if touchRunning || midiHelperRunning {
+                    handleTouchInputBacklog()
+                    // A partial drain still owns the next scheduling turn.
+                    if batch.more {
+                        Task { @MainActor [weak self, weak inbox] in
+                            guard let self, let inbox else { return }
+                            self.drainTouchInbox(inbox,generation:generation,token:token)
+                        }
+                    }
+                    return
+                }
                 continue
             }
             clickTouchingSurfaces = Set(sample.states.filter(\.isTouching).map(\.surface))
@@ -2435,6 +2441,23 @@ final class StudioController: ObservableObject {
                 guard let self, let inbox else { return }
                 self.drainTouchInbox(inbox,generation:generation,token:token)
             }
+        }
+    }
+
+    private func handleTouchInputBacklog() {
+        // A missing release is a fault, not permission to replay stale notes.
+        let wasPlaying = touchRunning || midiHelperRunning
+        touch?.invalidatePendingSamples()
+        clearClickAttribution()
+        if touchRunning { stopTouch() }
+        if midiHelperRunning { stopMIDIHelper() }
+        liveTouchStates = []
+        liveHelperStates = []
+        touchStates = []
+        midiHelperStates = []
+        touchContact = TrackpadContact()
+        if wasPlaying {
+            lastError = "Touch input backlog. Touch Instrument and Helper stopped; restart explicitly."
         }
     }
 
