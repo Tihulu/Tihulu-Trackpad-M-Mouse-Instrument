@@ -3089,10 +3089,23 @@ final class StudioController: ObservableObject {
 
     /// Read-only report for the Diagnostics panel. Never records key contents,
     /// typed text, device identifiers, user paths, or private recordings.
-    func resetTouchDispatchMetrics() { touchDispatchMetrics = TouchDispatchMetrics() }
+    func resetTouchDispatchMetrics() {
+        touchDispatchMetrics = TouchDispatchMetrics()
+        touch?.resetHapticDiagnostics()
+    }
 
     func touchDispatchDiagnosticReport() -> String {
         let m = touchDispatchMetrics
+        let hapticReport: String
+        if let h = touch?.hapticDiagnosticSnapshot() {
+            hapticReport = """
+            Trackpad max contacts / triggered: \(h.trackpadRawMax) / \(h.trackpadTriggeredMax)
+            Magic Mouse max contacts / triggered: \(h.mouseRawMax) / \(h.mouseTriggeredMax)
+            Drum strikes accepted / drained: \(h.acceptedDrumStrikes) / \(h.drainedDrumStrikes)
+            Motor calls returned / threw: \(h.motorSubmissions) / \(h.motorErrors)
+            Contact counts are committed active frames. Motor calls do not prove physical vibration.
+            """
+        } else { hapticReport = "Touch diagnostics unavailable." }
         func ms(_ seconds: Double) -> String { String(format:"%.2f ms",seconds*1000) }
         return """
         Accepted snapshots: \(m.count)
@@ -3101,6 +3114,8 @@ final class StudioController: ObservableObject {
         Queue delays ≥ 10 ms: \(m.queueOver10ms)
         Main processing mean / max: \(ms(m.processingMean)) / \(ms(m.processingMax))
         Callback-to-main timing only; not hardware-to-audio latency.
+
+        \(hapticReport)
         """
     }
 
