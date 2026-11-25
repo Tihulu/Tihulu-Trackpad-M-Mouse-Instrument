@@ -327,7 +327,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       (d.vertical===undefined||(Array.isArray(d.vertical)&&d.vertical.length<=3&&new Set(d.vertical).size===d.vertical.length&&d.vertical.every(i=>[0,1,2].includes(i))))&&
       (d.customColumns===undefined||["1","2","3"].includes(d.customColumns))&&
       (d.customAliases===undefined||(record(d.customAliases)&&Object.keys(d.customAliases).length<=8&&
-        Object.entries(d.customAliases).every(([id,v])=>(d.custom??[]).includes(id)&&validAlias(v))))&&
+        Array.isArray(d.custom)&&Object.entries(d.customAliases).every(([id,v])=>customIDs.includes(id)&&d.custom.includes(id)&&validAlias(v))))&&
       (d.custom===undefined||(Array.isArray(d.custom)&&d.custom.length<=8&&new Set(d.custom).size===d.custom.length&&d.custom.every(id=>customIDs.includes(id))))&&
       (d.drumOrder===undefined||validOrder(d.drumOrder,8))&&(d.pedalOrder===undefined||validOrder(d.pedalOrder,6))&&
       (d.holds===undefined||(Array.isArray(d.holds)&&d.holds.length<=3&&new Set(d.holds).size===d.holds.length&&d.holds.every(i=>[3,4,5].includes(i))))&&
@@ -708,7 +708,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function resetLayout(){
     if(!canEditLayout())return;
     clearLayoutDrag();
-    layout=defaultLayout();details=defaultDetails();pedalPositions=[...details.sliderDefaults];sliderValueKey="";
+    layout=defaultLayout();details=defaultDetails();pedalPositions=[...details.sliderDefaults];sliderValueKey="";aliasInputKey="";
     try{window.localStorage.removeItem(layoutKey);window.localStorage.removeItem(detailKey);layoutMessage="Default layout restored.";}
     catch{layoutMessage="Default layout restored for this page; saved data could not be removed.";}
     applyLayout();syncLayout();
