@@ -80,8 +80,12 @@ final class MIDIProcessClient: @unchecked Sendable {
         var newClient = MIDIClientRef()
         let status = MIDIClientCreateWithBlock(
             "Tihulu Trackpad & M. Mouse Instrument" as CFString, &newClient
-        ) { _ in }
-        guard status == noErr else { throw MIDIHapticError.client(status) }
+        ) { @Sendable _ in }
+        guard status == noErr,newClient != 0 else {
+            // A successful status with a null handle is not an admitted
+            // client. Do not cache it or attempt to use it.
+            throw MIDIHapticError.client(status == noErr ? -1 : status)
+        }
         retainedClient = newClient
         return newClient
     }

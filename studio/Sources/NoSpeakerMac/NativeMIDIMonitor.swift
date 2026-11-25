@@ -29,10 +29,7 @@ public enum NativeMIDIMonitor {
     }
     // Construct native callbacks outside MainActor. CoreMIDI delivers
     // them on its own threads; actor-isolated closure inference would trap.
-    private nonisolated static func makeClient(_ client:inout MIDIClientRef)->OSStatus {
-        MIDIClientCreateWithBlock("TIHULU Native Observer" as CFString,&client) { @Sendable _ in }
-    }
-    private nonisolated static func makePort(_ client:MIDIClientRef,_ port:inout MIDIPortRef,
+     private nonisolated static func makePort(_ client:MIDIClientRef,_ port:inout MIDIPortRef,
                                               counter:BoundedMIDIObservation)->OSStatus {
         MIDIInputPortCreateWithProtocol(client,"TIHULU Receive Only" as CFString,._1_0,&port) { @Sendable list,_ in
             counter.record(packets:list.pointee.numPackets,now:DispatchTime.now().uptimeNanoseconds)
@@ -88,7 +85,7 @@ public enum NativeMIDIMonitor {
         guard let bound=identity(source),bound.displayName==sourceName else { throw Failure.sourceUnavailable }
         let counter=BoundedMIDIObservation()
         return try await withTaskCancellationHandler {
-            var client=MIDIClientRef(),port=MIDIPortRef(),connected=false
+            var port=MIDIPortRef(),connected=false
             // Cleanup is attempted on every exit, including setup errors and cancellation.
             @MainActor func cleanup()->(status:OSStatus,identityValid:Bool) {
                 _ = counter.stop()
@@ -107,17 +104,18 @@ public enum NativeMIDIMonitor {
                     let status=MIDIPortDispose(port);port=0
                     if status != noErr && result == noErr { result=status }
                 }
-                if client != 0 {
-                    let status=MIDIClientDispose(client);client=0
-                    if status != noErr && result == noErr { result=status }
-                }
-                return (result,identityValid && identity(source)==bound)
+                 return (result,identityValid && identity(source)==bound)
             }
             do {
-                var status=makeClient(&client)
-                guard status==noErr else { throw Failure.native("client",status) }
-                status=makePort(client,&port,counter:counter)
-                guard status==noErr else { throw Failure.native("input port",status) }
+                // Keep the process client alive across observations and
+                // playback sessions. Each observation still owns exactly
+                // its input port and never disposes another session's port.
+                let client:MIDIClientRef
+                do { client=try MIDIProcessClient.shared.acquire() }
+                catch MIDIHapticError.client(let status) { throw Failure.native("client",status) }
+                try Task.checkCancellation()
+                var status=makePort(client,&port,counter:counter)
+                guard status==noErr,port != 0 else { throw Failure.native("input port",status==noErr ? -1 : status) }
                 guard try resolve(name:sourceName)==source,identity(source)==bound else { throw Failure.sourceUnavailable }
                 let clock=ContinuousClock()
                 let deadline=clock.now.advanced(by:.seconds(seconds))

@@ -108,4 +108,52 @@ private func makeObserverFixtureClient(_ client:inout MIDIClientRef)->OSStatus {
     let next=try await NativeMIDIMonitor.observe(sourceName:name,seconds:1)
     #expect(next.cleanupConfirmed && next.sourceStillPresent && next.callbackCount==0)
 }
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativeObserverSharedClientSurvivesIndependentPortCleanup() async throws {
+    let client=try MIDIProcessClient.shared.acquire()
+    let nameA="TIHULU shared observer A "+UUID().uuidString
+    let nameB="TIHULU shared observer B "+UUID().uuidString
+    var a=MIDIEndpointRef(),b=MIDIEndpointRef()
+    try #require(MIDISourceCreate(client,nameA as CFString,&a)==noErr && a != 0)
+    defer { _=MIDIEndpointDispose(a) }
+    try #require(MIDISourceCreate(client,nameB as CFString,&b)==noErr && b != 0)
+    defer { _=MIDIEndpointDispose(b) }
+    var readyA=false,readyB=false
+    let first=Task { @MainActor in
+        try await NativeMIDIMonitor.observe(sourceName:nameA,seconds:10,onConnected:{ readyA=true })
+    }
+    defer { first.cancel() }
+    let second=Task { @MainActor in
+        try await NativeMIDIMonitor.observe(sourceName:nameB,seconds:2,onConnected:{ readyB=true })
+    }
+    defer { second.cancel() }
+    let deadline=ContinuousClock().now.advanced(by:.seconds(1))
+    while (!readyA || !readyB) && ContinuousClock().now<deadline {
+        try await Task.sleep(nanoseconds:5_000_000)
+    }
+    try #require(readyA && readyB)
+    first.cancel()
+    do {
+        _=try await first.value
+        Issue.record("Cancelled first observation returned success")
+    } catch is CancellationError {}
+    #expect(try MIDIProcessClient.shared.acquire()==client)
+    // Send a harmless channel-pressure packet on the second fixture
+    // source only, after the first observation has fully cleaned up.
+    var list=MIDIPacketList()
+    let packet=MIDIPacketListInit(&list)
+    let bytes:[UInt8]=[0xD0,0]
+    let added=bytes.withUnsafeBufferPointer { buffer in
+        MIDIPacketListAdd(&list,MemoryLayout<MIDIPacketList>.size,packet,
+                          0,buffer.count,buffer.baseAddress!) != nil
+    }
+    try #require(added)
+    try #require(MIDIReceived(b,&list)==noErr)
+    let report=try await second.value
+    #expect(report.callbackCount>=1 && report.packetCount>=1 && report.cleanupConfirmed)
+    #expect(try MIDIProcessClient.shared.acquire()==client)
+    let again=try await NativeMIDIMonitor.observe(sourceName:nameA,seconds:1)
+    #expect(again.packetCount==0 && again.cleanupConfirmed)
+}
 #endif

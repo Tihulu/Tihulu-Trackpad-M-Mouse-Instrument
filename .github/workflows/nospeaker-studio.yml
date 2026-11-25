@@ -74,6 +74,7 @@ jobs:
           for fixture in \
             nativeObserverReceivesIsolatedFixtureAndClosesItsPort \
             nativeObserverRefusesSuccessAfterIdentityLoss \
+            nativeObserverSharedClientSurvivesIndependentPortCleanup \
             nativePlaybackUsesIsolatedSourceAndClosesIt \
             nativePlaybackStopBeforeRunEmitsNothing \
             nativePlaybackReceiverVerifiesNoteGateAndCancellation \
