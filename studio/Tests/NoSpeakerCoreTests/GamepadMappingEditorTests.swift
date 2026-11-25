@@ -10,7 +10,7 @@ import Testing
     let edited = try GamepadMappingEditor.replace(in:original,source:.gamepad1,signal:.padA,destinations:notes)
     #expect(edited.routes.contains(other))
     #expect(edited.routes.contains(filter))
-    #expect(!edited.routes.contains(old))
+    #expect(edited.routes.contains(old)) // retained destination preserves ID and calibration
     #expect(edited.routes.filter { $0.source == .gamepad1 && $0.signal == .padA }.map(\.destination) == notes)
     let cleared = try GamepadMappingEditor.replace(in:edited,source:.gamepad1,signal:.padA,destinations:[])
     #expect(cleared.routes == [other,filter])
