@@ -559,36 +559,23 @@ struct InstrumentBuilderView: View {
     }
 
     private var dawRoutingPanel: some View {
-        let rows = DAWRoutingOverview.rows(for:draft)
-        return DisclosureGroup("DAW routing · Logic track setup") {
-            VStack(alignment:.leading,spacing:6) {
-                Text(tunedAir ? "Tuned Air uses a dedicated MPE port. The rows below are logical routes, not MPE member channels." :
-                    "Standard Builder MIDI port: TIHULU Instrument Builder. These are logical routes; only enabled MIDI outputs reach the DAW.")
-                    .font(.caption).foregroundStyle(.secondary)
-                ForEach(rows) { row in
-                    VStack(alignment:.leading,spacing:2) {
-                        Text("Channel \(row.channel+1)").font(.headline)
-                        Text("Notes: " + (row.noteSources.isEmpty ? "—" : row.noteSources.map(\.rawValue).joined(separator:", "))).font(.caption)
-                        Text("Controls: " + (row.controlSources.isEmpty ? "—" : row.controlSources.map(\.rawValue).joined(separator:", "))).font(.caption)
-                        if row.sharesNotes {
-                            Text("Shared note channel: these sources play the same receiving instrument. Separate channels for different instruments.")
-                                .font(.caption).foregroundStyle(.orange)
-                        }
-                    }
-                }
-                if rows.isEmpty { Text("Add valid mappings first.").font(.caption) }
-                Text("In Logic, create one Software Instrument track per desired sound. Set Track Inspector MIDI Input and MIDI In Channel, record-enable each track, then test one controller at a time. Controls-only sources can intentionally share a target.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Button("Copy logical routing summary") {
-                    let header = tunedAir ? "Logical routes only — Tuned Air MPE" : "TIHULU Instrument Builder — logical routes; check enabled MIDI outputs"
-                    let report = rows.map { row in
-                        "Ch \(row.channel+1) | notes: \(row.noteSources.map(\.rawValue).joined(separator:", ")) | controls: \(row.controlSources.map(\.rawValue).joined(separator:", "))"
-                    }.joined(separator:"\n")
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(header+"\n"+report,forType:.string)
-                }.disabled(rows.isEmpty)
-            }.padding(6)
+        let active = studio.patchRunning
+        let patch = active ? studio.instrumentPatch : draft
+        let midi = active ? studio.patchMIDIEnabled : sendMIDI
+        let tuned = active ? studio.patchTunedAirActive : tunedAir
+        let selection = active ? studio.patchGamepadOutputSelection :
+            (splitGamepadOutputs && splitGamepadAvailable ? gamepadOutputSelection : nil)
+        let split = active ? selection != nil : splitGamepadOutputs
+        let tunedValid: Bool
+        if active {
+            tunedValid = studio.patchTunedAirActive
+        } else if tuned, midi, syntheticSource == nil, let scale = studio.chordBank.customScale {
+            tunedValid = (try? AirTunedOutput(patch:patch,scale:scale,root:studio.chordBank.root)) != nil
+        } else {
+            tunedValid = false
         }
+        return DAWSetupAssistantView(projection:.init(patch:patch,sendMIDI:midi,tunedAir:tuned,
+            splitRequested:split,splitSelection:selection,tunedAirValidated:tunedValid))
     }
 
     private var gamepadOutputPanel: some View {
