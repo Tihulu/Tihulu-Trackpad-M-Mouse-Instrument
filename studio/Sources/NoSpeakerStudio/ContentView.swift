@@ -31,6 +31,7 @@ private struct TouchDraft: Codable {
     var midiChannel: Int = 1
     // Optional for backward-compatible workspace decoding; nil means shared.
     var separateMouseMIDIChannel: Int? = nil
+    var independentDAWSustain: Bool? = nil
     var trackpadInstrument: SurfaceInstrumentMode = .melodic
     var magicMouseInstrument: SurfaceInstrumentMode = .melodic
     var trackpadOutput: SurfaceOutputRoute = .trackpadHaptic
@@ -223,7 +224,7 @@ struct ContentView: View {
                     case .mapping: InstrumentBuilderView()
                     case .chords: ChordPadPanel(compact: false)
                     case .voice: VoiceModeView(text: $voiceDraft.text, selectedLanguage: $voiceDraft.selectedLanguage, selectedVoice: $voiceDraft.selectedVoice)
-                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, separateMouseMIDIChannel: $touchDraft.separateMouseMIDIChannel, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, stringLayout: $touchDraft.stringLayout, mouseStringLayout: $touchDraft.mouseStringLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
+                    case .touch: TouchInstrumentView(root: $touchDraft.root, scale: $touchDraft.scale, fretless: $touchDraft.fretless, zoneWidth: $touchDraft.zoneWidth, pitchSpan: $touchDraft.pitchSpan, surfaceSelection: $touchDraft.surfaceSelection, triggerMode: $touchDraft.triggerMode, pressThreshold: $touchDraft.pressThreshold, velocityFromPressure: $touchDraft.velocityFromPressure, fixedVelocity: $touchDraft.fixedVelocity, pressureToExpression: $touchDraft.pressureToExpression, localHapticSound: $touchDraft.localHapticSound, multiTouch: $touchDraft.multiTouch, midiMode: $touchDraft.midiMode, midiChannel: $touchDraft.midiChannel, separateMouseMIDIChannel: $touchDraft.separateMouseMIDIChannel, independentDAWSustain: $touchDraft.independentDAWSustain, trackpadInstrument: $touchDraft.trackpadInstrument, magicMouseInstrument: $touchDraft.magicMouseInstrument, trackpadOutput: $touchDraft.trackpadOutput, magicMouseOutput: $touchDraft.magicMouseOutput, drumLayout: $touchDraft.drumLayout, stringLayout: $touchDraft.stringLayout, mouseStringLayout: $touchDraft.mouseStringLayout, sustainEnabled: $touchDraft.sustainEnabled, sustainTrackpadEnabled: $touchDraft.sustainTrackpadEnabled, sustainTrackpadGesture: $touchDraft.sustainTrackpadGesture, sustainTrackpadThreshold: $touchDraft.sustainTrackpadThreshold, sustainTrackpadSensor: $touchDraft.sustainTrackpadSensor, sustainMouseEnabled: $touchDraft.sustainMouseEnabled, sustainMouseGesture: $touchDraft.sustainMouseGesture, sustainMouseTapThreshold: $touchDraft.sustainMouseTapThreshold)
                     case .midiHelper: MIDIHelperView(surfaceSelection: $helperDraft.surfaceSelection, sendToDAW: $helperDraft.sendToDAW, localSound: $helperDraft.localSound, targetChannel: $helperDraft.targetChannel, pitchBendRange: $helperDraft.pitchBendRange, vibratoCC: $helperDraft.vibratoCC, expressionCC: $helperDraft.expressionCC, vibratoEnabled: $helperDraft.vibratoEnabled, pitchBendEnabled: $helperDraft.pitchBendEnabled, expressionEnabled: $helperDraft.expressionEnabled, sustainEnabled: $helperDraft.sustainEnabled, trackpadSustainEnabled: $helperDraft.trackpadSustainEnabled, trackpadSustainThreshold: $helperDraft.trackpadSustainThreshold, trackpadSustainSensor: $helperDraft.trackpadSustainSensor, trackpadSustainGesture: $helperDraft.trackpadSustainGesture, magicMouseSustainEnabled: $helperDraft.magicMouseSustainEnabled, magicMouseSustainGesture: $helperDraft.magicMouseSustainGesture, magicMouseTapThreshold: $helperDraft.magicMouseTapThreshold, sharePedalSurface:$helperDraft.sharePedalSurface,configureReceiverBendRange:$helperDraft.configureReceiverBendRange)
                     case .touchBar: TouchBarModeView()
                     case .notes: NoteSequencerView(notes: $noteDraft.notes, selectedMIDI: $noteDraft.selectedMIDI, velocity: $noteDraft.velocity, loop: $noteDraft.loop, groove: $noteDraft.groove, output: $noteDraft.output)
@@ -762,6 +763,7 @@ private struct TouchInstrumentView: View {
     @Binding var midiMode: TouchMIDIMode
     @Binding var midiChannel: Int
     @Binding var separateMouseMIDIChannel: Int?
+    @Binding var independentDAWSustain: Bool?
 
     @Binding var trackpadInstrument: SurfaceInstrumentMode
     @Binding var magicMouseInstrument: SurfaceInstrumentMode
@@ -893,6 +895,7 @@ private struct TouchInstrumentView: View {
                                 multiTouch: multiTouch,
                                 midiChannel: midiChannel - 1,
                                 separateChannels: separateDAWChannels,
+                                independentDAWSustain: independentDAWSustain ?? false,
                                 sustainSettings: .init(
                                     trackpadEnabled: sustainEnabled && sustainTrackpadEnabled,
                                     trackpadContactThreshold: sustainTrackpadThreshold,
@@ -1173,7 +1176,13 @@ private struct TouchInstrumentView: View {
                                         Text("Choose two distinct channels, Standard MIDI, and two pitched MIDI surfaces; turn off Fretless. Disable this split to use another mode.")
                                             .font(.caption).foregroundStyle(.orange)
                                     } else {
-                                        Text("Logic MIDI Input: NoSpeaker Touch MIDI Out · Trackpad Ch \(midiChannel) · Magic Mouse Ch \(mouse). Shared Touch sustain affects both. Choose the Helper target channel explicitly.")
+                                        Toggle("Independent MIDI sustain for each surface",isOn:Binding(
+                                            get:{ independentDAWSustain ?? false },
+                                            set:{ independentDAWSustain = $0 }
+                                        )).disabled(studio.touchRunning)
+                                        Text("Logic MIDI Input: NoSpeaker Touch MIDI Out · Trackpad Ch \(midiChannel) · Magic Mouse Ch \(mouse). " +
+                                            ((independentDAWSustain ?? false) ? "Each enabled surface pedal targets its own MIDI channel." : "Either enabled pedal sustains both MIDI channels.") +
+                                            " Local haptic sustain remains shared. Choose the Helper target channel explicitly.")
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                 }
