@@ -25,3 +25,29 @@ import Testing
     var invalid = scale; invalid.intervals = [0,Int.max]
     #expect(invalid.degreeCents.isEmpty)
 }
+
+@Test func airTunedStrumNativeAndDebugReleaseSameWireMembers() throws {
+    var scale = CustomScale(); scale.centOffsets = [7:25]
+    let patch = InstrumentPatch(routes:AirStrumPerformance.routes(bank:AirStrumPerformance.threeCourseBank))
+    let plan = try AirTunedOutput(patch:patch,scale:scale,root:60)
+    var live = PhysicalPatchRuntime()
+    var debug = PatchSimulation()
+    try live.configure(patch)
+    try debug.start(patch,now:0)
+    var wire:[SensorCommand] = []
+    for (count,aperture,x,time) in [(0,0.8,0.0,0.0),(1,0.8,0.0,0.01),(1,0.8,0.0,0.15),(1,0.1,0.0,0.17),(1,0.1,1.0,0.22)] {
+        let hand = AirHandSample.debugSample(x:x,y:0.5,aperture:aperture)
+        let a = live.receiveDualHand(count:count,confidence:1,helper:hand,hostTime:time,now:time)
+        let b = debug.receiveDualHand(count:count,confidence:1,helper:hand,time:time,now:time)
+        #expect(a == b)
+        wire += a.compactMap { plan.translate($0) }
+    }
+    #expect(wire.map(\.destination.number) == [48,55,60])
+    #expect(Set(wire.map(\.destination.channel)).count == 3)
+    #expect(wire.allSatisfy { $0.value > 0 })
+    let off = live.expire(now:0.35)
+    #expect(off == debug.expireDualHand(now:0.35))
+    let translated = off.compactMap { plan.translate($0) }
+    #expect(Set(translated.map(\.destination)) == Set(wire.map(\.destination)))
+    #expect(translated.allSatisfy { $0.value == 0 })
+}

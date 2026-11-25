@@ -259,7 +259,7 @@ struct InstrumentBuilderView: View {
                         }
                         Toggle("Send controls to dedicated MIDI output", isOn: $sendMIDI)
                             .disabled(studio.patchRunning)
-                        if AirStrumPerformance.usesStrum(draft.routes) {
+                        if AirStrumPerformance.usesStrum(draft.routes) || tunedAir {
                             Toggle("Tune Air strings from current Custom Scale (MPE)",isOn:$tunedAir)
                                 .disabled(studio.patchRunning)
                             if tunedAir {
@@ -291,7 +291,11 @@ struct InstrumentBuilderView: View {
                             }
                         }
                         if physical && draft.routes.contains(where: { $0.source == .phone || $0.source == .tablet }) {
-                            RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI, syntheticSource:syntheticSource)
+                            if tunedAir {
+                                Text("Turn off tuned Air explicitly before starting Remote, or use a string-only patch.").font(.caption).foregroundStyle(.orange)
+                            } else {
+                                RemoteLoopbackPanel(patch: draft, sendMIDI: sendMIDI, syntheticSource:syntheticSource)
+                            }
                         }
                         if physical && !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(draft,synthetic:$0) } ?? PhysicalPatchRuntime.supports(draft)) {
                             Text("Normal native mode supports local surfaces, lid, ribbon and camera. For valid phone/tablet touch, piano, drum pads, pedalboard and motion routes, use the Remote panel above. Other unsupported signals remain simulation-only.")
@@ -302,7 +306,7 @@ struct InstrumentBuilderView: View {
                                 studio.updateInstrumentPatch(draft)
                                 values = [:]
                                 airRange = AirRangeCapture(signal: airRange.signal)
-                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical,synthetic:physical ? syntheticSource : nil,tunedAir:tunedAir && AirStrumPerformance.usesStrum(draft.routes))
+                                studio.startInstrumentPatch(sendMIDI: sendMIDI, physical: physical,synthetic:physical ? syntheticSource : nil,tunedAir:tunedAir)
                             }.buttonStyle(.borderedProminent)
                                 .disabled(studio.patchRunning || !draft.isValid || draft.routes.isEmpty || (physical && !(syntheticSource.map { PhysicalPatchRuntime.supportsHybrid(draft,synthetic:$0) } ?? PhysicalPatchRuntime.supports(draft))))
                             Button("Stop / Release All") { studio.stopInstrumentPatch() }

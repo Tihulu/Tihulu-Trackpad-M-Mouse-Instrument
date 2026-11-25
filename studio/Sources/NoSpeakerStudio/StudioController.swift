@@ -94,13 +94,6 @@ final class StudioController: ObservableObject {
     private var airTunedPlan:AirTunedOutput?
     private var airTunedSelectors = MIDISelectorCleanup()
     @Published private(set) var patchTunedAirActive = false
-    private func sendBuilderCommand(_ command:SensorCommand) -> Bool {
-        if let plan = airTunedPlan {
-            guard let wire = plan.translate(command) else { return false }
-            return airTunedMIDI.send(wire)
-        }
-        return patchMIDI.send(command)
-    }
     private func releaseBuilderOutput() -> Bool {
         let plan = airTunedPlan
         let notes = patchLedger.releaseAll(send:{ command in

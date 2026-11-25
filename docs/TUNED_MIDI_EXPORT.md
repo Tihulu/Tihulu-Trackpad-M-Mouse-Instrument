@@ -10,3 +10,5 @@ Live Note Sequencer now also exposes explicit Play tuned MIDI for MIDI-only dest
 
 ## Air three-course strings
 An explicit tuned Air mode routes string-only camera patches to TIHULU Air Strings MPE. The existing camera/strum engine produces logical notes; the frozen plan translates them to fixed, distinct member channels using current bank cent offsets. Cleanup uses the same mapping and original endpoint even after a fault. Reject mixed sources, helper controls, multiple logical channels, more than 15 distinct pitches and nominal recording rather than discard tuning. Simulation is supported with explicit MIDI opt-in; native camera acceptance remains pending. Three-course voicings are experimental, not a complete bağlama fret/makam model.
+
+A selected tuned mode cannot be silently bypassed by starting the Remote panel or removing all string routes. Explicitly switch modes or load a replacement. Regression coverage includes identical live/debug strum commands and expiry releases translated through the frozen MPE plan.
