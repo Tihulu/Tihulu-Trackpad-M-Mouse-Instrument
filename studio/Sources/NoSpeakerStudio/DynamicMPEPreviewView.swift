@@ -10,7 +10,7 @@ struct DynamicMPEPreviewView: View {
     @State private var name = "Custom scale"
     @State private var degrees = "0, 180, 400, 500, 700, 900, 1100"
     @State private var root = "60"
-    @State private var preview:DynamicMPEPreview?
+    @Binding var preview:DynamicMPEPreview?
     @State private var message = ""
 
     private func build() {

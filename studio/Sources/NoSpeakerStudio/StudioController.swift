@@ -236,13 +236,23 @@ final class StudioController: ObservableObject {
     }
 
     @Published private(set) var groupTunedConfiguration: PerformanceGroupTuningConfiguration?
+    @Published private(set) var groupDynamicPreview:DynamicMPEPreview?
+    @Published private(set) var groupCapacityRefusals = 0
+    var groupRetainsTuning:Bool { groupTunedConfiguration != nil || groupDynamicPreview != nil }
 
     func startGroupGamepads(profile: PerformanceGroupProfile, allowLayering: Bool,
                             tuning: PerformanceGroupTuningConfiguration? = nil,
                             confirmedTuning: Bool = false,
                             remoteTransport:RemoteLoopbackTransport? = nil,
                             remotePage:RemoteLoopbackPageServer? = nil,
-                            confirmedLAN:Bool = false,hapticGroups:Set<UUID> = []) {
+                            confirmedLAN:Bool = false,hapticGroups:Set<UUID> = [],
+                            dynamicPreview:DynamicMPEPreview? = nil,confirmedDynamic:Bool = false) {
+        guard (dynamicPreview != nil) == confirmedDynamic,
+              dynamicPreview == nil || (PerformanceGroupMIDIHost.dynamicMPEEnabled && tuning == nil &&
+                remoteTransport == nil && remotePage == nil && hapticGroups.isEmpty && !confirmedTuning && !confirmedLAN) else {
+            groupGamepadStatus = "Dynamic MPE requires a separately enabled, confirmed local start."
+            return
+        }
         guard hapticGroups.isEmpty || (Self.groupHapticStartEnabled &&
                 (tuning == nil || (Self.groupTunedHapticStartEnabled && confirmedTuning && remoteTransport == nil))) else {
             groupGamepadStatus = "Group Trackpad output requires an enabled standard or explicitly confirmed local MPE start."
@@ -267,7 +277,7 @@ final class StudioController: ObservableObject {
             groupGamepadStatus = "Live MPE is disabled in this build; use the offline preview."
             return
         }
-        guard groupTunedConfiguration == nil else {
+        guard !groupRetainsTuning else {
             groupGamepadStatus = "Close the retained tuned ports before any new group performance."
             return
         }
@@ -278,12 +288,22 @@ final class StudioController: ObservableObject {
             groupGamepadStatus = "Stop other live performances and Builder before starting group MIDI."
             return
         }
-        let activation: PerformanceGroupActivationPlan
+        let specifications:[UUID:PerformanceGroupTuningPlan.Specification]
         do {
-            activation = try .init(profile:profile,mode:tuning.map { .tuned($0) } ?? .standard,
-                allowLayering:allowLayering,confirmedTuning:confirmedTuning,
-                registeredIDs:groupHost.registeredIDs,cleanupIDs:groupHost.pendingCleanup,
-                pendingDisposalCount:groupHost.pendingDisposalCount,allowRemote:remoteEnabled)
+            if let dynamicPreview {
+                guard dynamicPreview.profile == profile else { throw DynamicMPEActivationPlan.AdmissionError.unsupportedProfile }
+                let plan = try DynamicMPEActivationPlan(profile:profile,tuning:dynamicPreview.tuning,
+                    confirmed:confirmedDynamic,allowLayering:allowLayering,registeredIDs:groupHost.registeredIDs,
+                    cleanupIDs:groupHost.pendingCleanup,pendingDisposalCount:groupHost.pendingDisposalCount,
+                    allowSurfaces:true,allowScalars:true,allowCamera:true)
+                specifications = plan.preview.tuning
+            } else {
+                let activation = try PerformanceGroupActivationPlan(profile:profile,mode:tuning.map { .tuned($0) } ?? .standard,
+                    allowLayering:allowLayering,confirmedTuning:confirmedTuning,
+                    registeredIDs:groupHost.registeredIDs,cleanupIDs:groupHost.pendingCleanup,
+                    pendingDisposalCount:groupHost.pendingDisposalCount,allowRemote:remoteEnabled)
+                specifications = activation.tuning
+            }
         } catch {
             groupGamepadStatus = "Group Start rejected: " + String(describing:error)
             return
@@ -311,10 +331,10 @@ final class StudioController: ObservableObject {
         let needsSurface = sources.contains(.trackpad) || sources.contains(.magicMouse)
         if !hapticGroups.isEmpty {
             let projection:PerformanceGroupHapticProjection?
-            if activation.tuning.isEmpty {
+            if specifications.isEmpty {
                 projection = try? .init(profile:profile,selected:hapticGroups)
             } else {
-                projection = try? .init(profile:profile,selected:hapticGroups,preparedTuning:activation.tuning)
+                projection = try? .init(profile:profile,selected:hapticGroups,preparedTuning:specifications)
             }
             guard projection != nil,requireEngine(),driver != nil else {
                 groupGamepadStatus = "Selected group Trackpad output unavailable; Start refused."
@@ -338,17 +358,20 @@ final class StudioController: ObservableObject {
             return
         }
         do {
-            try groupHost.startGamepads(profile:activation.profile,allowLayering:activation.allowLayering,
-                allowSurfaces:true,allowScalars:true,allowCamera:true,tuning:activation.tuning,allowRemote:activation.allowRemote,hapticGroups:hapticGroups,
-                allowTunedHaptics:Self.groupTunedHapticStartEnabled && confirmedTuning)
+            try groupHost.startGamepads(profile:profile,allowLayering:allowLayering,
+                allowSurfaces:true,allowScalars:true,allowCamera:true,tuning:specifications,allowRemote:remoteEnabled,hapticGroups:hapticGroups,
+                allowTunedHaptics:Self.groupTunedHapticStartEnabled && confirmedTuning,
+                dynamicMPE:dynamicPreview != nil,confirmedDynamicMPE:confirmedDynamic)
             groupTunedConfiguration = tuning
+            groupDynamicPreview = dynamicPreview
         } catch {
             builderGamepads.stop()
             refreshGroupOutputState()
             // Preserve the requested mode while any partially opened endpoints
             // or cleanup debt remain. Do not advertise successful MPE setup.
-            if tuning != nil, !groupRegisteredIDs.isEmpty || !groupCleanupIDs.isEmpty || groupDisposalCount != 0 {
+            if !specifications.isEmpty, !groupRegisteredIDs.isEmpty || !groupCleanupIDs.isEmpty || groupDisposalCount != 0 {
                 groupTunedConfiguration = tuning
+                groupDynamicPreview = dynamicPreview
             }
             groupGamepadStatus = "Group setup failed: " + String(describing:error) + ". No fallback; check cleanup and close ports."
             return
@@ -361,6 +384,7 @@ final class StudioController: ObservableObject {
         groupGamepadsRunning = true
         groupFaultIDs = []
         groupStoppedIDs = []
+        groupCapacityRefusals = 0
         refreshGroupOutputState()
         do {
             for source in sources.subtracting(Set(SensorSource.groupRemoteSources)).sorted(by:{ $0.rawValue < $1.rawValue }) {
@@ -435,7 +459,9 @@ final class StudioController: ObservableObject {
             }
         }
         refreshGroupOutputState()
-        groupGamepadStatus = tuning == nil
+        groupGamepadStatus = dynamicPreview != nil
+            ? "Dynamic MPE pool setup sent; receiver not verified. Neutralize controls before playing."
+            : tuning == nil
             ? "Standard group ports registered. Release controller controls and lift each touch surface before playing."
             : "MPE setup sent; receiver not verified. Release controller controls and lift each touch surface before playing."
         if !hapticGroups.isEmpty {
@@ -515,6 +541,9 @@ final class StudioController: ObservableObject {
     }
 
     private func consumeGroupReports(_ reports: [PerformanceGroupDelivery.Report]) {
+        for report in reports where report.capacityRefused > 0 {
+            groupCapacityRefusals += min(report.capacityRefused,Int.max-groupCapacityRefusals)
+        }
         let failures = reports.reduce(into:Set<UUID>()) { $0.formUnion($1.failedGroups) }
         if !failures.isEmpty {
             groupFaultIDs.formUnion(failures)
@@ -829,7 +858,7 @@ final class StudioController: ObservableObject {
             refreshSharedSurfaceMonitoring()
         }
         groupGamepadStatus = groupCleanupIDs.isEmpty
-            ? (groupTunedConfiguration == nil ? "Group MIDI stopped. Registered ports retained for restart." : "MPE stopped. Close retained ports before another Start.")
+            ? (!groupRetainsTuning ? "Group MIDI stopped. Registered ports retained for restart." : "MPE stopped. Close retained ports before another Start.")
             : "Group MIDI stopped; cleanup pending. Retry before restarting."
     }
 
@@ -851,6 +880,7 @@ final class StudioController: ObservableObject {
         refreshGroupOutputState()
         if groupRegisteredIDs.isEmpty && groupCleanupIDs.isEmpty && groupDisposalCount == 0 && !groupGamepadsRunning {
             groupTunedConfiguration = nil
+            groupDynamicPreview = nil
         }
         groupGamepadStatus = groupCleanupIDs.isEmpty && groupDisposalCount == 0
             ? "No pending group cleanup." : "Group cleanup still pending. Check CoreMIDI and retry."
@@ -860,7 +890,7 @@ final class StudioController: ObservableObject {
         guard !groupGamepadsRunning else { return }
         let closed = groupHost.close()
         refreshGroupOutputState()
-        if closed { groupTunedConfiguration = nil }
+        if closed { groupTunedConfiguration = nil; groupDynamicPreview = nil }
         groupGamepadStatus = closed ? "Group MIDI ports closed." : "Group close refused or disposal failed; retry cleanup."
     }
 

@@ -22,6 +22,9 @@ struct PerformanceGroupEditorView: View {
     }
     @State private var pendingTunedStart:TunedStartSnapshot?
     @State private var confirmTunedStart = false
+    @State private var dynamicPreview:DynamicMPEPreview?
+    @State private var pendingDynamic:DynamicMPEStartConsent?
+    @State private var confirmDynamic = false
     @State private var profile = PerformanceGroupProfile()
     @State private var mobileDraft:PerformanceGroupMobileDraft?
     @State private var saved = PerformanceGroupProfile()
@@ -255,7 +258,7 @@ struct PerformanceGroupEditorView: View {
 
     private var canStartGroups: Bool {
         didLoad && !readFailed && !tuningDraft.isDirty && profile == saved && supportedLocalProfile &&
-        selectedControllersValid && !studio.groupGamepadsRunning && studio.groupTunedConfiguration == nil &&
+        selectedControllersValid && !studio.groupGamepadsRunning && !studio.groupRetainsTuning &&
         studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
         (saved.layeredInputs.isEmpty || allowLayering)
     }
@@ -263,7 +266,7 @@ struct PerformanceGroupEditorView: View {
     private var canStartRemoteGroups:Bool {
         StudioController.groupRemoteStartEnabled && didLoad && !readFailed && !tuningDraft.isDirty &&
         profile == saved && supportedRemoteProfile && selectedControllersValid &&
-        !studio.groupGamepadsRunning && studio.groupTunedConfiguration == nil &&
+        !studio.groupGamepadsRunning && !studio.groupRetainsTuning &&
         studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
         (saved.layeredInputs.isEmpty || allowLayering)
     }
@@ -286,6 +289,27 @@ struct PerformanceGroupEditorView: View {
         pendingTunedStart = .init(tuning:tuningPreview,profile:saved,storedData:storedData,
             controllers:studio.gamepadBindings,haptics:hapticSelection,layering:allowLayering)
         confirmTunedStart = true
+    }
+
+    private var canStartDynamic:Bool {
+        guard PerformanceGroupMIDIHost.dynamicMPEEnabled,canStartGroups,
+              hapticSelection.isEmpty,studio.groupRegisteredIDs.isEmpty,
+              let dynamicPreview,dynamicPreview.profile == saved else { return false }
+        return storedData != nil && UserDefaults.standard.data(forKey:key) == storedData
+    }
+
+    private var dynamicConsent:DynamicMPEStartConsent? {
+        guard canStartDynamic,let dynamicPreview,let storedData else { return nil }
+        return .init(profile:saved,tuning:dynamicPreview.tuning,archive:storedData,
+            controllers:studio.gamepadBindings,allowLayering:allowLayering,
+            cameraID:studio.patchCameraDeviceID,cameraOrientation:studio.patchCameraOrientation,
+            cameraMirror:studio.patchCameraMirrorX,mouseOrientation:studio.magicMouseOrientation)
+    }
+
+    private func requestDynamicStart() {
+        guard let consent = dynamicConsent else { return }
+        pendingDynamic = consent
+        confirmDynamic = true
     }
 
     private func registeredStatus(_ id:UUID) -> String {
@@ -448,6 +472,10 @@ struct PerformanceGroupEditorView: View {
                         Button("Start group MPE") { requestTunedStart() }
                             .disabled(!canStartTunedGroups)
                     }
+                    if PerformanceGroupMIDIHost.dynamicMPEEnabled {
+                        Button("Start dynamic MPE") { requestDynamicStart() }
+                            .disabled(!canStartDynamic)
+                    }
                     Button("Stop / Release All") { studio.stopGroupGamepads() }
                         .disabled(!studio.groupGamepadsRunning)
                     Button("Close ports") { studio.closeGroupPorts() }
@@ -456,6 +484,10 @@ struct PerformanceGroupEditorView: View {
                         .disabled(studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0)
                 }
                 Text(studio.groupGamepadStatus).font(.caption)
+                if studio.groupDynamicPreview != nil {
+                    Text("Dynamic MPE capacity refusals this run: " + String(studio.groupCapacityRefusals) + ". Release and press again after capacity frees. No voice stealing.")
+                        .font(.caption).foregroundStyle(studio.groupCapacityRefusals > 0 ? Color.orange : Color.secondary)
+                }
                 if studio.groupTiming.cycles > 0 {
                     DisclosureGroup("Host timing diagnostics") {
                         let timing = studio.groupTiming
@@ -567,7 +599,7 @@ struct PerformanceGroupEditorView: View {
                 if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
                 if didLoad && !readFailed {
                     PerformanceGroupTuningPreviewView(profile:saved,locked:editingLocked || profile != saved,configuration:$tuningPreview,draft:$tuningDraft)
-                    DynamicMPEPreviewView(profile:saved,locked:editingLocked || profile != saved)
+                    DynamicMPEPreviewView(profile:saved,locked:editingLocked || profile != saved,preview:$dynamicPreview)
                 }
                 liveControls
             }.padding(6)
@@ -577,6 +609,21 @@ struct PerformanceGroupEditorView: View {
         }
         .sheet(item:$mobileDraft) { draft in
             PerformanceGroupMobileDraftView(draft:draft,apply:applyMobileDraft)
+        }
+        .confirmationDialog("Start dynamic MPE pools?",isPresented:$confirmDynamic,titleVisibility:.visible) {
+            Button("Confirm dynamic MPE Start") {
+                guard let consent = pendingDynamic else { return }
+                pendingDynamic = nil
+                guard consent == dynamicConsent,let dynamicPreview else {
+                    message = "Dynamic MPE confirmation expired. Review current settings."
+                    return
+                }
+                studio.startGroupGamepads(profile:saved,allowLayering:allowLayering,
+                    dynamicPreview:dynamicPreview,confirmedDynamic:true)
+            }
+            Button("Cancel",role:.cancel) { pendingDynamic = nil }
+        } message: {
+            Text("This configures dedicated MPE ports. At most 15 simultaneous member channels per port; individual bend pools may fill sooner. Notes refused at capacity are not replayed. Remote and haptic output are excluded. Receiver setup must be verified manually.")
         }
         .confirmationDialog("Start independent group MPE?",isPresented:$confirmTunedStart,titleVisibility:.visible) {
             Button("Confirm MPE Start") {
