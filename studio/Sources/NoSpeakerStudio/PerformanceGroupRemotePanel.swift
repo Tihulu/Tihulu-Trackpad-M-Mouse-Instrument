@@ -65,7 +65,7 @@ struct PerformanceGroupRemotePanel: View {
         }
         do {
             let transport = try identity.makeLoopbackTransport(endpoint:endpoint)
-            let page = try identity.makeLoopbackPageServer(endpoint:endpoint)
+            let page = try identity.makeLoopbackPageServer(endpoint:endpoint,groupNeutralHandshake:true)
             start(transport,page,confirmedLAN)
         } catch { message = "TLS setup failed. No trust bypass. " + error.localizedDescription }
     }
