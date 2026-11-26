@@ -860,19 +860,21 @@ public struct PhysicalPatchRuntime: Sendable {
         if let id = hybridSession,removingHybrid || hybridReceipt.map({ !Self.admitsPhysicalReceipt($0,now:now) }) != false {
             removed.insert(id); hybridSession = nil; hybridReceipt = nil
         }
-        var commands = router.disconnect(sessions:removed,releasing:releasingSignals)
-        if let camera = sessions[.camera], airStrum != nil {
-            commands += airStrum!.expire(now:now,session:camera,router:&router)
+        // A watchdog tick retires due pulses and departing sessions together.
+        // No transient state between string/strike cleanup and device expiry.
+        var releasing=releasingSignals
+        if let camera=sessions[.camera],airStrum != nil {
+            releasing[camera,default:[]].formUnion(airStrum!.takeExpiredSignals(now:now))
         }
         for id in remotePeers.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
             guard var peer = remotePeers[id], var stream = peer.inertial[.accelerationMagnitude],
                   let deadline = stream.strikeReleaseAt, now >= deadline, let session = stream.session else { continue }
-            commands += router.releaseSignal(session: session, signal: .airStrike)
+            releasing[session,default:[]].insert(.airStrike)
             stream.strikeReleaseAt = nil
             peer.inertial[.accelerationMagnitude] = stream
             remotePeers[id] = peer
         }
-        return commands
+        return router.disconnect(sessions:removed,releasing:releasing)
     }
 
     /// Camera failure must not revoke unrelated physical or remote owners.

@@ -58,6 +58,24 @@ final class AirStrumPerformanceTests: XCTestCase {
         XCTAssertTrue(fresh.isEmpty)
     }
 
+    func testWatchdogReleasesExpiredSurfaceAndDueStringPulsesTogether() throws {
+        let local=SensorMapping(id:"local",source:.trackpad,signal:.contact,destination:.init(.note,number:84))
+        var live=PhysicalPatchRuntime()
+        try live.configure(.init(name:"Hybrid",routes:AirStrumPerformance.routes(bank:AirStrumPerformance.threeCourseBank)+[local]))
+        _=live.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:0,now:0)
+        for (count,aperture,x,time) in [(0,0.8,0.0,0.01),(1,0.8,0.0,0.02),(1,0.8,0.0,0.16),(1,0.1,0.0,0.18)] {
+            _=live.receiveDualHand(count:count,confidence:1,helper:AirHandSample.debugSample(x:x,y:0.5,aperture:aperture),hostTime:time,now:time)
+        }
+        let on=live.receiveDualHand(count:1,confidence:1,helper:AirHandSample.debugSample(x:1,y:0.5,aperture:0.1),hostTime:0.23,now:0.23)
+        XCTAssertEqual(on.map { $0.destination.number },[48,55,60])
+        let off=live.expire(now:0.36)
+        XCTAssertEqual(off.map { $0.destination.number },[48,55,60,84])
+        XCTAssertTrue(off.allSatisfy { $0.value==0 })
+        XCTAssertTrue(live.expire(now:0.37).isEmpty)
+        XCTAssertFalse(live.activeSources.contains(.trackpad))
+        XCTAssertTrue(live.activeSources.contains(.camera))
+    }
+
     func testInvalidMixAndMalformedBank() {
         let routes = AirStrumPerformance.routes(bank:AirStrumPerformance.threeCourseBank)
         XCTAssertEqual(routes.count,15)
