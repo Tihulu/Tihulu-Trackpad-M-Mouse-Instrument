@@ -34,6 +34,9 @@ public final class NativeMIDIPlayback {
         public let maximumNativeSendNS:UInt64
         /// Host scheduling telemetry, not physical MIDI latency.
         public let maximumWakeLatenessNS:UInt64
+        /// Timer dispatch and actor-resume are separate scheduling costs.
+        public let maximumTimerLatenessNS:UInt64
+        public let maximumActorResumeDelayNS:UInt64
     }
 
     /// The successful close report is distinct from receiver confirmation.
@@ -83,6 +86,8 @@ public final class NativeMIDIPlayback {
     private var maximumIdentityCheckNS:UInt64=0
     private var maximumNativeSendNS:UInt64=0
     private var maximumWakeLatenessNS:UInt64=0
+    private var maximumTimerLatenessNS:UInt64=0
+    private var maximumActorResumeDelayNS:UInt64=0
 
     public init(clip:MIDIClip) throws {
         player=try BoundedMIDIPlayback(clip:clip)
@@ -175,14 +180,10 @@ public final class NativeMIDIPlayback {
             recordGate(gate)
             return report(cancelled:true)
         }
-        // Anchor once to the suspending monotonic clock, like uptime.
-        // A relative Task.sleep may allow scheduler coalescing. Request
-        // exact absolute wake targets without relaxing the core fence.
-        // The OS can still delay this task; late events remain faults.
-        let waitClock=SuspendingClock()
-        let waitAnchor=waitClock.now
-        let uptimeAnchor=Self.now()
-        _=try player.begin(now:uptimeAnchor)
+        // Use the same absolute DispatchTime uptime for the core and
+        // the timer. A strict timer requests zero leeway on a dedicated
+        // queue; OS scheduling can still delay delivery or actor resumption.
+        _=try player.begin(now:Self.now())
         while player.state == .playing {
             // Check the bound source even during initial/trailing rests.
             guard gate.validate() else {
@@ -202,14 +203,15 @@ public final class NativeMIDIPlayback {
             guard let deadline=player.nextDeadline else { break }
             let current=Self.now()
             if let wakeTarget=Self.nextWakeTarget(deadline:deadline,current:current) {
-                guard wakeTarget>=uptimeAnchor,
-                      let offset=Int64(exactly:wakeTarget-uptimeAnchor) else {
-                    player.abort { gate.send($0) }
-                    break
-                }
                 do {
-                    try await waitClock.sleep(until:waitAnchor.advanced(by:.nanoseconds(offset)),tolerance:.zero)
+                    let fired=try await NativeMIDIPlaybackWake.wait(until:wakeTarget)
                     let woke=Self.now()
+                    if fired>=wakeTarget {
+                        maximumTimerLatenessNS=max(maximumTimerLatenessNS,fired-wakeTarget)
+                    }
+                    if woke>=fired {
+                        maximumActorResumeDelayNS=max(maximumActorResumeDelayNS,woke-fired)
+                    }
                     if woke>=wakeTarget {
                         maximumWakeLatenessNS=max(maximumWakeLatenessNS,woke-wakeTarget)
                     }
@@ -340,7 +342,9 @@ public final class NativeMIDIPlayback {
               faultReason:identityRetired ? "sourceIdentityLost" : player.fault?.rawValue,
               maximumObservedLatenessNS:player.maximumObservedLatenessNS,
               maximumIdentityCheckNS:maximumIdentityCheckNS,maximumNativeSendNS:maximumNativeSendNS,
-              maximumWakeLatenessNS:maximumWakeLatenessNS)
+              maximumWakeLatenessNS:maximumWakeLatenessNS,
+              maximumTimerLatenessNS:maximumTimerLatenessNS,
+              maximumActorResumeDelayNS:maximumActorResumeDelayNS)
     }
 
     // Nil means a due deadline, not permission to sleep or yield.

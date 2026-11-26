@@ -126,7 +126,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
             running.cancel()
         }
         let report=try await running.value
-        print("TIHULU_NATIVE_TIMING receiver cancel=\(cancel) state=\(report.state) fault=\(report.faultReason ?? "none") late_ns=\(report.maximumObservedLatenessNS) wake_ns=\(report.maximumWakeLatenessNS) identity_ns=\(report.maximumIdentityCheckNS) send_ns=\(report.maximumNativeSendNS)")
+        print("TIHULU_NATIVE_TIMING receiver cancel=\(cancel) state=\(report.state) fault=\(report.faultReason ?? "none") late_ns=\(report.maximumObservedLatenessNS) wake_ns=\(report.maximumWakeLatenessNS) timer_ns=\(report.maximumTimerLatenessNS) resume_ns=\(report.maximumActorResumeDelayNS) identity_ns=\(report.maximumIdentityCheckNS) send_ns=\(report.maximumNativeSendNS)")
         let deadline=ContinuousClock().now.advanced(by:.milliseconds(250))
         while trace.snapshot().count<2 && ContinuousClock().now<deadline {
             try await Task.sleep(nanoseconds:5_000_000)
@@ -332,7 +332,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     defer { _=MIDIPortDispose(port) }
     try #require(MIDIPortConnectSource(port,source,nil)==noErr)
     let result=try await player.runAndClose()
-    print("TIHULU_NATIVE_TIMING prepared state=\(result.playback.state) fault=\(result.playback.faultReason ?? "none") late_ns=\(result.playback.maximumObservedLatenessNS) wake_ns=\(result.playback.maximumWakeLatenessNS) identity_ns=\(result.playback.maximumIdentityCheckNS) send_ns=\(result.playback.maximumNativeSendNS)")
+    print("TIHULU_NATIVE_TIMING prepared state=\(result.playback.state) fault=\(result.playback.faultReason ?? "none") late_ns=\(result.playback.maximumObservedLatenessNS) wake_ns=\(result.playback.maximumWakeLatenessNS) timer_ns=\(result.playback.maximumTimerLatenessNS) resume_ns=\(result.playback.maximumActorResumeDelayNS) identity_ns=\(result.playback.maximumIdentityCheckNS) send_ns=\(result.playback.maximumNativeSendNS)")
     #expect(result.completed && result.sourceDisposed && !result.recoveryRequired,
             "state=\(result.playback.state), reason=\(result.playback.faultReason ?? "none"), max lateness ns=\(result.playback.maximumObservedLatenessNS), identity ns=\(result.playback.maximumIdentityCheckNS), native send ns=\(result.playback.maximumNativeSendNS), wake lateness ns=\(result.playback.maximumWakeLatenessNS)")
     #expect(result.playback.state=="finished" && !result.playback.receiverConfirmed)
@@ -450,5 +450,28 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     #expect(throws:NativeMIDIMonitor.Failure.self) {
         _=try NativeMIDIMonitor.resolve(name:player.sourceName)
     }
+}
+
+@Test func nativePlaybackAbsoluteWakeCompletesAndCancelsWithoutMIDI() async throws {
+    for _ in 0..<8 {
+        let start=DispatchTime.now().uptimeNanoseconds
+        let fired=try await NativeMIDIPlaybackWake.wait(until:start+1_000_000)
+        #expect(fired>=start)
+    }
+    for _ in 0..<32 {
+        let task=Task {
+            try await NativeMIDIPlaybackWake.wait(until:DispatchTime.now().uptimeNanoseconds+1_000_000_000)
+        }
+        task.cancel()
+        await #expect(throws:CancellationError.self) { _=try await task.value }
+    }
+}
+
+@Test func nativePlaybackWakeHonorsAlreadyCancelledTask() async throws {
+    let task=Task {
+        withUnsafeCurrentTask { $0?.cancel() }
+        return try await NativeMIDIPlaybackWake.wait(until:DispatchTime.now().uptimeNanoseconds+1_000_000_000)
+    }
+    await #expect(throws:CancellationError.self) { _=try await task.value }
 }
 #endif
