@@ -177,7 +177,7 @@ public struct PhysicalPatchRuntime: Sendable {
     public mutating func sendHybrid(_ input:PatchSimulation.Input,value:Double,now:Double) -> [SensorCommand] {
         guard input.source == hybridSource,hybridInputs.contains(input),now.isFinite,now >= 0,
               value.isFinite,(0...1).contains(value) else { return [] }
-        if let last = hybridReceipt, now < last { return releaseHybridSource() }
+        if let last = hybridReceipt, now < last { return releaseHybridSource(now:now) }
         var commands = expireHybrid(now:now)
         if hybridSession == nil { hybridSession = try? router.connect(input.source,now:now) }
         guard let id = hybridSession else { return commands }
@@ -196,6 +196,14 @@ public struct PhysicalPatchRuntime: Sendable {
         hybridSession = nil; hybridReceipt = nil
         return router.disconnect(id)
     }
+    /// Explicit UI loss and known expiry share one router reconciliation.
+    public mutating func releaseHybridSource(now:Double) -> [SensorCommand] {
+        guard now.isFinite,now>=0 else { return releaseHybridSource() }
+        if hybridSource == .camera { return releaseCamera(now:now) }
+        guard hybridSession != nil else { return [] }
+        return expire(now:now,removingRemote:[],removingHybrid:true)
+    }
+
     /// Heartbeats only renew existing ownership; never recreate notes.
     public mutating func refreshHybrid(now:Double) -> [SensorCommand] {
         let commands = expireHybrid(now:now)
@@ -207,7 +215,7 @@ public struct PhysicalPatchRuntime: Sendable {
     }
     private mutating func expireHybrid(now:Double) -> [SensorCommand] {
         guard let last = hybridReceipt else { return [] }
-        guard Self.admitsPhysicalReceipt(last,now:now) else { return releaseHybridSource() }
+        guard Self.admitsPhysicalReceipt(last,now:now) else { return releaseHybridSource(now:now) }
         return []
     }
 
@@ -784,7 +792,8 @@ public struct PhysicalPatchRuntime: Sendable {
     // Known transport departures and already expired owners must be
     // disconnected in one router transaction, never restored in between.
     mutating func expire(now:Double,removingRemote departures:Set<UUID>,
-                         removingPhysical physical:Set<SensorSource> = []) -> [SensorCommand] {
+                         removingPhysical physical:Set<SensorSource> = [],
+                         removingHybrid:Bool = false) -> [SensorCommand] {
         guard now.isFinite else { return [] }
         let dualExpired = (airDualEnabled || cameraHandsEnabled) && (seen[.camera].map { now - $0 >= 0.25 } ?? false)
         if dualExpired { airDual.reset(); airActiveSlot = nil; airStrum?.reset(); cameraHands.reset() }
@@ -802,7 +811,7 @@ public struct PhysicalPatchRuntime: Sendable {
         }
         let expiredPeers = Set(remotePeers.filter { $0.value.expired(now:now) }.map(\.key))
         for id in expiredPeers.union(departures) { removed.formUnion(removeRemoteSessions(id)) }
-        if let id = hybridSession,let last = hybridReceipt, !Self.admitsPhysicalReceipt(last,now:now) {
+        if let id = hybridSession,removingHybrid || hybridReceipt.map({ !Self.admitsPhysicalReceipt($0,now:now) }) != false {
             removed.insert(id); hybridSession = nil; hybridReceipt = nil
         }
         var commands = router.disconnect(sessions:removed)

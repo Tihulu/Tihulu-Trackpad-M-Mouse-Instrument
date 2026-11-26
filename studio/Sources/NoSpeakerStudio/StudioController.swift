@@ -1730,7 +1730,7 @@ final class StudioController: ObservableObject {
 
     func releaseHelperDebugFrame(runID:UUID) {
         guard patchHelperDebugAvailable,patchDebugCameraRunID == runID else { return }
-        recordPatchCommands(patchPhysical ? patchPhysicalRuntime.releaseHybridSource() : patchSimulation.releaseDualHand())
+        recordPatchCommands(patchPhysical ? patchPhysicalRuntime.releaseHybridSource(now:ProcessInfo.processInfo.systemUptime) : patchSimulation.releaseDualHand())
     }
 
     func sendAirDebugFrame(count: Int, aperture: Double, x: Double, y: Double,
@@ -1820,7 +1820,7 @@ final class StudioController: ObservableObject {
 
     func releaseAirDebugFrame() {
         guard patchAirDebugAvailable else { return }
-        let commands = patchPhysical ? patchPhysicalRuntime.releaseHybridSource() : patchSimulation.releaseDualHand()
+        let commands = patchPhysical ? patchPhysicalRuntime.releaseHybridSource(now:ProcessInfo.processInfo.systemUptime) : patchSimulation.releaseDualHand()
         refreshAirDebugState()
         recordPatchCommands(commands)
     }
@@ -2112,7 +2112,7 @@ final class StudioController: ObservableObject {
     func releaseHybridControls() {
         guard patchRunning,let source = patchHybridSource else { return }
         for input in Array(patchPadTasks.keys) where input.source == source { cancelPatchPulse(input) }
-        recordPatchCommands(patchPhysicalRuntime.releaseHybridSource())
+        recordPatchCommands(patchPhysicalRuntime.releaseHybridSource(now:ProcessInfo.processInfo.systemUptime))
     }
 
     func disconnectPatchInput(_ source: SensorSource) {
