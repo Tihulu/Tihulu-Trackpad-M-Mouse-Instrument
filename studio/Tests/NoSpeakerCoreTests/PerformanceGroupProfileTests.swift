@@ -96,9 +96,11 @@ import Testing
     var edited=original
     var library=PerformanceGroupPresetLibrary()
     let id=UUID()
-    #expect(library.add(name:"  Evening jam  ",profile:original,id:id))
+    let mutation1=library.add(name:"  Evening jam  ",profile:original,id:id)
+    #expect(mutation1)
     edited.groups[0].name="Custom lead"
-    #expect(library.add(name:"Second version",profile:edited))
+    let mutation2=library.add(name:"Second version",profile:edited)
+    #expect(mutation2)
     #expect(library.entries.first?.name=="Evening jam")
     #expect(library.entries.first?.profile==original)
     #expect(library.entries.last?.profile==edited)
@@ -106,13 +108,19 @@ import Testing
     let restored=try PerformanceGroupPresetLibrary.read(library.archive())
     #expect(restored==library)
     let before=library
-    #expect(!library.add(name:"evening JAM",profile:edited))
-    #expect(!library.add(name:"Other",profile:edited,id:id))
-    #expect(!library.add(name:" ",profile:edited))
-    #expect(!library.add(name:"Empty",profile:.init()))
+    let mutation3=library.add(name:"evening JAM",profile:edited)
+    #expect(!mutation3)
+    let mutation4=library.add(name:"Other",profile:edited,id:id)
+    #expect(!mutation4)
+    let mutation5=library.add(name:" ",profile:edited)
+    #expect(!mutation5)
+    let mutation6=library.add(name:"Empty",profile:.init())
+    #expect(!mutation6)
     #expect(library==before)
-    #expect(library.remove(id))
-    #expect(!library.remove(id))
+    let mutation7=library.remove(id)
+    #expect(mutation7)
+    let mutation8=library.remove(id)
+    #expect(!mutation8)
     #expect(library.entries.count==1 && library.entries.first?.profile==edited)
 }
 
@@ -120,10 +128,12 @@ import Testing
     var library=PerformanceGroupPresetLibrary()
     let profile=try #require(PerformanceGroupStarterPreset.trackpadSolo.makeProfile())
     for i in 0..<PerformanceGroupPresetLibrary.maximumEntries {
-        #expect(library.add(name:"Layout "+String(i),profile:profile))
+        let mutation9=library.add(name:"Layout "+String(i),profile:profile)
+        #expect(mutation9)
     }
     let before=library
-    #expect(!library.add(name:"Overflow",profile:profile))
+    let mutation10=library.add(name:"Overflow",profile:profile)
+    #expect(!mutation10)
     #expect(library==before)
     #expect(try PerformanceGroupPresetLibrary.read(library.archive())==library)
     let raw=try WorkspaceArchive.encode(name:"Invalid",payload:["entries":[
