@@ -149,6 +149,17 @@ public struct PerformanceGroupPresetLibrary:Codable,Equatable,Sendable {
         self=next
         return true
     }
+    /// Explicit replacement of an exact reviewed entry. Stale selections
+    /// cannot overwrite a newer revision. Keep the library entry identity.
+    @discardableResult
+    public mutating func update(expected:Entry,name:String,profile:PerformanceGroupProfile) -> Bool {
+        guard let index=entries.firstIndex(of:expected) else { return false }
+        var next=self
+        next.entries[index] = .init(id:expected.id,name:name.trimmingCharacters(in:.whitespacesAndNewlines),profile:profile)
+        guard (try? next.archive()) != nil else { return false }
+        self=next
+        return true
+    }
     @discardableResult
     public mutating func remove(_ id:UUID) -> Bool {
         guard isValid,entries.contains(where:{ $0.id==id }) else { return false }

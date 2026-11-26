@@ -167,3 +167,29 @@ import Testing
     session.clear()
     #expect(session.resume(saved:empty,archive:nil)==empty)
 }
+
+
+@Test func namedPresetUpdateRequiresExactEntryAndPreservesOtherCopies() throws {
+    let original=try #require(PerformanceGroupStarterPreset.trackpadSolo.makeProfile())
+    var library=PerformanceGroupPresetLibrary()
+    let a=library.add(name:"First",profile:original)
+    let b=library.add(name:"Second",profile:original)
+    #expect(a && b)
+    let first=try #require(library.entries.first)
+    let second=try #require(library.entries.last)
+    var edited=original
+    edited.groups[0].name="Custom"
+    let renamed=library.update(expected:first,name:"Lead",profile:first.profile)
+    #expect(renamed)
+    let renamedEntry=try #require(library.entries.first)
+    #expect(renamedEntry.id==first.id && renamedEntry.profile==original)
+    let stale=library.update(expected:first,name:"Stale",profile:edited)
+    let collision=library.update(expected:renamedEntry,name:"SECOND",profile:edited)
+    let invalid=library.update(expected:renamedEntry,name:"Lead",profile:.init())
+    #expect(!stale && !collision && !invalid)
+    #expect(library.entries==[renamedEntry,second])
+    let updated=library.update(expected:renamedEntry,name:renamedEntry.name,profile:edited)
+    #expect(updated && library.entries.first?.profile==edited)
+    #expect(library.entries.first?.id==first.id && library.entries.last==second)
+    #expect(try PerformanceGroupPresetLibrary.read(library.archive())==library)
+}

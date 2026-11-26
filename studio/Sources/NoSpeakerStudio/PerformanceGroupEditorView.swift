@@ -26,6 +26,10 @@ struct PerformanceGroupEditorView: View {
     @State private var libraryMessage=""
     @State private var pendingLibraryDelete:PerformanceGroupPresetLibrary.Entry?
     @State private var confirmLibraryDelete=false
+    @State private var pendingLibraryUpdate:PerformanceGroupPresetLibrary.Entry?
+    @State private var pendingLibraryUpdateProfile:PerformanceGroupProfile?
+    @State private var confirmLibraryUpdate=false
+    @State private var renamePresetName=""
     private let libraryKey="TIHULU.performanceGroupPresetLibrary.v1"
     @EnvironmentObject private var studio: StudioController
     @State private var allowLayering = false
@@ -807,6 +811,24 @@ struct PerformanceGroupEditorView: View {
                 if let entry=presetLibrary.entries.first(where:{$0.id==librarySelection}) {
                     Text("\(entry.profile.groups.count) groups · \(entry.profile.groups.reduce(0) { $0+$1.patch.routes.count }) mappings")
                         .font(.caption)
+                    HStack {
+                        TextField("Rename selected preset",text:$renamePresetName)
+                        Button("Rename") {
+                            var next=presetLibrary
+                            guard next.update(expected:entry,name:renamePresetName,profile:entry.profile),
+                                  storePresetLibrary(next) else {
+                                libraryMessage="Rename refused. Choose a unique valid name or reload the library."
+                                return
+                            }
+                            renamePresetName=""
+                            libraryMessage="Preset renamed. Mappings and port identities unchanged."
+                        }.disabled(renamePresetName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+                    }
+                    Button("Update selected preset from current draft") {
+                        pendingLibraryUpdate=entry
+                        pendingLibraryUpdateProfile=profile
+                        confirmLibraryUpdate=true
+                    }.disabled(!profile.isValid || profile.groups.isEmpty || profile==entry.profile || tuningDraft.isDirty)
                 }
                 HStack {
                     Button("Load editable copy") { recallNamedPreset() }
@@ -823,6 +845,27 @@ struct PerformanceGroupEditorView: View {
                 if !libraryMessage.isEmpty { Text(libraryMessage).font(.caption) }
             }.padding(6)
         }.disabled(!didLoad || readFailed || !libraryLoaded || libraryReadFailed || editingLocked || studio.patchRunning)
+        .onChange(of:librarySelection) { _ in renamePresetName="" }
+        .confirmationDialog("Update selected preset?",isPresented:$confirmLibraryUpdate,titleVisibility:.visible) {
+            Button("Update saved copy",role:.destructive) {
+                defer { pendingLibraryUpdate=nil;pendingLibraryUpdateProfile=nil }
+                guard let entry=pendingLibraryUpdate,let draft=pendingLibraryUpdateProfile,
+                      profile==draft,!tuningDraft.isDirty,librarySelection==entry.id else {
+                    libraryMessage="Selection or draft changed. Review again."
+                    return
+                }
+                var next=presetLibrary
+                guard next.update(expected:entry,name:entry.name,profile:draft),
+                      storePresetLibrary(next) else {
+                    libraryMessage="Update refused. Existing preset retained."
+                    return
+                }
+                libraryMessage="Selected preset updated. Active saved layout unchanged."
+            }
+            Button("Cancel",role:.cancel) { pendingLibraryUpdate=nil;pendingLibraryUpdateProfile=nil }
+        } message: {
+            Text("Replace the selected personal preset with the current group draft. Factory presets and the active saved layout are not changed.")
+        }
         .confirmationDialog("Delete saved preset copy?",isPresented:$confirmLibraryDelete,titleVisibility:.visible) {
             Button("Delete",role:.destructive) {
                 defer { pendingLibraryDelete=nil }
