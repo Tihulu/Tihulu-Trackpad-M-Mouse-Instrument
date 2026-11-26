@@ -1,6 +1,7 @@
 #if os(macOS)
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import NoSpeakerCore
 import NoSpeakerMac
 
@@ -13,6 +14,9 @@ struct PerformanceGroupEditorView: View {
     @State private var confirmStarterReplacement=false
     @State private var pendingStarter:PerformanceGroupStarterPreset?
     @State private var pendingStarterDraft:PerformanceGroupProfile?
+    @State private var pendingImport:PerformanceGroupProfile?
+    @State private var pendingImportDraft:PerformanceGroupProfile?
+    @State private var confirmImport=false
     @EnvironmentObject private var studio: StudioController
     @State private var allowLayering = false
     @State private var hapticSelection:Set<UUID> = []
@@ -644,8 +648,8 @@ struct PerformanceGroupEditorView: View {
         profile=next
         allowLayering=false
         hapticSelection=[]
-        groupsExpanded=true
-        message=preset.title + " loaded as editable draft. Save groups, select devices and Start explicitly."
+        groupsExpanded=false
+        message=preset.title + " loaded as editable draft. Save & Start or open Device setup / advanced."
     }
 
     private func sourceLabel(_ source:SensorSource) -> String {
@@ -661,6 +665,51 @@ struct PerformanceGroupEditorView: View {
         case .lid: "Lid sensor"
         default: GamepadFrame.slotLabel(source)
         }
+    }
+
+    private func exportGroupDraft() {
+        guard didLoad,!readFailed,profile.isValid else { return }
+        do {
+            let data=try profile.archive()
+            let panel=NSSavePanel()
+            panel.allowedContentTypes=[.json]
+            panel.nameFieldStringValue="TIHULU Groups.json"
+            guard panel.runModal() == .OK,let url=panel.url else { return }
+            try data.write(to:url,options:.atomic)
+            message="Group layout exported. Device assignments and MPE configuration are not included."
+        } catch { message=error.localizedDescription }
+    }
+
+    private func importGroupDraft() {
+        guard didLoad,!readFailed,!editingLocked,!studio.patchRunning,!tuningDraft.isDirty else { return }
+        let original=profile
+        let panel=NSOpenPanel()
+        panel.allowedContentTypes=[.json]
+        panel.allowsMultipleSelection=false
+        guard panel.runModal() == .OK,let url=panel.url,!editingLocked,!studio.patchRunning,
+              !tuningDraft.isDirty,profile==original else { return }
+        do {
+            let handle=try FileHandle(forReadingFrom:url)
+            defer { try? handle.close() }
+            let data=try handle.read(upToCount:WorkspaceArchive.maximumBytes+1) ?? Data()
+            let decoded=try PerformanceGroupProfile.read(data)
+            if profile.groups.isEmpty { applyImportedGroupDraft(decoded) }
+            else {
+                pendingImport=decoded
+                pendingImportDraft=original
+                confirmImport=true
+            }
+        } catch { message=error.localizedDescription }
+    }
+
+    private func applyImportedGroupDraft(_ imported:PerformanceGroupProfile) {
+        guard didLoad,!readFailed,!editingLocked,!studio.patchRunning,!tuningDraft.isDirty,
+              imported.isValid else { return }
+        profile=imported
+        allowLayering=false
+        hapticSelection=[]
+        groupsExpanded=false
+        message="Imported editable group layout. Original port identities retained; save and review devices before Start."
     }
 
     private var starterPanel:some View {
@@ -709,6 +758,12 @@ struct PerformanceGroupEditorView: View {
                         Button("Add preset to draft") { loadStarter(starter,append:true) }
                     }
                     Button("Manual / custom setup") { groupsExpanded=true }
+                }
+                HStack {
+                    Button("Export group layout…") { exportGroupDraft() }
+                        .disabled(!profile.isValid || profile.groups.isEmpty)
+                    Button("Import group layout…") { importGroupDraft() }
+                        .disabled(tuningDraft.isDirty)
                 }
                 Text("Choose → Load → Save groups → select devices → Start. Templates are editable copies. No automatic MIDI, haptic output, camera or network activation.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -858,6 +913,18 @@ struct PerformanceGroupEditorView: View {
         }.onAppear { load() }
         .onChange(of:studio.groupGamepadsRunning) { running in
             if !running { hapticSelection = [] }
+        }
+        .confirmationDialog("Import and replace group draft?",isPresented:$confirmImport,titleVisibility:.visible) {
+            Button("Replace draft",role:.destructive) {
+                defer { pendingImport=nil;pendingImportDraft=nil }
+                guard let imported=pendingImport,pendingImportDraft==profile else {
+                    message="Draft changed. Import again.";return
+                }
+                applyImportedGroupDraft(imported)
+            }
+            Button("Cancel",role:.cancel) { pendingImport=nil;pendingImportDraft=nil }
+        } message: {
+            Text("The imported layout keeps its original group port identities. Your saved profile remains unchanged until Save groups. No device assignment or tuning is imported.")
         }
         .sheet(item:$mobileDraft) { draft in
             PerformanceGroupMobileDraftView(draft:draft,apply:applyMobileDraft)
