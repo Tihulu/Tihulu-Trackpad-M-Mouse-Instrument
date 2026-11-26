@@ -102,7 +102,7 @@ public struct TouchBarProfile: Codable, Equatable, Sendable {
         var copy = self
         var unique = Set<TouchBarZone>()
         copy.zones = zones.filter { unique.insert($0).inserted }
-        if copy.zones.isEmpty { copy.zones = [.keys] }
+        if copy.zones.isEmpty && copy.effectiveSynthBank.controls.isEmpty { copy.zones = [.keys] }
         copy.channel = max(0, min(15, channel))
         copy.baseNote = max(0, min(115, baseNote))
         copy.noteVelocity = max(1, min(127, noteVelocity))

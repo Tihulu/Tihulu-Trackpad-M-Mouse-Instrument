@@ -35,6 +35,12 @@ struct TouchBarSynthPanel:View {
                 DisclosureGroup("Customize synth parameters",isExpanded:$expanded) {
                     VStack(alignment:.leading,spacing:8) {
                         Text("Up to eight controls. Native Touch Bar items follow the built-in zones by default; macOS customization can reorder them. Reserved selectors, pedals and existing Touch Bar CCs are excluded.").font(.caption).foregroundStyle(.secondary)
+                        Button("Use synth controls only"){
+                            var profile=studio.touchBarProfile
+                            profile.zones=[]
+                            studio.setTouchBarProfile(profile)
+                            feedback=studio.touchBarProfile.zones.isEmpty ? "Synth-only layout saved.":"Layout not applied; check session status."
+                        }.disabled(bank.controls.isEmpty || studio.touchBarProfile.zones.isEmpty)
                         ForEach(bank.controls){control in
                             HStack{
                                 Text("\(control.name) · CC \(control.cc) · Ch \((control.channel ?? studio.touchBarProfile.channel)+1) · \(control.style.rawValue)")
@@ -43,6 +49,8 @@ struct TouchBarSynthPanel:View {
                                 Button{if let next=bank.moving(id:control.id,delta:1){apply(next)}} label:{Image(systemName:"arrow.right")}.disabled(bank.controls.last?.id==control.id).accessibilityLabel("Move \(control.name) right")
                                 Button("Edit"){load(control)}
                                 Button("Remove",role:.destructive){if let next=bank.removing(id:control.id){apply(next);if editing==control.id {editing=nil}}}
+                                    .disabled(bank.controls.count==1 && studio.touchBarProfile.zones.isEmpty)
+                                    .help("Enable a built-in zone before removing the last synth control.")
                             }
                         }
                         Menu("Suggested parameters") {

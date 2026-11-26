@@ -124,3 +124,17 @@ extension TouchBarProfileTests {
         }
     }
 }
+
+extension TouchBarProfileTests {
+    func testSynthOnlyProfileAndEmptyFallback() throws {
+        var profile=TouchBarProfile(zones:[])
+        let bank=try XCTUnwrap(TouchBarSynthBank(controls:[.init(name:"Attack",cc:73)]))
+        profile.synthBank=bank
+        XCTAssertTrue(profile.normalized().zones.isEmpty)
+        let restored=try JSONDecoder().decode(TouchBarProfile.self,from:JSONEncoder().encode(profile))
+        XCTAssertTrue(restored.normalized().zones.isEmpty)
+        XCTAssertEqual(restored.effectiveSynthBank,bank)
+        profile.synthBank = .init()
+        XCTAssertEqual(profile.normalized().zones,[.keys])
+    }
+}

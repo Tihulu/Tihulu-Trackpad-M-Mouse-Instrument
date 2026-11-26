@@ -2728,7 +2728,7 @@ private struct TouchBarModeView: View {
                 TouchBarSavedProfilesPanel()
                 GroupBox("Touch Bar layout · Customize simultaneous zones") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Choose the zones in your preferred order. Native piano segments send bounded taps; on-screen piano pads support press and hold. At least one zone is required.")
+                        Text("Choose the zones in your preferred order. Native piano segments send bounded taps; on-screen piano pads support press and hold. At least one built-in or custom synth control is required.")
                             .font(.callout).foregroundStyle(.secondary)
                         Text("Layout presets").font(.caption.bold())
                         ViewThatFits(in:.horizontal) {
@@ -2751,7 +2751,7 @@ private struct TouchBarModeView: View {
                                     get: { studio.touchBarProfile.zones.contains(zone) },
                                     set: { enabled in
                                         setProfile { profile in
-                                            if !enabled && profile.zones.count == 1 && profile.zones.contains(zone) {return}
+                                            if !enabled && profile.zones.count == 1 && profile.zones.contains(zone) && profile.effectiveSynthBank.controls.isEmpty {return}
                                             profile.zones.removeAll { $0 == zone }
                                             if enabled { profile.zones.append(zone) }
                                         }
@@ -2813,6 +2813,7 @@ private struct TouchBarModeView: View {
                 }
 
                 TouchBarSynthPanel()
+                if !studio.touchBarProfile.zones.isEmpty {
                 GroupBox("Live performance strip · On-screen Touch Bar") {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(studio.touchBarProfile.zones) { zone in
@@ -2848,6 +2849,7 @@ private struct TouchBarModeView: View {
                     }.padding(8)
                 }
 
+                }
                 GroupBox("Screen hinge as an instrument · Calibration simulator") {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Map screen opening to wah (CC4), filter, expression, vibrato or pitch bend. Live hardware detection is experimental, manual-only and may be unsupported on Touch Bar MacBooks; use the simulator if no compatible sensor is available.")
