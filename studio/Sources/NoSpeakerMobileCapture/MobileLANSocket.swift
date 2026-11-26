@@ -3,7 +3,7 @@
 @preconcurrency import UIKit
 import NoSpeakerCore
 
-/// Experimental, single-use LAN adapter. Not attached to the sensor preview.
+/// Experimental, single-use LAN adapter for the opt-in Air companion.
 /// Ordinary URLSession TLS trust is mandatory; no trust challenge override.
 /// All mutable state is confined to one serial queue. Caller must stop on
 /// lifecycle loss and must supply observation timestamps in this clock domain.
@@ -11,6 +11,7 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
     public struct Status: Sendable {
         public let phase:MobileLANSession.Phase
         public let message:String
+        public let assignment: MobileLANCapabilities.Manifest?
     }
     private let endpoint:MobileLANEndpoint
     private let queue=DispatchQueue(label:"com.tihulu.mobile.lan",qos:.userInitiated)
@@ -30,10 +31,10 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
         super.init()
     }
     public static var nowNS:Int64 {
-        Int64(clamping:DispatchTime.now().uptimeNanoseconds)
+        MobileAirCaptureFrame.nanoseconds(MobileAirSensorSource.now) ?? -1
     }
     public func status()->Status {
-        queue.sync {Status(phase:policy.phase,message:message)}
+        queue.sync {Status(phase:policy.phase,message:message,assignment:policy.readyManifest)}
     }
     private func request()->URLRequest {
         // The endpoint parser has already validated the canonical numeric URL.
@@ -51,6 +52,7 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
             let config=URLSessionConfiguration.ephemeral
             config.httpCookieStorage=nil;config.urlCache=nil;config.urlCredentialStorage=nil
             config.httpShouldSetCookies=false;config.waitsForConnectivity=false
+            config.allowsCellularAccess=false
             config.timeoutIntervalForRequest=5
             let delegates=OperationQueue();delegates.maxConcurrentOperationCount=1
             let session=URLSession(configuration:config,delegate:self,delegateQueue:delegates)
@@ -69,8 +71,11 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
             return true
         }
     }
-    public func offer(_ output:MobileAirOutput,observedAt:Int64) {
-        queue.sync {if !terminal && opened {dispatch(policy.offer(output,observedAt:observedAt,now:Self.nowNS))}}
+    public func offer(_ output: MobileAirOutput, observedAt: Int64, stringDeadlines: [Int: Int64] = [:]) {
+        queue.sync {
+            guard !terminal, opened else { return }
+            dispatch(policy.offer(output, observedAt: observedAt, now: Self.nowNS, stringDeadlines: stringDeadlines))
+        }
     }
     public func stop(){queue.sync {finish("Stopped explicitly")}}
     private func watchdog(){

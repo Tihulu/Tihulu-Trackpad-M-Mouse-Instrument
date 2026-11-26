@@ -1,10 +1,6 @@
 # Mobile Air — native sensor preview (experimental)
 
-The iOS/iPadOS 17+ library NoSpeakerMobileCapture is isolated from Studio's
-release app. It is not an installable companion and does not open a network
-connection or emit MIDI. A later companion must supply NSCameraUsageDescription
-and explicit user permission, local-network permission and the existing
-authenticated host handshake before musical transmission. Never bypass TLS.
+The iOS/iPadOS 17+ capture library powers the experimental Air companion. Local preview is the default. The companion also supports explicit pairing with the Mac group host. See the [iOS/iPadOS companion guide](../studio/mobile-ios/README.md) for setup and certificate provisioning.
 
 ## Sensor paths
 
@@ -46,16 +42,15 @@ rear-camera-up stand, all orientations, swapped roles, empty scene, two hands
 with ambiguity, foreground/background, permission denial, near/far calibration,
 occlusion/reflective surfaces/low confidence, physical note release, no old
 event after rearm, measured p50/p95/p99 gesture-to-MIDI/audio latency.
-Native QR/TLS transport, actual mobile app packaging and physical tests remain
-HOLD. Do not claim the browser has access to ARKit scene depth.
+The generic iOS app build covers the QR scanner and the camera-to-LAN integration. Live camera, TLS and musical performance on hardware require device acceptance. Browser capture has a separate sensor contract.
 
 ## Diagnostic stage view
 
-MobileAirPreviewView is a reusable SwiftUI view for a future iOS/iPadOS app.
+MobileAirPreviewView is the companion’s camera and pairing screen.
 It offers explicit start/stop, sensor and hand role, image and control
 orientation (including 180°), mirror, near/far settings, derived XY, measured
 depth, logical note and helper meters. Configuration is locked while capture
 is active. The timer independently releases preview output on stale frames;
 scene inactivity, disappearance and permission failure stop capture.
 The full logical keyboard mask is used solely for offline diagnostics, never
-as authorization for a connected host. This is not an installable app.
+as authorization for a connected host. Paired mode builds a new projection from the confirmed host assignment before starting capture.

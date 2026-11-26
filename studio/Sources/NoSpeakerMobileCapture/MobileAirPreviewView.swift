@@ -3,10 +3,18 @@ import SwiftUI
 import Combine
 import NoSpeakerCore
 
-/// A sensor-only diagnostic stage for an iOS/iPadOS host app. No connection,
-/// MIDI endpoint or note emission is opened by this view.
+/// Local preview and explicitly paired Mac performance share one camera owner.
 @MainActor public struct MobileAirPreviewView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @State private var useMac = false
+    @State private var pageAddress = ""
+    @State private var invitation = ""
+    @State private var helperIndex = 0
+    @State private var socket: MobileLANSocket?
+    @State private var assignment: MobileLANCapabilities.Manifest?
+    @State private var connectionStatus = ""
+    @State private var scanning = false
+    @State private var askingPermission = false
     @State private var backend:MobileAirSensorSource.Backend = .rearCamera
     @State private var cameras:[MobileAirSensorSource.CameraChoice]=[]
     @State private var cameraID:String=""
@@ -26,11 +34,18 @@ import NoSpeakerCore
     @State private var output=MobileAirOutput()
     @State private var sample:AirHandSample?
     @State private var depth:Double?
-    @State private var status="Stopped · sensor-only preview"
+    @State private var status="Stopped"
     private let timer=Timer.publish(every:0.05,on:.main,in:.common).autoconnect()
 
     public init() {}
     private var busy:Bool {pending || source != nil || retiring != nil}
+    private var configurationLocked: Bool { busy || socket != nil || scanning || askingPermission }
+    private var playableAssignment: Bool {
+        guard useMac else { return true }
+        guard let assignment else { return false }
+        return MobileAirCaptureProjection(mode: mode, keys: assignment.piano, role: role,
+            orientation: musicalOrientation, mirrorX: mirror, near: near, far: far) != nil
+    }
     private var selectedCamera:MobileAirSensorSource.CameraChoice? {cameras.first {$0.id==cameraID}}
     private func refreshCameras() {
         cameras=MobileAirSensorSource.cameras(for:backend)
@@ -48,7 +63,11 @@ import NoSpeakerCore
         ScrollView {
             VStack(alignment:.leading,spacing:16) {
                 Text("TIHULU · Air stage").font(.largeTitle.bold())
-                Text("Local sensor preview — no MIDI or network connection").font(.subheadline).foregroundStyle(.secondary)
+                Picker("Output", selection: $useMac) {
+                    Text("Local preview").tag(false)
+                    Text("Paired Mac").tag(true)
+                }.pickerStyle(.segmented).disabled(configurationLocked)
+                if useMac { pairingPanel }
                 HStack {
                     Label(MobileAirSensorSource.hasLiDAR ? "LiDAR available":"Camera only",systemImage:"sensor")
                     Spacer()
@@ -103,7 +122,7 @@ import NoSpeakerCore
                             Slider(value:$far,in:0.2...3,step:0.05)
                         }
                     }
-                }.disabled(busy)
+                }.disabled(configurationLocked)
                 if !valid {
                     Text("Select a supported sensor, valid range and a distinct performing hand for chords.").foregroundStyle(.orange)
                 }
@@ -130,28 +149,125 @@ import NoSpeakerCore
                 let active=(0..<25).filter { output.keys & (1<<$0) != 0 }
                 Text(active.isEmpty ? "All preview keys released":"Logical keys: "+active.map {String($0+1)}.joined(separator:", "))
                 HStack {
-                    Button("Start sensors",action:start).buttonStyle(.borderedProminent).disabled(busy || !valid || scenePhase != .active)
+                    Button(useMac ? "Start playing" : "Start sensors", action: start).buttonStyle(.borderedProminent)
+                        .disabled(busy || scanning || askingPermission || !valid || !playableAssignment || scenePhase != .active)
                     Button("Stop / release") { stop("Stopped") }.buttonStyle(.bordered).disabled(!busy)
                 }
-                Text("No image is displayed, saved or transmitted. This panel does not play sound. A signed companion and authenticated MIDI connection are separate acceptance gates.").font(.caption).foregroundStyle(.secondary)
+                Text(useMac ? "Your hand position and depth are processed on this device. The Mac receives assigned keys or helper levels." : "Preview keys and helper levels on this device.").font(.caption).foregroundStyle(.secondary)
             }.padding().frame(maxWidth:640).frame(maxWidth:.infinity)
         }
         .onAppear {if !busy {refreshCameras()}}
         .onChange(of:backend) {_,_ in if !busy {refreshCameras()}}
         .onChange(of:cameraID) {_,_ in if !busy {zoom=selectedCamera?.zoom.defaultFactor ?? 1}}
+        .sheet(isPresented: $scanning) {
+            NavigationStack {
+                MobileAddressScanner { address in
+                    scanning = false
+                    if let address, MobileLANEndpoint(pageAddress: address) != nil {
+                        pageAddress = address
+                        invitation = ""
+                        connectionStatus = "Address scanned. Enter the separate invitation from the Mac."
+                    } else {
+                        connectionStatus = "Scan the Mac’s controller address QR or type the address."
+                    }
+                }
+                .navigationTitle("Scan Mac address")
+                .toolbar { Button("Cancel") { scanning = false } }
+            }
+        }
         .onReceive(timer) {_ in poll()}
-        .onChange(of:scenePhase) {_,phase in if phase != .active {stop("App inactive · stopped")} }
+        .onChange(of:scenePhase) {_,phase in
+            if phase != .active { scanning = false; stop("App inactive · stopped") }
+        }
         .onDisappear {stop("View closed")}
     }
+    private var pairingPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Mac controller address", text: $pageAddress)
+                .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder).disabled(configurationLocked)
+            Button("Scan Mac address QR") {
+                guard cameraPermissionForPairing() else { return }
+                scanning = true
+            }.disabled(configurationLocked)
+            SecureField("One-time invitation from Mac", text: $invitation)
+                .textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive()
+                .textFieldStyle(.roundedBorder).disabled(configurationLocked)
+            if mode.isHelper {
+                Picker("Mac helper lane", selection: $helperIndex) {
+                    ForEach(0..<3) { index in Text("Pedal " + String(index + 1)).tag(index) }
+                }.disabled(configurationLocked)
+            }
+            if socket == nil {
+                Button("Connect to Mac", action: connect)
+                    .disabled(configurationLocked || !valid || MobileLANEndpoint(pageAddress: pageAddress) == nil ||
+                              MobileLANEndpoint.invitationBytes(invitation) == nil || scenePhase != .active)
+            } else {
+                Button("Disconnect and release") { stop("Disconnected") }
+            }
+            if let assignment {
+                if mode.isHelper {
+                    Text("Mac assigned pedal " + String(helperIndex + 1))
+                } else {
+                    let keys = (0..<25).filter { assignment.piano & (1 << $0) != 0 }
+                    Text("Mac assigned keys " + keys.map { String($0 + 1) }.joined(separator: ", "))
+                }
+                if !playableAssignment {
+                    Text("This assignment has too few matching keys for the selected instrument. Disconnect to change it.")
+                }
+            }
+            if !connectionStatus.isEmpty { Text(connectionStatus).font(.caption) }
+        }
+    }
+
+    /// A permission dialog can deactivate the scene. It must never implicitly arm a camera or socket.
+    private func cameraPermissionForPairing() -> Bool {
+        if MobileAirSensorSource.authorization == .authorized { return true }
+        guard MobileAirSensorSource.authorization == .notDetermined else {
+            connectionStatus = "Allow camera access in Settings to use the Air instrument."
+            return false
+        }
+        guard !askingPermission else { return false }
+        askingPermission = true
+        Task { @MainActor in
+            let granted = await MobileAirSensorSource.requestCameraPermission()
+            askingPermission = false
+            connectionStatus = granted ? "Camera permission granted. Continue when ready." : "Camera permission denied."
+        }
+        return false
+    }
+
+    private func connect() {
+        guard useMac, !configurationLocked, valid, scenePhase == .active,
+              let endpoint = MobileLANEndpoint(pageAddress: pageAddress),
+              MobileLANEndpoint.invitationBytes(invitation) != nil,
+              cameraPermissionForPairing() else { return }
+        let client = MobileLANSocket(endpoint: endpoint, selection: mode.isHelper ? .helper(helperIndex) : .keys)
+        let secret = invitation
+        invitation = ""
+        guard client.connect(invitation: secret) else {
+            client.stop()
+            connectionStatus = "Connection setup failed."
+            return
+        }
+        socket = client
+        assignment = nil
+        connectionStatus = "Connecting to the Mac"
+    }
+
     private func start() {
-        guard !busy,valid,scenePhase == .active else {return}
+        guard !busy, !scanning, !askingPermission, valid, playableAssignment, scenePhase == .active else {return}
         let ticket=UUID();generation=ticket;pending=true;status="Waiting for camera permission"
         Task { @MainActor in
             let granted=await MobileAirSensorSource.requestCameraPermission()
             guard generation==ticket,pending else {return}
             guard granted,scenePhase == .active else {stop("Camera permission denied or app inactive");return}
-            // Synthetic logical key authorization for the isolated preview only.
-            guard let next=MobileAirCaptureProjection(mode:mode,keys:(1<<25)-1,role:role,
+            let keys: Int
+            if useMac {
+                guard let assigned = socket?.status().assignment else { stop("Mac assignment ended"); return }
+                keys = assigned.piano
+            } else { keys = (1 << 25) - 1 }
+            guard let next=MobileAirCaptureProjection(mode:mode,keys:keys,role:role,
                 orientation:musicalOrientation,mirrorX:mirror,near:near,far:far) else {stop("Invalid setup");return}
             let capture=MobileAirSensorSource()
             projection=next;source=capture;pending=false;status="Starting sensors"
@@ -160,12 +276,22 @@ import NoSpeakerCore
     }
     private func stop(_ message:String) {
         generation=UUID();pending=false
+        invitation = ""
+        if let socket { socket.stop(); connectionStatus = message }
+        socket = nil
+        assignment = nil
         if let source {source.stop();retiring=source}
         source=nil;projection=nil
         output = .init();sample=nil;depth=nil;status=message
     }
     private func poll() {
         if retiring?.isStopped == true {retiring=nil}
+        if let socket {
+            let state = socket.status()
+            if state.phase == .closed { stop(state.message); return }
+            if assignment != state.assignment { assignment = state.assignment }
+            if connectionStatus != state.message { connectionStatus = state.message }
+        }
         guard let source,var p=projection else {return}
         let now=MobileAirSensorSource.now
         for event in source.drain() {
@@ -174,6 +300,10 @@ import NoSpeakerCore
             case .fault(let message):stop(message);return
             case .frame(let frame):
                 output=p.receive(frame,now:now)
+                if let socket {
+                    guard let at = MobileAirCaptureFrame.nanoseconds(frame.time) else { stop("Invalid capture time"); return }
+                    socket.offer(output, observedAt: at, stringDeadlines: p.stringDeadlines)
+                }
                 let observation:MobileAirObservation?
                 switch role {case .single:observation=frame.single;case .left:observation=frame.left;case .right:observation=frame.right}
                 if frame.time.isFinite,now>=frame.time,now-frame.time<0.15 {

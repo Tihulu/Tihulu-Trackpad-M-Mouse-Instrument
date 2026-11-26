@@ -24,7 +24,8 @@
   A00000000000000000000010 = {isa = XCBuildConfiguration; buildSettings = {
     CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES;
     INFOPLIST_KEY_CFBundleDisplayName = "TIHULU Air Preview";
-    INFOPLIST_KEY_NSCameraUsageDescription = "Camera and supported LiDAR depth are processed locally to preview hand instrument controls.";
+    INFOPLIST_KEY_NSCameraUsageDescription = "Scan the Mac address or use the camera and supported depth sensor to play hand instruments.";
+    INFOPLIST_FILE = Info.plist;
     INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES;
     MARKETING_VERSION = 0.3.0; PRODUCT_BUNDLE_IDENTIFIER = com.tihulu.mobile.airpreview;
     PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = "1,2";
@@ -33,7 +34,8 @@
   A00000000000000000000011 = {isa = XCBuildConfiguration; buildSettings = {
     CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES;
     INFOPLIST_KEY_CFBundleDisplayName = "TIHULU Air Preview";
-    INFOPLIST_KEY_NSCameraUsageDescription = "Camera and supported LiDAR depth are processed locally to preview hand instrument controls.";
+    INFOPLIST_KEY_NSCameraUsageDescription = "Scan the Mac address or use the camera and supported depth sensor to play hand instruments.";
+    INFOPLIST_FILE = Info.plist;
     INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES;
     MARKETING_VERSION = 0.3.0; PRODUCT_BUNDLE_IDENTIFIER = com.tihulu.mobile.airpreview;
     PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = "1,2";
