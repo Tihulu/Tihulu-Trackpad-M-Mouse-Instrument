@@ -12,13 +12,17 @@ struct TouchBarSynthPanel:View {
     @State private var low=0
     @State private var high=127
     @State private var neutral=0
+    @State private var inheritChannel=true
+    @State private var channel=0
+    @State private var inverted=false
+    @State private var curve:Bank.Curve = .linear
     @State private var editing:UUID?
     @State private var feedback=""
     var body:some View {
         GroupBox("Synth controls · MIDI CC") {
             VStack(alignment:.leading,spacing:8) {
                 let bank=studio.touchBarProfile.effectiveSynthBank
-                Text("Custom parameters use the profile MIDI channel. Start the MIDI bridge explicitly and assign the receiving synth or DAW parameter via MIDI Learn. The label is not a plugin parameter binding. Higher-priority existing owners may override a CC.").font(.caption).foregroundStyle(.secondary)
+                Text("Custom parameters can inherit the profile MIDI channel or use an explicit channel. Start the MIDI bridge explicitly and assign the receiving synth or DAW parameter via MIDI Learn. The label is not a plugin parameter binding. Higher-priority existing owners may override a CC.").font(.caption).foregroundStyle(.secondary)
                 Text(studio.touchBarSynthAvailable ? "MIDI bridge running · custom controls available":"MIDI output unavailable · configure and start the standard MIDI bridge").font(.caption)
                 if !bank.controls.isEmpty {
                     LazyVGrid(columns:[GridItem(.adaptive(minimum:132))],spacing:8) {
@@ -33,7 +37,7 @@ struct TouchBarSynthPanel:View {
                         Text("Up to eight controls. Native Touch Bar items follow the built-in zones by default; macOS customization can reorder them. Reserved selectors, pedals and existing Touch Bar CCs are excluded.").font(.caption).foregroundStyle(.secondary)
                         ForEach(bank.controls){control in
                             HStack{
-                                Text("\(control.name) · CC \(control.cc) · \(control.style.rawValue)")
+                                Text("\(control.name) · CC \(control.cc) · Ch \((control.channel ?? studio.touchBarProfile.channel)+1) · \(control.style.rawValue)")
                                 Spacer()
                                 Button{if let next=bank.moving(id:control.id,delta:-1){apply(next)}} label:{Image(systemName:"arrow.left")}.disabled(bank.controls.first?.id==control.id).accessibilityLabel("Move \(control.name) left")
                                 Button{if let next=bank.moving(id:control.id,delta:1){apply(next)}} label:{Image(systemName:"arrow.right")}.disabled(bank.controls.last?.id==control.id).accessibilityLabel("Move \(control.name) right")
@@ -54,9 +58,15 @@ struct TouchBarSynthPanel:View {
                             Stepper("Max \(high)",value:$high,in:0...127)
                         }
                         Stepper("Reset on Stop \(neutral)",value:$neutral,in:0...127)
+                        Toggle("Use profile MIDI channel",isOn:$inheritChannel)
+                        if !inheritChannel {Stepper("MIDI channel \(channel+1)",value:$channel,in:0...15)}
+                        Toggle("Reverse direction",isOn:$inverted)
+                        if style != .toggle {
+                            Picker("Response curve",selection:$curve){ForEach(Bank.Curve.allCases){Text($0.rawValue).tag($0)}}
+                        }
                         HStack {
                             Button(editing == nil ? "Add control":"Apply edit") {
-                                let control=Bank.Control(id:editing ?? UUID(),name:name,cc:cc,style:style,low:low,high:high,neutral:neutral)
+                                let control=Bank.Control(id:editing ?? UUID(),name:name,cc:cc,style:style,low:low,high:high,neutral:neutral,channel:inheritChannel ? nil:channel,inverted:inverted ? true:nil,curve:curve == .linear ? nil:curve)
                                 let next=editing == nil ? bank.adding(control):bank.replacing(control)
                                 if let next {apply(next);editing=nil}
                                 else {feedback="Invalid name/range, reserved or duplicate CC, or bank full."}
@@ -71,6 +81,8 @@ struct TouchBarSynthPanel:View {
     }
     private func load(_ c:Bank.Control){
         editing=c.id;name=c.name;cc=c.cc;style=c.style;low=c.low;high=c.high;neutral=c.neutral
+        inheritChannel=c.channel==nil;channel=c.channel ?? studio.touchBarProfile.channel
+        inverted=c.inverted ?? false;curve=c.curve ?? .linear
     }
     private func apply(_ bank:Bank){
         var profile=studio.touchBarProfile;profile.synthBank=bank
@@ -131,7 +143,7 @@ private struct TouchBarSynthPerformanceControl:View {
                     revision=active ? studio.touchBarGestureEpoch.revision:nil
                 }).accessibilityLabel(control.name)
             }
-            Text("CC \(control.cc) · \(control.value(normalized:value) ?? control.neutral)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            Text("Ch \((control.channel ?? studio.touchBarProfile.channel)+1) · CC \(control.cc) · \(control.value(normalized:value) ?? control.neutral)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
         }.padding(6)
          .disabled(!studio.touchBarSynthAvailable)
          .onAppear{value=control.initialPosition}

@@ -2766,9 +2766,9 @@ final class StudioController: ObservableObject {
         guard touchBarSynthAvailable,let midi,
               touchBarGestureEpoch.permitsSample(captured:revision),
               let control=touchBarProfile.effectiveSynthBank.controls.first(where:{$0.id==id}),
-              let value=control.value(normalized:normalized) else{return false}
-        midi.sendTouchBarControl(.init(.controlChange,channel:touchBarProfile.channel,number:control.cc),
-            value:value,neutralOverride:control.neutral)
+              let value=control.value(normalized:normalized),
+              let target=control.destination(profileChannel:touchBarProfile.channel) else{return false}
+        midi.sendTouchBarControl(target,value:value,neutralOverride:control.neutral)
         return true
     }
 

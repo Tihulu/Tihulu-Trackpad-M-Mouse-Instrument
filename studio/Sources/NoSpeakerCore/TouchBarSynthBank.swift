@@ -8,6 +8,16 @@ public struct TouchBarSynthBank: Codable, Equatable, Sendable {
         case knob="Knob",slider="Slider",toggle="Toggle"
         public var id:String{rawValue}
     }
+    public enum Curve:String,Codable,CaseIterable,Identifiable,Sendable {
+        case linear="Linear",fineLow="Fine at low end",fineHigh="Fine at high end"
+        public var id:String{rawValue}
+        fileprivate func apply(_ x:Double)->Double {
+            switch self {case .linear:x;case .fineLow:x*x;case .fineHigh:1-(1-x)*(1-x)}
+        }
+        fileprivate func inverse(_ x:Double)->Double {
+            switch self {case .linear:x;case .fineLow:x.squareRoot();case .fineHigh:1-(1-x).squareRoot()}
+        }
+    }
     public struct Control:Codable,Equatable,Sendable,Identifiable {
         public let id:UUID
         public let name:String
@@ -16,24 +26,38 @@ public struct TouchBarSynthBank: Codable, Equatable, Sendable {
         public let low:Int
         public let high:Int
         public let neutral:Int
-        public init(id:UUID=UUID(),name:String,cc:Int,style:Style = .knob,low:Int=0,high:Int=127,neutral:Int=0){
+        /// Nil retains the profile channel and old saved settings.
+        public let channel:Int?
+        public let inverted:Bool?
+        public let curve:Curve?
+        public init(id:UUID=UUID(),name:String,cc:Int,style:Style = .knob,low:Int=0,high:Int=127,neutral:Int=0,channel:Int?=nil,inverted:Bool?=nil,curve:Curve?=nil){
             self.id=id;self.name=name;self.cc=cc;self.style=style
             self.low=low;self.high=high;self.neutral=neutral
+            self.channel=channel;self.inverted=inverted;self.curve=curve
         }
         public var isValid:Bool {
             !name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty &&
             name.utf8.count<=64 && !name.unicodeScalars.contains{CharacterSet.controlCharacters.contains($0)} &&
             TouchBarSynthBank.permitsCC(cc) && (0...127).contains(low) &&
-            (low...127).contains(high) && low<high && (0...127).contains(neutral)
+            (low...127).contains(high) && low<high && (0...127).contains(neutral) &&
+            (channel.map{(0...15).contains($0)} ?? true)
         }
         public func value(normalized:Double)->Int? {
             guard isValid,normalized.isFinite,(0...1).contains(normalized) else{return nil}
-            if style == .toggle {return normalized>=0.5 ? high:low}
-            return low+Int((Double(high-low)*normalized).rounded())
+            let x=inverted==true ? 1-normalized:normalized
+            if style == .toggle {return x>=0.5 ? high:low}
+            return low+Int((Double(high-low)*(curve ?? .linear).apply(x)).rounded())
+        }
+        public func destination(profileChannel:Int)->SensorDestination? {
+            let resolved=channel ?? profileChannel
+            guard isValid,(0...15).contains(resolved) else{return nil}
+            return .init(.controlChange,channel:resolved,number:cc)
         }
         public var initialPosition:Double {
             guard isValid else{return 0}
-            return min(1,max(0,Double(neutral-low)/Double(high-low)))
+            let fraction=min(1,max(0,Double(neutral-low)/Double(high-low)))
+            let position=style == .toggle ? (fraction>=0.5 ? 1.0:0.0):(curve ?? .linear).inverse(fraction)
+            return inverted==true ? 1-position:position
         }
     }
     public static let capacity=8

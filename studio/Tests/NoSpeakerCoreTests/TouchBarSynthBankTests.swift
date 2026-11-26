@@ -46,3 +46,21 @@ import Testing
     let reset=owners.release(.touchBar)
     #expect(reset.map(\.value)==[64])
 }
+
+@Test func touchBarSynthChannelCurveAndInversionAreValidated() throws {
+    let c=TouchBarSynthBank.Control(name:"Attack",cc:73,low:0,high:100,neutral:25,channel:5,curve:.fineLow)
+    #expect(c.destination(profileChannel:0)?.channel==5)
+    #expect(c.value(normalized:0.5)==25)
+    #expect(c.initialPosition==0.5)
+    let reversed=TouchBarSynthBank.Control(name:"Attack",cc:73,low:0,high:100,neutral:25,inverted:true,curve:.fineLow)
+    #expect(reversed.destination(profileChannel:9)?.channel==9)
+    #expect(reversed.value(normalized:1)==0)
+    #expect(reversed.value(normalized:0)==100)
+    #expect(reversed.value(normalized:reversed.initialPosition)==25)
+    #expect(!TouchBarSynthBank.Control(name:"Invalid",cc:73,channel:16).isValid)
+    let bank=try #require(TouchBarSynthBank(controls:[c]))
+    #expect(try JSONDecoder().decode(TouchBarSynthBank.self,from:JSONEncoder().encode(bank))==bank)
+    let old=TouchBarSynthBank.Control(name:"Legacy",cc:71)
+    #expect(old.channel==nil && old.curve==nil && old.inverted==nil)
+    #expect(old.destination(profileChannel:16)==nil)
+}
