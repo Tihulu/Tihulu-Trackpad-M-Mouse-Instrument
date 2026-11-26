@@ -71,6 +71,7 @@ class AirPreviewActivity: ComponentActivity() {
     private lateinit var helperPick:Spinner
     private lateinit var connectButton:Button
     private lateinit var disconnectButton:Button
+    private lateinit var pauseModeButton:Button
     private lateinit var connectionStatus:TextView
     private lateinit var pairPanel:LinearLayout
     private var qrRequested=false
@@ -80,6 +81,7 @@ class AirPreviewActivity: ComponentActivity() {
     private var lastPhase:MobileLanSession.Phase?=null
     private val locked get()=busy||lan!=null||qrRequested
     private val wantsPair get()=pairedAllowed&&paired.isChecked
+    private val canEditInstrument get()=!busy&&!qrRequested&&(lan==null||lan?.status()?.phase==MobileLanSession.Phase.READY)
     private fun selectedMode()=(if(depthToggle.isChecked)depthModes else modes).getOrNull(modePick.selectedItemPosition)
     private fun selectedRole()=HandRole.entries.getOrNull(rolePick.selectedItemPosition)
     private fun selectedOrientation()=Orientation.entries.getOrNull(orientationPick.selectedItemPosition)
@@ -242,6 +244,7 @@ class AirPreviewActivity: ComponentActivity() {
         helperPick=Spinner(this).also {it.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Pedal 1","Pedal 2","Pedal 3"));pairPanel.addView(it)}
         connectButton=pairButton("Connect to Mac"){connectMac()}
         disconnectButton=pairButton("Disconnect / release"){end("Disconnected")}
+        pauseModeButton=pairButton("Pause / change instrument"){pauseInstrument()}
         connectionStatus=TextView(this).also{it.text="Not connected";pairPanel.addView(it)}
 
         modelButton=button("Choose trusted local hand_landmarker.task") {if(!locked)modelPicker.launch(arrayOf("application/octet-stream","application/zip","*/*"))}
@@ -298,7 +301,7 @@ class AirPreviewActivity: ComponentActivity() {
             override fun onStopTrackingTouch(bar:SeekBar?) {}
         })
         depthToggle.setOnCheckedChangeListener {_,checked->
-            if(!locked){modePick.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,(if(checked)depthModes else modes).map {it.name.replace('_',' ')});controls()}
+            if(canEditInstrument){modePick.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,(if(checked)depthModes else modes).map {it.name.replace('_',' ')});controls()}
         }
         paired.setOnCheckedChangeListener {_,checked->
             if(!locked){pairPanel.visibility=if(checked&&pairedAllowed)View.VISIBLE else View.GONE;clearInvitation();controls()}
@@ -325,9 +328,9 @@ class AirPreviewActivity: ComponentActivity() {
     private fun controls() {
         val b=locked;val r=range
         val depth=depthToggle.isChecked
-        for(v in listOf(modePick,rolePick,orientationPick,mirror,depthToggle))v.isEnabled=!b
+        for(v in listOf(modePick,rolePick,orientationPick,mirror,depthToggle))v.isEnabled=canEditInstrument
         cameraPick.isEnabled=!b&&!depth
-        depthRange.isEnabled=!b&&depth;imageRotation.isEnabled=!b&&depth
+        depthRange.isEnabled=canEditInstrument&&depth;imageRotation.isEnabled=canEditInstrument&&depth
         flip.isEnabled=!b&&!depth&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_FRONT}&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_BACK}
         for(v in listOf(zoomBar,minus,plus,reset))v.isEnabled=!b&&!depth&&r!=null&&r.max>r.min
         modelButton.isEnabled=!b
@@ -336,7 +339,10 @@ class AirPreviewActivity: ComponentActivity() {
         helperPick.visibility=if(selectedMode()?.isHelper==true)View.VISIBLE else View.GONE
         connectButton.isEnabled=!b&&wantsPair
         disconnectButton.isEnabled=lan!=null
+        pauseModeButton.isEnabled=lan?.status()?.phase==MobileLanSession.Phase.READY&&(pending||source!=null||depthSource!=null)
         start.text=if(wantsPair)"Start playing" else "Start sensors"
+        if(lan?.status()?.phase==MobileLanSession.Phase.READY&&!busy&&pairedProjection()==null)
+            status.text="Mode incompatible with assignment: choose the same family or disconnect and pair again."
         start.isEnabled=!busy&&!qrRequested&&(depth||r?.admits(zoom)==true)&&(!wantsPair||pairedProjection()!=null)
         stopButton.isEnabled=pending||source!=null||depthSource!=null||lan!=null
     }
@@ -452,14 +458,28 @@ class AirPreviewActivity: ComponentActivity() {
         }catch(_:Exception){end("ARCore unavailable, unsupported or install declined")}
         catch(_:LinkageError){end("ARCore runtime not included by embedding app")}
     }
-    private fun end(message:String) {
+    private fun retireCapture() {
         ticket++;pending=false;importing=false
         observationFence?.retire();observationFence=null
-        lan?.let {it.stop();connectionStatus.text=message};lan=null;lastPhase=null
-        clearInvitation()
         source?.let {it.stop();retiring=it};source=null;projection=null
         depthSource?.let {it.stop();depthRetiring=it};depthSource=null
-        meter.text="All preview keys released";status.text=message;controls()
+        meter.text="All preview keys released"
+    }
+    private fun pauseInstrument() {
+        val client=lan?:return
+        if(client.status().phase!=MobileLanSession.Phase.READY)return
+        // Old callbacks are invalidated before the explicit neutral fence.
+        // No new sensor is opened until release ACK and worker retirement.
+        retireCapture()
+        client.pauseForModeChange()
+        status.text="Waiting for neutral ACK; then select a compatible mode and press Start."
+        controls()
+    }
+    private fun end(message:String) {
+        retireCapture()
+        lan?.let {it.stop();connectionStatus.text=message};lan=null;lastPhase=null
+        clearInvitation()
+        status.text=message;controls()
     }
     override fun onResume(){super.onResume();handler.removeCallbacks(pulse);handler.post(pulse)}
     override fun onPause(){end("App inactive · stopped");handler.removeCallbacks(pulse);super.onPause()}
