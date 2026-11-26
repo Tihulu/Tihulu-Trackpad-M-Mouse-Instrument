@@ -34,6 +34,8 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
     private val worker = Executors.newSingleThreadExecutor()
     private val closed = AtomicBoolean(false)
     private val started = AtomicBoolean(false)
+    private val stopped = AtomicBoolean(false)
+    val isStopped get() = stopped.get()
     private val ready = AtomicBoolean(false)
     private var analysis: ImageAnalysis? = null
     private var detector: HandLandmarker? = null // worker confined
@@ -94,7 +96,7 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
             analysis?.let { it.clearAnalyzer(); provider.unbind(it) }
             analysis = null
             owner.lifecycle.removeObserver(this)
-            worker.execute { detector?.close(); detector=null }
+            worker.execute { try { detector?.close() } finally { detector=null; stopped.set(true) } }
             worker.shutdown()
         }
     }

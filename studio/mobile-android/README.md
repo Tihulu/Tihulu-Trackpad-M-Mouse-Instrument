@@ -22,3 +22,5 @@ ARCore integration, live depth acquisition, native UI, signing and hardware
 acceptance remain pending.
 
 AirProjection is an initial Kotlin counterpart of the Swift projection, not a certified parity claim. Strings use a basic crossing detector; physical hand identity, confidence, and calibration need device validation. Depth modes require separately aligned observations with explicit provenance, role and matching timestamps. They cannot yet run from RgbHandSource alone.
+
+The non-exported AirPreviewActivity is an embedding-app diagnostic view with camera inventory, front/rear switch, zoom slider and buttons, role, orientation, mirror, RGB mode and independent expiry. It requires a local reviewed model asset. It deliberately offers no live depth or MIDI, and is not a launcher APK. Wait for source teardown before reconfiguring.
