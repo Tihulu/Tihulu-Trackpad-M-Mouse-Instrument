@@ -65,6 +65,7 @@ class AirPreviewActivity: ComponentActivity() {
     private lateinit var address:EditText
     private lateinit var invitation:EditText
     private lateinit var fingerprint:EditText
+    private lateinit var qrButton:Button
     private lateinit var rootButton:Button
     private lateinit var rootStatus:TextView
     private lateinit var helperPick:Spinner
@@ -72,11 +73,12 @@ class AirPreviewActivity: ComponentActivity() {
     private lateinit var disconnectButton:Button
     private lateinit var connectionStatus:TextView
     private lateinit var pairPanel:LinearLayout
+    private var qrRequested=false
     private var rootDer:ByteArray?=null
     private var lan:BoundedMobileLanSocket?=null
     private var observationFence:PairedObservationFence?=null
     private var lastPhase:MobileLanSession.Phase?=null
-    private val locked get()=busy||lan!=null
+    private val locked get()=busy||lan!=null||qrRequested
     private val wantsPair get()=pairedAllowed&&paired.isChecked
     private fun selectedMode()=(if(depthToggle.isChecked)depthModes else modes).getOrNull(modePick.selectedItemPosition)
     private fun selectedRole()=HandRole.entries.getOrNull(rolePick.selectedItemPosition)
@@ -90,6 +92,37 @@ class AirPreviewActivity: ComponentActivity() {
         return lan?.newProjection(mode,role,orientation,mirror.isChecked,near,far,depthToggle.isChecked)
     }
     private fun clearInvitation(){invitation.text.clear()}
+    private val qrCamera=registerForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
+        val expected=qrRequested
+        qrRequested=false
+        if(bitmap==null||!expected||destroyed||!wantsPair||locked) {
+            bitmap?.recycle()
+            if(!destroyed)controls()
+            return@registerForActivityResult
+        }
+        val epoch=++ticket
+        importing=true;controls();connectionStatus.text="Reading QR locally"
+        importer.execute {
+            val result=try {
+                if(!AirAddressQr.admits(bitmap.width,bitmap.height))null else {
+                    val pixels=IntArray(bitmap.width*bitmap.height)
+                    bitmap.getPixels(pixels,0,bitmap.width,0,0,bitmap.width,bitmap.height)
+                    AirAddressQr.decode(pixels,bitmap.width,bitmap.height)
+                }
+            }catch(_:Exception){null}
+            finally{bitmap.recycle()}
+            handler.post {
+                if(!destroyed&&epoch==ticket&&importing){
+                    importing=false
+                    if(result!=null&&wantsPair) {
+                        address.setText(result);clearInvitation()
+                        connectionStatus.text="Mac address scanned. Enter the separate invitation and verify the root."
+                    }else connectionStatus.text="No valid private Mac address QR. Try again or type the address."
+                    controls()
+                }
+            }
+        }
+    }
     private val rootPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null&&pairedAllowed&&!locked&&!destroyed) {
             val epoch=++ticket
@@ -196,11 +229,12 @@ class AirPreviewActivity: ComponentActivity() {
             it.hint=hintText;it.setSingleLine(true);it.isSaveEnabled=false
             it.importantForAutofill=View.IMPORTANT_FOR_AUTOFILL_NO
             it.inputType=InputType.TYPE_CLASS_TEXT or if(secret)InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            it.filters=arrayOf(InputFilter.LengthFilter(64))
+            it.filters=arrayOf(InputFilter.LengthFilter(128))
             pairPanel.addView(it)
         }
         fun pairButton(text:String,action:()->Unit)=Button(this).also {it.text=text;it.setOnClickListener{action()};pairPanel.addView(it)}
         address=field("Mac controller HTTPS address")
+        qrButton=pairButton("Scan Mac address QR (camera photo)"){scanAddress()}
         invitation=field("Separate one-time invitation",true)
         fingerprint=field("Verified root SHA-256 (64 hex)")
         rootButton=pairButton("Choose verified Mac root (.der)") {if(!locked)rootPicker.launch(arrayOf("application/pkix-cert","application/octet-stream","*/*"))}
@@ -298,13 +332,23 @@ class AirPreviewActivity: ComponentActivity() {
         for(v in listOf(zoomBar,minus,plus,reset))v.isEnabled=!b&&!depth&&r!=null&&r.max>r.min
         modelButton.isEnabled=!b
         paired.isEnabled=!b&&pairedAllowed
-        for(v in listOf(address,invitation,fingerprint,rootButton,helperPick))v.isEnabled=!b&&wantsPair
+        for(v in listOf(address,invitation,fingerprint,qrButton,rootButton,helperPick))v.isEnabled=!b&&wantsPair
         helperPick.visibility=if(selectedMode()?.isHelper==true)View.VISIBLE else View.GONE
         connectButton.isEnabled=!b&&wantsPair
         disconnectButton.isEnabled=lan!=null
         start.text=if(wantsPair)"Start playing" else "Start sensors"
-        start.isEnabled=!busy&&(depth||r?.admits(zoom)==true)&&(!wantsPair||pairedProjection()!=null)
+        start.isEnabled=!busy&&!qrRequested&&(depth||r?.admits(zoom)==true)&&(!wantsPair||pairedProjection()!=null)
         stopButton.isEnabled=pending||source!=null||depthSource!=null||lan!=null
+    }
+    private fun scanAddress() {
+        if(!wantsPair||locked||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
+        if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){
+            permission.launch(Manifest.permission.CAMERA);return
+        }
+        clearInvitation()
+        qrRequested=true;controls()
+        try {qrCamera.launch(null)}
+        catch(_:Exception){qrRequested=false;connectionStatus.text="Camera QR capture unavailable; type the address.";controls()}
     }
     private fun connectMac() {
         if(!wantsPair||locked||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
@@ -353,7 +397,7 @@ class AirPreviewActivity: ComponentActivity() {
         }
     }
     private fun begin() {
-        if(busy||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||wantsPair&&pairedProjection()==null)return
+        if(busy||qrRequested||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||wantsPair&&pairedProjection()==null)return
         if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
             permission.launch(Manifest.permission.CAMERA);return
         }
@@ -419,5 +463,5 @@ class AirPreviewActivity: ComponentActivity() {
     }
     override fun onResume(){super.onResume();handler.removeCallbacks(pulse);handler.post(pulse)}
     override fun onPause(){end("App inactive · stopped");handler.removeCallbacks(pulse);super.onPause()}
-    override fun onDestroy(){destroyed=true;end("View closed");importer.shutdownNow();localModel=null;rootDer=null;handler.removeCallbacks(pulse);super.onDestroy()}
+    override fun onDestroy(){destroyed=true;qrRequested=false;end("View closed");importer.shutdownNow();localModel=null;rootDer=null;handler.removeCallbacks(pulse);super.onDestroy()}
 }

@@ -126,7 +126,14 @@ a production release. No credentials or CA are bundled.
    failure retires the session. A new invitation is required to reconnect.
    ARCore installation can interrupt the session; finish setup before pairing.
 
-Current limitations: manual address entry (native QR scanning still pending),
+Current limitations: address QR via explicit system camera thumbnail (continuous in-app scanning remains pending),
 single-family assignment, no live mode reconfiguration, no signed production
 release, no physical Android/ARCore/Mac/Logic acceptance. JVM loopback TLS tests
 exercise the same upgrade path but do not certify Android TLS provider behavior.
+
+The paired screen can optionally scan the Mac address using an explicit system
+camera photo. ZXing decodes the bounded thumbnail locally; only the exact
+canonical private HTTPS controller address is accepted. The image is not
+saved by TIHULU, no connection opens from the QR, and invitation/root trust
+must still be entered separately. System camera behavior and QR quality
+require physical device validation; manual address entry remains available.
