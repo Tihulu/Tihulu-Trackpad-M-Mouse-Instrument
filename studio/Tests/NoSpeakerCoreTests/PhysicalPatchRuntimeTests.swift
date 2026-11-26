@@ -81,3 +81,20 @@ import Testing
     #expect(state.receiveGamepad(source:.gamepad1,frame:held,now:2.03)==[.init(note,value:100)])
     #expect(state.receiveGamepad(source:.gamepad1,frame:held,now:2.04,hostTime:2.02)==[.init(note,value:0)])
 }
+
+
+@Test func physicalSurfaceFreshSnapshotCannotRenewExpiredOwnershipBeforeWatchdog() throws {
+    let a=SensorDestination(.note,number:60),b=SensorDestination(.note,number:64)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:a),
+        .init(id:"b",source:.magicMouse,signal:.contact,destination:b)
+    ]))
+    #expect(runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1,now:1)==[.init(a,value:100)])
+    #expect(runtime.receive(source:.magicMouse,x:0.5,y:0.5,size:0.5,hostTime:1.2,now:1.2)==[.init(b,value:100)])
+    let late=runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1.36,now:1.36)
+    #expect(late==[.init(a,value:0)] && runtime.activeSources==[.magicMouse])
+    #expect(runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1.35,now:1.37).isEmpty)
+    #expect(runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1.38,now:1.38)==[.init(a,value:100)])
+    #expect(runtime.activeSources==[.trackpad,.magicMouse])
+}

@@ -218,6 +218,19 @@ public struct PhysicalPatchRuntime: Sendable {
         MonotonicReceiptAdmission.permits(receipt:hostTime,now:now,maximumAge:Self.timeout)
     }
 
+    // A fresh sample cannot silently renew an already expired session
+    // before the watchdog has run. Retire all known expired owners together,
+    // and consume this sample as loss, not as a new attack. The next fresh
+    // sample follows the existing per-adapter acquisition policy.
+    private mutating func expireBeforePhysicalRenewal(_ source:SensorSource,receipt:Double,now:Double) -> [SensorCommand]? {
+        guard sessions[source] != nil,
+              let last = seen[source],!Self.admitsPhysicalReceipt(last,now:now) else { return nil }
+        let commands = expire(now:now)
+        // Retain the rejected sample as a receipt high-water mark.
+        seen[source] = max(last,receipt)
+        return commands
+    }
+
     /// hostTime is local receipt time, not the undocumented driver timestamp.
     /// An empty frame or invalid sample releases the entire physical source.
     public mutating func receive(source: SensorSource, x: Double?, y: Double?, size: Double?,
@@ -225,6 +238,7 @@ public struct PhysicalPatchRuntime: Sendable {
         guard (source == .trackpad || source == .magicMouse), supported.contains(source),
               Self.admitsPhysicalReceipt(hostTime,now:now),
               hostTime >= (seen[source] ?? 0) else { return [] }
+        if let expired = expireBeforePhysicalRenewal(source,receipt:hostTime,now:now) { return expired }
         seen[source] = hostTime
         guard let x, let y, let size, [x,y,size].allSatisfy({ $0.isFinite && (0...1).contains($0) })
         else { return disconnect(source) }
@@ -303,6 +317,7 @@ public struct PhysicalPatchRuntime: Sendable {
         guard source == .lid || source == .touchBar, supported.contains(source),
               hostTime.isFinite, now.isFinite, hostTime >= 0, hostTime <= now,
               Self.admitsPhysicalReceipt(hostTime,now:now), hostTime >= (seen[source] ?? 0) else { return [] }
+        if let expired = expireBeforePhysicalRenewal(source,receipt:hostTime,now:now) { return expired }
         seen[source] = hostTime
         guard let value, value.isFinite, (0...1).contains(value) else { return disconnect(source) }
         if sessions[source] == nil { sessions[source] = try? router.connect(source, now: hostTime) }
@@ -319,6 +334,7 @@ public struct PhysicalPatchRuntime: Sendable {
         guard !airDualEnabled, !cameraHandsEnabled, supported.contains(source), hostTime.isFinite, now.isFinite,
               hostTime >= 0, hostTime <= now, Self.admitsPhysicalReceipt(hostTime,now:now),
               hostTime >= (seen[source] ?? 0) else { return [] }
+        if let expired = expireBeforePhysicalRenewal(source,receipt:hostTime,now:now) { return expired }
         seen[source] = hostTime
         guard let hand else { return disconnect(source) }
         if sessions[source] == nil { sessions[source] = try? router.connect(source, now: hostTime) }
