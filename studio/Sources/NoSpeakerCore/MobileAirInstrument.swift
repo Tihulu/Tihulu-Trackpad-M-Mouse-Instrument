@@ -9,13 +9,15 @@ public enum MobileAirMode: String, CaseIterable, Identifiable, Sendable {
     case vertical = "Vertical helper"
     case aperture = "Aperture helper"
     case speed = "Motion speed helper"
+    case pinchHelper = "Pinch helper"
+    case toggleHelper = "Pinch toggle helper"
     case depthKeys = "Beam notes"
     case depthControl = "Beam helper"
     public var id: Self { self }
     public var usesDepth: Bool { self == .depthKeys || self == .depthControl }
     public var isHelper: Bool {
         switch self {
-        case .horizontal, .vertical, .aperture, .speed, .depthControl: true
+        case .horizontal, .vertical, .aperture, .speed, .pinchHelper, .toggleHelper, .depthControl: true
         default: false
         }
     }
@@ -44,6 +46,9 @@ public struct MobileAirInstrument: Sendable {
     private var beamZone: Int?
     private var lastTime: Double?
     private var previous: AirHandSample?
+    private var helperPinched = false
+    private var helperLatched = false
+    private var helperArmed = false
 
     public init?(mode: MobileAirMode, keys mask: Int, near: Double = 0.25, far: Double = 0.85) {
         guard (0..<(1<<25)).contains(mask), mode.isHelper || mask != 0,
@@ -67,6 +72,16 @@ public struct MobileAirInstrument: Sendable {
         beamZone = nil
         heldKey = nil
         previous = nil
+        helperPinched = false; helperLatched = false; helperArmed = false
+    }
+
+    /// Independent consumer timer. Never extrapolate a held gesture during silence.
+    public mutating func expire(now: Double) -> MobileAirOutput? {
+        guard let lastTime else { return .init() }
+        guard now.isFinite, now >= lastTime, now-lastTime < 0.15 else {
+            loseTracking(); return .init()
+        }
+        return nil
     }
 
     /// Both Vision and LiDAR belong to the same acquisition. An invalid depth
@@ -93,6 +108,12 @@ public struct MobileAirInstrument: Sendable {
         case .speed:
             guard let prior, let oldTime else { return .init(level: 0) }
             return .init(level: min(1, hypot(sample.x-prior.x, sample.y-prior.y)/max(0.001,time-oldTime)/5))
+        case .pinchHelper, .toggleHelper:
+            if sample.aperture >= 0.35 { helperArmed = true; helperPinched = false }
+            if helperArmed && !helperPinched && sample.aperture <= 0.18 {
+                helperPinched = true; helperLatched.toggle()
+            }
+            return .init(level: (mode == .pinchHelper ? helperPinched : helperLatched) ? 1 : 0)
         case .depthControl, .depthKeys:
             guard let depth else { return .init() }
             let level = min(1, max(0, (far-depth)/(far-near)))
