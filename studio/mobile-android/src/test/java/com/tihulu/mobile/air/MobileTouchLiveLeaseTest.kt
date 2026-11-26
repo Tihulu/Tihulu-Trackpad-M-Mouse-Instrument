@@ -50,4 +50,37 @@ class MobileTouchLiveLeaseTest {
         assertTrue(runCatching{MobileTouchLiveLease(0,0)}.isFailure)
         assertTrue(runCatching{MobileTouchLiveLease(1,-1)}.isFailure)
     }
+
+    private fun mask(action:AirSendGate.Action,expected:Int) {
+        val bytes=(action as AirSendGate.Action.Send).bytes
+        assertTrue(bytes.decodeToString().contains("\"mask\":$expected"))
+    }
+    @Test fun ownerPulseSustainsStationaryNoteAndActualRelease() {
+        val lease=MobileTouchLiveLease(3,ms(20))
+        val gate=AirSendGate(AirWireLane.Keys(3),0)
+        gate.begin(0);gate.acknowledge("accepted",ms(20))
+        val down=checkNotNull(lease.event(began,listOf(c(0,0.0)),ms(30),true))
+        mask(gate.offer(down.output,down.ownerAt,down.ownerAt),1)
+        gate.acknowledge("accepted",ms(35))
+        for(time in listOf(80L,130L,180L,230L,280L)){
+            val pulse=checkNotNull(lease.pulse(ms(time),true))
+            mask(gate.offer(pulse.output,pulse.ownerAt,pulse.ownerAt),1)
+            assertEquals(AirSendGate.Action.Wait,gate.acknowledge("accepted",ms(time+5)))
+        }
+        val up=checkNotNull(lease.event(ended,emptyList(),ms(295),true))
+        mask(gate.offer(up.output,up.ownerAt,up.ownerAt),0)
+        assertEquals(AirSendGate.Action.Wait,gate.acknowledge("accepted",ms(300)))
+    }
+    @Test fun independentSenderReleasesAndViewCannotRearmAfterStall() {
+        val lease=MobileTouchLiveLease(1,ms(20))
+        val gate=AirSendGate(AirWireLane.Keys(1),0)
+        gate.begin(0);gate.acknowledge("accepted",ms(20))
+        val down=checkNotNull(lease.event(began,listOf(c(0,0.0)),ms(30),true))
+        gate.offer(down.output,down.ownerAt,down.ownerAt)
+        gate.acknowledge("accepted",ms(35))
+        mask(gate.poll(ms(180)),0)
+        assertNull(lease.pulse(ms(180),true))
+        gate.acknowledge("accepted",ms(185))
+        assertNull(lease.event(began,listOf(c(1,0.0)),ms(190),true))
+    }
 }
