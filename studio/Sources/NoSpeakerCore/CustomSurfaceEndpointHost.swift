@@ -129,8 +129,13 @@ public final class CustomSurfaceEndpointHost {
     /// A close first retires output; subsequent calls retry only retained
     /// debt or disposal. Never dispose a source whose identity is uncertain.
     @discardableResult
-    public func close(_ id: UUID) -> Status? {
+    public func close(_ id: UUID, retryPending: Bool = true) -> Status? {
         guard let entry = entries[id] else { return nil }
+        // An automatic stop following a delivery fault must not silently
+        // repeat an already failed wire cleanup or native disposal.
+        if !retryPending && (entry.phase == .cleanupPending || entry.phase == .disposalPending || entry.phase == .identityLost) {
+            return entry.status
+        }
         if let lease = entry.lease {
             let report = entry.report?.retired == true
                 ? registry.retryCleanup(lease) : registry.close(lease)

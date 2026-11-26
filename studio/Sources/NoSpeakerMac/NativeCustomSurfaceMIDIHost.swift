@@ -43,8 +43,8 @@ public final class NativeCustomSurfaceMIDIHost {
         return status
     }
     @discardableResult
-    public func close(_ id: UUID) -> Status? {
-        let status = host.close(id)
+    public func close(_ id: UUID, retryPending: Bool = true) -> Status? {
+        let status = host.close(id, retryPending: retryPending)
         reconcileWatchdog()
         return status
     }

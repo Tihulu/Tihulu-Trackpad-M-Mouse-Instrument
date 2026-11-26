@@ -150,3 +150,30 @@ private let hostContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5, 
     #expect(playing.hasNeutralHandshake && wire.count == 1)
     #expect(host.close(opened.id)?.hasNeutralHandshake == false)
 }
+
+@Test func customSurfaceHostAutomaticStopDoesNotRetryFailedCleanup() throws {
+    var now: Int64 = 0
+    var allowed = true
+    var failOff = true
+    var wire: [[UInt8]] = []
+    var disposals = 0
+    let host = CustomSurfaceEndpointHost(backend: .init(create: { name in
+        .init(endpoint: .init(handle: 12, uniqueID: 42, name: name), succeeded: true)
+    }, owns: { _ in true }, send: { _, bytes in
+        wire.append(bytes)
+        return !failOff || bytes[0] != 0x82
+    }, dispose: { _ in disposals += 1; return true }))
+    let opened = try #require(host.open(plan: try hostPlan(), clock: { now }, admitsLive: { allowed }))
+    _ = host.frame(opened.id, surface: .trackpad, contacts: [], sequence: 1, observedAt: 0)
+    now = 1
+    _ = host.frame(opened.id, surface: .trackpad, contacts: [hostContact], sequence: 2, observedAt: 1)
+    allowed = false
+    host.poll()
+    #expect(host.statuses.first?.phase == .cleanupPending)
+    #expect(wire.count == 2)
+    failOff = false
+    #expect(host.close(opened.id, retryPending: false)?.phase == .cleanupPending)
+    #expect(wire.count == 2 && disposals == 0)
+    #expect(host.close(opened.id)?.phase == .closed)
+    #expect(wire.count == 3 && disposals == 1)
+}

@@ -3683,7 +3683,7 @@ final class StudioController: ObservableObject {
         touch?.setCustomSurfaceInbox(nil)
         let id = customPadRunID
         customPadRunID = nil
-        if let id { _ = customPadHost.close(id) }
+        if let id { _ = customPadHost.close(id, retryPending: false) }
         customPadPorts = customPadHost.statuses
         customPadStatus = customPadPorts.isEmpty ? reason : reason + " · MIDI recovery pending."
         if refresh {
