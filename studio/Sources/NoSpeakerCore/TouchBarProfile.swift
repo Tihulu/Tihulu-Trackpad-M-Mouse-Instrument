@@ -72,6 +72,9 @@ public struct TouchBarProfile: Codable, Equatable, Sendable {
     public var tiltTarget: TiltMIDITarget
     public var tiltMinDegrees: Double
     public var tiltMaxDegrees: Double
+    /// Optional so existing profiles decode unchanged.
+    public var synthBank: TouchBarSynthBank?
+    public var effectiveSynthBank: TouchBarSynthBank {synthBank ?? .init()}
     public var musicalOutput: MusicalOutput?
     public var effectiveOutput: MusicalOutput { musicalOutput ?? .midi }
 
