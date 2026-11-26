@@ -48,6 +48,22 @@ class AirPreviewActivity: ComponentActivity() {
     private lateinit var imageRotation:Spinner
     private var depthSource:ArCoreDiagnosticSource?=null
     private var depthRetiring:ArCoreDiagnosticSource?=null
+    private lateinit var xyz:CheckBox
+    private lateinit var xyzSettings:XYZSettings
+    private var xyzSource:Camera2XYZSource?=null
+    private var xyzRetiring:Camera2XYZSource?=null
+    private var xyzVolume:XYZVolume?=null
+    private var xyzTracking:MeasuredXYZTracking?=null
+    private var xyzStage:XYZStageView?=null
+    private var xyzRotation=0
+    private var xyzLastAt:Long?=null
+    @Suppress("DEPRECATION")
+    private fun displayDegrees()=windowManager.defaultDisplay.rotation*90
+    private val measuredMode get()=xyz.isChecked && !wantsTouchPair
+    private fun measuredCamera()=choices.getOrNull(cameraPick.selectedItemPosition)?.takeIf {
+        it.depth16Advertised && it.facing==CameraCharacteristics.LENS_FACING_BACK
+    }
+    private fun xyzAssigned() = lan?.status()?.assignment?.xyzLane(xyzSettings.mask)!=null
     private var installRequested=false
     private val depthModes=listOf(AirMode.BEAM_KEYS,AirMode.BEAM_HELPER)
     private val depthRanges=listOf(.25 to .85,.15 to .55,.4 to 1.2)
@@ -150,7 +166,7 @@ class AirPreviewActivity: ComponentActivity() {
         }
     }
     private val modes=AirMode.entries.filter {it!=AirMode.BEAM_KEYS&&it!=AirMode.BEAM_HELPER}
-    private val busy get()=touchStage||pending||source!=null||retiring!=null||importing||depthSource!=null||depthRetiring!=null
+    private val busy get()=xyzSource!=null||xyzRetiring!=null||touchStage||pending||source!=null||retiring!=null||importing||depthSource!=null||depthRetiring!=null
     private val modelPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null&&!locked&&!destroyed) {
             val epoch=++ticket;importing=true;controls();modelStatus.text="Reading selected local model…"
@@ -188,11 +204,30 @@ class AirPreviewActivity: ComponentActivity() {
                     controls()
                 }
             }
-            if((source!=null||depthSource!=null||(lan!=null&&!wantsTouchPair))&&ContextCompat.checkSelfPermission(this@AirPreviewActivity,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
+            if((xyzSource!=null||source!=null||depthSource!=null||(lan!=null&&!wantsTouchPair))&&ContextCompat.checkSelfPermission(this@AirPreviewActivity,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
                 end("Camera permission lost");handler.postDelayed(this,50);return
             }
             if(retiring?.isStopped==true) {retiring=null;controls()}
             if(depthRetiring?.isStopped==true){depthRetiring=null;controls()}
+            if(xyzRetiring?.stopped==true){xyzRetiring=null;controls()}
+            xyzSource?.let { source ->
+                val volume=xyzVolume
+                val tracker=xyzTracking
+                val failure=source.fault
+                if(failure!=null || displayDegrees()!=xyzRotation || volume==null || tracker==null){
+                    end(failure?:"Display rotation changed · restart required")
+                } else {
+                    for(frame in source.drain()) {
+                        val output=tracker.observe(frame.point,frame.at,SystemClock.elapsedRealtimeNanos())
+                        if(!submit(output,frame.at,emptyMap(),false))break
+                        xyzLastAt=frame.at
+                        xyzStage?.update(frame.point.takeIf {output.xyz!=null},volume)
+                    }
+                    if(xyzLastAt?.let {SystemClock.elapsedRealtimeNanos()-it>=AirSendGate.FRESH_NS}==true){
+                        xyzLastAt=null;xyzStage?.update(null,volume)
+                    }
+                }
+            }
             depthSource?.let {d->
                 val reading=d.read()
                 if(d.isStopped){end(reading.status)}else {
@@ -289,7 +324,10 @@ class AirPreviewActivity: ComponentActivity() {
         rolePick=spinner(HandRole.entries.map {it.name})
         orientationPick=spinner(Orientation.entries.map {it.name})
         mirror=CheckBox(this).also {it.text="Mirror X";column.addView(it)}
-        label("ARCore may require Google Play Services for AR; live depth is experimental. Native calibrated view: lens and zoom locked. Camera2 DEPTH16 remains inventory only.")
+        xyz=CheckBox(this).apply {text="Measured XYZ · Camera2 DEPTH16";column.addView(this)}
+        xyzSettings=XYZSettings(this){measuredCamera()?.id}
+        column.addView(xyzSettings)
+        label("ARCore may require Google Play Services for AR; live depth is experimental. Native calibrated view: lens and zoom locked. Measured XYZ requires a rear DEPTH16 stream with a real-time sensor clock.")
         status=label("Stopped")
         meter=label("All preview keys released")
         start=button("Start sensors"){begin()}
@@ -301,7 +339,7 @@ class AirPreviewActivity: ComponentActivity() {
                     range=choices.getOrNull(position)?.zoom
                     setZoom(range?.reset ?: 1f)
                     val c=choices.getOrNull(position)
-                    status.text=if(c?.depth16Advertised==true)"DEPTH16 advertised · not live" else "RGB camera selected"
+                    status.text=if(c?.depth16Advertised==true)"DEPTH16 advertised · select Measured XYZ to start" else "RGB camera selected"
                     controls()
                 }
             }
@@ -316,6 +354,12 @@ class AirPreviewActivity: ComponentActivity() {
         })
         depthToggle.setOnCheckedChangeListener {_,checked->
             if(canEditInstrument){modePick.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,(if(checked)depthModes else modes).map {it.name.replace('_',' ')});controls()}
+        }
+        xyz.setOnCheckedChangeListener {_,checked ->
+            if(!locked){
+                if(checked)depthToggle.isChecked=false
+                controls()
+            }
         }
         paired.setOnCheckedChangeListener {_,checked->
             if(!locked){pairPanel.visibility=if(checked&&pairedAllowed)View.VISIBLE else View.GONE;clearInvitation();controls()}
@@ -348,21 +392,33 @@ class AirPreviewActivity: ComponentActivity() {
         depthRange.isEnabled=canEditInstrument&&depth;imageRotation.isEnabled=canEditInstrument&&depth
         flip.isEnabled=canEditInstrument&&!depth&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_FRONT}&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_BACK}
         for(v in listOf(zoomBar,minus,plus,reset))v.isEnabled=canEditInstrument&&!depth&&r!=null&&r.max>r.min
+        xyz.isEnabled=!b&&!wantsTouchPair
+        xyzSettings.visibility=if(measuredMode)View.VISIBLE else View.GONE
+        xyzSettings.lock(b)
+        if(measuredMode){
+            for(v in listOf(modePick,rolePick,orientationPick,mirror,depthToggle,depthRange,imageRotation,
+                zoomBar,minus,plus,reset,flip))v.isEnabled=false
+            cameraPick.isEnabled=!b
+        }
         touchPreview.isEnabled=!b
         touchLive.isEnabled=!busy&&!qrRequested&&lan?.status()?.assignment?.piano?.let{it!=0}==true
         modelButton.isEnabled=!b
         paired.isEnabled=!b&&pairedAllowed
         for(v in listOf(address,invitation,fingerprint,qrButton,rootButton,helperPick))v.isEnabled=!b&&wantsPair
         touchOnly.isEnabled=!b&&wantsPair
-        helperPick.visibility=if(!wantsTouchPair&&selectedMode()?.isHelper==true)View.VISIBLE else View.GONE
+        helperPick.visibility=if(!measuredMode&&!wantsTouchPair&&selectedMode()?.isHelper==true)View.VISIBLE else View.GONE
         connectButton.isEnabled=!b&&wantsPair
         disconnectButton.isEnabled=lan!=null
         pauseModeButton.isEnabled=lan?.status()?.phase==MobileLanSession.Phase.READY&&(pending||source!=null||depthSource!=null)
         start.text=if(wantsPair)"Start playing" else "Start sensors"
-        if(!wantsTouchPair&&lan?.status()?.phase==MobileLanSession.Phase.READY&&!busy&&pairedProjection()==null)
+        if(!measuredMode&&!wantsTouchPair&&lan?.status()?.phase==MobileLanSession.Phase.READY&&!busy&&pairedProjection()==null)
             status.text="Mode incompatible with assignment: choose the same family or disconnect and pair again."
         start.isEnabled=!wantsTouchPair&&!busy&&!qrRequested&&(depth||r?.admits(zoom)==true)&&(!wantsPair||pairedProjection()!=null)
-        stopButton.isEnabled=pending||source!=null||depthSource!=null||lan!=null
+        if(measuredMode){
+            start.isEnabled=!busy&&!qrRequested&&measuredCamera()!=null&&(!wantsPair||xyzAssigned())
+            modelButton.isEnabled=false
+        }
+        stopButton.isEnabled=xyzSource!=null||pending||source!=null||depthSource!=null||lan!=null
     }
     private fun scanAddress() {
         if(!wantsPair||locked||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
@@ -389,10 +445,13 @@ class AirPreviewActivity: ComponentActivity() {
         if(endpoint==null||check==null||root==null||(!wantsTouchPair&&mode==null)){
             connectionStatus.text="Enter the exact Mac address, invitation and verified DER root.";return
         }
-        if(!wantsTouchPair&&mode==AirMode.CHORDS&&selectedRole()==HandRole.SINGLE){
+        if(!measuredMode&&!wantsTouchPair&&mode==AirMode.CHORDS&&selectedRole()==HandRole.SINGLE){
             connectionStatus.text="Choose a left or right performing hand for chords.";return
         }
-        val selection=if(!wantsTouchPair&&mode?.isHelper==true)MobileLanSession.Selection.Helper(helperPick.selectedItemPosition) else MobileLanSession.Selection.Keys
+        if(measuredMode && (measuredCamera()==null || xyzSettings.volume()==null || xyzSettings.mask==0)){
+            connectionStatus.text="Select a rear DEPTH16 camera, enabled axes and valid volume";return
+        }
+        val selection=if(measuredMode)MobileLanSession.Selection.XYZ(xyzSettings.mask) else if(!wantsTouchPair&&mode?.isHelper==true)MobileLanSession.Selection.Helper(helperPick.selectedItemPosition) else MobileLanSession.Selection.Keys
         clearInvitation()
         val epoch=++ticket;importing=true;controls();connectionStatus.text="Verifying selected private root"
         importer.execute {
@@ -421,9 +480,21 @@ class AirPreviewActivity: ComponentActivity() {
         }
     }
     private fun begin() {
-        if(wantsTouchPair||busy||qrRequested||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||wantsPair&&pairedProjection()==null)return
+        if(wantsTouchPair||busy||qrRequested||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||wantsPair&&(if(measuredMode)!xyzAssigned() else pairedProjection()==null))return
         if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
             permission.launch(Manifest.permission.CAMERA);return
+        }
+        if(measuredMode){
+            val camera=measuredCamera()?:return
+            val volume=xyzSettings.volume()
+            val mask=xyzSettings.mask
+            if(volume==null || mask !in 1..7){status.text="Set valid bounds and enable at least one axis";return}
+            xyzRotation=displayDegrees();xyzVolume=volume;xyzLastAt=null
+            xyzTracking=MeasuredXYZTracking(volume,mask)
+            observationFence=if(wantsPair)PairedObservationFence(SystemClock.elapsedRealtimeNanos()) else null
+            val measured=Camera2XYZSource(applicationContext,camera,xyzRotation,volume)
+            xyzSource=measured;xyzStage=XYZStageView(this,mask,::end)
+            measured.start();controls();return
         }
         if(depthToggle.isChecked){beginDepth();return}
         val c=choices.getOrNull(cameraPick.selectedItemPosition) ?: return
@@ -518,6 +589,8 @@ class AirPreviewActivity: ComponentActivity() {
         observationFence?.retire();observationFence=null
         // No capture callback can renew the old session after this fence.
         beforeWorkerStop()
+        xyzSource?.let {it.stop();xyzRetiring=it};xyzSource=null
+        xyzStage?.close();xyzStage=null;xyzTracking=null;xyzVolume=null;xyzLastAt=null
         source?.let {it.stop();retiring=it};source=null;projection=null
         depthSource?.let {it.stop();depthRetiring=it};depthSource=null
         meter.text="All preview keys released"
