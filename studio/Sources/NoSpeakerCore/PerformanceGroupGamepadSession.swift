@@ -15,7 +15,7 @@ private protocol LocalGroupOutput: Sendable {
     mutating func admittedFrame(lease:UUID,sequence:UInt64,now:Double,values:[SensorSignal:Double],
                                 releasing:Set<SensorSignal>,admit:()->Bool,
                                 send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
-    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:(()->Bool)?,
+    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:((PerformanceGroupCommand)->Bool)?,
                                   send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
     mutating func stopGroup(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
     mutating func panic(send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
@@ -52,7 +52,7 @@ private struct DynamicLocalGroupOutput: LocalGroupOutput {
         .init(dynamic:engine.admittedFrame(lease:lease,sequence:sequence,now:now,values:values,
                                            releasing:releasing,admit:admit,send:send))
     }
-    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:(()->Bool)?,
+    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:((PerformanceGroupCommand)->Bool)?,
                                   send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
         .init(dynamic:engine.disconnectBatch(leases,admitRestoration:admitRestoration,send:send))
     }
@@ -103,6 +103,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
     public static let timeout = PhysicalPatchRuntime.timeout
     private var delivery: any LocalGroupOutput
     private let mapped: [SensorSource:Set<SensorSignal>]
+    // Frozen logical destination membership; no translated MIDI address is used.
+    private let restorationSources:[UUID:[SensorDestination:Set<SensorSource>]]
     private let smoothed: Set<SensorSource>
     private let remoteModes: [SensorSource:Set<PerformanceGroupRemoteSurface>]
     private let remoteLabels: [SensorSource:[RemoteMappingLabel]]
@@ -212,6 +214,9 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         let routes = profile.groups.flatMap { $0.patch.routes }
         mapped = Dictionary(grouping:routes,by:{ $0.source }).mapValues { Set($0.map(\.signal)) }
+        restorationSources = Dictionary(uniqueKeysWithValues:profile.groups.map { group in
+            (group.id,Dictionary(grouping:group.patch.routes,by:{ $0.destination }).mapValues { Set($0.map(\.source)) })
+        })
         remoteModes = Dictionary(grouping:routes.filter { $0.source.isGroupRemote },by:{ $0.source })
             .compactMapValues { PerformanceGroupRemoteSurface.modes(for:$0) }
         // Only labels for mapped controls in this slot. Ambiguous labels on
@@ -795,13 +800,19 @@ public struct PerformanceGroupGamepadSession: Sendable {
             return [delivery.disconnectBatch(leases,admitRestoration:nil,send:send)]
         }
         let survivors = bindings
+        let sourcesByTarget = restorationSources
         var sampled = clock
         var valid = true
-        let report = delivery.disconnectBatch(leases,admitRestoration:{
+        let report = delivery.disconnectBatch(leases,admitRestoration:{ item in
             let current = refreshNow()
             guard valid,current.isFinite,current >= sampled else { valid=false; return false }
             sampled=current
-            return Self.staleSources(in:survivors,now:current).isEmpty
+            guard let sources = sourcesByTarget[item.groupID]?[item.command.destination] else { return false }
+            // A target may have several contributors. Conservatively check
+            // every mapped live lease for that target, but not unrelated
+            // endpoints or unrelated controls. Expiry still drains globally.
+            let relevant = survivors.filter { sources.contains($0.key) && $0.value.lease != nil }
+            return !relevant.isEmpty && Self.staleSources(in:relevant,now:current).isEmpty
         },send:send)
         // Preserve the highest observed clock even if the next sample
         // regresses. A bad clock retires every remaining source once.

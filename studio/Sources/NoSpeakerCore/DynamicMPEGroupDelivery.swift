@@ -106,7 +106,7 @@ public struct DynamicMPEGroupDelivery: Sendable {
         disconnectBatch(leases,admitRestoration:nil,send:send)
     }
 
-    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:(()->Bool)?,
+    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:((PerformanceGroupCommand)->Bool)?,
                                   send:(PerformanceGroupCommand)->Bool) -> Report {
         guard state == .ready else { return Report(pending:pendingCleanup) }
         let commands = router.disconnectBatch(leases)
@@ -121,7 +121,7 @@ public struct DynamicMPEGroupDelivery: Sendable {
 
     private mutating func deliver(_ commands:[PerformanceGroupCommand],
                                   admit:()->Bool = { true },onAttempt:(UUID)->Void = { _ in },
-                                  admitRestoration:(()->Bool)? = nil,
+                                  admitRestoration:((PerformanceGroupCommand)->Bool)? = nil,
                                   send:(PerformanceGroupCommand)->Bool) -> Report {
         var report = Report()
         for item in commands {
@@ -130,7 +130,7 @@ public struct DynamicMPEGroupDelivery: Sendable {
             // Dynamic pools admit only notes, hold sustain and master bend.
             // Their cleanup neutral policy is fixed by the validated plan.
             let restoring = item.command.value != PatchOutputLedger.neutral(item.command.destination)
-            if restoring,let admitRestoration,!admitRestoration() {
+            if restoring,let admitRestoration,!admitRestoration(item) {
                 report.admissionExpired = true
                 report.failedGroups.insert(item.groupID)
                 _ = router.stopGroup(item.groupID)
@@ -145,7 +145,7 @@ public struct DynamicMPEGroupDelivery: Sendable {
             switch result {
             case .delivered:
                 report.delivered += 1
-                if restoring,let admitRestoration,!admitRestoration() {
+                if restoring,let admitRestoration,!admitRestoration(item) {
                     report.admissionExpired = true
                     report.failedGroups.insert(item.groupID)
                     _ = router.stopGroup(item.groupID)

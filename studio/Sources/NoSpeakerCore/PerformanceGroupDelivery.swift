@@ -124,7 +124,7 @@ public struct PerformanceGroupDelivery: Sendable {
     /// A departing owner may restore another owner's non-neutral CC or
     /// bend. Those are live output, not cleanup. Check before and after
     /// such a restoration; never fence actual neutral/off commands.
-    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:(()->Bool)?,
+    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:((PerformanceGroupCommand)->Bool)?,
                                   send:(PerformanceGroupCommand)->Bool) -> Report {
         let commands = router.disconnectBatch(leases)
         return deliver(commands,admitRestoration:admitRestoration,send:send)
@@ -141,7 +141,7 @@ public struct PerformanceGroupDelivery: Sendable {
     private mutating func deliver(_ commands: [PerformanceGroupCommand],
                                   admit: () -> Bool = { true },
                                   onAttempt: (UUID) -> Void = { _ in },
-                                  admitRestoration:(()->Bool)? = nil,
+                                  admitRestoration:((PerformanceGroupCommand)->Bool)? = nil,
                                   send: (PerformanceGroupCommand) -> Bool) -> Report {
         var report = Report()
         for item in commands {
@@ -151,7 +151,7 @@ public struct PerformanceGroupDelivery: Sendable {
             // unfenced so an expired input cannot suppress a necessary off.
             guard admit() else { report.admissionExpired = true; break }
             let restoring = !output.ledger.isRelease(item.command)
-            if restoring,let admitRestoration,!admitRestoration() {
+            if restoring,let admitRestoration,!admitRestoration(item) {
                 report.admissionExpired = true
                 retire(id,send:send,report:&report)
                 continue
@@ -163,7 +163,7 @@ public struct PerformanceGroupDelivery: Sendable {
             outputs[id] = output
             if ok {
                 report.accepted += 1
-                if restoring,let admitRestoration,!admitRestoration() {
+                if restoring,let admitRestoration,!admitRestoration(item) {
                     report.admissionExpired = true
                     retire(id,send:send,report:&report)
                 }

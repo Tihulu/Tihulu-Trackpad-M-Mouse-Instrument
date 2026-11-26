@@ -203,7 +203,7 @@ private func deliveryGroup(_ source: SensorSource, signal: SensorSignal = .conta
         _ = state.frame(lease:high,sequence:1,now:1,values:[.x:0.8]) { _ in true }
         var fresh = stallAfterRestoration
         var wire:[PerformanceGroupCommand] = []
-        let report = state.disconnectBatch([high],admitRestoration:{fresh}) {
+        let report = state.disconnectBatch([high],admitRestoration:{_ in fresh}) {
             wire.append($0)
             if $0.groupID == shared.id && $0.command.value == 51 { fresh = false }
             return true
@@ -225,7 +225,7 @@ private func deliveryGroup(_ source: SensorSource, signal: SensorSignal = .conta
     let lease = try state.connect(.lid,now:1)
     _ = state.frame(lease:lease,sequence:1,now:1,values:[.angle:0.8]) { _ in true }
     var wire:[PerformanceGroupCommand] = []
-    let report = state.disconnectBatch([lease],admitRestoration:{false}) { wire.append($0); return true }
+    let report = state.disconnectBatch([lease],admitRestoration:{_ in false}) { wire.append($0); return true }
     #expect(!report.admissionExpired && report.failedGroups.isEmpty && report.pendingCleanup.isEmpty)
     #expect(wire == [.init(groupID:group.id,command:.init(cc,value:32))])
 }

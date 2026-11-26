@@ -161,7 +161,7 @@ private func dynamicSpec(_ cents:Int) -> PerformanceGroupTuningPlan.Specificatio
     _ = state.frame(lease:low,sequence:1,now:1,values:[.padLSX:0.2]) { _ in true }
     _ = state.frame(lease:high,sequence:1,now:1,values:[.padLSX:0.8]) { _ in true }
     var wire:[PerformanceGroupCommand] = []
-    let report = state.disconnectBatch([high],admitRestoration:{false}) { wire.append($0);return true }
+    let report = state.disconnectBatch([high],admitRestoration:{_ in false}) { wire.append($0);return true }
     #expect(report.admissionExpired && report.failedGroups == [group.id] && report.pendingCleanup.isEmpty)
     #expect(wire == [.init(groupID:group.id,command:.init(.init(.pitchBend),value:8192))])
     #expect(state.activeGroups.isEmpty && !state.hasLease(low))

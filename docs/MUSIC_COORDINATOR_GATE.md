@@ -82,3 +82,8 @@ Native Group watchdog, explicit unbind, remote bridge and physical/remote receip
 ## Restoration clock and revocation follow-up
 
 Latch the highest observed monotonic time during restoration; a clock regression retires remaining sources with scoped neutral cleanup (no restoration). A rejected restoration cannot be treated as a fresh neutral rearm even if the next clock sample looks valid. Explicit remote revoke also emits revocations for other peers expired during cleanup. Two additional regressions. First restoration primitive run 45739112745 had a test compile error (padLX spelling); successor corrected to padLSX. Preserve failed intermediate evidence. No change to safety limits, release or physical acceptance.
+
+
+## Target-scoped restoration admission candidate
+
+Restore admission receives the original logical Group command before fixed/dynamic translation. Check deadlines only for surviving leases mapped to that logical destination; unrelated expired sources no longer retire an otherwise valid endpoint during a restoration. Mapping membership is frozen at initialization; unknown destinations fail closed. All contributors mapped to the target remain conservatively checked even if a specific one is not currently winning. Global monotonic clock checks and post-cleanup expiry drain unchanged. One regression exercises a live two-CC restoration while an independent note expires; both CCs must restore and the note must release. Existing timeout and identity policies unchanged. No new physical acceptance.

@@ -84,7 +84,7 @@ public struct PerformanceGroupTunedDelivery: Sendable {
         disconnectBatch(leases,admitRestoration:nil,send:send)
     }
 
-    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:(()->Bool)?,
+    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:((PerformanceGroupCommand)->Bool)?,
                                   send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
         guard state == .ready else { return .init() }
         let frozen = plan
