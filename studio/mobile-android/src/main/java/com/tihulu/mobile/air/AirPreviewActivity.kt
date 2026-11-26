@@ -15,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
+import com.google.ar.core.ArCoreApk
 
 /** Reusable, non-exported diagnostic screen inside a future host application.
  * Only local derived hand data. No sound, network, or live depth capture. */
@@ -35,6 +36,14 @@ class AirPreviewActivity: ComponentActivity() {
     private lateinit var plus:Button
     private lateinit var reset:Button
     private lateinit var mirror:CheckBox
+    private lateinit var depthToggle:CheckBox
+    private lateinit var depthRange:Spinner
+    private lateinit var imageRotation:Spinner
+    private var depthSource:ArCoreDiagnosticSource?=null
+    private var depthRetiring:ArCoreDiagnosticSource?=null
+    private var installRequested=false
+    private val depthModes=listOf(AirMode.BEAM_KEYS,AirMode.BEAM_HELPER)
+    private val depthRanges=listOf(.25 to .85,.15 to .55,.4 to 1.2)
     private lateinit var modelButton:Button
     private lateinit var modelStatus:TextView
     private val importer=Executors.newSingleThreadExecutor()
@@ -50,7 +59,7 @@ class AirPreviewActivity: ComponentActivity() {
     private var pending=false
     private var ticket=0L
     private val modes=AirMode.entries.filter {it!=AirMode.BEAM_KEYS&&it!=AirMode.BEAM_HELPER}
-    private val busy get()=pending||source!=null||retiring!=null||importing
+    private val busy get()=pending||source!=null||retiring!=null||importing||depthSource!=null||depthRetiring!=null
     private val modelPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null&&!busy&&!destroyed) {
             val epoch=++ticket;importing=true;controls();modelStatus.text="Reading selected local model…"
@@ -75,6 +84,14 @@ class AirPreviewActivity: ComponentActivity() {
     private val pulse=object:Runnable {
         override fun run() {
             if(retiring?.isStopped==true) {retiring=null;controls()}
+            if(depthRetiring?.isStopped==true){depthRetiring=null;controls()}
+            depthSource?.let {d->
+                val reading=d.read()
+                if(d.isStopped){end(reading.status)}else {
+                    status.text=reading.status
+                    showOutput(reading.output)
+                }
+            }
             val s=source;val p=projection
             if(s!=null&&p!=null) {
                 val now=SystemClock.elapsedRealtimeNanos()
@@ -82,8 +99,7 @@ class AirPreviewActivity: ComponentActivity() {
                 for(frame in s.drain()) out=p.receive(frame,now)
                 val expired=p.expire(now)
                 if(expired!=null) out=expired
-                if(out!=null) meter.text=out.level?.let {"Helper: "+(it*100).toInt()+"%"}
-                    ?: if(out.keys==0) "All preview keys released" else "Logical keys: "+(0..24).filter {(out.keys and (1 shl it))!=0}.joinToString { (it+1).toString() }
+                if(out!=null)showOutput(out)
             }
             handler.postDelayed(this,50)
         }
@@ -97,7 +113,7 @@ class AirPreviewActivity: ComponentActivity() {
             it.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,labels);column.addView(it)
         }
         label("TIHULU · Android Air stage")
-        label("RGB-only diagnostics · no MIDI, no network, no stored images")
+        label("RGB / optional ARCore diagnostics · no MIDI, no app network, no stored images")
         modelButton=button("Choose trusted local hand_landmarker.task") {if(!busy)modelPicker.launch(arrayOf("application/octet-stream","application/zip","*/*"))}
         modelStatus=label("No imported model. Select a trusted local .task file; its hash will be displayed.")
         choices=CameraInventory.list(this)
@@ -118,12 +134,15 @@ class AirPreviewActivity: ComponentActivity() {
         minus=button("Zoom −"){setZoom(zoom/1.25f)}
         plus=button("Zoom +"){setZoom(zoom*1.25f)}
         reset=button("Reset zoom"){range?.let {setZoom(it.reset)}}
+        depthToggle=CheckBox(this).also {it.text="Use ARCore raw depth (estimated/fused, rear camera)";column.addView(it)}
+        depthRange=spinner(listOf("25–85 cm","15–55 cm","40–120 cm"))
+        imageRotation=spinner(listOf("Raw image 0°","Raw image 90°","Raw image 180°","Raw image 270°"))
         label("Instrument / helper")
         modePick=spinner(modes.map {it.name.replace('_',' ')})
         rolePick=spinner(HandRole.entries.map {it.name})
         orientationPick=spinner(Orientation.entries.map {it.name})
         mirror=CheckBox(this).also {it.text="Mirror X";column.addView(it)}
-        label("Depth mode unavailable in this preview. Camera2 depth capability is shown, not a verified aligned stream.")
+        label("ARCore may require Google Play Services for AR; live depth is experimental. Native calibrated view: lens and zoom locked. Camera2 DEPTH16 remains inventory only.")
         status=label("Stopped")
         meter=label("All preview keys released")
         start=button("Start sensors"){begin()}
@@ -148,8 +167,15 @@ class AirPreviewActivity: ComponentActivity() {
             override fun onStartTrackingTouch(bar:SeekBar?) {}
             override fun onStopTrackingTouch(bar:SeekBar?) {}
         })
+        depthToggle.setOnCheckedChangeListener {_,checked->
+            if(!busy){modePick.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,(if(checked)depthModes else modes).map {it.name.replace('_',' ')});controls()}
+        }
         setContentView(ScrollView(this).apply {addView(column)})
         controls()
+    }
+    private fun showOutput(out:AirOutput){
+        meter.text=out.level?.let {"Helper: "+(it*100).toInt()+"%"}
+            ?: if(out.keys==0) "All preview keys released" else "Logical keys: "+(0..24).filter {(out.keys and (1 shl it))!=0}.joinToString { (it+1).toString() }
     }
     private fun showZoom(){zoomLabel.text="Lens-relative zoom: %.2f×".format(zoom)}
     private fun setZoom(value:Float) {
@@ -161,18 +187,22 @@ class AirPreviewActivity: ComponentActivity() {
     }
     private fun controls() {
         val b=busy;val r=range
-        for(v in listOf(cameraPick,modePick,rolePick,orientationPick,mirror))v.isEnabled=!b
-        flip.isEnabled=!b&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_FRONT}&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_BACK}
-        for(v in listOf(zoomBar,minus,plus,reset))v.isEnabled=!b&&r!=null&&r.max>r.min
+        val depth=depthToggle.isChecked
+        for(v in listOf(modePick,rolePick,orientationPick,mirror,depthToggle))v.isEnabled=!b
+        cameraPick.isEnabled=!b&&!depth
+        depthRange.isEnabled=!b&&depth;imageRotation.isEnabled=!b&&depth
+        flip.isEnabled=!b&&!depth&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_FRONT}&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_BACK}
+        for(v in listOf(zoomBar,minus,plus,reset))v.isEnabled=!b&&!depth&&r!=null&&r.max>r.min
         modelButton.isEnabled=!b
-        start.isEnabled=!b&&r?.admits(zoom)==true
-        stopButton.isEnabled=pending||source!=null
+        start.isEnabled=!b&&(depth||r?.admits(zoom)==true)
+        stopButton.isEnabled=pending||source!=null||depthSource!=null
     }
     private fun begin() {
         if(busy||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
         if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
             permission.launch(Manifest.permission.CAMERA);return
         }
+        if(depthToggle.isChecked){beginDepth();return}
         val c=choices.getOrNull(cameraPick.selectedItemPosition) ?: return
         val mode=modes[modePick.selectedItemPosition]
         val role=HandRole.entries[rolePick.selectedItemPosition]
@@ -198,9 +228,29 @@ class AirPreviewActivity: ComponentActivity() {
             }
         },ContextCompat.getMainExecutor(this))
     }
+    private fun beginDepth(){
+        val model=localModel
+        if(model==null&&runCatching {assets.open("hand_landmarker.task").use {}}.isFailure){status.text="Choose a trusted local hand_landmarker.task first";return}
+        try {
+            val installer=ArCoreApk.getInstance()
+            when(installer.requestInstall(this,!installRequested)) {
+                ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {installRequested=true;status.text="Complete ARCore installation, then press Start again";return}
+                ArCoreApk.InstallStatus.INSTALLED -> installRequested=false
+            }
+            if(!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
+            val range=depthRanges[depthRange.selectedItemPosition]
+            @Suppress("DEPRECATION") val displayRotation=windowManager.defaultDisplay.rotation
+            val s=ArCoreDiagnosticSource(applicationContext,model,imageRotation.selectedItemPosition*90,displayRotation,
+                HandRole.entries[rolePick.selectedItemPosition],depthModes[modePick.selectedItemPosition],
+                Orientation.entries[orientationPick.selectedItemPosition],mirror.isChecked,range.first,range.second)
+            depthSource=s;controls();s.start();status.text="Starting ARCore diagnostic sensor"
+        }catch(_:Exception){end("ARCore unavailable, unsupported or install declined")}
+        catch(_:LinkageError){end("ARCore runtime not included by embedding app")}
+    }
     private fun end(message:String) {
         ticket++;pending=false;importing=false
         source?.let {it.stop();retiring=it};source=null;projection=null
+        depthSource?.let {it.stop();depthRetiring=it};depthSource=null
         meter.text="All preview keys released";status.text=message;controls()
     }
     override fun onResume(){super.onResume();handler.removeCallbacks(pulse);handler.post(pulse)}

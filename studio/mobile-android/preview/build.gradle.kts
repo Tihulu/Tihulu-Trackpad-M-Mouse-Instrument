@@ -11,4 +11,4 @@ android {
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
-dependencies { implementation(project(":")) }
+dependencies { implementation(project(":")); implementation("com.google.ar:core:1.48.0") }
