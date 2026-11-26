@@ -98,3 +98,26 @@ import Testing
     #expect(runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1.38,now:1.38)==[.init(a,value:100)])
     #expect(runtime.activeSources==[.trackpad,.magicMouse])
 }
+
+
+@Test func physicalGamepadExpiredSharedOwnersAreReleasedWithoutTransientRestore() throws {
+    let target=SensorDestination(.controlChange,number:74)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"high",source:.gamepad1,signal:.padLT,destination:target,priority:10),
+        .init(id:"low",source:.gamepad2,signal:.padLT,destination:target,priority:0)
+    ]))
+    let neutral=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+    let high=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0.8,0],sticks:[0,0,0,0]))
+    let low=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0.3,0],sticks:[0,0,0,0]))
+    _=runtime.receiveGamepad(source:.gamepad1,frame:neutral,now:1)
+    _=runtime.receiveGamepad(source:.gamepad2,frame:neutral,now:1)
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:high,now:1.01).count==1)
+    _=runtime.receiveGamepad(source:.gamepad2,frame:low,now:1.02)
+    #expect(runtime.activeSources==[.gamepad1,.gamepad2])
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:high,now:1.38)==[.init(target,value:0)])
+    #expect(runtime.activeSources.isEmpty)
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:high,now:1.39).isEmpty)
+    _=runtime.receiveGamepad(source:.gamepad1,frame:neutral,now:1.4)
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:high,now:1.41).count==1)
+}

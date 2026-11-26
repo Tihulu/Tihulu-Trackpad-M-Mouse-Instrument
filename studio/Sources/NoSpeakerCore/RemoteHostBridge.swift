@@ -59,6 +59,31 @@ public struct RemoteHostBridge: Sendable {
         return result
     }
 
+    /// Native host uses a current clock so explicit revocation cannot
+    /// restore a second owner whose deadline has already passed.
+    public mutating func revoke(_ connection:UUID,now:Double,
+                                runtime:inout PhysicalPatchRuntime) -> RemoteHostBatch {
+        guard now.isFinite,now>=0 else {
+            var result=stop(runtime:&runtime)
+            result.fault=true
+            return result
+        }
+        guard let peer=bindings.removeValue(forKey:connection) else {
+            var result=RemoteHostBatch()
+            result.actions=[.revoke(connection)]
+            return result
+        }
+        var result=RemoteHostBatch()
+        result.commands=runtime.expire(now:now,removingRemote:[peer])
+        result.actions=[.revoke(connection)]
+        let expired=bindings.filter { !runtime.remotePeerIDs.contains($0.value) }.map(\.key)
+        for id in expired.sorted(by:{ $0.uuidString < $1.uuidString }) {
+            bindings.removeValue(forKey:id)
+            result.actions.append(.revoke(id))
+        }
+        return result
+    }
+
     public mutating func stop(runtime: inout PhysicalPatchRuntime) -> RemoteHostBatch {
         stopped = true
         ready = false

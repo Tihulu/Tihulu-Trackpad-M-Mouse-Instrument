@@ -269,8 +269,17 @@ public struct PhysicalPatchRuntime: Sendable {
         guard GamepadFrame.sources.contains(source),supported.contains(source) else { return [] }
         let receipt=hostTime ?? now
         guard let frame,Self.admitsPhysicalReceipt(receipt,now:now) else { return releaseGamepad(source) }
-        if let last = seen[source],(!Self.admitsPhysicalReceipt(last,now:now) || receipt<last) {
-            return releaseGamepad(source)
+        if let last = seen[source] {
+            if !Self.admitsPhysicalReceipt(last,now:now) {
+                // All already expired owners leave together. Otherwise a
+                // stale controller could briefly restore another stale CC.
+                let commands = expire(now:now)
+                gamepadArmed.remove(source)
+                lastGamepadActive.removeValue(forKey:source)
+                seen[source] = max(last,receipt)
+                return commands
+            }
+            if receipt < last { return releaseGamepad(source) }
         }
         seen[source] = receipt
         if !gamepadArmed.contains(source) {

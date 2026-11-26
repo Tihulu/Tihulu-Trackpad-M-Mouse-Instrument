@@ -1603,11 +1603,19 @@ final class StudioController: ObservableObject {
 
     func revokeBuilderRemote(_ connection: UUID) {
         guard var bridge = patchRemoteBridge, let transport = patchRemoteTransport else { return }
-        let result = bridge.revoke(connection, runtime: &patchPhysicalRuntime)
+        let result = bridge.revoke(connection,now:ProcessInfo.processInfo.systemUptime,runtime:&patchPhysicalRuntime)
         patchRemoteBridge = bridge
         patchRemotePeers = bridge.connectionIDs
         recordPatchCommands(result.commands)
-        transport.revoke(connection)
+        guard patchRunning,patchRemoteTransport === transport else { return }
+        if result.fault {
+            stopInstrumentPatch()
+            patchStatus = "Remote clock fault. Outputs released; restart explicitly."
+            return
+        }
+        for action in result.actions {
+            if case .revoke(let id) = action { transport.revoke(id) }
+        }
     }
 
     private func drainBuilderRemote(now: Double) {

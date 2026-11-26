@@ -191,3 +191,28 @@ private func bridgeRuntime() throws -> PhysicalPatchRuntime {
     #expect(rejected.commands == [.init(bridgeNote,value:0)] && rejected.actions == [.acknowledge(id,false)])
     #expect(bridge.connectionIDs.isEmpty)
 }
+
+
+@Test func builderRemoteExplicitRevokeDoesNotRestoreExpiredPeer() throws {
+    var runtime=PhysicalPatchRuntime()
+    let target=SensorDestination(.controlChange,number:74)
+    try runtime.configure(.init(routes:[
+        .init(id:"high",source:.phone,signal:.x,destination:target,priority:10),
+        .init(id:"low",source:.tablet,signal:.x,destination:target,priority:0)
+    ]),allowRemote:true)
+    var bridge=RemoteHostBridge()
+    let a=UUID(),b=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(a,bridgeSecret,1)],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.tablet,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(b,bridgeSecret,1)],now:1,runtime:&runtime)
+    let low=Data("{\"version\":1,\"sequence\":1,\"kind\":\"touch\",\"x\":0.3,\"y\":0.5}".utf8)
+    let high=Data("{\"version\":1,\"sequence\":1,\"kind\":\"touch\",\"x\":0.8,\"y\":0.5}".utf8)
+    _=bridge.process([.frame(b,low,1.01)],now:1.01,runtime:&runtime)
+    _=bridge.process([.frame(a,high,1.2)],now:1.2,runtime:&runtime)
+    let result=bridge.revoke(a,now:1.37,runtime:&runtime)
+    #expect(result.commands==[.init(target,value:0)])
+    #expect(result.actions==[.revoke(a),.revoke(b)])
+    #expect(bridge.connectionIDs.isEmpty && runtime.remotePeerIDs.isEmpty)
+}
