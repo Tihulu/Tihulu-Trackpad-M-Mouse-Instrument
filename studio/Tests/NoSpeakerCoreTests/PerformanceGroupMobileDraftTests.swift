@@ -312,3 +312,28 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     let changed=draft.transformFamily(.piano,transpose:-12)
     #expect(changed && draft.routes.map(\.destination.number)==[48,115])
 }
+
+@Test func measuredXYZPresetKeepsOtherPlayersAndRejectsTargetCollisions() throws {
+    let group = PerformanceInstrumentGroup(name: "Keys", patch: .init(routes: [
+        .init(id: "keys", source: .tablet, signal: .pianoKey0, destination: .init(.note, number: 60))
+    ]))
+    let profile = PerformanceGroupProfile(groups: [group])
+    var draft = try PerformanceGroupMobileDraft(profile: profile, groupID: group.id, source: .phone)
+    let conflicting = draft.addXYZHelper(.expression, channel: 0)
+    #expect(!conflicting && draft.routes.isEmpty)
+    let added = draft.addXYZHelper(.expression, channel: 1)
+    #expect(added && draft.xyzHelperIsCompatible)
+    #expect(try draft.applying(to: profile).groups[0].patch.routes.first == group.patch.routes.first)
+    draft.routes[1].destination = draft.routes[2].destination
+    #expect(!draft.xyzHelperIsCompatible)
+}
+
+@Test func measuredAxisSensitivityPreservesLegacyCalibrationAndCenter() throws {
+    var calibration = try JSONDecoder().decode(SensorCalibration.self, from:
+        Data(#"{"minimum":0,"maximum":1,"inverted":false,"deadZone":0,"exponent":1}"#.utf8))
+    #expect(calibration.apply(0.25) == 0.25)
+    calibration.sensitivity = 2
+    #expect(calibration.apply(0.25) == 0 && calibration.apply(0.5) == 0.5 && calibration.apply(1) == 1)
+    calibration.sensitivity = .nan
+    #expect(calibration.apply(0.5) == nil)
+}

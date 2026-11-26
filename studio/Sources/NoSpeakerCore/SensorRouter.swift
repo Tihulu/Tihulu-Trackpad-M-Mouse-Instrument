@@ -39,6 +39,7 @@ public struct SensorCalibration: Codable, Equatable, Sendable {
     public var maximum: Double
     public var inverted: Bool
     public var deadZone: Double
+    public var sensitivity: Double?
     public var exponent: Double
 
     public init(minimum: Double = 0, maximum: Double = 1, inverted: Bool = false,
@@ -54,12 +55,13 @@ public struct SensorCalibration: Codable, Equatable, Sendable {
         minimum.isFinite && maximum.isFinite && (0...1).contains(minimum) &&
         (0...1).contains(maximum) && maximum - minimum >= 0.01 &&
         deadZone.isFinite && (0...0.45).contains(deadZone) &&
-        exponent.isFinite && (0.25...4).contains(exponent)
+        (sensitivity.map { (0.25...4).contains($0) } ?? true) && exponent.isFinite && (0.25...4).contains(exponent)
     }
 
     public func apply(_ input: Double) -> Double? {
         guard isValid, input.isFinite, (0...1).contains(input) else { return nil }
         var value = min(1, max(0, (input - minimum) / (maximum - minimum)))
+        if let sensitivity { value = min(1, max(0, 0.5 + (value - 0.5) * sensitivity)) }
         if inverted { value = 1 - value }
         // Endpoint dead zone preserves the center of bipolar controls.
         value = min(1, max(0, (value - deadZone) / (1 - 2 * deadZone)))

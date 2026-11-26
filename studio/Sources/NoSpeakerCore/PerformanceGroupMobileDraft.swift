@@ -240,3 +240,52 @@ public struct PerformanceGroupMobileDraft: Identifiable, Equatable, Sendable {
         return next
     }
 }
+
+/// A measured XYZ client asks for one continuous pedal family. Adding a preset
+/// is an offline edit to an unused mobile source in the selected group.
+public enum DepthXYZHelperPreset: String, CaseIterable, Sendable {
+    case expression = "Pitch bend / Modulation / Expression"
+    case filter = "Cutoff / Resonance / Reverb"
+    case beam = "Depth expression"
+
+    public var destinations: [SensorDestination?] {
+        switch self {
+        case .expression: return [.init(.pitchBend), .init(.controlChange, number: 1), .init(.controlChange, number: 11)]
+        case .filter: return [74, 71, 91].map { .init(.controlChange, number: $0) }
+        case .beam: return [nil, nil, .init(.controlChange, number: 11)]
+        }
+    }
+}
+
+extension PerformanceGroupMobileDraft {
+    /// A named group is the destination, so validate its other sources as
+    /// well as this draft. A channel bend is not an independent per-note bend.
+    public var xyzHelperIsCompatible: Bool {
+        guard let profile = try? applying(to: baseline),
+              let group = profile.groups.first(where: { $0.id == groupID }),
+              !profile.groups.contains(where: { $0.id != groupID && $0.patch.routes.contains { $0.source == source } }),
+              !routes.isEmpty else { return false }
+        let axes = RemotePedalboard.signals.prefix(3)
+        let targets = Set(routes.map(\.destination))
+        guard routes.allSatisfy({ axes.contains($0.signal) && ContinuousResponse.isContinuous($0.destination) }),
+              Set(routes.map(\.signal)).count == routes.count, targets.count == routes.count else { return false }
+        let bendChannels = Set(targets.filter { $0.kind == .pitchBend }.map(\.channel))
+        return !group.patch.routes.contains {
+            $0.source != source && (targets.contains($0.destination) ||
+                ($0.destination.kind == .note && bendChannels.contains($0.destination.channel)))
+        }
+    }
+
+    public mutating func addXYZHelper(_ preset: DepthXYZHelperPreset, channel: Int) -> Bool {
+        guard routes.isEmpty, (0...15).contains(channel) else { return false }
+        var next = self
+        for (signal, value) in zip(RemotePedalboard.signals, preset.destinations) {
+            guard var destination = value else { continue }
+            destination.channel = channel
+            next.routes.append(.init(id: UUID().uuidString, source: source, signal: signal, destination: destination))
+        }
+        guard next.xyzHelperIsCompatible else { return false }
+        self = next
+        return true
+    }
+}
