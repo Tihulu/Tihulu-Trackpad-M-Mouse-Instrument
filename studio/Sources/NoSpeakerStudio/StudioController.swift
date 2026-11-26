@@ -1829,6 +1829,7 @@ final class StudioController: ObservableObject {
         guard patchRunning, patchPhysical, patchNativeToken == token else { return }
         let now=ProcessInfo.processInfo.systemUptime
         let receipt=hostTime ?? now
+        guard !patchPhysicalRuntime.isRetiredGamepadReceipt(source,receipt:receipt) else { return }
         guard PhysicalPatchRuntime.admitsPhysicalReceipt(receipt,now:now) else {
             stopInstrumentPatch(reason:"Controller snapshot expired before delivery. Restart Builder explicitly.")
             return
@@ -2078,7 +2079,7 @@ final class StudioController: ObservableObject {
         guard patchRunning, (!patchPhysical || patchHybridSource != nil),patchInputs.contains(input) else { return }
         cancelPatchPulse(input)
         let commands: [SensorCommand]
-        if patchPhysical { commands = patchPhysicalRuntime.releaseHybrid(input) }
+        if patchPhysical { commands = patchPhysicalRuntime.releaseHybrid(input,now:ProcessInfo.processInfo.systemUptime) }
         else if GamepadFrame.sources.contains(input.source) {
             commands = patchSimulation.liftGamepadControl(input,now:ProcessInfo.processInfo.systemUptime)
         } else { commands = patchSimulation.release(input) }

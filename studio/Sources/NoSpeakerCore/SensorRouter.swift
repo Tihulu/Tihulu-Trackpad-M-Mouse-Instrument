@@ -349,15 +349,19 @@ public struct SensorRouter: Sendable {
     }
 
     public mutating func releaseSignals(session id: UUID, signals: Set<SensorSignal>) -> [SensorCommand] {
-        guard let session = sessions[id] else { return [] }
+        removeSignals(session:id,signals:signals)
+        return reconcile()
+    }
+
+    private mutating func removeSignals(session id:UUID,signals:Set<SensorSignal>) {
+        guard let session=sessions[id] else { return }
         for signal in signals {
             for mapping in mappingsByInput[.init(source:session.source,signal:signal)] ?? [] {
-                let owner = Owner(session:id,mapping:mapping.id)
+                let owner=Owner(session:id,mapping:mapping.id)
                 pedalPressed.remove(owner)
                 removeContribution(owner)
             }
         }
-        return reconcile()
     }
 
     /// Closing one device releases only its ownership. Other devices may
@@ -369,8 +373,17 @@ public struct SensorRouter: Sendable {
     /// A departing group is removed before reconciliation. Never restore a
     /// lower-priority owner that is itself part of the same departing group.
     public mutating func disconnect(sessions ids: Set<UUID>) -> [SensorCommand] {
-        let removed = ids.intersection(sessions.keys)
-        guard !removed.isEmpty else { return [] }
+        disconnect(sessions:ids,releasing:[:])
+    }
+
+    // Signal releases and whole-session departures are one reconciliation.
+    // In particular do not restore a surviving session's departing axis.
+    mutating func disconnect(sessions ids:Set<UUID>,releasing signals:[UUID:Set<SensorSignal>]) -> [SensorCommand] {
+        let removed=ids.intersection(sessions.keys)
+        for (id,axes) in signals where !removed.contains(id) {
+            removeSignals(session:id,signals:axes)
+        }
+        guard !removed.isEmpty else { return reconcile() }
         for id in removed { sessions.removeValue(forKey:id) }
         pedalPressed = pedalPressed.filter { !removed.contains($0.session) }
         let departing = contributions.keys.filter { removed.contains($0.session) }

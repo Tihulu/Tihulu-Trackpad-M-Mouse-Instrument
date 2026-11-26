@@ -192,6 +192,12 @@ public struct PhysicalPatchRuntime: Sendable {
         guard hybridInputs.contains(input),let id = hybridSession else { return [] }
         return router.releaseSignal(session:id,signal:input.signal)
     }
+    public mutating func releaseHybrid(_ input:PatchSimulation.Input,now:Double) -> [SensorCommand] {
+        guard hybridInputs.contains(input),let id=hybridSession else { return [] }
+        guard now.isFinite,now>=0 else { return releaseHybridSource() }
+        return expire(now:now,removingRemote:[],releasingSignals:[id:[input.signal]])
+    }
+
     public mutating func releaseHybridSource() -> [SensorCommand] {
         if hybridSource == .camera { return releaseCamera() }
         guard let id = hybridSession else { return [] }
@@ -280,7 +286,7 @@ public struct PhysicalPatchRuntime: Sendable {
         let receipt=hostTime ?? now
         // Pre-loss queued data (including old nil callbacks) cannot
         // rearm or tear down a newer owner. Check before freshness.
-        if let retiredAt=gamepadRetiredAt[source],receipt.isFinite,receipt<=retiredAt { return [] }
+        if isRetiredGamepadReceipt(source,receipt:receipt) { return [] }
         guard let frame,Self.admitsPhysicalReceipt(receipt,now:now) else {
             return releaseGamepad(source,now:now)
         }
@@ -328,6 +334,14 @@ public struct PhysicalPatchRuntime: Sendable {
         gamepadSnapshotMetrics.record(skipped:false,events:events.count)
         return router.ingestFrame(session:session,releasing:releasing,events:events,now:now)
     }
+    /// Host preflight uses the same retirement fence before rejecting
+    /// an expired callback. Old-generation input is ignored, not a fault
+    /// of the newly armed performance.
+    public func isRetiredGamepadReceipt(_ source:SensorSource,receipt:Double) -> Bool {
+        guard let retiredAt=gamepadRetiredAt[source],receipt.isFinite else { return false }
+        return receipt<=retiredAt
+    }
+
     public mutating func releaseGamepad(_ source:SensorSource) -> [SensorCommand] {
         guard GamepadFrame.sources.contains(source) else { return [] }
         gamepadArmed.remove(source)
@@ -802,7 +816,8 @@ public struct PhysicalPatchRuntime: Sendable {
     // disconnected in one router transaction, never restored in between.
     mutating func expire(now:Double,removingRemote departures:Set<UUID>,
                          removingPhysical physical:Set<SensorSource> = [],
-                         removingHybrid:Bool = false) -> [SensorCommand] {
+                         removingHybrid:Bool = false,
+                         releasingSignals:[UUID:Set<SensorSignal>] = [:]) -> [SensorCommand] {
         guard now.isFinite else { return [] }
         let dualExpired = (airDualEnabled || cameraHandsEnabled) && (seen[.camera].map { now - $0 >= 0.25 } ?? false)
         if dualExpired { airDual.reset(); airActiveSlot = nil; airStrum?.reset(); cameraHands.reset() }
@@ -826,7 +841,7 @@ public struct PhysicalPatchRuntime: Sendable {
         if let id = hybridSession,removingHybrid || hybridReceipt.map({ !Self.admitsPhysicalReceipt($0,now:now) }) != false {
             removed.insert(id); hybridSession = nil; hybridReceipt = nil
         }
-        var commands = router.disconnect(sessions:removed)
+        var commands = router.disconnect(sessions:removed,releasing:releasingSignals)
         if let camera = sessions[.camera], airStrum != nil {
             commands += airStrum!.expire(now:now,session:camera,router:&router)
         }
