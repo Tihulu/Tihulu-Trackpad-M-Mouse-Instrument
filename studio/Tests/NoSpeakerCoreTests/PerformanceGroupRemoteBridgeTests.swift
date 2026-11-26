@@ -664,3 +664,66 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     #expect(session.activeSessions == 0 && session.pendingCleanup.isEmpty)
     #expect(session.sourceStates[.gamepad1] == .waitingForNeutral)
 }
+
+
+@Test func groupRemoteFinalClockRegressionRetiresLocalLeaseEvenWithoutPeers() throws {
+    let local = groupRemoteFixture(.gamepad1,.padA,64)
+    let phone = groupRemoteFixture(.phone,.drumPad1,36)
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[local,phone]),allowRemote:true)
+    var bridge = PerformanceGroupRemoteBridge()
+    let token = try session.bind(.gamepad1,now:1)
+    let neutral = try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+    var buttons = Array(repeating:0.0,count:12); buttons[0] = 1
+    let held = try #require(GamepadFrame(buttons:buttons,triggers:[0,0],sticks:[0,0,0,0]))
+    _ = session.receive(.gamepad1,token:token,frame:neutral,now:1,send:{_ in true})
+    _ = session.receive(.gamepad1,token:token,frame:held,now:1.01,send:{_ in true})
+    #expect(session.activeSessions == 1)
+    var reads = 0
+    var sent:[PerformanceGroupCommand] = []
+    let result = bridge.process([],now:1.2,refreshNow:{
+        reads += 1
+        return reads <= 2 ? 1.2 : 1.1
+    },session:&session,send:{sent.append($0);return true})
+    #expect(result.fault && result.actions == [.stop] && bridge.stopped)
+    #expect(sent.count == 1 && sent.first?.groupID == local.id && sent.first?.command.value == 0)
+    #expect(session.activeSessions == 0 && session.sourceStates[.gamepad1] == .waitingForNeutral)
+}
+
+@Test func groupRemoteFinalLocalCleanupCannotExtendMetadataNegotiation() throws {
+    let local = groupRemoteFixture(.gamepad1,.padA,64)
+    let phone = groupRemoteFixture(.phone,.contact,60)
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[local,phone]),allowRemote:true)
+    var bridge = PerformanceGroupRemoteBridge()
+    let peer = UUID(), secret = Data(repeating:3,count:32)
+    let ok:(PerformanceGroupCommand)->Bool = {_ in true}
+    _ = bridge.process([.ready],now:0,session:&session,send:ok)
+    try bridge.issue(secret:secret,source:.phone,now:0,session:session)
+    _ = bridge.process([.invitation(peer,secret,0)],now:0,session:&session,send:ok)
+    _ = bridge.process([.frame(peer,groupRemoteWire("capabilities",7,1),0.25)],now:0.25,session:&session,send:ok)
+    for i in 1...9 {
+        _ = bridge.process([.frame(peer,groupRemoteWire("heartbeat",1,i+1),Double(i))],
+                           now:Double(i),session:&session,send:ok)
+    }
+    let token = try session.bind(.gamepad1,now:9.85)
+    let neutral = try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+    var buttons = Array(repeating:0.0,count:12); buttons[0] = 1
+    let held = try #require(GamepadFrame(buttons:buttons,triggers:[0,0],sticks:[0,0,0,0]))
+    _ = session.receive(.gamepad1,token:token,frame:neutral,now:9.85,send:ok)
+    _ = session.receive(.gamepad1,token:token,frame:held,now:9.86,send:ok)
+    _ = bridge.process([.frame(peer,groupRemoteWire("heartbeat",1,11),10)],now:10,session:&session,send:ok)
+    #expect(session.activeSessions == 1 && bridge.connectionIDs == [peer])
+    var reads = 0, now = 10.2
+    var sent:[PerformanceGroupCommand] = []
+    let result = bridge.process([],now:now,refreshNow:{
+        reads += 1
+        if reads == 3 { now = 10.22 }
+        return now
+    },session:&session,send:{command in
+        sent.append(command)
+        now = 10.26
+        return true
+    })
+    #expect(sent.count == 1 && sent.first?.groupID == local.id && sent.first?.command.value == 0)
+    #expect(result.actions == [.revoke(peer)] && bridge.connectionIDs.isEmpty)
+    #expect(session.activeSessions == 0 && !session.boundSources.contains(.phone))
+}

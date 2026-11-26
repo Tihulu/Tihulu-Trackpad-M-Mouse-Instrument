@@ -119,12 +119,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
             // invoke the sink. Never reuse the batch-start receipt budget.
             let eventNow=refreshNow?() ?? now
             guard eventNow.isFinite,eventNow>=lastProcessingTime else {
-                let retirement=stop(session:&session,refreshNow:refreshNow,send:send)
-                result.reports += retirement.reports
-                result.actions += retirement.actions
-                result.fault=true
-                discardInvalidMetadata(in:&result)
-                return result
+                return retireClockFault(result,session:&session,send:send)
             }
             lastProcessingTime=eventNow
             let now=eventNow
@@ -200,12 +195,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                 // or disclose a label page as if still timely.
                 let completedAt=refreshNow?() ?? now
                 guard completedAt.isFinite,completedAt>=now else {
-                    let retirement=stop(session:&session,refreshNow:refreshNow,send:send)
-                    result.reports += retirement.reports
-                    result.actions += retirement.actions
-                    result.fault=true
-                    discardInvalidMetadata(in:&result)
-                    return result
+                    return retireClockFault(result,session:&session,send:send)
                 }
                 lastProcessingTime=completedAt
                 guard !binding.metadataExpired(now:completedAt) else {
@@ -259,14 +249,10 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         // The batch can cross a metadata deadline even with no frame from
         // that peer (or no events at all). Drain newly expired negotiations
         // in bounded rounds, with the original ten-second deadline.
-        for _ in 0...bindings.count {
+        for _ in 0...(bindings.count + session.boundSources.count) {
             let current=refreshNow?() ?? now
             guard current.isFinite,current>=lastProcessingTime else {
-                let retirement=stop(session:&session,refreshNow:refreshNow,send:send)
-                result.reports += retirement.reports
-                result.actions += retirement.actions
-                result.fault=true
-                break
+                return retireClockFault(result,session:&session,send:send)
             }
             lastProcessingTime=current
             let timedOut=Set(bindings.compactMap { id,binding in
@@ -279,14 +265,33 @@ public struct PerformanceGroupRemoteBridge: Sendable {
             // The final clock observation must govern physical and remote
             // leases too, not only the ten-second metadata negotiation.
             // Batch known departures with all expired leases before restoring.
-            result.reports += session.expire(now:current,removingRemote:departures,
-                                             refreshNow:refreshNow,send:send)
+            let drained = session.expire(now:current,removingRemote:departures,
+                                         refreshNow:refreshNow,send:send)
+            result.reports += drained
             result.actions += timedOut.sorted(by:{ $0.uuidString < $1.uuidString }).map { .revoke($0) }
             result.actions += reconcileRevoked(session:session)
-            guard !timedOut.isEmpty else { break }
+            // A slow final note-off can itself cross a metadata deadline.
+            // Repeat only after a departure or actual scoped cleanup.
+            guard !timedOut.isEmpty || !drained.isEmpty else { break }
         }
         // Another peer's cleanup can expire an authenticated slot.
         result.actions += reconcileRevoked(session:session)
+        discardInvalidMetadata(in:&result)
+        return result
+    }
+
+    /// A broken trusted host clock invalidates all Group leases, not
+    /// only the peers owned by this bridge. Reset them atomically without
+    /// consulting another sample from the already invalid clock.
+    private mutating func retireClockFault(_ previous:PerformanceGroupRemoteBatch,
+                                            session:inout PerformanceGroupGamepadSession,
+                                            send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupRemoteBatch {
+        var result = previous
+        result.reports += session.expire(now:.nan,send:send)
+        let retirement = stop(session:&session,send:send)
+        result.reports += retirement.reports
+        result.actions += retirement.actions
+        result.fault = true
         discardInvalidMetadata(in:&result)
         return result
     }
