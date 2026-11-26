@@ -1936,14 +1936,14 @@ final class StudioController: ObservableObject {
         stopAirTrace()
         patchAirLiveSelected = nil
         patchAirLiveSounding = nil
-        if let camera = patchCamera {
-            retiringPatchCamera = camera
-            camera.stop()
-        }
+        let camera = patchCamera
         patchCamera = nil
+        retiringPatchCamera = camera ?? retiringPatchCamera
         airTracking.reset()
         patchCameraHand = nil
+        // Retire the runtime source before potentially slow capture teardown.
         recordPatchCommands(patchPhysicalRuntime.releaseCamera(now:ProcessInfo.processInfo.systemUptime))
+        camera?.stop()
         patchCameraStatus = reason
     }
 
@@ -2210,8 +2210,17 @@ final class StudioController: ObservableObject {
 
     func stopInstrumentPatch() {
         if groupGamepadsRunning { stopGroupGamepads() }
-        flushPatchMonitor()
+        // Invalidate input and scheduled publication before sending releases.
+        // Camera, HID, TLS and shared-monitor teardown must not delay MIDI
+        // note-off or selector cleanup. The ledger retains failed debt.
+        patchRunning = false
+        patchNativeToken = nil
+        patchWatchdog?.cancel()
+        patchWatchdog = nil
         gamepadHapticToken = nil
+        patchMIDIEnabled = false
+        let released = releaseBuilderOutput()
+        flushPatchMonitor()
         gamepadHaptics?.stop()
         gamepadHaptics = nil
         releaseSharedOutputIfIdle()
@@ -2231,15 +2240,12 @@ final class StudioController: ObservableObject {
         for task in patchPadTasks.values { task.cancel() }
         patchPadTasks.removeAll()
         patchPadTokens.removeAll()
-        patchWatchdog?.cancel()
-        patchWatchdog = nil
         patchAirDebugSelected = nil
         patchAirDebugSounding = nil
         patchAirLiveSelected = nil
         patchAirLiveSounding = nil
         let hadPhysicalInput = patchPhysical
         let hadNativeBar = patchNativeBar
-        patchNativeToken = nil
         patchGamepadPollSources = []
         patchNativeBar = false
         patchRemoteProbeToken = nil
@@ -2280,10 +2286,7 @@ final class StudioController: ObservableObject {
         _ = patchSimulation.stop()
         patchInputs = []
         debugCameraRunToken = nil
-        patchRunning = false
-        patchMIDIEnabled = false
         patchTunedAirActive = false
-        let released = releaseBuilderOutput()
         patchStatus = released ? "Builder idle" : "MIDI release failed. Reset DAW and retry Stop."
     }
 
