@@ -880,7 +880,12 @@ struct PerformanceGroupEditorView: View {
             VStack(alignment:.leading,spacing:8) {
                 Picker("Choose a setup",selection:$starter) {
                     Section("One device / desktop") {
-                        ForEach([PerformanceGroupStarterPreset.trackpadSolo,.mouseSolo,.desktopDuo,.xboxSolo,.phoneSolo]) { p in
+                        ForEach([PerformanceGroupStarterPreset.trackpadSolo,.mouseSolo,.desktopDuo,.xboxSolo,.xboxDrums,.phoneSolo,.tabletKeys]) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                    Section("Instrument + Helper") {
+                        ForEach([PerformanceGroupStarterPreset.mousePedal,.xboxHelper,.phonePedals]) { p in
                             Text(p.title).tag(p)
                         }
                     }

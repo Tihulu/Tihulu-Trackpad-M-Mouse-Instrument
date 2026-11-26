@@ -65,9 +65,15 @@ public enum PerformanceGroupPartyJamPreset:String,CaseIterable,Identifiable,Send
 /// Every copy receives fresh group ports; runtime consent stays explicit.
 public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Sendable {
     case trackpadSolo,mouseSolo,desktopDuo,xboxSolo,xboxDuo,phoneSolo,pocketJam,mobileDuo,cameraLead,touchBarLead,lidLead,mobileQuartet,hybridBand
+    case xboxDrums,tabletKeys,mousePedal,xboxHelper,phonePedals
     public var id:String { rawValue }
     public var title:String {
         switch self {
+        case .xboxDrums: "Xbox drum kit"
+        case .tabletKeys: "Tablet keys"
+        case .mousePedal: "Trackpad + Mouse pedal"
+        case .xboxHelper: "Trackpad + Xbox Helper"
+        case .phonePedals: "Trackpad + phone pedals"
         case .trackpadSolo: "Trackpad lead"
         case .mouseSolo: "Magic Mouse lead"
         case .desktopDuo: "Desktop duo"
@@ -85,6 +91,11 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
     }
     public var detail:String {
         switch self {
+        case .xboxDrums: "Eight buttons mapped to GM drums on MIDI channel 10."
+        case .tabletKeys: "25 piano keys and sustain on a tablet."
+        case .mousePedal: "Trackpad lead; hold Mouse contact for sustain on the same MIDI port."
+        case .xboxHelper: "Trackpad lead; Xbox RT sustain, LT filter, left X bend, right Y modulation. Helper axes take priority while active."
+        case .phonePedals: "Trackpad lead; phone sustain, wah/filter, modulation and two MIDI switches. No audio effect is created automatically."
         case .trackpadSolo: "Touch = held note; X = pitch bend, Y = filter."
         case .mouseSolo: "Mouse touch = held note; X = bend, Y = filter."
         case .desktopDuo: "Trackpad lead and Magic Mouse bass on independent ports."
@@ -102,6 +113,11 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
     }
     public var requiredSources:[SensorSource] {
         switch self {
+        case .xboxDrums: [.gamepad1]
+        case .tabletKeys: [.tablet]
+        case .mousePedal: [.trackpad,.magicMouse]
+        case .xboxHelper: [.trackpad,.gamepad1]
+        case .phonePedals: [.trackpad,.phone]
         case .trackpadSolo: [.trackpad]
         case .mouseSolo: [.magicMouse]
         case .desktopDuo: [.trackpad,.magicMouse]
@@ -136,6 +152,23 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
         let drums=group("Phone drums",RemoteDrumPads.routes(source:.phone))
         let groups:[PerformanceInstrumentGroup]
         switch self {
+        case .xboxDrums: groups=[group("Xbox drums",GamepadFrame.Role.drums.routes(source:.gamepad1,channel:9))]
+        case .tabletKeys: groups=[group("Tablet keys",RemotePiano.routes(source:.tablet))]
+        case .mousePedal: groups=[group("Trackpad lead and pedal",lead+[
+            .init(id:"mouse-sustain",source:.magicMouse,signal:.contact,destination:.init(.sustain))
+        ])]
+        case .xboxHelper:
+            let helper=GamepadFrame.Role.helper.routes(source:.gamepad1,channel:0).map { route -> SensorMapping in
+                var next=route;next.priority=10;return next
+            }
+            groups=[group("Trackpad lead and Xbox Helper",lead+helper)]
+        case .phonePedals: groups=[group("Trackpad lead and phone pedals",lead+[
+            .init(id:"phone-sustain",source:.phone,signal:.pedalSustain,destination:.init(.sustain)),
+            .init(id:"phone-filter",source:.phone,signal:.pedalWah,destination:.init(.controlChange,number:74),priority:10),
+            .init(id:"phone-mod",source:.phone,signal:.pedalExpression,destination:.init(.controlChange,number:1)),
+            .init(id:"phone-switch1",source:.phone,signal:.pedalSwitch1,destination:.init(.controlChange,number:80)),
+            .init(id:"phone-switch2",source:.phone,signal:.pedalSwitch2,destination:.init(.controlChange,number:81))
+        ])]
         case .trackpadSolo: groups=[group("Trackpad lead",lead)]
         case .mouseSolo: groups=[group("Mouse lead",surface(.magicMouse,note:60))]
         case .desktopDuo: groups=[group("Trackpad lead",lead),group("Mouse bass",surface(.magicMouse,note:36))]

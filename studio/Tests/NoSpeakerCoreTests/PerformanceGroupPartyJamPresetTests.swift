@@ -62,3 +62,28 @@ import Testing
     let full=PerformanceGroupProfile(groups:(0..<PerformanceGroupProfile.maximumGroups).map { .init(name:"Empty "+String($0)) })
     #expect(PerformanceGroupStarterPreset.phoneSolo.appending(to:full)==nil)
 }
+
+
+@Test func readyToPlayHelperPresetsShareOnePortAndKeepSustainWithLead() throws {
+    for preset in [PerformanceGroupStarterPreset.mousePedal,.xboxHelper,.phonePedals] {
+        let profile=try #require(preset.makeProfile())
+        let group=try #require(profile.groups.first)
+        #expect(profile.groups.count==1)
+        let routes=group.patch.routes
+        let note=try #require(routes.first(where:{$0.destination.kind == .note}))
+        let sustain=try #require(routes.first(where:{$0.destination.kind == .sustain}))
+        #expect(note.source == .trackpad && sustain.source != .trackpad)
+        #expect(note.destination.channel==sustain.destination.channel)
+        var router=try PerformanceGroupRouter(profile:profile)
+        let lead=try router.connect(note.source,now:1)
+        let helper=try router.connect(sustain.source,now:1)
+        let attack=router.frame(lease:lead,sequence:1,now:1,values:[note.signal:1])
+        let pedal=router.frame(lease:helper,sequence:1,now:1.1,values:[sustain.signal:1])
+        let lift=router.disconnect(lead)
+        let release=router.disconnect(helper)
+        #expect(attack.map(\.command)==[.init(note.destination,value:100)])
+        #expect(pedal.map(\.command)==[.init(sustain.destination,value:127)])
+        #expect(lift.map(\.command)==[.init(note.destination,value:0)])
+        #expect(release.map(\.command)==[.init(sustain.destination,value:0)])
+    }
+}
