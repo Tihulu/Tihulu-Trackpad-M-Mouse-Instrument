@@ -52,6 +52,15 @@ public struct PhysicalKeyboardScaleMap: Equatable, Sendable {
         return Self(tuning: tuning, inputRoot: inputRoot, layout: .chromatic(slots))
     }
 
+    /// Standard equal-tempered scale lock: physical pitch classes remain
+    /// unchanged, including a non-C tonic. No microtonal approximation.
+    public static func standardLock(intervals:[Int], root:Int) -> Self? {
+        guard (0...127).contains(root) else { return nil }
+        var scale=CustomScale()
+        scale.intervals=intervals
+        return legacy(scale,inputRoot:root,outputRoot:root)
+    }
+
     private static func whiteIndex(_ note: Int) -> Int? {
         guard let index = white.firstIndex(of: note % 12) else { return nil }
         return (note / 12) * 7 + index
