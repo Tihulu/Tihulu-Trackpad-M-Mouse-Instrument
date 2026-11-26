@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.MotionEvent
@@ -57,7 +58,13 @@ internal class TouchPianoView(context:Context,
     private val keyList=MobileTouchKeys(authorized).keys
     private var owner:MobileTouchLiveLease?=null
     private var armedUptime=0L
-    private fun ownerActive()=isAttachedToWindow&&isShown&&hasWindowFocus()&&windowVisibility==VISIBLE&&width>0&&height>0
+    private fun ownerActive():Boolean {
+        if(!isAttachedToWindow||!isShown||!hasWindowFocus()||windowVisibility!=VISIBLE||width<=0||height<=0)return false
+        // A scroll-clipped or partially offscreen playing surface cannot
+        // renew a held contact. Scroll the whole surface into view first.
+        val visible=Rect()
+        return getLocalVisibleRect(visible)&&visible==Rect(0,0,width,height)
+    }
     private val pulse=object:Runnable {
         override fun run(){
             val current=owner?:return
@@ -103,7 +110,7 @@ internal class TouchPianoView(context:Context,
     override fun onTouchEvent(event:MotionEvent):Boolean {
         val current=owner?:return true
         val uptime=SystemClock.uptimeMillis()
-        if(!ownerActive()||event.eventTime<armedUptime||event.eventTime>uptime||
+        if(!ownerActive()||event.eventTime<=armedUptime||event.eventTime>uptime||
             uptime-event.eventTime>=150||event.flags and (MotionEvent.FLAG_WINDOW_IS_OBSCURED or MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED)!=0||
             event.pointerCount !in 1..MobileTouchKeys.MAX_CONTACTS){
             retire();return true

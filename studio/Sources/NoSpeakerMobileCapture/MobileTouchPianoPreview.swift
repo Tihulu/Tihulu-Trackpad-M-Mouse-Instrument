@@ -103,9 +103,18 @@ import NoSpeakerCore
     }
     required init?(coder:NSCoder){return nil}
     private var ownerActive:Bool {
-        window?.isKeyWindow == true && window?.windowScene?.activationState == .foregroundActive &&
-            UIApplication.shared.applicationState == .active && !isHidden && alpha>0 &&
-            bounds.width>0 && bounds.height>0
+        guard let window,window.isKeyWindow,window.windowScene?.activationState == .foregroundActive,
+              UIApplication.shared.applicationState == .active,bounds.width>0,bounds.height>0 else{return false}
+        let frame=convert(bounds,to:window)
+        guard window.bounds.contains(frame) else{return false}
+        var ancestor:UIView?=self
+        while let view=ancestor {
+            guard !view.isHidden,view.alpha>0 else{return false}
+            if view.clipsToBounds,!view.bounds.contains(convert(bounds,to:view)){return false}
+            if view===window{return true}
+            ancestor=view.superview
+        }
+        return false
     }
     func arm(){
         guard owner==nil,ownerActive,
@@ -127,7 +136,7 @@ import NoSpeakerCore
     private func fresh(_ touches:Set<UITouch>)->Bool {
         let now=ProcessInfo.processInfo.systemUptime
         return !touches.isEmpty && touches.allSatisfy {
-            $0.type == .direct && $0.timestamp>=armedUptime && $0.timestamp<=now && now-$0.timestamp<0.15
+            $0.type == .direct && $0.timestamp>armedUptime && $0.timestamp<=now && now-$0.timestamp<0.15
         }
     }
     func retire(){

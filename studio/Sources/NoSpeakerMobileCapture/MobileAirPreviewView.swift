@@ -83,7 +83,7 @@ import NoSpeakerCore
                         if liveTouchID==id{stop("Touch piano released · disconnected")}
                     }).id(id).frame(height:360)
                     Button("Release / disconnect"){stop("Touch piano released")}
-                } else if useMac,assignment?.piano ?? 0 != 0 {
+                } else if useMac,(assignment?.piano ?? 0) != 0 {
                     Button("Open assigned touch piano",action:openTouchPiano).disabled(busy || scanning || askingPermission || scenePhase != .active)
                 }
                 HStack {
