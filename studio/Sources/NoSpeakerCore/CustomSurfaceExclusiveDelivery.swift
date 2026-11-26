@@ -3,7 +3,8 @@ import Foundation
 /// Synchronous injected-sink delivery for an exclusively reserved endpoint.
 /// Not an endpoint reservation or physical adapter: the caller must prove
 /// exclusivity, serialize calls and bind the sink to the same endpoint until
-/// debt is cleared. Never attach this independent ledger to a shared port.
+/// debt is cleared. Callbacks must be synchronous and non-reentrant.
+/// Never attach this independent ledger to a shared port.
 public final class CustomSurfaceExclusiveDelivery {
     public enum Retirement:Equatable,Sendable {case expiredOrInvalid,admissionDenied,sendFailed,stopped}
     public struct Report:Equatable,Sendable {
@@ -21,14 +22,17 @@ public final class CustomSurfaceExclusiveDelivery {
     private var controls:[SensorDestination:LegacyContinuousOwners.Value]=[:]
     private let clock:()->Int64
     private let admits:()->Bool
+    private let ownsCleanupEndpoint:()->Bool
     private let send:(SensorCommand)->Bool
     private var lastClock:Int64?
     public private(set) var retirement:Retirement?
 
     public init(plan:CustomSurfaceMixedPlan,clock:@escaping ()->Int64,
-                admitsExclusiveEndpoint:@escaping ()->Bool,send:@escaping (SensorCommand)->Bool) {
+                admitsExclusiveEndpoint:@escaping ()->Bool,
+                ownsCleanupEndpoint:@escaping ()->Bool,send:@escaping (SensorCommand)->Bool) {
         self.plan=plan;projection = .init(layout:plan.layout)
-        self.clock=clock;admits=admitsExclusiveEndpoint;self.send=send
+        self.clock=clock;admits=admitsExclusiveEndpoint
+        self.ownsCleanupEndpoint=ownsCleanupEndpoint;self.send=send
     }
 
     private func tick()->Int64? {
@@ -38,7 +42,7 @@ public final class CustomSurfaceExclusiveDelivery {
         return now
     }
     private func liveFailure(observedAt:Int64)->Retirement? {
-        guard admits() else{return .admissionDenied}
+        guard admits(),ownsCleanupEndpoint() else{return .admissionDenied}
         guard let now=tick(),observedAt>=0,now>=observedAt,
               now-observedAt<MobileAirSendGate.freshNS else{return .expiredOrInvalid}
         return nil
@@ -49,6 +53,9 @@ public final class CustomSurfaceExclusiveDelivery {
     private func clean()->Int {
         var count=0
         _=ledger.releaseAll { command in
+            // Live admission may be revoked; cleanup requires the original
+            // still-owned endpoint. A denial retains wire debt.
+            guard ownsCleanupEndpoint() else{return false}
             let ok=send(command)
             if ok {count+=1}
             return ok
@@ -122,7 +129,7 @@ public final class CustomSurfaceExclusiveDelivery {
     }
     public func poll()->Report {
         guard retirement==nil else{return report(0)}
-        guard admits() else{return retire(.admissionDenied)}
+        guard admits(),ownsCleanupEndpoint() else{return retire(.admissionDenied)}
         guard let now=tick(),!projection.poll(now:now).retired else{return retire(.expiredOrInvalid)}
         return report(0)
     }
