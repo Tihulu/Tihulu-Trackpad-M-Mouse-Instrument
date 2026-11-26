@@ -86,3 +86,21 @@ private func surfacePad(_ id:String,_ x:Int,_ y:Int,_ w:Int,_ h:Int,_ assignment
         #expect(updated.pads[0].label=="Renamed")
     }
 }
+
+@Test func customSurfaceGapInsertionPreservesExistingPadsAndTouchBarGeometry() throws {
+    let left=surfacePad("left",0,0,3333,10000,.chord([60,64,67]))
+    let right=surfacePad("right",6666,0,3334,10000,.helper(.init(.pitchBend)))
+    let bar=try #require(CustomSurfacePadLayout(surface:.touchBar,pads:[left,right]))
+    let added=try #require(bar.addingInGap(id:"middle",label:"Middle",width:3333,height:10000,assignment:.drum(38)))
+    #expect(Array(added.pads.prefix(2))==bar.pads)
+    #expect(added.pads.last?.x==3333)
+    #expect(added.pad(x:0.5,y:0.5)?.assignment == .drum(38))
+    #expect(bar.addingInGap(id:"large",label:"Large",width:3334,height:10000,assignment:.note(60))==nil)
+    #expect(bar.addingInGap(id:"half",label:"Half",width:1000,height:5000,assignment:.note(60))==nil)
+    #expect(bar.addingInGap(id:"left",label:"Duplicate",width:1000,height:10000,assignment:.note(60))==nil)
+    let grid=try #require(CustomSurfacePadLayout.grid(surface:.tablet,columns:2,rows:2))
+    let gap=try #require(grid.removing(id:"pad-4"))
+    let filled=try #require(gap.addingInGap(id:"new",label:"New",width:5000,height:5000,assignment:.degree(-2)))
+    #expect(filled.pads.last?.x==5000 && filled.pads.last?.y==5000)
+    #expect(grid.addingInGap(id:"full",label:"Full",width:1,height:1,assignment:.note(60))==nil)
+}

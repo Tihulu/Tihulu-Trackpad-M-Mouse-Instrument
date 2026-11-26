@@ -29,6 +29,8 @@ struct CustomSurfacePadEditor:View {
     @State private var cc=71
     @State private var channel=0
     @State private var feedback=""
+    @State private var newWidth=1000
+    @State private var newHeight=2500
     private enum Kind:String,CaseIterable,Identifiable {
         case note="Note",drum="Drum",degree="Tuning degree",chord="Chord",sustain="Sustain",bend="Pitch bend",cc="Custom MIDI CC",xy="XY (CC1 / CC11)"
         var id:String{rawValue}
@@ -64,6 +66,21 @@ struct CustomSurfacePadEditor:View {
                     Text("Saved layouts could not be read. Original data is preserved; saving is disabled.").font(.caption).foregroundStyle(.orange)
                 }
                 if let layout=layouts[surface] {
+                    HStack {
+                        Stepper("New pad width \(newWidth)",value:$newWidth,in:100...10000,step:100)
+                        if surface != .touchBar {
+                            Stepper("Height \(newHeight)",value:$newHeight,in:100...10000,step:100)
+                        }
+                    }
+                    Button("Add pad in empty space"){
+                        let id=UUID().uuidString
+                        if let next=layout.addingInGap(id:id,label:"New pad",width:newWidth,
+                            height:surface == .touchBar ? 10000:newHeight,assignment:.note(60)){
+                            layouts[surface]=next
+                            select(next.pads.last)
+                            feedback="Pad added to a free region."
+                        } else {feedback="No matching free region. Resize or remove a pad, or choose a smaller new pad."}
+                    }.disabled(layout.pads.count>=64)
                     GeometryReader{geo in
                         ZStack(alignment:.topLeading){
                             RoundedRectangle(cornerRadius:6).strokeBorder(Color.secondary)

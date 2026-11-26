@@ -82,6 +82,23 @@ public struct CustomSurfacePadLayout: Codable, Equatable, Sendable {
         return Self(surface:surface,pads:next)
     }
     public func adding(_ pad:Pad)->Self? {Self(surface:surface,pads:pads+[pad])}
+    /// Find a deterministic empty rectangle using exact integer boundaries.
+    /// No existing region is moved, resized or overwritten. Touch Bar
+    /// remains one dimensional; all candidates must span its full height.
+    public func addingInGap(id:String,label:String,width:Int,height:Int,assignment:Assignment)->Self? {
+        guard pads.count<64,(1...10000).contains(width),(1...10000).contains(height),
+              surface != .touchBar || height==10000 else{return nil}
+        let xs=Set([0]+pads.map{$0.x+$0.width}).sorted()
+        let ys=surface == .touchBar ? [0]:Set([0]+pads.map{$0.y+$0.height}).sorted()
+        for y in ys where y<=10000-height {
+            for x in xs where x<=10000-width {
+                let pad=Pad(id:id,label:label,x:x,y:y,width:width,height:height,assignment:assignment)
+                guard pad.isValid else{return nil}
+                if !pads.contains(where:{pad.overlaps($0)}) {return adding(pad)}
+            }
+        }
+        return nil
+    }
     public func removing(id:String)->Self? {
         guard pads.contains(where:{$0.id==id}) else{return nil}
         return Self(surface:surface,pads:pads.filter{$0.id != id})
