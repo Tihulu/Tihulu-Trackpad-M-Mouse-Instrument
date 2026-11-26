@@ -71,6 +71,28 @@ public struct LegacyContinuousOwners: Sendable {
         }
     }
 
+    /// Advance intended ownership only for individually admitted, completed
+    /// target updates. Failed wire attempts remain the transport's debt;
+    /// no untouched target is installed merely because it was in the frame.
+    public mutating func replaceAdmitted(_ owner:Owner,values:[SensorDestination:Value],
+                                         permits:()->Bool,send:(Update)->Bool)->Bool {
+        guard values.allSatisfy({ $0.value.valid(for:$0.key) }) else { return false }
+        let old=self.values(for:owner)
+        let targets=sorted(Set(old.keys).union(values.keys).filter { old[$0] != values[$0] })
+        for target in targets {
+            guard permits() else { return false }
+            var next=self.values(for:owner)
+            next[target]=values[target]
+            var candidate=self
+            let updates=candidate.replace(owner,values:next)
+            for update in updates {
+                guard permits(),send(update) else { return false }
+            }
+            self=candidate
+        }
+        return permits()
+    }
+
     private static func transition(_ target: SensorDestination, from previous: Value?, to next: Value?) -> Update? {
         if let next {
             let rangeChanged = previous?.bendRange != next.bendRange
@@ -98,5 +120,37 @@ public struct LegacyContinuousOwners: Sendable {
         }
         owners.removeAll()
         return result
+    }
+}
+
+
+/// Physical bend range transaction. The selector reset is cleanup, not
+/// a fresh performance command. Never send a late data entry; expose
+/// incomplete/ambiguous range writes instead of claiming success.
+public enum LegacyAdmittedBendRange {
+    public struct Result: Equatable, Sendable {
+        public let completed:Bool
+        public let attempted:Bool
+        public let dataAttempted:Bool
+        public let cleanupConfirmed:Bool
+    }
+    public static func send(semitones:Int,permits:()->Bool,begin:()->Void,
+                            wire:(Int,Int)->Bool)->Result {
+        guard permits() else {
+            return .init(completed:false,attempted:false,dataAttempted:false,cleanupConfirmed:true)
+        }
+        begin()
+        var dataAttempted=false
+        var completed=true
+        let parts=[(101,0),(100,0),(6,max(0,min(24,semitones))),(38,0)]
+        for (cc,value) in parts {
+            guard permits() else { completed=false;break }
+            if cc==6 || cc==38 { dataAttempted=true }
+            guard wire(cc,value) else { completed=false;break }
+        }
+        let msb=wire(101,127)
+        let lsb=wire(100,127)
+        return .init(completed:completed && msb && lsb,attempted:true,
+                     dataAttempted:dataAttempted,cleanupConfirmed:msb && lsb)
     }
 }

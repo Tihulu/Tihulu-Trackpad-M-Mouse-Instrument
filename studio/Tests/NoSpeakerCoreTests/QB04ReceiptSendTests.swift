@@ -238,3 +238,61 @@ private func qbPedal(_ channel:Int,_ value:Int)->SensorCommand {
     let cleanup=owners.replace(.touchBar,channels:[])
     #expect(cleanup == [qbPedal(4,0)])
 }
+
+
+@Test func qb04ContinuousOwnerDoesNotAcquireUnsentTargetsAfterStall() {
+    let a=SensorDestination(.controlChange,number:1)
+    let b=SensorDestination(.controlChange,number:74)
+    let independent=SensorDestination(.controlChange,channel:9,number:74)
+    var owners=LegacyContinuousOwners()
+    _=owners.set(.touchBar,target:independent,value:.init(50,neutral:0))
+    var now=10.01
+    var fence=PhysicalReceiptSendFence(receipt:10,maximumAge:0.150)
+    var sent:[LegacyContinuousOwners.Update]=[]
+    let ok=owners.replaceAdmitted(.helper,values:[a:.init(64,neutral:0),b:.init(80,neutral:0)],
+        permits:{fence.permits(now:now)},send:{update in sent.append(update);now=10.15;return true})
+    #expect(!ok && sent.map(\.target)==[a])
+    #expect(Set(owners.values(for:.helper).keys)==[a])
+    let cleanup=owners.release(.helper)
+    #expect(cleanup.map(\.target)==[a] && cleanup.first?.value==0)
+    #expect(owners.values(for:.touchBar)[independent]?.value==50)
+}
+
+@Test func qb04ContinuousSilentJoinRequiresFreshReceiptAndFailedWriteIsNotAnOwner() {
+    let a=SensorDestination(.controlChange,number:1)
+    var owners=LegacyContinuousOwners()
+    _=owners.set(.touch,target:a,value:.init(64,neutral:0))
+    let blocked=owners.replaceAdmitted(.helper,values:[a:.init(80,neutral:0)],
+        permits:{false},send:{_ in Issue.record("Unexpected wire");return true})
+    #expect(!blocked && owners.values(for:.helper).isEmpty)
+    let failed=owners.replaceAdmitted(.touch,values:[a:.init(90,neutral:0)],
+        permits:{true},send:{_ in false})
+    #expect(!failed && owners.values(for:.touch)[a]?.value==64)
+}
+
+@Test func qb04RangeExpiryClearsSelectorsWithoutLateDataEntries() {
+    for stopAfter in 0...4 {
+        var sent:[Int]=[]
+        var began=0
+        let result=LegacyAdmittedBendRange.send(semitones:12,permits:{sent.count<stopAfter},
+            begin:{began+=1},wire:{cc,_ in sent.append(cc);return true})
+        if stopAfter==0 {
+            #expect(!result.attempted && began==0 && sent.isEmpty)
+        } else {
+            #expect(result.attempted && began==1 && result.cleanupConfirmed)
+            #expect(sent==Array([101,100,6,38].prefix(stopAfter))+[101,100])
+            #expect(result.dataAttempted == (stopAfter>=3))
+            #expect(result.completed == (stopAfter==4))
+        }
+    }
+}
+
+@Test func qb04RangeFailedSelectorCleanupCannotReportSuccess() {
+    var sent:[Int]=[]
+    let result=LegacyAdmittedBendRange.send(semitones:12,permits:{true},begin:{},wire:{cc,value in
+        sent.append(cc)
+        return !(cc==101 && value==127)
+    })
+    #expect(result.attempted && result.dataAttempted && !result.completed && !result.cleanupConfirmed)
+    #expect(sent == [101,100,6,38,101,100])
+}

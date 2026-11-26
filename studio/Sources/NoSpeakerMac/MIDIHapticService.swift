@@ -536,7 +536,7 @@ public final class MIDIHapticService: @unchecked Sendable {
                         $0.key.channel != channel || (isFretlessMelody && $0.key.kind == .pitchBend)
                     }
                     for (target,value) in frameControls where target.channel == channel { staged[target] = value }
-                    sendContinuousUpdates(continuousOwners.replace(.touch,values:staged))
+                    guard replaceAdmittedContinuous(.touch,values:staged,permits:admitOnset) else { return }
                     if isMPE {
                         var pressure = outgoingPressure.values
                         pressure[channel] = framePressure[channel]
@@ -557,14 +557,14 @@ public final class MIDIHapticService: @unchecked Sendable {
                 // rearticulations still establish pitch/range before the note.
                 if let existing = outgoingTouches[key] {
                     if existing.note != anchor || !existing.fretless {
-                        sendContinuousUpdates(continuousOwners.set(.touch,target:target,value:value))
+                        guard replaceAdmittedContinuous(.touch,values:continuousOwners.values(for:.touch).merging([target:value]) { _,new in new },permits:admitOnset) else { return }
                         sendOwnedNotes(noteOwners.release(.touch(key)))
                         guard noteOwners.pressAdmitted(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity)),
                             permits:admitOnset,send:{ self.sendOwnedNotes([$0]) }) else { return }
                         outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true, mpe: midiMode == .mpe)
                     }
                 } else {
-                    sendContinuousUpdates(continuousOwners.set(.touch,target:target,value:value))
+                    guard replaceAdmittedContinuous(.touch,values:continuousOwners.values(for:.touch).merging([target:value]) { _,new in new },permits:admitOnset) else { return }
                     guard noteOwners.pressAdmitted(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity)),
                             permits:admitOnset,send:{ self.sendOwnedNotes([$0]) }) else { return }
                     outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true, mpe: midiMode == .mpe)
@@ -595,7 +595,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         for (target,value) in continuousOwners.values(for:.touch) where mpeChannels.reserved.contains(target.channel) {
             frameControls[target] = frameControls[target] ?? value
         }
-        sendContinuousUpdates(continuousOwners.replace(.touch,values:frameControls))
+        guard replaceAdmittedContinuous(.touch,values:frameControls,permits:admitOnset) else { return }
         for (channel,value) in outgoingPressure.values where mpeChannels.reserved.contains(channel) {
             framePressure[channel] = framePressure[channel] ?? value
         }
@@ -762,10 +762,59 @@ public final class MIDIHapticService: @unchecked Sendable {
         }
     }
 
+    private func sendAdmittedContinuousUpdate(_ update:LegacyContinuousOwners.Update,
+                                               permits:()->Bool)->Bool {
+        let target=update.target
+        guard permits(),permitsOutgoingSend else { return false }
+        switch target.kind {
+        case .pitchBend:
+            var changedRange=false
+            if let range=update.bendRange {
+                let result=LegacyAdmittedBendRange.send(semitones:range,permits:{
+                    permits() && self.permitsOutgoingSend
+                },begin:{ self.controllerDebt.beginRange(channel:target.channel) },
+                    wire:{ self.sendMIDI1(status:0xb0|target.channel,data1:$0,data2:$1,rangePart:true) })
+                if result.attempted && result.cleanupConfirmed { controllerDebt.completeRange(channel:target.channel) }
+                // A partially applied data entry has no known receiver
+                // baseline. Do not silently allow another performance.
+                if !result.completed {
+                    if result.dataAttempted { controllerRecoveryRequired=true }
+                    return false
+                }
+                changedRange=true
+            }
+            guard permits(),permitsOutgoingSend else {
+                if changedRange { controllerRecoveryRequired=true }
+                return false
+            }
+            let value=max(0,min(16383,update.value))
+            let ok=sendMIDI1(status:0xe0|target.channel,data1:value&0x7f,data2:(value>>7)&0x7f)
+            if !ok && changedRange { controllerRecoveryRequired=true }
+            return ok
+        case .controlChange:
+            return sendMIDI1(status:0xb0|target.channel,data1:target.number,data2:update.value,
+                             neutral:update.neutral,persistentGain:update.preserveOnRelease)
+        default: return false
+        }
+    }
+
+    @discardableResult
+    private func replaceAdmittedContinuous(_ owner:LegacyContinuousOwners.Owner,
+                                            values:[SensorDestination:LegacyContinuousOwners.Value],
+                                            permits:()->Bool)->Bool {
+        var staged=continuousOwners
+        let result=staged.replaceAdmitted(owner,values:values,permits:{
+            permits() && self.permitsOutgoingSend
+        },send:{ self.sendAdmittedContinuousUpdate($0,permits:permits) })
+        continuousOwners=staged
+        return result
+    }
+
     public func sendHelperControls(
         x: Double, y: Double, contactSize: Double, assignments: MIDIHelperAssignments,
         channel: Int, pitchBendRange: Int, vibratoCC: Int, expressionCC: Int,
-        configureReceiverBendRange:Bool = false
+        configureReceiverBendRange:Bool = false,
+        admitOnset:(()->Bool)? = nil
     ) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
@@ -774,7 +823,11 @@ public final class MIDIHapticService: @unchecked Sendable {
             assignments:assignments,channel:channel,bendRange:pitchBendRange,
             vibratoCC:vibratoCC,expressionCC:expressionCC,
             configureReceiverBendRange:configureReceiverBendRange) else { return }
-        sendContinuousUpdates(continuousOwners.replace(.helper,values:values))
+        if let admitOnset {
+            _=replaceAdmittedContinuous(.helper,values:values,permits:admitOnset)
+        } else {
+            sendContinuousUpdates(continuousOwners.replace(.helper,values:values))
+        }
     }
 
     /// Ordinary lift retires the helper owner. Persistent gain stays at its

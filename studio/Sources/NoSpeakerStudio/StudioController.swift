@@ -3640,7 +3640,7 @@ final class StudioController: ObservableObject {
                 if let instrumentStates { handleTouchStates(instrumentStates,pedal:pedal,admitOnset:admit) }
             },helper:{
                 if let helperStates {
-                    handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:effectsAdmitted)
+                    handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:effectsAdmitted,admitOnset:admit)
                 }
             })
     }
@@ -4221,7 +4221,7 @@ final class StudioController: ObservableObject {
         return helperSustained
     }
 
-    private func handleMIDIHelperStates(_ states: [HelperSurfaceContact],pedalAdmitted:Bool,effectsAdmitted:Bool) {
+    private func handleMIDIHelperStates(_ states: [HelperSurfaceContact],pedalAdmitted:Bool,effectsAdmitted:Bool,admitOnset:(()->Bool)? = nil) {
         if pedalAdmitted || !midiHelperRunning { liveHelperStates = states }
         defer {
             if helperPreviewRequested, states != midiHelperStates,
@@ -4265,7 +4265,8 @@ final class StudioController: ObservableObject {
             pitchBendRange: helperPitchBendRange,
             vibratoCC: helperVibratoCC,
             expressionCC: helperExpressionCC,
-            configureReceiverBendRange:helperConfigureReceiverBendRange
+            configureReceiverBendRange:helperConfigureReceiverBendRange,
+            admitOnset:admitOnset
         )
     }
 
