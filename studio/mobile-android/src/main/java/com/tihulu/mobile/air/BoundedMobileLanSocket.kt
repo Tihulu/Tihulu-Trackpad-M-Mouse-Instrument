@@ -67,6 +67,10 @@ internal class BoundedMobileLanSocket internal constructor(
         try {state {driver.offer(output,observedAt,clock(),deadlines)}}
         catch(_:Exception){retire("Sensor submission failed")}
     }
+    fun pauseForModeChange() {
+        try {state {driver.pauseForModeChange(clock())}}
+        catch(_:Exception){retire("Mode transition failed")}
+    }
     fun newProjection(mode:AirMode,role:HandRole=HandRole.SINGLE,
         orientation:Orientation=Orientation.UP,mirror:Boolean=false,
         near:Double=.25,far:Double=.85,allowEstimatedDepth:Boolean=false):AirProjection? =

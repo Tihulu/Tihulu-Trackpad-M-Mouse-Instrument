@@ -98,6 +98,9 @@ internal class BoundedLanDriver(selection:MobileLanSession.Selection,
         if(check(now)&&upgraded&&phase==MobileLanSession.Phase.READY)
             dispatch(policy.offer(output,observedAt,now,deadlines),now)
     }
+    fun pauseForModeChange(now:Long) {
+        if(check(now)&&upgraded)dispatch(policy.pauseForModeChange(now),now)
+    }
     fun take(now:Long):LanWriteSlot.Lease? {
         if(!check(now))return null
         return slot.take(now)

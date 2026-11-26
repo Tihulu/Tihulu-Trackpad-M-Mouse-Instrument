@@ -132,4 +132,34 @@ class AirSendGateTest {
         g.acknowledge("accepted",ms(25))
         assertTrue(g.poll(ms(31)) is AirSendGate.Action.Close)
     }
+
+    @Test fun explicitNeutralModeFenceClearsOldSampleAndRequiresFreshAck() {
+        val g=AirSendGate(AirWireLane.Keys(3),0)
+        g.begin(0);g.acknowledge("accepted",ms(20))
+        g.offer(AirOutput(keys=1),ms(21),ms(21));g.acknowledge("accepted",ms(30))
+        assertTrue(send(g.requestNeutral(ms(35))).contains("\"mask\":0"))
+        assertFalse(g.neutralReady)
+        assertEquals(AirSendGate.Action.Wait,g.offer(AirOutput(keys=2),ms(36),ms(36)))
+        g.acknowledge("accepted",ms(40))
+        assertTrue(g.neutralReady)
+        assertEquals(AirSendGate.Action.Wait,g.offer(AirOutput(keys=2),ms(39),ms(41)))
+        assertTrue(send(g.offer(AirOutput(keys=2),ms(49),ms(49))).contains("\"mask\":2"))
+    }
+    @Test fun explicitNeutralWaitsForOrdinaryPendingAckWithoutReplayingAttack() {
+        val g=AirSendGate(AirWireLane.Keys(3),0)
+        g.begin(0);g.acknowledge("accepted",ms(20));g.offer(AirOutput(keys=1),ms(21),ms(21))
+        assertEquals(AirSendGate.Action.Wait,g.requestNeutral(ms(22)))
+        assertTrue(send(g.acknowledge("accepted",ms(35))).contains("\"mask\":0"))
+        g.acknowledge("accepted",ms(36));assertTrue(g.neutralReady)
+    }
+    @Test fun transitionCannotDelayActiveStringOrExistingReleaseDebt() {
+        val g=AirSendGate(AirWireLane.Keys(1),0)
+        g.begin(0);g.acknowledge("accepted",ms(20))
+        g.offer(AirOutput(keys=1),ms(21),ms(21),mapOf(0 to ms(100)))
+        assertTrue(g.requestNeutral(ms(22)) is AirSendGate.Action.Close)
+        val h=AirSendGate(AirWireLane.Keys(1),0)
+        h.begin(0);h.acknowledge("accepted",ms(20));h.offer(AirOutput(keys=1),ms(21),ms(21))
+        h.offer(AirOutput(),ms(30),ms(30));h.requestNeutral(ms(100))
+        assertTrue(h.poll(ms(180)) is AirSendGate.Action.Close)
+    }
 }

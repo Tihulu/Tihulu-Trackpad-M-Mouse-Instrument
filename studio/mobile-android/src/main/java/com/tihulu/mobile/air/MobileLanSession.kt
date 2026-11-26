@@ -5,7 +5,7 @@ package com.tihulu.mobile.air
  * authenticated current connection can supply begin/receive events. */
 class MobileLanSession(private val selection:Selection) {
     sealed interface Selection { data object Keys:Selection; data class Helper(val index:Int):Selection }
-    enum class Phase { IDLE, ADMISSION, CAPABILITIES, NEUTRAL_DELAY, NEUTRAL_ACK, READY, CLOSED }
+    enum class Phase { IDLE, ADMISSION, CAPABILITIES, NEUTRAL_DELAY, NEUTRAL_ACK, READY, RECONFIGURING, CLOSED }
     sealed interface Action {
         data object Wait:Action
         data class Binary(val bytes:ByteArray):Action
@@ -58,11 +58,12 @@ class MobileLanSession(private val selection:Selection) {
                 this.manifest = manifest
                 pendingAt=null;phase=Phase.NEUTRAL_DELAY;poll(now)
             }
-            Phase.NEUTRAL_ACK,Phase.READY->{
+            Phase.NEUTRAL_ACK,Phase.READY,Phase.RECONFIGURING->{
                 val sender=gate?:return close("Missing sender")
                 val initial=phase==Phase.NEUTRAL_ACK
                 val result=sender.acknowledge(text,now)
                 if(initial&&result==AirSendGate.Action.Wait)phase=Phase.READY
+                if(phase==Phase.RECONFIGURING&&sender.neutralReady)phase=Phase.READY
                 translate(result)
             }
             else->close("Unexpected response")
@@ -78,13 +79,26 @@ class MobileLanSession(private val selection:Selection) {
             gate=sender;phase=Phase.NEUTRAL_ACK
             return translate(sender.begin(now))
         }
-        if(phase==Phase.NEUTRAL_ACK||phase==Phase.READY)return translate(gate?.poll(now)?:return close("Missing sender"))
+        if(phase==Phase.NEUTRAL_ACK||phase==Phase.READY||phase==Phase.RECONFIGURING){
+            val sender=gate?:return close("Missing sender")
+            val result=sender.poll(now)
+            if(phase==Phase.RECONFIGURING&&sender.neutralReady)phase=Phase.READY
+            return translate(result)
+        }
         return Action.Wait
     }
     fun offer(output:AirOutput,observedAt:Long,now:Long,stringDeadlines:Map<Int,Long> = emptyMap()):Action {
         check(now)?.let{return it}
         if(phase!=Phase.READY)return poll(now)
         return translate(gate?.offer(output,observedAt,now,stringDeadlines)?:return close("Missing sender"))
+    }
+    /** A mode change retains exactly the existing lane, not a new host
+     * assignment. The caller must retire old camera callbacks first. */
+    internal fun pauseForModeChange(now:Long):Action {
+        check(now)?.let{return it}
+        if(phase!=Phase.READY)return close("Mode change requires ready session")
+        phase=Phase.RECONFIGURING
+        return translate(gate?.requestNeutral(now)?:return close("Missing sender"))
     }
     /** A paired projection may be constructed only after neutral ACK.
      * It uses the confirmed mask, never the diagnostic full keyboard. */

@@ -165,6 +165,29 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
         if(sent==AirOutput()&&elapsed>=IDLE_NS)return send(AirOutput(),now,heartbeat=true)
         return Action.Wait
     }
+    /** Explicit mode-change fence, not a fabricated sensor observation.
+     * The caller stops the old capture generation before invoking this.
+     * Preserve any earlier release debt and refuse to hide active string
+     * expiry behind a pending ACK or pace limit. */
+    internal val neutralReady:Boolean get()=started&&admitted&&!closed&&
+        pendingAt==null&&!neutralFence&&sent==AirOutput()&&sample==null
+    internal fun requestNeutral(now:Long):Action {
+        check(now)?.let{return it}
+        if(!started||!admitted)return close("Neutral transition before admission")
+        val at=sampledAt
+        if(at!=null&&now-at>=FRESH_NS&&sent!=AirOutput()&&pendingAt!=null&&!pendingNeutral)
+            return close("Source expired while active ACK outstanding")
+        val activeStrings=stringDeadlines.keys.any {sent.keys and (1 shl it)!=0}
+        if(activeStrings&&!pendingNeutral&&(pendingAt!=null||lastSend?.let{now-it<PACE_NS}==true))
+            return close("Mode change cannot delay string release")
+        // Existing release debt is never moved forward. If the source
+        // already expired, the earlier expiry is the release origin.
+        val debt=minOf(releaseDebtAt?:now,now,
+            if(at!=null&&now-at>=FRESH_NS)at+FRESH_NS else now)
+        sample=null;sampledAt=null;stringDeadlines=emptyMap()
+        neutralFence=true;releaseDebtAt=debt
+        return poll(now)
+    }
     /** Caller must close transport immediately, not send stale release. */
     fun abort():Action.Close=close("Stopped explicitly")
 }
