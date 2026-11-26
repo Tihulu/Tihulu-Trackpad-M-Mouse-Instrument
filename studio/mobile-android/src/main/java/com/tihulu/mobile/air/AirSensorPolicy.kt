@@ -23,7 +23,7 @@ data class Hand(val x: Double, val y: Double, val aperture: Double) {
     }
 }
 data class Observation(val hand: Hand, val side: String?, val score: Float, val fingers:Int? = null)
-data class Frame(val hands: List<Observation>, val timeNs: Long)
+data class Frame(val hands: List<Observation>, val timeNs: Long, val acquisitionNs:Long=timeNs)
 enum class DepthProvenance { NONE, CAMERA2_DEPTH16, ARCORE_ESTIMATED_OR_FUSED }
 object DepthPolicy {
     // DEPTH16: 13-bit millimetres, 3-bit confidence encoding.

@@ -97,7 +97,7 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
         val selected=if(mode==AirMode.CHORDS) hand(frame,if(role==HandRole.LEFT)HandRole.RIGHT else HandRole.LEFT) else null
         if(mode==AirMode.CHORDS && (selected?.fingers ?: -1) !in 0..5) {reset();return AirOutput()}
         val measured=if(beam) depth?.takeIf {
-            it.role==role&&it.rgbNs==t&&DepthPolicy.sameAcquisition(it.rgbNs,it.depthNs)&&
+            it.role==role&&it.rgbNs==frame.acquisitionNs&&DepthPolicy.sameAcquisition(it.rgbNs,it.depthNs)&&
             it.meters.isFinite()&&it.meters in near..far&&
             (it.provenance==DepthProvenance.CAMERA2_DEPTH16||
              (allowEstimatedDepth&&it.provenance==DepthProvenance.ARCORE_ESTIMATED_OR_FUSED))
