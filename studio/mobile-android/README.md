@@ -73,3 +73,15 @@ must obtain the expected fingerprint independently (e.g. verified on the Mac
 screen), never derive it from the selected file as implicit consent. The APK
 still has no network permission; bounded inbound WebSocket reassembly and
 physical TLS tests remain prerequisites for pairing UI activation.
+
+### Bounded inbound frame reader (transport candidate)
+
+The isolated Kotlin reader rejects oversized lengths before payload allocation,
+limits assembled ASCII messages to 256 bytes and at most 16 fragments,
+rejects unexpected binary, masked server and extension frames, handles control
+frames without growing the message buffer, and permanently retires on parse
+error or close. It is deliberately not wired into OkHttp: its callbacks already
+receive materialized messages. A replacement transport must bind this reader to
+an exact authenticated TLS upgrade, bound HTTP headers, implement masked writes,
+validate control semantics, and independently interrupt blocking reads at the
+existing deadlines. No Android network permission or live MIDI is enabled.
