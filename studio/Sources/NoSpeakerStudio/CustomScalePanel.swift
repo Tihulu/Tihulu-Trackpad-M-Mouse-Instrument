@@ -43,6 +43,7 @@ struct CustomScalePanel: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                PhysicalKeyboardScalePreview(scale:studio.chordBank.customScale ?? builtInScale)
                 Text("Root-relative octave scale, used by generated chords, progressions and arpeggios. Custom chord MIDI notes stay fixed; tuning applies by pitch class. Copy the scale from Touch Instrument to use fretted tuning. External chord tuning requires a compatible MPE receiver.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(8)
@@ -97,6 +98,12 @@ struct CustomScalePanel: View {
                 }
             }.padding(22).frame(width: 510)
         }
+    }
+
+    private var builtInScale:CustomScale {
+        var value=CustomScale()
+        value.intervals=studio.chordBank.scale.intervals
+        return value
     }
 
     private func degreeRow(_ degree: Int) -> some View {
