@@ -32,7 +32,7 @@ private func nativePlaybackClip() -> MIDIClip {
     let running=try #require(task)
     let report=try await running.value
     #expect(report.state=="finished",
-            "state=\(report.state), reason=\(report.faultReason ?? "none"), max lateness ns=\(report.maximumObservedLatenessNS), identity ns=\(report.maximumIdentityCheckNS), native send ns=\(report.maximumNativeSendNS)")
+            "state=\(report.state), reason=\(report.faultReason ?? "none"), max lateness ns=\(report.maximumObservedLatenessNS), identity ns=\(report.maximumIdentityCheckNS), native send ns=\(report.maximumNativeSendNS), wake lateness ns=\(report.maximumWakeLatenessNS)")
     #expect(report.cleanupConfirmed && report.outstandingNotes==0)
     #expect(!report.cancelled && !report.receiverConfirmed)
     #expect(observation.callbackCount>=2 && observation.packetCount>=2)
@@ -126,6 +126,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
             running.cancel()
         }
         let report=try await running.value
+        print("TIHULU_NATIVE_TIMING receiver cancel=\(cancel) state=\(report.state) fault=\(report.faultReason ?? "none") late_ns=\(report.maximumObservedLatenessNS) wake_ns=\(report.maximumWakeLatenessNS) identity_ns=\(report.maximumIdentityCheckNS) send_ns=\(report.maximumNativeSendNS)")
         let deadline=ContinuousClock().now.advanced(by:.milliseconds(250))
         while trace.snapshot().count<2 && ContinuousClock().now<deadline {
             try await Task.sleep(nanoseconds:5_000_000)
@@ -145,7 +146,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
             #expect(retry.cancelled && retry.cleanupConfirmed)
         } else {
             #expect(report.state=="finished" && !report.cancelled,
-                    "state=\(report.state), reason=\(report.faultReason ?? "none"), max lateness ns=\(report.maximumObservedLatenessNS), identity ns=\(report.maximumIdentityCheckNS), native send ns=\(report.maximumNativeSendNS)")
+                    "state=\(report.state), reason=\(report.faultReason ?? "none"), max lateness ns=\(report.maximumObservedLatenessNS), identity ns=\(report.maximumIdentityCheckNS), native send ns=\(report.maximumNativeSendNS), wake lateness ns=\(report.maximumWakeLatenessNS)")
             // Deliberately broad hosted-runner tolerance, not physical latency.
             #expect((180_000_000...350_000_000).contains(gate))
         }
@@ -331,8 +332,9 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     defer { _=MIDIPortDispose(port) }
     try #require(MIDIPortConnectSource(port,source,nil)==noErr)
     let result=try await player.runAndClose()
+    print("TIHULU_NATIVE_TIMING prepared state=\(result.playback.state) fault=\(result.playback.faultReason ?? "none") late_ns=\(result.playback.maximumObservedLatenessNS) wake_ns=\(result.playback.maximumWakeLatenessNS) identity_ns=\(result.playback.maximumIdentityCheckNS) send_ns=\(result.playback.maximumNativeSendNS)")
     #expect(result.completed && result.sourceDisposed && !result.recoveryRequired,
-            "state=\(result.playback.state), reason=\(result.playback.faultReason ?? "none"), max lateness ns=\(result.playback.maximumObservedLatenessNS), identity ns=\(result.playback.maximumIdentityCheckNS), native send ns=\(result.playback.maximumNativeSendNS)")
+            "state=\(result.playback.state), reason=\(result.playback.faultReason ?? "none"), max lateness ns=\(result.playback.maximumObservedLatenessNS), identity ns=\(result.playback.maximumIdentityCheckNS), native send ns=\(result.playback.maximumNativeSendNS), wake lateness ns=\(result.playback.maximumWakeLatenessNS)")
     #expect(result.playback.state=="finished" && !result.playback.receiverConfirmed)
     #expect(result.playback.cleanupConfirmed && result.playback.outstandingNotes==0)
     let deadline=ContinuousClock().now.advanced(by:.milliseconds(250))

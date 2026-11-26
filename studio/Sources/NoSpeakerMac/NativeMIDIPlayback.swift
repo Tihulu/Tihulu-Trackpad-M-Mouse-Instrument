@@ -32,6 +32,8 @@ public final class NativeMIDIPlayback {
         public let maximumObservedLatenessNS:UInt64
         public let maximumIdentityCheckNS:UInt64
         public let maximumNativeSendNS:UInt64
+        /// Host scheduling telemetry, not physical MIDI latency.
+        public let maximumWakeLatenessNS:UInt64
     }
 
     /// The successful close report is distinct from receiver confirmation.
@@ -77,6 +79,7 @@ public final class NativeMIDIPlayback {
     private var stopRequested=false
     private var maximumIdentityCheckNS:UInt64=0
     private var maximumNativeSendNS:UInt64=0
+    private var maximumWakeLatenessNS:UInt64=0
 
     public init(clip:MIDIClip) throws {
         player=try BoundedMIDIPlayback(clip:clip)
@@ -164,7 +167,14 @@ public final class NativeMIDIPlayback {
             recordGate(gate)
             return report(cancelled:true)
         }
-        _=try player.begin(now:Self.now())
+        // Anchor once to the suspending monotonic clock, like uptime.
+        // A relative Task.sleep may allow scheduler coalescing. Request
+        // exact absolute wake targets without relaxing the core fence.
+        // The OS can still delay this task; late events remain faults.
+        let waitClock=SuspendingClock()
+        let waitAnchor=waitClock.now
+        let uptimeAnchor=Self.now()
+        _=try player.begin(now:uptimeAnchor)
         while player.state == .playing {
             // Check the bound source even during initial/trailing rests.
             guard gate.validate() else {
@@ -184,8 +194,19 @@ public final class NativeMIDIPlayback {
             guard let deadline=player.nextDeadline else { break }
             let current=Self.now()
             if deadline>current {
-                do { try await Task.sleep(nanoseconds:min(deadline-current,20_000_000)) }
-                catch {
+                let wakeTarget=current+min(deadline-current,20_000_000)
+                guard wakeTarget>=uptimeAnchor,
+                      let offset=Int64(exactly:wakeTarget-uptimeAnchor) else {
+                    player.abort { gate.send($0) }
+                    break
+                }
+                do {
+                    try await waitClock.sleep(until:waitAnchor.advanced(by:.nanoseconds(offset)),tolerance:.zero)
+                    let woke=Self.now()
+                    if woke>=wakeTarget {
+                        maximumWakeLatenessNS=max(maximumWakeLatenessNS,woke-wakeTarget)
+                    }
+                } catch {
                     player.stop { gate.send($0) }
                     break
                 }
@@ -286,7 +307,8 @@ public final class NativeMIDIPlayback {
               outstandingNotes:player.outstanding.count,receiverConfirmed:false,
               faultReason:identityRetired ? "sourceIdentityLost" : player.fault?.rawValue,
               maximumObservedLatenessNS:player.maximumObservedLatenessNS,
-              maximumIdentityCheckNS:maximumIdentityCheckNS,maximumNativeSendNS:maximumNativeSendNS)
+              maximumIdentityCheckNS:maximumIdentityCheckNS,maximumNativeSendNS:maximumNativeSendNS,
+              maximumWakeLatenessNS:maximumWakeLatenessNS)
     }
 
     private nonisolated static func now() -> UInt64 {
