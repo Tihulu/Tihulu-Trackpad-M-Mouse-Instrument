@@ -58,16 +58,19 @@ struct PerformanceGroupEditorView: View {
     private func load() {
         guard !didLoad else { return }
         didLoad = true
-        guard let stored = UserDefaults.standard.object(forKey:key) else { return }
+        guard let stored = UserDefaults.standard.object(forKey:key) else {
+            profile=studio.resumeGroupDraft(saved:saved,archive:nil)
+            return
+        }
         guard let data = stored as? Data,
               let decoded = try? PerformanceGroupProfile.read(data) else {
             readFailed = true
             message = "Saved group profile could not be read. Original data retained; saving is blocked."
             return
         }
-        profile = decoded
         saved = decoded
         storedData = data
+        profile=studio.resumeGroupDraft(saved:decoded,archive:data)
     }
 
     @discardableResult
@@ -84,6 +87,7 @@ struct PerformanceGroupEditorView: View {
             UserDefaults.standard.set(data,forKey:key)
             storedData = data
             saved = profile
+            studio.discardGroupDraft()
             allowLayering = false
             hapticSelection = []
             message = "Group configuration saved. No new MIDI endpoints created."
@@ -92,6 +96,11 @@ struct PerformanceGroupEditorView: View {
             message = error.localizedDescription
             return false
         }
+    }
+
+    private func rememberGroupDraft() {
+        guard didLoad,!readFailed else { return }
+        studio.rememberGroupDraft(profile,saved:saved,archive:storedData)
     }
 
     private func add(patch: InstrumentPatch) {
@@ -927,7 +936,7 @@ struct PerformanceGroupEditorView: View {
             VStack(alignment:.leading,spacing:6) {
                 Text(studio.groupGamepadStatus).font(.caption)
                 if !profile.groups.isEmpty {
-                    Text(profile == saved ? "Saved layout" : "Unsaved layout")
+                    Text(profile == saved ? "Saved layout" : "Unsaved layout · retained until app closes")
                         .font(.caption.weight(.semibold))
                     ForEach(profile.groups) { group in
                         VStack(alignment:.leading,spacing:2) {
@@ -1053,7 +1062,7 @@ struct PerformanceGroupEditorView: View {
                     }.disabled(!profile.isValid || profile.groups.isEmpty || readFailed)
                 }
                 if profile != saved {
-                    Text("Unsaved changes. Save before leaving this screen.").font(.caption).foregroundStyle(.orange)
+                    Text("Unsaved changes. Draft retained while the app is open; save before quitting.").font(.caption).foregroundStyle(.orange)
                 }
                 if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
                 if didLoad && !readFailed {
@@ -1064,6 +1073,8 @@ struct PerformanceGroupEditorView: View {
             }.padding(6)
             }
         }.onAppear { load(); loadPresetLibrary() }
+        .onChange(of:profile) { _ in rememberGroupDraft() }
+        .onDisappear { rememberGroupDraft() }
         .onChange(of:studio.groupGamepadsRunning) { running in
             if !running { hapticSelection = [] }
         }

@@ -40,6 +40,7 @@ final class StudioController: ObservableObject {
     @Published var bpm = 120.0
     @Published private(set) var instrumentPatch = StudioController.readInstrumentPatch()
     private var builderDraftSession = BuilderDraftSession()
+    private var groupDraftSession=PerformanceGroupDraftSession()
     @Published private(set) var patchRunning = false
     @Published private(set) var patchInputs: [PatchSimulation.Input] = []
     @Published private(set) var patchMessages: [String] = []
@@ -1319,6 +1320,18 @@ final class StudioController: ObservableObject {
     func discardBuilderDraft() {
         builderDraftSession.clear()
     }
+
+    func resumeGroupDraft(saved:PerformanceGroupProfile,archive:Data?) -> PerformanceGroupProfile {
+        groupDraftSession.resume(saved:saved,archive:archive)
+    }
+
+    func rememberGroupDraft(_ draft:PerformanceGroupProfile,saved:PerformanceGroupProfile,archive:Data?) {
+        let current=UserDefaults.standard.object(forKey:"TIHULU.performanceGroups.v1")
+        guard (current==nil && archive==nil) || (current is Data && (current as? Data)==archive) else { return }
+        groupDraftSession.remember(draft,saved:saved,archive:archive)
+    }
+
+    func discardGroupDraft() { groupDraftSession.clear() }
 
     func refreshBuilderCameras() {
         guard !patchRunning else { return }

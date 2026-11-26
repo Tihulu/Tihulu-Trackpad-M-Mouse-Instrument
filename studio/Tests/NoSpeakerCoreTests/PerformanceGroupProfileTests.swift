@@ -132,3 +132,28 @@ import Testing
     ]])
     #expect(throws:WorkspaceArchiveError.invalidPayload) { try PerformanceGroupPresetLibrary.read(raw) }
 }
+
+
+@Test func groupDraftSessionRetainsUnfinishedNamesButNeverReplacesNewerArchive() throws {
+    let saved=try #require(PerformanceGroupStarterPreset.desktopDuo.makeProfile())
+    let archive=try saved.archive()
+    var draft=saved
+    draft.groups[0].name=""
+    var session=PerformanceGroupDraftSession()
+    session.remember(draft,saved:saved,archive:archive)
+    #expect(session.resume(saved:saved,archive:archive)==draft)
+    #expect(session.resume(saved:saved,archive:archive+Data([10]))==saved)
+    #expect(session.resume(saved:saved,archive:archive)==saved)
+    session.remember(draft,saved:saved,archive:archive)
+    var newer=saved
+    newer.groups[0].name="Newer"
+    #expect(session.resume(saved:newer,archive:try newer.archive())==newer)
+    session.remember(draft,saved:saved,archive:archive)
+    session.remember(saved,saved:saved,archive:archive)
+    #expect(session.resume(saved:saved,archive:archive)==saved)
+    let empty=PerformanceGroupProfile()
+    session.remember(saved,saved:empty,archive:nil)
+    #expect(session.resume(saved:empty,archive:nil)==saved)
+    session.clear()
+    #expect(session.resume(saved:empty,archive:nil)==empty)
+}

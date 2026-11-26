@@ -156,3 +156,27 @@ public struct PerformanceGroupPresetLibrary:Codable,Equatable,Sendable {
         return true
     }
 }
+
+
+/// Session-only group draft. Retain unfinished names and mappings, but
+/// never restore a draft over a changed saved archive (even equal content).
+public struct PerformanceGroupDraftSession:Sendable {
+    private struct Pending:Sendable {
+        let draft:PerformanceGroupProfile
+        let saved:PerformanceGroupProfile
+        let archive:Data?
+    }
+    private var pending:Pending?
+    public init() {}
+    public mutating func remember(_ draft:PerformanceGroupProfile,saved:PerformanceGroupProfile,archive:Data?) {
+        pending=draft==saved ? nil : .init(draft:draft,saved:saved,archive:archive)
+    }
+    public mutating func resume(saved:PerformanceGroupProfile,archive:Data?) -> PerformanceGroupProfile {
+        guard let pending,pending.saved==saved,pending.archive==archive else {
+            clear()
+            return saved
+        }
+        return pending.draft
+    }
+    public mutating func clear() { pending=nil }
+}
