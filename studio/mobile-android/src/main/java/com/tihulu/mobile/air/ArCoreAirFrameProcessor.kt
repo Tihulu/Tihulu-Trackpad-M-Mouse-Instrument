@@ -17,12 +17,12 @@ import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
  * Caller must separately expire the projection on a monotonic consumer clock.
  * Receipt time bounds inference only: ARCore timestamp is not assumed to
  * share the elapsedRealtimeNanos epoch. */
-class ArCoreAirFrameProcessor(context:Context,modelAsset:String,private val clockwise:Int):AutoCloseable {
+class ArCoreAirFrameProcessor(context:Context,modelAsset:String,private val clockwise:Int,localModel:LocalHandModel?=null):AutoCloseable {
     init { require(clockwise in listOf(0,90,180,270)) }
     private val owner=Thread.currentThread()
     private val engine=HandLandmarker.createFromOptions(context,
         HandLandmarker.HandLandmarkerOptions.builder()
-            .setBaseOptions(BaseOptions.builder().setModelAssetPath(modelAsset).build())
+            .setBaseOptions(BaseOptions.builder().apply {if(localModel!=null)setModelAssetBuffer(localModel.directBuffer()) else setModelAssetPath(modelAsset)}.build())
             .setRunningMode(RunningMode.VIDEO).setNumHands(2)
             .setMinHandDetectionConfidence(.75f).setMinHandPresenceConfidence(.75f)
             .setMinTrackingConfidence(.75f).build())

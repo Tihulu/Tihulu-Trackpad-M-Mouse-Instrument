@@ -38,6 +38,7 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
     private val stopped = AtomicBoolean(false)
     val isStopped get() = stopped.get()
     private val ready = AtomicBoolean(false)
+    private val lease=Any()
     private var analysis: ImageAnalysis? = null
     private var detector: HandLandmarker? = null // worker confined
     private var last = -1L
@@ -63,6 +64,7 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
             ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             fail("Camera permission or active lifecycle required"); return
         }
+        if(!MobileCaptureLease.acquire(lease)){fail("Another sensor is still stopping");return}
         owner.lifecycle.addObserver(this)
         try {
             val selector = CameraSelector.Builder().addCameraFilter { choices ->
@@ -100,7 +102,7 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
             analysis?.let { it.clearAnalyzer(); provider.unbind(it) }
             analysis = null
             owner.lifecycle.removeObserver(this)
-            worker.execute { try { detector?.close() } finally { detector=null; stopped.set(true) } }
+            worker.execute { try { detector?.close() } finally { detector=null; MobileCaptureLease.release(lease); stopped.set(true) } }
             worker.shutdown()
         }
     }

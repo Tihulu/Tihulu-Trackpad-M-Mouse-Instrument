@@ -18,7 +18,7 @@ import com.google.ar.core.Session
 class ArCoreAirStage(private val context:Context,private val modelAsset:String,
     private val rotation:Int,private val role:HandRole,mode:AirMode,
     authorized:Int,orientation:Orientation=Orientation.UP,mirror:Boolean=false,
-    near:Double=.25,far:Double=.85):AutoCloseable {
+    near:Double=.25,far:Double=.85,private val localModel:LocalHandModel?=null):AutoCloseable {
     init {
         require(rotation in listOf(0,90,180,270))
         require(mode==AirMode.BEAM_KEYS||mode==AirMode.BEAM_HELPER)
@@ -30,6 +30,8 @@ class ArCoreAirStage(private val context:Context,private val modelAsset:String,
     private var attempted=false
     private var stopped=false
     private var output=AirOutput()
+    var observationAt:Long?=null
+        private set
     val active:Boolean get() {checkOwner();return session!=null&&!stopped}
     private fun checkOwner(){check(Thread.currentThread()===owner)}
     fun start(pausedSession:Session,textureName:Int,displayRotation:Int,width:Int,height:Int):Boolean {
@@ -47,7 +49,7 @@ class ArCoreAirStage(private val context:Context,private val modelAsset:String,
                 pausedSession.configure(config)
                 pausedSession.setCameraTextureName(textureName)
                 pausedSession.setDisplayGeometry(displayRotation,width,height)
-                processor=ArCoreAirFrameProcessor(context,modelAsset,rotation)
+                processor=ArCoreAirFrameProcessor(context,modelAsset,rotation,localModel)
                 pausedSession.resume()
                 true
             }
@@ -66,8 +68,8 @@ class ArCoreAirStage(private val context:Context,private val modelAsset:String,
         return try {
             val capture=processor?.read(s.update(),role)
             val now=SystemClock.elapsedRealtimeNanos()
-            if(capture!=null)output=projection.receive(capture.frame,now,capture.depth)
-            projection.expire(now)?.let {output=it}
+            if(capture!=null){output=projection.receive(capture.frame,now,capture.depth);observationAt=capture.frame.timeNs}
+            projection.expire(now)?.let {output=it;if(it==AirOutput())observationAt=null}
             output
         }catch(_:Exception){close();AirOutput()}
     }
@@ -76,7 +78,7 @@ class ArCoreAirStage(private val context:Context,private val modelAsset:String,
     override fun close(){
         checkOwner()
         if(stopped)return
-        stopped=true;output=AirOutput()
+        stopped=true;output=AirOutput();observationAt=null
         val s=session;session=null
         try {s?.pause()}catch(_:Exception){}
         try {processor?.close()}catch(_:Exception){}
