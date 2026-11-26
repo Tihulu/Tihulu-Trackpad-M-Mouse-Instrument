@@ -66,8 +66,10 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
         samples.removeAll(keepingCapacity: true)
         return result
     }
-    public func close() {
+    public func close(at now: Int64? = nil) {
         lock.lock(); defer { lock.unlock() }
+        guard !closed else { return }
+        if let now { evidence.finish(at: now) }
         closed = true
         samples.removeAll()
     }

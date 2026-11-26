@@ -24,3 +24,17 @@ import Testing
     #expect(e.unorderedReceipts == 1 && e.maximumGapNS == 1)
     #expect(e.incompleteFrames == 2 && e.invalidFrames == 2)
 }
+
+@Test func customCaptureEvidenceReportsTerminalOccupiedSilenceSeparately() {
+    var e = CustomSurfaceCaptureEvidence()
+    e.observe(receipt: 100, rawCount: 1, rawStates: [4], decodedCount: 1, occupied: true)
+    e.finish(at: 99)
+    #expect(e.trailingOccupiedGapNS == 0)
+    e.finish(at: 150_000_100)
+    #expect(e.trailingOccupiedGapNS == 150_000_000)
+    #expect(e.occupiedDeadlineGaps == 0 && e.maximumOccupiedGapNS == 0)
+    var idle = CustomSurfaceCaptureEvidence()
+    idle.observe(receipt: 0, rawCount: 0, rawStates: [], decodedCount: 0, occupied: false)
+    idle.finish(at: 1_000_000_000)
+    #expect(idle.trailingOccupiedGapNS == 0)
+}

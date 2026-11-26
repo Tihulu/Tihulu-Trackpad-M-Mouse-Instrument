@@ -3576,7 +3576,15 @@ final class StudioController: ObservableObject {
     /// Experimental single-device Standard MIDI performance. The shared
     /// monitor remains the sole owner of private callback registration.
     private var customPadCanStart: Bool {
-        !customPadBlocksOtherStarts && !touchRunning && !midiHelperRunning && !midiRunning && !patchRunning && !groupGamepadsRunning && groupRegisteredIDs.isEmpty && groupCleanupIDs.isEmpty && groupDisposalCount == 0 && !sequenceRunning && !chordArmed && !touchBarOutputArmed && !isPlaying && !speakerBusy && !liveHingeEnabled && !captureArmed && !captureHotkeyArmed && !pointerCaptured && !keyboardAuditRunning && patchLedger.outstanding.isEmpty && airTunedSelectors.isEmpty && !ensembleClockStopDebt && sequenceLedger.outstanding.isEmpty && sequenceSelectors.isEmpty && chordOutstanding.isEmpty && chordMPESelectors.isEmpty && touchBarOutputLedger.isEmpty
+        let producersIdle = !customPadBlocksOtherStarts && !touchRunning && !midiHelperRunning &&
+            !midiRunning && !patchRunning && !groupGamepadsRunning && !sequenceRunning &&
+            !chordArmed && !touchBarOutputArmed && !isPlaying && !speakerBusy && !liveHingeEnabled
+        let inputIdle = !captureArmed && !captureHotkeyArmed && !pointerCaptured && !keyboardAuditRunning
+        let groupClean = groupRegisteredIDs.isEmpty && groupCleanupIDs.isEmpty && groupDisposalCount == 0
+        let outputClean = patchLedger.outstanding.isEmpty && airTunedSelectors.isEmpty &&
+            !ensembleClockStopDebt && sequenceLedger.outstanding.isEmpty && sequenceSelectors.isEmpty &&
+            chordOutstanding.isEmpty && chordMPESelectors.isEmpty && touchBarOutputLedger.isEmpty
+        return producersIdle && inputIdle && groupClean && outputClean
     }
 
     /// Explicit bounded input-only probe; no MIDI endpoint, no global key
@@ -3737,7 +3745,7 @@ final class StudioController: ObservableObject {
         captureMonitor?.setCustomPadEmergencyArmed(false)
         customPadTask?.cancel(); customPadTask = nil
         if let inbox = customPadInbox {
-            inbox.close()
+            inbox.close(at: NativeCustomSurfaceMIDIHost.monotonicNow())
             updateCustomPadEvidence(inbox)
         }
         customPadInbox = nil
