@@ -265,15 +265,8 @@ extension PerformanceGroupMobileDraft {
               let group = profile.groups.first(where: { $0.id == groupID }),
               !profile.groups.contains(where: { $0.id != groupID && $0.patch.routes.contains { $0.source == source } }),
               !routes.isEmpty else { return false }
-        let axes = RemotePedalboard.signals.prefix(3)
-        let targets = Set(routes.map(\.destination))
-        guard routes.allSatisfy({ axes.contains($0.signal) && ContinuousResponse.isContinuous($0.destination) }),
-              Set(routes.map(\.signal)).count == routes.count, targets.count == routes.count else { return false }
-        let bendChannels = Set(targets.filter { $0.kind == .pitchBend }.map(\.channel))
-        return !group.patch.routes.contains {
-            $0.source != source && (targets.contains($0.destination) ||
-                ($0.destination.kind == .note && bendChannels.contains($0.destination.channel)))
-        }
+        return routes.allSatisfy { $0.measuredXYZHelper == true } &&
+            RemotePedalboard.permitsXYZHelpers(in: group.patch.routes)
     }
 
     public mutating func addXYZHelper(_ preset: DepthXYZHelperPreset, channel: Int) -> Bool {
@@ -283,7 +276,9 @@ extension PerformanceGroupMobileDraft {
             guard var destination = value else { continue }
             destination.channel = channel
             let response: ContinuousResponse? = destination.kind == .controlChange && [7,11].contains(destination.number) ? .init(release: 0) : nil
-            next.routes.append(.init(id: UUID().uuidString, source: source, signal: signal, destination: destination, response: response))
+            var route = SensorMapping(id: UUID().uuidString, source: source, signal: signal, destination: destination, response: response)
+            route.measuredXYZHelper = true
+            next.routes.append(route)
         }
         guard next.xyzHelperIsCompatible else { return false }
         self = next

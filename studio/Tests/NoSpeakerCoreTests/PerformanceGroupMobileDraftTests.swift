@@ -337,3 +337,21 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     calibration.sensitivity = .nan
     #expect(calibration.apply(0.5) == nil)
 }
+
+@Test func xyzProfileAfterReloadRetainsItsOutputExclusivity() throws {
+    let group = PerformanceInstrumentGroup(name: "Depth")
+    let empty = PerformanceGroupProfile(groups: [group])
+    var draft = try PerformanceGroupMobileDraft(profile: empty, groupID: group.id, source: .phone)
+    let added = draft.addXYZHelper(.filter, channel: 1)
+    #expect(added)
+    let saved = try draft.applying(to: empty)
+    var reloaded = try JSONDecoder().decode(PerformanceGroupProfile.self, from: JSONEncoder().encode(saved))
+    #expect(reloaded.isValid)
+    var edited = try PerformanceGroupMobileDraft(profile: reloaded, groupID: group.id, source: .phone)
+    edited.routes[0].destination = edited.routes[1].destination
+    #expect(throws: PerformanceGroupMobileDraft.EditError.self) { try edited.applying(to: reloaded) }
+    reloaded.groups.append(.init(name: "Other", patch: .init(routes: [
+        .init(id: "other", source: .phone, signal: .pianoKey0, destination: .init(.note, number: 60))
+    ])))
+    #expect(!reloaded.isValid)
+}

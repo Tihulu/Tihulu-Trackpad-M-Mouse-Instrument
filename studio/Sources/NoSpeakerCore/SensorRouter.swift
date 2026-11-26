@@ -119,6 +119,7 @@ public struct SensorMapping: Codable, Equatable, Identifiable, Sendable {
     public var velocity: Int
     public var response: ContinuousResponse?
     public var pedalMode: GamepadPedalMode?
+    public var measuredXYZHelper: Bool?
 
     public init(id: String, source: SensorSource, signal: SensorSignal,
                 destination: SensorDestination, calibration: SensorCalibration = .init(),

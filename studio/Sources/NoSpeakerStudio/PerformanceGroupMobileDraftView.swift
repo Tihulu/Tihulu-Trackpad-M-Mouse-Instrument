@@ -11,7 +11,6 @@ struct PerformanceGroupMobileDraftView: View {
     @State private var message = ""
     @State private var family:PerformanceGroupRemoteSurface = .xy
     @State private var xyzPreset = DepthXYZHelperPreset.expression
-    @State private var editingXYZ = false
     @State private var familyChannel=0
     @State private var familyTranspose=12
     let apply:(PerformanceGroupMobileDraft)->Bool
@@ -22,7 +21,6 @@ struct PerformanceGroupMobileDraftView: View {
     }
 
     private var validation:PerformanceGroupProfile? {
-        guard !editingXYZ || draft.xyzHelperIsCompatible else { return nil }
         return try? draft.applying(to:draft.baseline)
     }
 
@@ -39,8 +37,8 @@ struct PerformanceGroupMobileDraftView: View {
                         }
                         Stepper("MIDI channel \(familyChannel + 1)", value: $familyChannel, in: 0...15)
                         Button("Add XYZ axes to empty mobile slot") {
-                            editingXYZ = draft.addXYZHelper(xyzPreset, channel: familyChannel)
-                            message = editingXYZ ? "Edit each axis below before applying." : "A target conflicts with another route or the mobile slot is in use."
+                            let added = draft.addXYZHelper(xyzPreset, channel: familyChannel)
+                            message = added ? "Edit each axis below before applying." : "A target conflicts with another route or the mobile slot is in use."
                         }.disabled(!draft.routes.isEmpty)
                         Text("X uses Pedal 1, Y uses Pedal 2 and Z uses Pedal 3. Choose the same enabled axes on the device. Save the group preset to keep these mappings.").font(.caption)
                     }

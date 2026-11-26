@@ -29,6 +29,22 @@ public enum RemotePedalboard {
             (route.response == nil || route.response == ContinuousResponse()) &&
             ContinuousResponse.defaultRelease(route.destination) == 0
     }
+    /// Marked XYZ slots retain their exclusivity after reopening or importing a patch.
+    public static func permitsXYZHelpers(in routes: [SensorMapping]) -> Bool {
+        let sources = Set(routes.lazy.filter { $0.measuredXYZHelper == true }.map(\.source))
+        for source in sources {
+            let own = routes.filter { $0.source == source }
+            let targets = Set(own.map(\.destination))
+            guard source.isGroupRemote, own.count <= 3,
+                  own.allSatisfy({ $0.measuredXYZHelper == true && signals.prefix(3).contains($0.signal) &&
+                                   ContinuousResponse.isContinuous($0.destination) }),
+                  Set(own.map(\.signal)).count == own.count, targets.count == own.count else { return false }
+            let bends = Set(targets.filter { $0.kind == .pitchBend }.map(\.channel))
+            if routes.contains(where: { $0.source != source && (targets.contains($0.destination) ||
+                ($0.destination.kind == .note && bends.contains($0.destination.channel))) }) { return false }
+        }
+        return true
+    }
     public static func routes(source: SensorSource = .phone) -> [SensorMapping] {
         guard source == .phone || source == .tablet else { return [] }
         let destinations: [SensorDestination] = [

@@ -30,7 +30,10 @@ public struct PerformanceGroupProfile: Codable, Equatable, Sendable {
     public init(groups: [PerformanceInstrumentGroup] = []) { self.groups = groups }
 
     public var isValid: Bool {
-        groups.count <= Self.maximumGroups &&
+        let xyzSources = Set(groups.flatMap { $0.patch.routes }.filter { $0.measuredXYZHelper == true }.map(\.source))
+        return xyzSources.allSatisfy { source in
+            groups.filter { $0.patch.routes.contains { $0.source == source } }.count == 1
+        } && groups.count <= Self.maximumGroups &&
         Set(groups.map(\.id)).count == groups.count &&
         groups.allSatisfy(\.isValid) &&
         groups.reduce(0) { $0 + $1.patch.routes.count } <= Self.maximumRoutes

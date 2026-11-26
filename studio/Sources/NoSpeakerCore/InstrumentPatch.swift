@@ -25,7 +25,7 @@ public struct InstrumentPatch: Codable, Equatable, Sendable {
         !name.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } &&
         routes.count <= SensorRouter.maxMappings &&
         Set(routes.map(\.id)).count == routes.count &&
-        routes.allSatisfy(Self.permits) && AirDualHandPerformance.permitsCombination(routes) && AirHandsHelper.permitsCombination(routes) && ContinuousResponse.releaseValues(for: routes) != nil && GamepadPedalMode.switchTargets(routes) != nil &&
+        routes.allSatisfy(Self.permits) && RemotePedalboard.permitsXYZHelpers(in: routes) && AirDualHandPerformance.permitsCombination(routes) && AirHandsHelper.permitsCombination(routes) && ContinuousResponse.releaseValues(for: routes) != nil && GamepadPedalMode.switchTargets(routes) != nil &&
         AirDrumSensitivity.settings(for: routes) != nil &&
         (performanceLayout?.isValid ?? true)
     }
