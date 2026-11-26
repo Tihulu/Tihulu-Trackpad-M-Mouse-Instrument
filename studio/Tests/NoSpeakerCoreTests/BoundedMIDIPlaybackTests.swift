@@ -519,3 +519,18 @@ private func playbackClip() -> MIDIClip {
     player.advance(now:1_000_000_000){_ in true}
     #expect(player.waitPhase==nil && player.state == .finished)
 }
+
+
+@Test func boundedPlaybackCancellationDuringFinalClockReadDoesNotOwnUnattemptedOnset() throws {
+    var player=try BoundedMIDIPlayback(clip:playbackClip())
+    _=try player.begin(now:0)
+    var cancelled=false
+    var commands:[SensorCommand]=[]
+    player.advance(now:0,refreshNow:{ cancelled=true; return 0 },
+                   shouldStop:{cancelled},authorizeOnset:{true}) {
+        commands.append($0)
+        return true
+    }
+    #expect(player.state == .stopped && player.fault == nil)
+    #expect(commands.isEmpty && player.outstanding.isEmpty)
+}

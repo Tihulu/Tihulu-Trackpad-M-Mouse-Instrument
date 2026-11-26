@@ -1609,7 +1609,8 @@ public final class PerformanceGroupMIDIHost {
     public func stopGroup(_ id: UUID) -> PerformanceGroupDelivery.Report? {
         groupHapticProjection?.retire(id)
         if var state = gamepads {
-            let result = state.stopGroup(id,send:send)
+            let result = state.stopGroup(id,refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
+            groupHapticProjection?.reconcileDeliveryReports([result])
             gamepads = state
             return result
         }
@@ -1637,7 +1638,8 @@ public final class PerformanceGroupMIDIHost {
 
     public func retryCleanup(_ id: UUID) -> PerformanceGroupDelivery.Report? {
         if var state = gamepads {
-            let result = state.retryCleanup(id,send:send)
+            let result = state.retryCleanup(id,refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
+            groupHapticProjection?.reconcileDeliveryReports([result])
             gamepads = state
             return result
         }

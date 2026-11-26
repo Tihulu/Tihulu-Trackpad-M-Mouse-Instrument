@@ -196,3 +196,42 @@ private func gamepadGroup(_ source: SensorSource) -> PerformanceInstrumentGroup 
     let final = engine.panic(send:sink)
     #expect(final.accepted == 0 && final.pendingCleanup.isEmpty)
 }
+
+
+@Test func groupManualStopAndRetryDrainOtherExpiredNotesBeforeReturning() throws {
+    for retry in [false,true] {
+        let a = gamepadGroup(.gamepad1)
+        let b = gamepadGroup(.gamepad2)
+        let c = gamepadGroup(.gamepad3)
+        var engine = try PerformanceGroupGamepadSession(profile:.init(groups:[a,b,c]))
+        let x = try engine.bind(.gamepad1,now:0)
+        let y = try engine.bind(.gamepad2,now:0)
+        let z = try engine.bind(.gamepad3,now:0)
+        let neutral = try gamepadSnapshot()
+        let held = try gamepadSnapshot(true)
+        for (source,token) in [(SensorSource.gamepad1,x),(.gamepad2,y),(.gamepad3,z)] {
+            _ = engine.receive(source,token:token,frame:neutral,now:0,send:{ _ in true })
+            _ = engine.receive(source,token:token,frame:held,now:0.01,send:{ _ in true })
+        }
+        if retry {
+            let failed = engine.stopGroup(a.id,send:{ _ in false })
+            #expect(failed.pendingCleanup == [a.id])
+        }
+        _ = engine.receive(.gamepad3,token:z,frame:held,now:0.25,send:{ _ in true })
+        var now = 0.25
+        var sent:[PerformanceGroupCommand] = []
+        let sink:(PerformanceGroupCommand)->Bool = { command in
+            sent.append(command)
+            if command.groupID == a.id { now = 0.37 }
+            return true
+        }
+        let result = retry
+            ? engine.retryCleanup(a.id,refreshNow:{now},send:sink)
+            : engine.stopGroup(a.id,refreshNow:{now},send:sink)
+        #expect(result.pendingCleanup.isEmpty && result.failedGroups.isEmpty)
+        #expect(sent.count == 2 && sent.map(\.groupID) == [a.id,b.id])
+        #expect(sent.allSatisfy { $0.command.value == 0 })
+        #expect(engine.sourceStates[.gamepad2] == .waitingForNeutral)
+        #expect(engine.sourceStates[.gamepad3] == .leased && engine.activeSessions == 1)
+    }
+}

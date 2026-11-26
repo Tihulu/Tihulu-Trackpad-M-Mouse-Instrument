@@ -160,6 +160,9 @@ public struct BoundedMIDIPlayback: Sendable {
                 guard let end=onsetEnds[next],end>admittedElapsed else {
                     retire(.faulted,fault:.expiredOnset,send:send); return
                 }
+                // The final clock read is a caller callback too. If it
+                // observed cancellation, do not acquire unattempted debt.
+                if shouldStop() { retire(.stopped,send:send); return }
                 outstanding.insert(cmd.destination)
             }
             guard send(cmd) else { retire(.faulted,fault:.sendFailed,send:send); return }

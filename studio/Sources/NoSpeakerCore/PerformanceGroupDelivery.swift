@@ -27,6 +27,19 @@ public struct PerformanceGroupDelivery: Sendable {
             pendingCleanup = dynamic.pendingCleanup
         }
 
+        // Preserve all scoped failures while reporting the final debt inventory.
+        func appending(_ reports:[Self],pending:Set<UUID>) -> Self {
+            var result = self
+            for report in reports {
+                result.accepted += report.accepted
+                result.capacityRefused += report.capacityRefused
+                result.failedGroups.formUnion(report.failedGroups)
+                result.admissionExpired = result.admissionExpired || report.admissionExpired
+            }
+            result.pendingCleanup = pending
+            return result
+        }
+
         // Merge setup-selector debt without exposing mutable report fields.
         func includingSetupCleanup(_ pending:Set<UUID>,failedGroup:UUID?) -> Self {
             var result = self

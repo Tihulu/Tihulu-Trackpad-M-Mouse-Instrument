@@ -773,18 +773,31 @@ public struct PerformanceGroupGamepadSession: Sendable {
         return reports
     }
 
-    public mutating func stopGroup(_ id: UUID, send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
+    public mutating func stopGroup(_ id: UUID,refreshNow:(()->Double)? = nil,
+                                   send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
         let report = delivery.stopGroup(id,send:send)
         reconcileRetiredLeases()
-        return report
+        return drainAfterManualCleanup(report,refreshNow:refreshNow,send:send)
     }
     public mutating func panic(send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
         bindings.removeAll()
         cameraTracking.reset()
         return delivery.panic(send:send)
     }
-    public mutating func retryCleanup(_ id: UUID, send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
-        delivery.retryCleanupReport(id,send:send)
+    public mutating func retryCleanup(_ id: UUID,refreshNow:(()->Double)? = nil,
+                                      send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
+        let report = delivery.retryCleanupReport(id,send:send)
+        return drainAfterManualCleanup(report,refreshNow:refreshNow,send:send)
+    }
+
+    // Stop/retry may block in synchronous MIDI cleanup. Before returning
+    // to the host, drain newly expired sources using their own ledgers.
+    private mutating func drainAfterManualCleanup(_ report:PerformanceGroupDelivery.Report,
+                                                  refreshNow:(()->Double)?,
+                                                  send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        guard let refreshNow,!retired else { return report }
+        let drained = retireSources([],refreshNow:refreshNow,observeEvenWhenEmpty:true,send:send)
+        return report.appending(drained,pending:delivery.pendingCleanup)
     }
 
     /// A Group can retire all members of another source's lease. Do not
