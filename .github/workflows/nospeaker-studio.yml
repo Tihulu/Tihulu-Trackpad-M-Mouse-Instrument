@@ -146,7 +146,7 @@ jobs:
             nativePlaybackCompoundCancellationBeforeDisposalDoesNotReportCompletion
           do
             log="$(mktemp)"
-            if swift test --filter "$fixture" >"$log" 2>&1; then
+            if swift test --skip-build --filter "$fixture" >"$log" 2>&1; then
               # A missing filter or disabled fixture is not acceptance.
               if ! grep -F "Test $fixture() passed" "$log"; then
                 echo "Fixture did not actually pass: $fixture"
@@ -169,7 +169,7 @@ jobs:
               for timing_fixture in nativePlaybackReceiverVerifiesNoteGateAndCancellation nativePlaybackPreparedSessionReceivesNoteGateBeforeDisposal; do
                 log="$(mktemp)"
                 echo "Mandatory timing trial $round: $timing_fixture"
-                if swift test --filter "$timing_fixture" >"$log" 2>&1; then
+                if swift test --skip-build --filter "$timing_fixture" >"$log" 2>&1; then
                   if ! grep -F "Test $timing_fixture() passed" "$log"; then status=1; fi
                 else
                   status=1
@@ -324,6 +324,11 @@ jobs:
           packages: 'platform-tools'
       - name: Android SDK
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Verify Maven dependency retry policy
+        run: python3 tools/test_android_gradle_ci.py
+      - name: Resolve Android annotation dependencies (bounded Maven 429 retry)
+        working-directory: studio/mobile-android
+        run: python3 ../../tools/android_gradle_ci.py
       - name: Compile library and run local tests
         working-directory: studio/mobile-android
         run: gradle --no-daemon :assembleDebug :testDebugUnitTest :preview:assembleDebug
