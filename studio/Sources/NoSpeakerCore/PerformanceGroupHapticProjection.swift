@@ -101,6 +101,15 @@ public struct PerformanceGroupHapticProjection: Sendable {
         }
     }
 
+    /// A receipt fence can retire an endpoint even when every attempted
+    /// MIDI send and cleanup succeeds. The wire observer alone cannot see
+    /// that logical retirement. Consume authoritative delivery reports
+    /// before publishing the next held frame or transient snapshot.
+    public mutating func reconcileDeliveryReports(_ reports:[PerformanceGroupDelivery.Report]) {
+        let failed = reports.reduce(into:Set<UUID>()) { $0.formUnion($1.failedGroups) }
+        for id in failed.sorted(by:{ $0.uuidString < $1.uuidString }) { retire(id) }
+    }
+
     /// Conservative: invalidate all unrendered transients across a fault or
     /// changed expression. Held voices on unrelated ports remain intact.
     public mutating func discardAttacks() {

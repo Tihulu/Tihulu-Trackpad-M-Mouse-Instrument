@@ -1469,6 +1469,7 @@ public final class PerformanceGroupMIDIHost {
         let peers = bridge.connectionIDs
         let result = bridge.process(events,now:now,
             refreshNow:{ ProcessInfo.processInfo.systemUptime },session:&state,send:send)
+        groupHapticProjection?.reconcileDeliveryReports(result.reports)
         if result.fault || !peers.isSubset(of:bridge.connectionIDs) { discardGroupHapticAttacks() }
         gamepads = state
         remoteBridge = bridge.stopped ? nil : bridge
@@ -1480,6 +1481,7 @@ public final class PerformanceGroupMIDIHost {
         guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else { return .init() }
         discardGroupHapticAttacks()
         let result = bridge.revoke(connection,session:&state,refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
+        groupHapticProjection?.reconcileDeliveryReports(result.reports)
         remoteBridge = bridge
         gamepads = state
         return result
@@ -1489,6 +1491,7 @@ public final class PerformanceGroupMIDIHost {
         guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else { return .init() }
         discardGroupHapticAttacks()
         let result = bridge.stop(session:&state,refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
+        groupHapticProjection?.reconcileDeliveryReports(result.reports)
         gamepads = state
         remoteBridge = nil
         remoteRunID = nil
@@ -1508,6 +1511,7 @@ public final class PerformanceGroupMIDIHost {
         guard var state = gamepads else { return nil }
         let result = state.receive(source,token:token,frame:frame,now:now,hostTime:hostTime,
                                    refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
+        groupHapticProjection?.reconcileDeliveryReports(result.reports)
         if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result
@@ -1519,6 +1523,7 @@ public final class PerformanceGroupMIDIHost {
         let result = state.receiveSurface(source,token:token,x:x,y:y,size:size,
                                           hostTime:hostTime,now:now,
                                           refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
+        groupHapticProjection?.reconcileDeliveryReports(result.reports)
         if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result
@@ -1529,6 +1534,7 @@ public final class PerformanceGroupMIDIHost {
         guard var state = gamepads else { return nil }
         let result = state.receiveScalar(source,token:token,value:value,hostTime:hostTime,now:now,
                                          refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
+        groupHapticProjection?.reconcileDeliveryReports(result.reports)
         if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result
@@ -1539,6 +1545,7 @@ public final class PerformanceGroupMIDIHost {
         guard var state = gamepads else { return nil }
         let result = state.receiveCamera(token:token,hand:hand,hostTime:hostTime,now:now,
                                          refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
+        groupHapticProjection?.reconcileDeliveryReports(result.reports)
         if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result
@@ -1548,6 +1555,7 @@ public final class PerformanceGroupMIDIHost {
         guard var state = gamepads else { return [] }
         let before = state.sourceStates
         let result = state.expire(now:now,refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
+        groupHapticProjection?.reconcileDeliveryReports(result)
         if before != state.sourceStates { discardGroupHapticAttacks() }
         gamepads = state
         return result
@@ -1561,6 +1569,7 @@ public final class PerformanceGroupMIDIHost {
         guard var state = gamepads else { return [] }
         discardGroupHapticAttacks()
         let result = state.unbindBatch(tokens,refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
+        groupHapticProjection?.reconcileDeliveryReports(result)
         gamepads = state
         return result
     }
@@ -1576,6 +1585,7 @@ public final class PerformanceGroupMIDIHost {
                       values: [SensorSignal:Double], releasing: Set<SensorSignal> = []) -> PerformanceGroupDelivery.Report? {
         guard var state = delivery else { return nil }
         let result = state.frame(lease:lease,sequence:sequence,now:now,values:values,releasing:releasing,send:send)
+        groupHapticProjection?.reconcileDeliveryReports([result])
         delivery = state
         return result
     }
@@ -1583,6 +1593,7 @@ public final class PerformanceGroupMIDIHost {
     public func disconnect(_ lease: UUID) -> PerformanceGroupDelivery.Report? {
         guard var state = delivery else { return nil }
         let result = state.disconnect(lease,send:send)
+        groupHapticProjection?.reconcileDeliveryReports([result])
         delivery = state
         return result
     }
@@ -1590,6 +1601,7 @@ public final class PerformanceGroupMIDIHost {
     public func expire(now: Double, timeout: Double) -> PerformanceGroupDelivery.Report? {
         guard var state = delivery else { return nil }
         let result = state.expire(now:now,timeout:timeout,send:send)
+        groupHapticProjection?.reconcileDeliveryReports([result])
         delivery = state
         return result
     }

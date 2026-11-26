@@ -108,3 +108,31 @@ private func hapticCommand(_ group:PerformanceInstrumentGroup,_ target:SensorDes
     _ = output.panic(send:accept)
     #expect(haptic.activeGroups.isEmpty && haptic.frame() == nil)
 }
+
+
+@Test func groupHapticProjectionRetiresReceiptFaultEvenWhenAllWireCleanupSucceeds() throws {
+    let a=hapticGroup(.gamepad1,notes:[60,62]),b=hapticGroup(.gamepad2,notes:[64])
+    let profile=PerformanceGroupProfile(groups:[a,b])
+    var output=try PerformanceGroupDelivery(profile:profile)
+    var haptic=try PerformanceGroupHapticProjection(profile:profile,selected:[a.id,b.id])
+    let x=try output.connect(.gamepad1,now:1),y=try output.connect(.gamepad2,now:1)
+    _=output.frame(lease:y,sequence:1,now:1.01,values:[.padA:1]) { item in
+        haptic.observe(item,accepted:true,now:1.01)
+        return true
+    }
+    var fresh=true
+    let report=output.admittedFrame(lease:x,sequence:1,now:1.02,values:[.padA:1,.padB:1],releasing:[],admit:{fresh}) { item in
+        haptic.observe(item,accepted:true,now:1.02)
+        if item.command.value>0 { fresh=false }
+        return true
+    }
+    #expect(report.admissionExpired && report.failedGroups == [a.id] && report.pendingCleanup.isEmpty)
+    // No send failed, so the observer cannot infer retirement on its own.
+    #expect(haptic.activeGroups == [a.id,b.id])
+    haptic.reconcileDeliveryReports([report])
+    #expect(haptic.activeGroups == [b.id] && haptic.frame()?.tones.count==1)
+    let snapshot=haptic.snapshot(now:1.02)
+    #expect(snapshot.attacks.isEmpty && snapshot.held?.tones.count==1)
+    haptic.observe(hapticCommand(a,.init(.note,number:60),100),accepted:true,now:1.03)
+    #expect(haptic.activeGroups == [b.id] && haptic.frame()?.tones.count==1)
+}
