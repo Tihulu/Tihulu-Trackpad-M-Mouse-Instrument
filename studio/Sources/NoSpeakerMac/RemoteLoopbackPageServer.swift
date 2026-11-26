@@ -131,8 +131,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pad[aria-disabled=true]{opacity:.45}#dot{position:absolute;width:22px;height:22px;background:#e34f4f;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}#dot[hidden]{display:none}
 #releaseAll{min-height:44px;border-color:#e5a33b}#status{min-height:2.8em}small{color:#bdbdbd}
 #drumGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}#drumGrid button{margin:0;min-height:80px;padding:8px;touch-action:none;user-select:none;overflow-wrap:anywhere}#drumGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5} @media(max-width:420px){#drumGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-#kitBoard{position:relative;height:clamp(250px,48vh,430px);border:1px solid #777;border-radius:12px;background:radial-gradient(#454545 1px,transparent 1px) 0 0/16px 16px;overflow:hidden}
-#kitBoard button{position:absolute;margin:0;transform:translate(-50%,-50%);width:clamp(48px,18%,100px);aspect-ratio:1;border-radius:50%;padding:3px;touch-action:none;font-size:clamp(10px,2.4vw,14px);background:#303947;border:2px solid #8e9bad;overflow-wrap:anywhere}
+#kitBoard{container-type:size;position:relative;height:clamp(250px,48vh,430px);border:1px solid #777;border-radius:12px;background:radial-gradient(#454545 1px,transparent 1px) 0 0/16px 16px;overflow:hidden}
+#kitBoard button{position:absolute;margin:0;transform:translate(-50%,-50%);width:clamp(44px,18%,100px);max-width:min(24cqw,30cqh);box-sizing:border-box;aspect-ratio:1;border-radius:50%;padding:3px;touch-action:none;font-size:clamp(10px,2.4vw,14px);background:#303947;border:2px solid #8e9bad;overflow-wrap:anywhere}
 #kitBoard button[data-cymbal=true]{background:#66512a;border-color:#d9b65c}
 #kitBoard button[data-selected=true]{outline:3px solid #79c9a5;outline-offset:2px}
 #kitBoard button[data-hit=true]{background:#286b50;border-color:#79c9a5}
@@ -249,8 +249,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <label for="kitPart">Kit element</label><select id="kitPart"></select><button id="kitAdd" type="button">Add to layout</button><button id="kitRemove" type="button">Remove from layout</button>
 <label for="kitX">Horizontal position</label><input id="kitX" type="range" min="12" max="88" step="1">
 <label for="kitY">Vertical position</label><input id="kitY" type="range" min="15" max="85" step="1">
+<label for="kitSize">Element size</label><input id="kitSize" type="range" min="12" max="24" step="1">
 <button id="kitSave" type="button">Save layout on this browser</button><button id="kitReset" type="button">Reset kit</button><p id="kitStatus" role="status"></p>
-<small>Drag a visible element or adjust its position. Add/remove changes presentation only; the Mac owns MIDI assignments. Only assigned pads can be added.</small></div>
+<small>Drag a visible element or adjust its position and size. Add/remove changes presentation only; the Mac owns MIDI assignments. Only assigned pads can be added.</small></div>
 <label for="airStickPad">Assigned strike pad</label><select id="airStickPad"></select><button id="airStickStart" type="button" disabled>Enable air stick</button><button id="airStickStop" type="button" disabled>Stop air stick</button><p id="airStickStatus" role="status">Off.</p><small>Gravity-free motion triggers a mapped pad at fixed velocity. Hold securely, use small movements and never hit a surface.</small></div></section>
 <section id="pianoSection" hidden aria-labelledby="piano-title"><h2 id="piano-title">Piano</h2>
 <p>Only keys and sustain mapped for this paired device are available. Key positions identify logical controls. Scale hints are available only for a verified default pitch mapping.</p>
@@ -267,7 +268,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <small id="pianoManualHint">Hold multiple keys or the pedal. Lift to release. Octave changes are available only after all piano messages are acknowledged. Scale guide does not alter MIDI routing.</small>
 <div id="phraseSection" hidden><h3 id="phraseTitle">Chord pads</h3>
 <div id="chordGrid"><button id="chord0" type="button" disabled></button><button id="chord1" type="button" disabled></button><button id="chord2" type="button" disabled></button><button id="chord3" type="button" disabled></button></div>
-<div id="phraseTransport" hidden><label for="phraseTempo">Tempo</label><select id="phraseTempo"><option value="60">60 BPM</option><option value="90">90 BPM</option><option value="120" selected>120 BPM</option><option value="150">150 BPM</option></select><label id="arpLabel" for="arpChoice">Arpeggio chord</label><select id="arpChoice"></select><div id="arpKeyboardTools" hidden><button id="arpClear" type="button">Clear selected notes</button><label for="arpDirection">Direction</label><select id="arpDirection"><option value="up">Up</option><option value="down">Down</option><option value="bounce">Up / down</option></select><label for="arpRate">Rate</label><select id="arpRate"><option value="8">1/8</option><option value="4">1/4</option></select><p id="arpSelected" role="status"></p></div><div id="sequenceSteps"><label for="phraseStep0">Step 1</label><select id="phraseStep0"></select><label for="phraseStep1">Step 2</label><select id="phraseStep1"></select><label for="phraseStep2">Step 3</label><select id="phraseStep2"></select><label for="phraseStep3">Step 4</label><select id="phraseStep3"></select><label for="phraseStep4">Step 5</label><select id="phraseStep4"></select><label for="phraseStep5">Step 6</label><select id="phraseStep5"></select><label for="phraseStep6">Step 7</label><select id="phraseStep6"></select><label for="phraseStep7">Step 8</label><select id="phraseStep7"></select></div><button id="phraseStart" type="button" disabled>Start loop</button><button id="phraseStop" type="button" disabled>Stop loop</button></div>
+<div id="phraseTransport" hidden><label for="phraseTempo">Tempo</label><select id="phraseTempo"><option value="60">60 BPM</option><option value="90">90 BPM</option><option value="120" selected>120 BPM</option><option value="150">150 BPM</option></select><label id="arpLabel" for="arpChoice">Arpeggio chord</label><select id="arpChoice"></select><div id="arpKeyboardTools" hidden><button id="arpClear" type="button">Clear selected notes</button><label for="arpDirection">Direction</label><select id="arpDirection"><option value="up">Up</option><option value="down">Down</option><option value="bounce">Up / down</option></select><label for="arpRate">Rate</label><select id="arpRate"><option value="8">1/8</option><option value="4">1/4</option><option value="16">1/16</option><option value="12">1/8 triplet</option></select><p id="arpSelected" role="status"></p></div><div id="sequenceSteps"><label for="phraseStep0">Step 1</label><select id="phraseStep0"></select><label for="phraseStep1">Step 2</label><select id="phraseStep1"></select><label for="phraseStep2">Step 3</label><select id="phraseStep2"></select><label for="phraseStep3">Step 4</label><select id="phraseStep3"></select><label for="phraseStep4">Step 5</label><select id="phraseStep4"></select><label for="phraseStep5">Step 6</label><select id="phraseStep5"></select><label for="phraseStep6">Step 7</label><select id="phraseStep6"></select><label for="phraseStep7">Step 8</label><select id="phraseStep7"></select></div><button id="phraseStart" type="button" disabled>Start loop</button><button id="phraseStop" type="button" disabled>Stop loop</button></div>
 <p id="phraseStatus" role="status">Off.</p><small>Only mapped logical keys are used. Actual pitch depends on Mac mapping. Browser clock, no DAW synchronization; delayed playback stops instead of replaying old notes.</small></div></section>
 <section id="pedalSection" hidden aria-labelledby="pedal-title"><h2 id="pedal-title">Pedalboard</h2>
 <p>Only pedals mapped for this paired device are available. These are MIDI controls, not audio effects. Labels identify logical controls; actual destinations depend on the Mac mapping.</p>
@@ -1114,16 +1115,32 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   let stickState="idle",stickEpoch=0,stickPad=0,stickKey="",stickAt=0,stickReady=false,stickPulseAt=null,stickLast=-Infinity;
   const kitKey="tihulu.remote.drum-kit.v1";
   const kitNames=["Kick","Snare","Closed hi-hat","Open hi-hat","Low tom","High tom","Crash","Ride"];
-  const kitDefault=()=>[[50,78],[25,53],[16,24],[84,50],[63,43],[39,35],[38,15],[77,15]].map(([x,y])=>({x,y,visible:true}));
-  function validKit(v){return Array.isArray(v)&&v.length===8&&v.every(p=>p&&Object.keys(p).length===3&&typeof p.visible==="boolean"&&Number.isInteger(p.x)&&p.x>=12&&p.x<=88&&Number.isInteger(p.y)&&p.y>=15&&p.y<=85);}
-  function loadKit(){try{const raw=window.localStorage?.getItem(kitKey);if(typeof raw==="string"&&raw.length<1024){const v=JSON.parse(raw);if(validKit(v))return v;}}catch{}return kitDefault();}
+  const kitDefault=()=>[[50,78],[25,53],[16,24],[84,50],[63,43],[39,35],[38,15],[77,15]].map(([x,y])=>({x,y,size:18,visible:true}));
+  function within(value, min, max) {
+    return Number.isInteger(value) && value >= min && value <= max;
+  }
+  function loadKit() {
+    try {
+      const raw = window.localStorage?.getItem(kitKey);
+      if (typeof raw === "string" && raw.length < 1024) {
+        const saved = JSON.parse(raw);
+        if (Array.isArray(saved) && saved.length === 8 && saved.every(part =>
+          part && Object.keys(part).every(key => ["x","y","size","visible"].includes(key)) &&
+          typeof part.visible === "boolean" && within(part.x,12,88) && within(part.y,15,85) &&
+          (part.size === undefined || within(part.size,12,24)))) {
+          return saved.map(part => ({...part, size: part.size ?? 18}));
+        }
+      }
+    } catch {}
+    return kitDefault();
+  }
   let kit=loadKit(),kitEditing=false,kitPart=0,kitOptionsKey="",kitDrag=null;
   const kitNodes=kitNames.map((name,i)=>{
     const b=document.createElement("button");b.type="button";b.textContent=name;b.setAttribute("data-cymbal",String([2,3,6,7].includes(i)));
     get("kitBoard").appendChild(b);
     b.addEventListener("click",()=>{if(!kitIdle()||!has("drums",i)||!kit[i].visible)return;if(kitEditing){kitPart=i;}else{stickPad=i;get("airStickPad").value=String(i);}syncStick();});
     b.addEventListener("pointerdown",e=>{
-      if(!kitEditing||!kitIdle()||!has("drums",i)||!kit[i].visible||e.button!==0)return;
+      if(kitDrag||!kitEditing||!kitIdle()||!has("drums",i)||!kit[i].visible||e.button!==0)return;
       e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{return;}
       kitPart=i;kitDrag={id:e.pointerId,i};syncStick();
     });
@@ -1134,7 +1151,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       kit[i].x=Math.round(Math.max(12,Math.min(88,100*(e.clientX-r.left)/r.width)));
       kit[i].y=Math.round(Math.max(15,Math.min(85,100*(e.clientY-r.top)/r.height)));syncStick();
     });
-    for(const event of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(event,e=>{if(kitDrag?.id===e.pointerId)kitDrag=null;});
+    for(const event of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(event,e=>{if(kitDrag?.id===e.pointerId&&kitDrag.i===i)kitDrag=null;});
     return b;
   });
   function kitIdle(){return currentView==="play"&&playMode==="stick"&&admitted&&stickState==="idle"&&!releasingAll&&!drumBusy();}
@@ -1148,12 +1165,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(!idle){kitEditing=false;kitDrag=null;}
     get("kitEdit").disabled=!idle;get("kitEdit").setAttribute("aria-pressed",String(kitEditing));
     get("kitEditor").hidden=!kitEditing;get("kitPart").value=String(kitPart);
-    for(const id of ["kitPart","kitX","kitY","kitAdd","kitRemove","kitSave","kitReset"])get(id).disabled=!kitEditing||!idle;
+    for(const id of ["kitPart","kitX","kitY","kitSize","kitAdd","kitRemove","kitSave","kitReset"])get(id).disabled=!kitEditing||!idle;
     get("kitAdd").disabled||=kit[kitPart].visible;get("kitRemove").disabled||=!kit[kitPart].visible;
     get("kitX").value=String(kit[kitPart].x);get("kitY").value=String(kit[kitPart].y);
+    get("kitSize").value=String(kit[kitPart].size);
     kitNodes.forEach((b,i)=>{
       b.hidden=!has("drums",i)||!kit[i].visible;b.disabled=!idle;
       b.style.left=kit[i].x+"%";b.style.top=kit[i].y+"%";
+      b.style.width="clamp(44px, "+kit[i].size+"%, "+Math.round(100*kit[i].size/18)+"px)";
       b.setAttribute("data-selected",String(i===(kitEditing?kitPart:stickPad)));
       b.setAttribute("data-hit",String(Boolean(drumDesired&(1<<i))));
       b.textContent=kitNames[i];b.setAttribute("aria-label",kitNames[i]+" · "+labelFor(9+i));
@@ -1165,7 +1184,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     else if(action==="save"){try{window.localStorage.setItem(kitKey,JSON.stringify(kit));get("kitStatus").textContent="Layout saved. No assignments stored.";}catch{get("kitStatus").textContent="Storage unavailable.";}}
     else if(has("drums",kitPart)){
       if(action==="add"||action==="remove")kit[kitPart].visible=action==="add";
-      else if(action==="x"||action==="y"){
+      else if(action==="size"){
+        const size=Number(get("kitSize").value);
+        if(within(size,12,24))kit[kitPart].size=size;
+      }else if(action==="x"||action==="y"){
         const n=Number(get(action==="x"?"kitX":"kitY").value),lo=action==="x"?12:15,hi=action==="x"?88:85;
         if(Number.isInteger(n)&&n>=lo&&n<=hi)kit[kitPart][action]=n;
       }
@@ -1325,9 +1347,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     let pattern=playMode==="arp"?(arpSelected.size?[...arpSelected].sort((a,b)=>a-b):selection!==""&&chordAvailable(index)?[...chordShapes[index]]:[]):
       Array.from({length:8},(_,i)=>Number(get("phraseStep"+i).value));
     const direction=get("arpDirection").value,rate=get("arpRate").value||"8";
-    if(playMode==="arp"){if(!["","up","down","bounce"].includes(direction)||!["4","8"].includes(rate))return;if(direction==="down")pattern.reverse();if(direction==="bounce"&&pattern.length>2)pattern=pattern.concat(pattern.slice(1,-1).reverse());}
+    if(playMode==="arp"){if(!["","up","down","bounce"].includes(direction)||!["4","8","12","16"].includes(rate))return;if(direction==="down")pattern.reverse();if(direction==="bounce"&&pattern.length>2)pattern=pattern.concat(pattern.slice(1,-1).reverse());}
     if(!pattern.length||!pattern.some(i=>i>=0)||!pattern.every(i=>Number.isInteger(i)&&(i===-1||(i<25&&has("piano",i)))))return;
-    phraseRun={pattern,index:0,on:false,next:performance.now(),period:(playMode==="arp"&&rate==="4"?60000:30000)/bpm};
+    phraseRun={pattern,index:0,on:false,next:performance.now(),period:240000/(bpm*(playMode==="arp"?Number(rate):8))};
     get("phraseStatus").textContent="Playing · local browser clock.";syncControls();tick();
   }
   function advancePhrase(now){
@@ -1886,10 +1908,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("layoutReset").addEventListener("click",resetLayout);
   for(const v of viewNames)get(navId(v)).addEventListener("click",()=>chooseView(v));
   get("playMode").addEventListener("change",choosePlayMode);
-  get("airStickPad").addEventListener("change",()=>{const i=Number(get("airStickPad").value);if(stickState==="idle"&&Number.isInteger(i)&&has("drums",i))stickPad=i;else get("airStickPad").value=String(stickPad);});
+  get("airStickPad").addEventListener("change",()=>{const i=Number(get("airStickPad").value);if(kitIdle()&&within(i,0,7)&&has("drums",i))stickPad=i;get("airStickPad").value=String(stickPad);syncKit();});
   get("kitEdit").addEventListener("click",()=>{if(kitIdle()){kitEditing=!kitEditing;kitDrag=null;syncStick();}});
   get("kitPart").addEventListener("change",()=>{const i=Number(get("kitPart").value);if(kitIdle()&&kitEditing&&Number.isInteger(i)&&has("drums",i))kitPart=i;syncStick();});
   for(const [id,action] of [["kitAdd","add"],["kitRemove","remove"],["kitSave","save"],["kitReset","reset"]])get(id).addEventListener("click",()=>editKit(action));
+  get("kitSize").addEventListener("input",()=>editKit("size"));
   get("kitX").addEventListener("input",()=>editKit("x"));get("kitY").addEventListener("input",()=>editKit("y"));
   get("airStickStart").addEventListener("click",startStick);
   get("airStickStop").addEventListener("click",stopStick);
@@ -1897,7 +1920,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);
   for(const s of streams){s.start.addEventListener("click",()=>startInertial(s));s.stop.addEventListener("click",()=>stopInertial(s));}
-  function rotated(){if(ws&&(touchBusy()||pedalBusy()||pianoBusy()||drumDesired!==0||drumSent!==0||drumQueue.length||mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
+  function rotated(){if(ws&&(stickState!=="idle"||touchBusy()||pedalBusy()||pianoBusy()||drumDesired!==0||drumSent!==0||drumQueue.length||mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
   window.addEventListener("orientationchange",rotated);
   if(window.screen&&window.screen.orientation&&typeof window.screen.orientation.addEventListener==="function")window.screen.orientation.addEventListener("change",rotated);
   disconnect.addEventListener("click",()=>close("Disconnected. Host releases owned controls."));
