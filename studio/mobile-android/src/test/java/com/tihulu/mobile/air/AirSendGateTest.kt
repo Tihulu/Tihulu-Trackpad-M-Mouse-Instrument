@@ -66,8 +66,11 @@ class AirSendGateTest {
         val g=AirSendGate(AirWireLane.Keys(1),0)
         g.begin(0);g.acknowledge("accepted",ms(20));g.offer(AirOutput(keys=1),ms(21),ms(21))
         g.offer(AirOutput(),ms(30),ms(30))
-        assertEquals(AirSendGate.Action.Wait,g.offer(AirOutput(keys=1),ms(179),ms(179)))
-        assertTrue(g.poll(ms(180)) is AirSendGate.Action.Close)
+        // The outstanding attack's original source deadline (21+150)
+        // now wins over the later release debt deadline (30+150).
+        assertEquals(AirSendGate.Action.Wait,g.offer(AirOutput(keys=1),ms(170),ms(170)))
+        assertEquals(AirSendGate.Action.Close("Source expired while active ACK outstanding"),g.poll(ms(171)))
+        assertEquals(AirSendGate.Action.Close("Already closed"),g.acknowledge("accepted",ms(172)))
     }
 
     @Test fun freshArrivalCannotBridgeExpiredSourceGap() {
