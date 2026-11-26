@@ -72,3 +72,15 @@ private let palm = DepthXYZPoint(x: 0.4, y: 0.5, meters: 0.4, confidence: 0.8)
     #expect(keys.output(.init(x: 0,y: 1,z: 0)).keys == 1 << 15)
     #expect(DepthXYZKeys(authorized: RemotePiano.sustainBit, axis: .z) == nil)
 }
+
+@Test func depthXYZDelayedWatchdogRejectsBufferedReacquisition() throws {
+    var tracker = try #require(DepthXYZTracking())
+    #expect(tracker.observe(palm, at: 0, now: 0) == nil)
+    #expect(tracker.observe(palm, at: 0.01, now: 0.01) != nil)
+    // Both buffered stamps are individually fresh, but the old acquisition
+    // expired at 0.16 before the delayed UI drain.
+    #expect(tracker.observe(palm, at: 0.14, now: 0.17) == nil)
+    #expect(tracker.observe(palm, at: 0.15, now: 0.171) == nil)
+    #expect(tracker.observe(palm, at: 0.18, now: 0.18) == nil)
+    #expect(tracker.observe(palm, at: 0.19, now: 0.19) != nil)
+}

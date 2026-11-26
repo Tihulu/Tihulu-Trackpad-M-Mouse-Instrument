@@ -237,7 +237,7 @@ class AirPreviewActivity: ComponentActivity() {
                         xyzLastAt=frame.at
                         xyzStage?.update(frame.point.takeIf {axes.xyz!=null},volume,output.keys)
                     }
-                    if(xyzLastAt?.let {SystemClock.elapsedRealtimeNanos()-it>=AirSendGate.FRESH_NS}==true){
+                    if(tracker.expire(SystemClock.elapsedRealtimeNanos()) || xyzLastAt?.let {SystemClock.elapsedRealtimeNanos()-it>=AirSendGate.FRESH_NS}==true){
                         xyzLastAt=null;xyzKeys?.output(null);xyzStage?.update(null,volume)
                     }
                 }

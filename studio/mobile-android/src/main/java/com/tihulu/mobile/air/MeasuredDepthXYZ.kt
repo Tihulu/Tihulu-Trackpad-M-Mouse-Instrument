@@ -92,8 +92,26 @@ class MeasuredXYZTracking(private val volume:XYZVolume,private val mask:Int) {
         val axes=point?.let { volume.axes(it,mask) }
         if(!fresh || axes==null){candidate=null;watermark=maxOf(watermark,clock);return AirOutput()}
         val last=candidate
+        // Mirror Swift: a delayed drain cannot extend an expired acquisition
+        // with a buffered measurement captured before its expiry.
+        if(last!=null && now-last>=AirSendGate.FRESH_NS){
+            if(at-last<AirSendGate.FRESH_NS){
+                candidate=null;watermark=maxOf(watermark,clock);return AirOutput()
+            }
+            watermark=at;candidate=at;return AirOutput()
+        }
         watermark=at;candidate=at
         return if(last!=null && at-last<AirSendGate.FRESH_NS)AirOutput(xyz=axes) else AirOutput()
+    }
+    /** Expire on silence and fence previously captured measurements. */
+    fun expire(now:Long):Boolean {
+        val last=candidate
+        val invalid=now<0 || now<clock
+        clock=maxOf(clock,now)
+        if(last==null)return false
+        if(!invalid && now-last<AirSendGate.FRESH_NS)return false
+        candidate=null;watermark=maxOf(watermark,clock)
+        return true
     }
 }
 

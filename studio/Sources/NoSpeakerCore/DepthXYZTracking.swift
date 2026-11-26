@@ -101,6 +101,18 @@ public struct DepthXYZTracking: Sendable {
             return nil
         }
         let previous = candidate
+        // A delayed watchdog must not allow a buffered measurement from
+        // before the expired candidate's deadline to renew that candidate.
+        if let previous, receipt - previous >= MobileAirSendGate.freshNS {
+            let deadline = previous + MobileAirSendGate.freshNS
+            guard stamp >= deadline else {
+                reset()
+                return nil
+            }
+            observed = stamp
+            candidate = stamp
+            return nil
+        }
         observed = stamp
         candidate = stamp
         guard let previous, stamp - previous < MobileAirSendGate.freshNS else { return nil }
