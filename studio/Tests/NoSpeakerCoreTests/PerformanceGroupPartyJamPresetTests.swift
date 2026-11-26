@@ -148,12 +148,14 @@ import Testing
     #expect(session.remoteCapabilities(.phone)?.drums == 49)
     #expect(session.remoteCapabilities(.phone2)?.drums == 206)
     let unchanged=profile
-    #expect(!profile.reassignRemoteDrum(groupID:before.id,signal:.drumPad2,from:.phone,to:.phone2))
+    let movedAgain = profile.reassignRemoteDrum(groupID: before.id, signal: .drumPad2, from: .phone, to: .phone2)
+    #expect(!movedAgain)
     #expect(profile == unchanged)
     var duplicate=expected;duplicate.id="occupied-pad";duplicate.source = .phone
     profile.groups[0].patch.routes.append(duplicate)
     let occupied=profile
-    #expect(!profile.reassignRemoteDrum(groupID:before.id,signal:.drumPad2,from:.phone2,to:.phone))
+    let movedToOccupiedPad = profile.reassignRemoteDrum(groupID: before.id, signal: .drumPad2, from: .phone2, to: .phone)
+    #expect(!movedToOccupiedPad)
     #expect(profile == occupied)
 }
 
