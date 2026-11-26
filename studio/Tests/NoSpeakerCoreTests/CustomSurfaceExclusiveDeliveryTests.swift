@@ -147,3 +147,44 @@ private let sustain=SensorDestination(.sustain,channel:2)
     #expect(d.frame([note],sequence:2,observedAt:0).outstanding.isEmpty)
     #expect(wire.isEmpty)
 }
+
+@Test func customPadExclusiveDeliveryRechecksAdmissionAfterIdentityQuery() throws {
+    var now:Int64=0
+    var allowed=true
+    var revokeDuringQuery=false
+    var wire:[SensorCommand]=[]
+    let d=CustomSurfaceExclusiveDelivery(plan:try deliveryPlan(),clock:{now},
+        admitsExclusiveEndpoint:{allowed},ownsCleanupEndpoint:{
+            if revokeDuringQuery {allowed=false}
+            return true
+        },send:{wire.append($0);return true})
+    _=d.frame([],sequence:1,observedAt:0)
+    now=1;_=d.frame([note],sequence:2,observedAt:1)
+    wire=[]
+    now=2;revokeDuringQuery=true
+    let stopped=d.frame([chord,pedal],sequence:3,observedAt:2)
+    #expect(stopped.retirement == .admissionDenied)
+    #expect(stopped.pendingCleanup.isEmpty)
+    #expect(wire==[.init(n60,value:0)])
+}
+@Test func customPadExclusiveDeliveryRechecksAdmissionBetweenChordSends() throws {
+    var now:Int64=0
+    var allowed=true
+    var revokeOnNextQuery=false
+    var wire:[SensorCommand]=[]
+    let d=CustomSurfaceExclusiveDelivery(plan:try deliveryPlan(),clock:{now},
+        admitsExclusiveEndpoint:{allowed},ownsCleanupEndpoint:{
+            if revokeOnNextQuery {allowed=false}
+            return true
+        },send:{
+            wire.append($0)
+            if $0.destination==n60 && $0.value>0 {revokeOnNextQuery=true}
+            return true
+        })
+    _=d.frame([],sequence:1,observedAt:0)
+    now=1
+    let stopped=d.frame([chord],sequence:2,observedAt:1)
+    #expect(stopped.retirement == .admissionDenied)
+    #expect(stopped.pendingCleanup.isEmpty)
+    #expect(wire==[.init(n60,value:90),.init(n60,value:0)])
+}

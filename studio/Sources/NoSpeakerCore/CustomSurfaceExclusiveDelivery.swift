@@ -43,7 +43,7 @@ public final class CustomSurfaceExclusiveDelivery {
         return now
     }
     private func liveFailure(observedAt:Int64)->Retirement? {
-        guard admits(),ownsCleanupEndpoint() else{return .admissionDenied}
+        guard admits(),ownsCleanupEndpoint(),admits() else{return .admissionDenied}
         guard let now=tick(),observedAt>=0,now>=observedAt,
               now-observedAt<MobileAirSendGate.freshNS else{return .expiredOrInvalid}
         return nil
@@ -131,7 +131,7 @@ public final class CustomSurfaceExclusiveDelivery {
     }
     public func poll()->Report {
         guard retirement==nil else{return report(0)}
-        guard admits(),ownsCleanupEndpoint() else{return retire(.admissionDenied)}
+        guard admits(),ownsCleanupEndpoint(),admits() else{return retire(.admissionDenied)}
         guard let now=tick(),!projection.poll(now:now).retired else{return retire(.expiredOrInvalid)}
         return report(0)
     }
