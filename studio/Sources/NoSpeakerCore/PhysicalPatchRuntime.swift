@@ -648,13 +648,14 @@ public struct PhysicalPatchRuntime: Sendable {
             peer.lastOrientation = now
             remotePeers[id] = peer
             let values = tilt.normalize(angles)
-            var commands: [SensorCommand] = []
-            for (signal, value): (SensorSignal, Double) in [(.tiltYaw, values.yaw), (.tiltPitch, values.pitch), (.tiltRoll, values.roll)] {
+            // All three axes describe the same instant, not three separate
+            // musical states. Reconcile only their final ownership.
+            var events:[SensorEvent] = []
+            for (signal,value):(SensorSignal,Double) in [(.tiltYaw,values.yaw),(.tiltPitch,values.pitch),(.tiltRoll,values.roll)] {
                 sequence &+= 1
-                commands += router.ingest(.init(session: session, signal: signal, value: value,
-                                                sequence: sequence, timestamp: now), now: now)
+                events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:now))
             }
-            return .accepted(commands)
+            return .accepted(router.ingestFrame(session:session,releasing:[],events:events,now:now))
         case .motionRelease:
             guard peer.tilt != nil else { return .close(revokeRemote(id,now:processingTime)) }
             let departing = peer.motionSession
