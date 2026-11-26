@@ -1285,3 +1285,34 @@ test("arp selection cannot start with an unmapped chord",()=>{
   a.elements.phraseTempo.value="120";a.elements.arpChoice.value="0";a.elements.phraseStart.emit("click");
   assert.equal(a.socket.frames.length,0);
 });
+
+
+test("active sequencer mode switch cancels loop and waits for release ACK",()=>{
+  const a=setup("granted",{...touchOnly,touch:true,piano:1},false);
+  a.elements.playMode.value="seq";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseStep0.value="0";a.elements.phraseStart.emit("click");a.step(25);
+  assert.equal(a.socket.frames.at(-1).mask,1);a.ack();
+  a.elements.playMode.value="xy";a.elements.playMode.emit("change");a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"pianoKeys");assert.equal(a.socket.frames.at(-1).mask,0);
+  assert.equal(a.elements.playMode.disabled,true);a.ack();
+  assert.equal(a.elements.playMode.value,"xy");assert.equal(a.elements.phraseSection.hidden,true);
+  const count=a.socket.frames.length;a.step(100);
+  assert.equal(a.socket.frames.length,count);
+});
+test("sequencer refuses overdue notes instead of catching up",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="seq";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseStep0.value="0";a.elements.phraseStart.emit("click");a.step(25);a.ack();
+  const count=a.socket.frames.length;a.step(400);
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,count);
+});
+test("air stick mode departure during permission request cannot arm stale callback",async()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:1,piano:1},false);
+  let resolve;a.window.DeviceMotionEvent.requestPermission=()=>new Promise(r=>resolve=r);
+  a.elements.playMode.value="stick";a.elements.playMode.emit("change");
+  const permission=a.elements.airStickStart.emit("click");
+  a.elements.playMode.value="piano";a.elements.playMode.emit("change");
+  resolve("granted");await permission;
+  assert.equal(a.window.events.has("devicemotion"),false);
+  assert.equal(a.elements.playMode.value,"piano");assert.equal(a.socket.frames.length,0);
+});

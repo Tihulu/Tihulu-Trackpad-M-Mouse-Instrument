@@ -223,3 +223,30 @@ private func remoteGroup(_ source:SensorSource,_ signal:SensorSignal,_ target:Se
     #expect(third.status == .lost && session.boundSources.isEmpty && session.activeSessions == 0)
     #expect(events.count == 4 && !events.contains { $0.command.destination.number == 64 })
 }
+
+
+@Test func dualPhoneStickLossDoesNotReleaseOtherStickOnSameDrumPort() throws {
+    let profile = try #require(PerformanceGroupStarterPreset.dualPhoneSticks.makeProfile())
+    let group = try #require(profile.groups.first)
+    var session = try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
+    let left = try session.bind(.phone,now:1)
+    let right = try session.bind(.phone2,now:1)
+    var events:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { events.append($0);return true }
+    _ = session.receiveRemote(.phone,token:left,bytes:wire("drumPads",4,1,",\"mask\":0"),hostTime:1.01,now:1.01,send:sink)
+    _ = session.receiveRemote(.phone2,token:right,bytes:wire("drumPads",4,1,",\"mask\":0"),hostTime:1.01,now:1.01,send:sink)
+    _ = session.receiveRemote(.phone,token:left,bytes:wire("drumPads",4,2,",\"mask\":2"),hostTime:1.02,now:1.02,send:sink)
+    _ = session.receiveRemote(.phone2,token:right,bytes:wire("drumPads",4,2,",\"mask\":4"),hostTime:1.03,now:1.03,send:sink)
+    #expect(events.count == 2 && events.allSatisfy { $0.groupID == group.id && $0.command.value > 0 })
+    #expect(Set(events.map(\.command.destination.number)) == [38,42])
+    events.removeAll()
+    _ = session.unbindRemoteBatch([.phone:left],send:sink)
+    #expect(events.count == 1 && events[0].command.destination.number == 38 && events[0].command.value == 0)
+    #expect(session.boundSources == [.phone2] && session.activeSessions == 1)
+    events.removeAll()
+    let stale = session.receiveRemote(.phone,token:left,bytes:wire("drumPads",4,3,",\"mask\":2"),hostTime:1.04,now:1.04,send:sink)
+    #expect(stale.status == .ignored && events.isEmpty)
+    _ = session.receiveRemote(.phone2,token:right,bytes:wire("drumPads",4,3,",\"mask\":0"),hostTime:1.05,now:1.05,send:sink)
+    #expect(events.count == 1 && events[0].command.destination.number == 42 && events[0].command.value == 0)
+    #expect(session.activeSessions == 0)
+}

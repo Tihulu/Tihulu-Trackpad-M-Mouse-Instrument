@@ -1247,7 +1247,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pianoChanged(false);return Boolean(admitted);
   }
   function syncPiano(){
-    pianoEnable.disabled=!admitted||!caps?.piano||!modeAllows("piano");pianoEnable.textContent=pianoEnabled?"Disable piano":"Enable piano";
+    pianoEnable.disabled=!admitted||!caps?.piano||!modeAllows("piano");pianoEnable.textContent=(pianoEnabled?"Disable ":"Enable ")+({chord:"chord pads",arp:"arpeggiator",seq:"sequencer"}[playMode]||"piano");
     pianoRelease.disabled=!admitted||!pianoBusy();
     octaveDown.disabled=!admitted||!pianoEnabled||pianoOctave===0||!octaveAvailable(0)||pianoBusy();
     octaveUp.disabled=!admitted||!pianoEnabled||pianoOctave===1||!octaveAvailable(1)||pianoBusy();
