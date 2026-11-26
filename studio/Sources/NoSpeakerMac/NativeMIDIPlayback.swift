@@ -56,7 +56,7 @@ public final class NativeMIDIPlayback {
 
     /// Local ledger state, not proof that the remote receiver is silent.
     public var lifecycle:Lifecycle {
-        .init(state:player.state.rawValue,sourceOpen:endpoint != 0,running:running,
+        .init(state:player.state.rawValue,sourceOpen:endpoint != 0,running:running || closingSession,
               identityRetired:identityRetired,disposalFailed:disposalFailed,outstandingNotes:player.outstanding.count,
               recoveryRequired:identityRetired || disposalFailed || (player.state != .playing && !player.outstanding.isEmpty))
     }
@@ -76,6 +76,9 @@ public final class NativeMIDIPlayback {
     private var player:BoundedMIDIPlayback
     private var opened=false
     private var running=false
+    // A compound operation owns the endpoint until disposal or failure,
+    // including the actor-resumption boundary after the async run.
+    private var closingSession=false
     private var stopRequested=false
     private var maximumIdentityCheckNS:UInt64=0
     private var maximumNativeSendNS:UInt64=0
@@ -143,6 +146,11 @@ public final class NativeMIDIPlayback {
     public func requestStop() { if player.state == .ready || player.state == .playing { stopRequested=true } }
 
     public func run() async throws -> Report {
+        guard !closingSession else { throw Failure.invalidLifecycle }
+        return try await runPlayback()
+    }
+
+    private func runPlayback() async throws -> Report {
         guard opened,endpoint != 0,!running,player.state == .ready,!identityRetired else {
             throw Failure.invalidLifecycle
         }
@@ -229,30 +237,43 @@ public final class NativeMIDIPlayback {
     /// The caller retains this instance if any stage requires recovery.
     /// Never automatically opens a device or treats a fault as success.
     public func runAndClose() async throws -> ClosedSessionReport {
-        guard opened,endpoint != 0,!running,player.state == .ready else {
+        try await runAndClose(beforeClose:{})
+    }
+
+    // Internal fixture seam verifies the exclusive finalization boundary.
+    func runAndClose(beforeClose:()->Void) async throws -> ClosedSessionReport {
+        guard opened,endpoint != 0,!running,!closingSession,player.state == .ready else {
             throw Failure.invalidLifecycle
         }
+        closingSession=true
+        defer { closingSession=false }
         let initial:Report
         do {
-            initial=try await run()
+            initial=try await runPlayback()
         } catch {
             let primary=error
-            do { try close() }
+            do { try closePlayback() }
             catch { throw Failure.sessionFailure(primary.localizedDescription,error.localizedDescription) }
             throw primary
         }
-        let final=initial.outstandingNotes>0 ? try retryCleanup() : initial
+        beforeClose()
+        let final=initial.outstandingNotes>0 ? try retryPlaybackCleanup() : initial
         guard final.cleanupConfirmed else {
             if identityRetired { throw Failure.sourceIdentityLost }
             throw Failure.cleanupPending
         }
-        try close()
+        try closePlayback()
         return .init(playback:final,completed:final.state=="finished" && !final.cancelled,
                      sourceDisposed:endpoint==0,recoveryRequired:lifecycle.recoveryRequired)
     }
 
     /// Retry only outstanding note-offs on the exact original endpoint.
     public func retryCleanup() throws -> Report {
+        guard !closingSession else { throw Failure.invalidLifecycle }
+        return try retryPlaybackCleanup()
+    }
+
+    private func retryPlaybackCleanup() throws -> Report {
         guard opened,endpoint != 0,!running,player.state != .ready,
               player.state != .playing else { throw Failure.invalidLifecycle }
         let gate=IdentityGate(source:endpoint,id:sourceID,name:sourceName,retired:identityRetired)
@@ -280,6 +301,11 @@ public final class NativeMIDIPlayback {
 
     /// Never silently discard note debt or a failed endpoint disposal.
     public func close() throws {
+        guard !closingSession else { throw Failure.invalidLifecycle }
+        try closePlayback()
+    }
+
+    private func closePlayback() throws {
         guard opened,endpoint != 0,!running else { throw Failure.invalidLifecycle }
         guard player.outstanding.isEmpty else { throw Failure.cleanupPending }
         let source=endpoint

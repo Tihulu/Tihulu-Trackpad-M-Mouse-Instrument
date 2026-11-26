@@ -404,4 +404,22 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     for player in players.dropFirst() { try player.close() }
     #expect(players.allSatisfy { !$0.lifecycle.sourceOpen })
 }
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackCompoundSessionRetainsExclusiveFinalization() async throws {
+    let player=try NativeMIDIPlayback(clip:nativePlaybackClip())
+    try player.open()
+    defer { _=try? player.close() }
+    player.requestStop()
+    var visited=false
+    let result=try await player.runAndClose(beforeClose:{
+        visited=true
+        #expect(player.lifecycle.running && player.lifecycle.sourceOpen)
+        #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
+        #expect(throws:NativeMIDIPlayback.Failure.self) { _=try player.retryCleanup() }
+        #expect(player.lifecycle.sourceOpen)
+    })
+    #expect(visited && result.sourceDisposed && !result.completed)
+    #expect(result.playback.cleanupConfirmed && !player.lifecycle.running && !player.lifecycle.sourceOpen)
+}
 #endif
