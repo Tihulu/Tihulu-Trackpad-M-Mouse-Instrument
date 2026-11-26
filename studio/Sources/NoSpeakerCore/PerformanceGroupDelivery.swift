@@ -36,6 +36,22 @@ public struct PerformanceGroupDelivery: Sendable {
         }
     }
 
+    /// A receipt expiry can retire a Group even if all wire sends succeeded.
+    /// This presentation summary must not assert a failed CoreMIDI call
+    /// when only admission failed, or conceal retained cleanup debt.
+    public static func faultNotice(_ reports:[Report]) -> String? {
+        let expired=reports.contains { $0.admissionExpired }
+        let failed=reports.contains { !$0.failedGroups.isEmpty }
+        guard expired || failed else { return nil }
+        if expired && failed {
+            return "Group input expired or MIDI delivery failed. Affected groups stopped; inspect cleanup status."
+        }
+        if expired {
+            return "Group input expired. Affected source released; use a fresh neutral input or reconnect as required."
+        }
+        return "A group MIDI send or cleanup failed. Affected groups stopped; inspect cleanup status."
+    }
+
     private struct Output: Sendable {
         var ledger: PatchOutputLedger
         var retired = false

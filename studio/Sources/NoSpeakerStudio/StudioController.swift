@@ -564,8 +564,9 @@ final class StudioController: ObservableObject {
         if !failures.isEmpty {
             groupFaultIDs.formUnion(failures)
             groupStoppedIDs.formUnion(failures)
-            groupGamepadStatus = "A group MIDI send failed. Affected groups stopped; inspect cleanup status."
         }
+        let faultNotice=PerformanceGroupDelivery.faultNotice(reports)
+        if let faultNotice { groupGamepadStatus = faultNotice }
         // Publish reconciled edges promptly, not just on the next 20 ms
         // watchdog. The independent latest-frame mailbox never waits for
         // the physical driver. Silent polling does not do extra rendering.
@@ -574,7 +575,12 @@ final class StudioController: ObservableObject {
         }
         refreshGroupOutputState()
         if groupGamepadsRunning, !groupRegisteredIDs.isEmpty,
-           groupRegisteredIDs.isSubset(of:groupStoppedIDs) { stopGroupGamepads() }
+           groupRegisteredIDs.isSubset(of:groupStoppedIDs) {
+            stopGroupGamepads()
+            // Retain the reason rather than replacing it with a generic
+            // Stop message when the last live endpoint is retired.
+            if let faultNotice { groupGamepadStatus = faultNotice + " " + groupGamepadStatus }
+        }
     }
 
     /// Sample the complete set of mapped Xbox slots before sending MIDI.

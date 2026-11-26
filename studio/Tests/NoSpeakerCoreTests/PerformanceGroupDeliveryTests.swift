@@ -229,3 +229,17 @@ private func deliveryGroup(_ source: SensorSource, signal: SensorSignal = .conta
     #expect(!report.admissionExpired && report.failedGroups.isEmpty && report.pendingCleanup.isEmpty)
     #expect(wire == [.init(groupID:group.id,command:.init(cc,value:32))])
 }
+
+
+@Test func groupFaultNoticeSeparatesAdmissionFromTransportAndMixedRetirement() throws {
+    let group=deliveryGroup(.trackpad)
+    var output=try PerformanceGroupDelivery(profile:.init(groups:[group]))
+    let lease=try output.connect(.trackpad,now:1)
+    let silent=output.admittedFrame(lease:lease,sequence:1,now:1,values:[.contact:1],releasing:[],admit:{false},send:{_ in Issue.record("Expired wire attempt");return false})
+    #expect(PerformanceGroupDelivery.faultNotice([])==nil)
+    #expect(PerformanceGroupDelivery.faultNotice([silent])?.contains("input expired")==true)
+    #expect(PerformanceGroupDelivery.faultNotice([silent])?.contains("MIDI delivery failed")==false)
+    let failed=output.frame(lease:lease,sequence:1,now:1,values:[.contact:1]){_ in false}
+    #expect(PerformanceGroupDelivery.faultNotice([failed])?.contains("MIDI send or cleanup failed")==true)
+    #expect(PerformanceGroupDelivery.faultNotice([silent,failed])?.contains("expired or MIDI delivery failed")==true)
+}

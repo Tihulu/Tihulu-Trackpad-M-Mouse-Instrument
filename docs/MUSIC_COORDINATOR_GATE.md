@@ -122,3 +122,8 @@ A send/receipt fault or explicit Group Stop can retire all members of another so
 ## Native scalar and controller read receipt
 
 Capture monotonic receipt before synchronous HID lid report/controller snapshot reads rather than after completion. Group and Builder callbacks propagate that original receipt. Lid adapter refuses a blocked read or a gap beyond the existing physical timeout, including on initial probe; legacy hinge callback also receives only admitted samples. Builder rejects stale pre-delivery snapshots through its owned Stop cleanup instead of fencing note-offs with an expired receipt. Core Gamepad expiry now uses original receipt and rejects reordered samples. Existing public event callback remains available. New portable regression covers delayed renewal, stale neutral and reordered receipt. Native hardware acceptance remains separate; the snapshot receipt is host read start, not a hardware event timestamp. No deadline relaxation.
+
+
+## Group fault presentation
+
+Do not describe every receipt retirement as a failed MIDI send. Derive the notice from admission expiry and failed Group reports, including mixed/ambiguous outcomes. Preserve the reason when the final Group is automatically stopped; cleanup debt remains independently visible. One portable regression verifies admission-only, wire-failure and mixed summaries. No output policy change.
