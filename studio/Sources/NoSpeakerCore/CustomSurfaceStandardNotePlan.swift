@@ -33,16 +33,18 @@ public struct CustomSurfaceStandardNotePlan: Sendable {
         for intent in snapshot.intents {
             guard desired[intent.contactID]==nil,(1...127).contains(intent.velocity),
                   let pad=layout.pads.first(where:{$0.id==intent.padID}),pad.assignment==intent.assignment else{return nil}
-            let targets:[SensorDestination]
-            switch pad.assignment {
-            case .note(let note):targets=[.init(.note,channel:melodicChannel,number:note)]
-            case .chord(let notes):targets=notes.map{.init(.note,channel:melodicChannel,number:$0)}
-            case .drum(let note):targets=[.init(.note,channel:GMDrumPads.midiChannel,number:note)]
-            default:return nil
-            }
-            desired[intent.contactID]=Set(targets)
+            guard let targets=Self.noteTargets(pad.assignment,melodicChannel:melodicChannel) else{return nil}
+            desired[intent.contactID]=targets
             velocities[intent.contactID]=intent.velocity
         }
         return .init(desired:desired,velocities:velocities)
+    }
+    static func noteTargets(_ assignment:CustomSurfacePadLayout.Assignment,melodicChannel:Int)->Set<SensorDestination>? {
+        switch assignment {
+        case .note(let note):return [.init(.note,channel:melodicChannel,number:note)]
+        case .chord(let notes):return Set(notes.map{.init(.note,channel:melodicChannel,number:$0)})
+        case .drum(let note):return [.init(.note,channel:GMDrumPads.midiChannel,number:note)]
+        default:return nil
+        }
     }
 }
