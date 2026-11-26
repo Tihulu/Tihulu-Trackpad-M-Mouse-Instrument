@@ -27,7 +27,7 @@ enum class AirMode { PINCH_KEYS, CHORDS, STRINGS, HORIZONTAL, VERTICAL, APERTURE
 }
 enum class HandRole { SINGLE, LEFT, RIGHT }
 enum class Orientation { UP, CLOCKWISE, DOWN, COUNTERCLOCKWISE }
-data class AirOutput(val keys:Int=0,val level:Double?=null)
+data class AirOutput(val keys:Int=0, val level:Double?=null, val xyz:List<Double?>?=null)
 data class AlignedDepth(val meters:Double,val provenance:DepthProvenance,
     val rgbNs:Long,val depthNs:Long,val role:HandRole)
 

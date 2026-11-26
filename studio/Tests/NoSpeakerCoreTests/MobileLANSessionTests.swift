@@ -270,3 +270,32 @@ private func host(_ piano:Int=1,_ pedals:Int=0)throws->String {
     #expect(bridge.connectionIDs == [peer,other])
     #expect(hostSession.boundSources == [.phone,.tablet])
 }
+
+@Test func xyzSessionSendsOneAuthorizedSnapshotAndReleasesAfterSourceLoss() throws {
+    var session = MobileLANSession(selection: .xyz(mask: 5))
+    _ = session.begin(trustedTLS: true, subprotocol: "tihulu-touch-v1", invitation: invitation, now: 0)
+    _ = session.receive(text: "admitted", now: ns(1))
+    let initial = try packet(session.receive(text: try host(0,7), now: ns(15)))
+    #expect(initial.kind == .pedalboard && initial.mask == 0)
+    _ = session.receive(text: "accepted", now: ns(20))
+    let active = try packet(session.offer(.init(xyz: [0, nil, 0.7]), observedAt: ns(30), now: ns(30)))
+    #expect(active.sequence == 3 && active.mask == 5 && active.levels == [0,0,0.7,0,0,0])
+    _ = session.receive(text: "accepted", now: ns(40))
+    let release = try packet(session.poll(now: ns(180)))
+    #expect(release.sequence == 4 && release.mask == 0 && release.levels == [0,0,0,0,0,0])
+    _ = session.receive(text: "accepted", now: ns(190))
+    #expect(session.offer(.init(xyz: [0.5,nil,1]), observedAt: ns(185), now: ns(195)) == .wait)
+}
+
+@Test func xyzSessionRefusesPartialAssignmentsAndInvalidActiveSnapshots() throws {
+    let manifest = try #require(MobileLANCapabilities.parseSingleFamily(Data(try host(0,5).utf8)))
+    #expect(manifest.xyzLane(mask: 7) == nil)
+    let lane = try #require(manifest.xyzLane(mask: 5))
+    for output in [MobileAirOutput(xyz: [0,1,0]), .init(xyz: [nil,nil,nil]), .init(xyz: [0,nil]),
+                   .init(xyz: [.nan,nil,0]), .init(xyz: [0,nil,2]), .init(keys: 1), .init(level: 0)] {
+        #expect(throws: RemoteTouchError.self) { try lane.encode(output, sequence: 1) }
+    }
+    #expect(throws: RemoteTouchError.self) {
+        try MobileAirWireLane.helper(index: 0, authorized: 7).encode(.init(xyz:[1,1,1]),sequence:1)
+    }
+}

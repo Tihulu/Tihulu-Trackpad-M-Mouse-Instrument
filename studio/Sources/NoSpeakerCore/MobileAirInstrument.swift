@@ -27,7 +27,13 @@ public struct MobileAirOutput: Equatable, Sendable {
     public var keys: Int = 0
     /// nil releases this control. Zero is a valid active control value.
     public var level: Double?
-    public init(keys: Int = 0, level: Double? = nil) { self.keys = keys; self.level = level }
+    /// Three simultaneous continuous lanes in X/Y/Z order. A nil slot is disabled.
+    public var xyz: [Double?]?
+    public init(keys: Int = 0, level: Double? = nil, xyz: [Double?]? = nil) {
+        self.keys = keys
+        self.level = level
+        self.xyz = xyz
+    }
 }
 
 public struct MobileAirInstrument: Sendable {

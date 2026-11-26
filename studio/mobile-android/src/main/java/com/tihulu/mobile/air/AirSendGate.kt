@@ -130,7 +130,8 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
         if(previous!=null&&previous.keys!=output.keys&&previous.keys!=0&&output.keys!=0&&
             (pendingAt!=null||lastSend?.let {now-it<PACE_NS}==true))
             return close("Discrete edge cannot be delivered on time")
-        sample=output;sampledAt=observedAt;stringDeadlines=deadlines.toMap()
+        sample = if (output.xyz == null) output else output.copy(xyz = output.xyz.toList())
+        sampledAt=observedAt;stringDeadlines=deadlines.toMap()
         return poll(now)
     }
     private fun rememberReleaseDeadlines() {

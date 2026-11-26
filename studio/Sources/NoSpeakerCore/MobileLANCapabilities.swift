@@ -7,6 +7,10 @@ public enum MobileLANCapabilities {
     public struct Manifest: Equatable, Sendable {
         public let piano: Int
         public let pedals: Int
+        public func xyzLane(mask: Int) -> MobileAirWireLane? {
+            guard piano == 0, (1...7).contains(mask), mask & pedals == mask else { return nil }
+            return .xyz(mask: mask, authorized: pedals)
+        }
         public func keysLane() -> MobileAirWireLane? {
             guard piano>0,pedals==0 else {return nil}
             return .keys(authorized:piano)

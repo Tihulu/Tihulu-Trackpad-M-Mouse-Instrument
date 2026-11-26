@@ -72,20 +72,40 @@ public struct MobileAirCaptureProjection: Sendable {
 public enum MobileAirWireLane: Sendable {
     case keys(authorized: Int)
     case helper(index: Int, authorized: Int)
+    case xyz(mask: Int, authorized: Int)
     public func encode(_ output:MobileAirOutput,sequence:UInt64) throws -> Data {
         guard (1...9_007_199_254_740_991).contains(sequence) else { throw RemoteTouchError.invalidFrame }
         let fields:[String:Any]
         switch self {
         case .keys(let authorized):
             guard (1..<(1<<25)).contains(authorized), (0..<(1<<25)).contains(output.keys),
-                  output.keys & authorized == output.keys,output.level == nil else { throw RemoteTouchError.invalidFrame }
+                  output.keys & authorized == output.keys, output.level == nil, output.xyz == nil else { throw RemoteTouchError.invalidFrame }
             fields=["kind":"pianoKeys","version":5,"sequence":sequence,"mask":output.keys]
         case .helper(let index,let authorized):
             guard (0..<3).contains(index),(1...63).contains(authorized),authorized & (1<<index) != 0,
-                  output.keys == 0,output.level.map({ $0.isFinite && (0...1).contains($0) }) ?? true else { throw RemoteTouchError.invalidFrame }
+                  output.keys == 0, output.xyz == nil, output.level.map({ $0.isFinite && (0...1).contains($0) }) ?? true else { throw RemoteTouchError.invalidFrame }
             var levels=Array(repeating:0.0,count:6)
             if let level=output.level { levels[index]=level }
             fields=["kind":"pedalboard","version":6,"sequence":sequence,"mask":output.level == nil ? 0 : 1<<index,"levels":levels]
+        case .xyz(let mask, let authorized):
+            guard (1...7).contains(mask), (1...63).contains(authorized),
+                  mask & authorized == mask, output.keys == 0, output.level == nil else {
+                throw RemoteTouchError.invalidFrame
+            }
+            var levels = Array(repeating: 0.0, count: RemotePedalboard.signals.count)
+            var active = 0
+            if let axes = output.xyz {
+                guard axes.count == 3 else { throw RemoteTouchError.invalidFrame }
+                for (index, value) in axes.enumerated() {
+                    if let value {
+                        guard value.isFinite, (0...1).contains(value) else { throw RemoteTouchError.invalidFrame }
+                        active |= 1 << index
+                        levels[index] = value
+                    }
+                }
+                guard active == mask else { throw RemoteTouchError.invalidFrame }
+            }
+            fields = ["kind":"pedalboard", "version":6, "sequence":sequence, "mask":active, "levels":levels]
         }
         let bytes=try JSONSerialization.data(withJSONObject:fields,options:[.sortedKeys])
         _ = try RemoteTouchFrame.read(bytes)

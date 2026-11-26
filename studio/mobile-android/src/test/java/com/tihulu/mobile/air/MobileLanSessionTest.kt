@@ -115,4 +115,28 @@ class MobileLanSessionTest {
         assertNull(s.readyManifest)
         assertTrue(s.receive("accepted",ms(181)) is MobileLanSession.Action.Close)
     }
+    @Test fun xyzUsesOneGrantedSnapshotAndReleasesAtSourceExpiry() {
+        val session = MobileLanSession(MobileLanSession.Selection.XYZ(5))
+        session.begin(true, "tihulu-touch-v1", token, 0)
+        session.receive("admitted", ms(1))
+        assertTrue(packet(session.receive(host(0,7), ms(15))).contains("\"mask\":0"))
+        session.receive("accepted", ms(20))
+        val axes = mutableListOf<Double?>(0.0, null, 0.7)
+        val frame = packet(session.offer(AirOutput(xyz = axes), ms(30), ms(30)))
+        assertTrue(frame.contains("\"mask\":5,\"levels\":[0.0,0,0.7,0,0,0]"))
+        axes[0] = 1.0
+        session.receive("accepted", ms(40))
+        assertTrue(packet(session.poll(ms(80))).contains("[0.0,0,0.7,0,0,0]"))
+        session.receive("accepted", ms(85))
+        assertTrue(packet(session.poll(ms(180))).contains("\"mask\":0"))
+    }
+    @Test fun xyzRejectsIncompleteGrantAndInvalidOutput() {
+        val manifest = checkNotNull(MobileLanCapabilities.parseSingleFamily(host(0,5)))
+        assertNull(manifest.xyzLane(7))
+        val lane = checkNotNull(manifest.xyzLane(5))
+        for (output in listOf(AirOutput(xyz=listOf(1.0,1.0,1.0)), AirOutput(level=0.5),
+            AirOutput(xyz=listOf(0.0,null,Double.NaN)), AirOutput(keys=1))) {
+            assertThrows(IllegalArgumentException::class.java) { lane.encode(output,1) }
+        }
+    }
 }

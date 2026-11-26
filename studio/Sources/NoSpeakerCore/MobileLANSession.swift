@@ -5,7 +5,7 @@ import Foundation
 /// serialize all calls, dispatch actions immediately and poll on its own clock.
 /// This type cannot open sockets, verify certificates or grant host authority.
 public struct MobileLANSession: Sendable {
-    public enum Selection: Sendable { case keys, helper(Int) }
+    public enum Selection: Sendable { case keys, helper(Int), xyz(mask: Int) }
     public enum Phase: Equatable, Sendable { case idle, admission, capabilities, neutralDelay, neutralACK, ready, reconfiguring, closed }
     public enum Action: Equatable, Sendable { case wait, binary(Data), text(Data), close(String) }
     public private(set) var phase:Phase = .idle
@@ -64,6 +64,7 @@ public struct MobileLANSession: Sendable {
             guard let manifest=MobileLANCapabilities.parseSingleFamily(Data(text.utf8)) else {return close("Unsupported manifest")}
             switch selection {
             case .keys:lane=manifest.keysLane()
+            case .xyz(let mask): lane = manifest.xyzLane(mask: mask)
             case .helper(let index):lane=manifest.helperLane(index:index)
             }
             guard lane != nil else {return close("Unassigned lane")}

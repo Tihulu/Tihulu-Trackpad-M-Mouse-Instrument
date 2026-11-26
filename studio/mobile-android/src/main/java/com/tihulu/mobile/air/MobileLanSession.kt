@@ -4,7 +4,7 @@ package com.tihulu.mobile.air
  * Serialize calls, dispatch immediately and poll independently. Only the
  * authenticated current connection can supply begin/receive events. */
 class MobileLanSession(private val selection:Selection) {
-    sealed interface Selection { data object Keys:Selection; data class Helper(val index:Int):Selection }
+    sealed interface Selection { data object Keys:Selection; data class Helper(val index:Int):Selection; data class XYZ(val mask:Int):Selection }
     enum class Phase { IDLE, ADMISSION, CAPABILITIES, NEUTRAL_DELAY, NEUTRAL_ACK, READY, RECONFIGURING, CLOSED }
     sealed interface Action {
         data object Wait:Action
@@ -53,7 +53,11 @@ class MobileLanSession(private val selection:Selection) {
             }
             Phase.CAPABILITIES->{
                 val manifest=MobileLanCapabilities.parseSingleFamily(text)?:return close("Unsupported manifest")
-                lane=when(val s=selection){Selection.Keys->manifest.keysLane();is Selection.Helper->manifest.helperLane(s.index)}
+                lane = when (val selected = selection) {
+                    Selection.Keys -> manifest.keysLane()
+                    is Selection.Helper -> manifest.helperLane(selected.index)
+                    is Selection.XYZ -> manifest.xyzLane(selected.mask)
+                }
                 if(lane==null)return close("Unassigned lane")
                 this.manifest = manifest
                 pendingAt=null;phase=Phase.NEUTRAL_DELAY;poll(now)
@@ -107,6 +111,7 @@ class MobileLanSession(private val selection:Selection) {
                       near:Double=.25,far:Double=.85,allowEstimatedDepth:Boolean=false):AirProjection? {
         val assigned=readyManifest?:return null
         val authorized=when(val selected=selection) {
+            is Selection.XYZ -> return null
             Selection.Keys -> if(!mode.isHelper&&assigned.keysLane()!=null)assigned.piano else return null
             is Selection.Helper -> if(mode.isHelper&&assigned.helperLane(selected.index)!=null)0 else return null
         }

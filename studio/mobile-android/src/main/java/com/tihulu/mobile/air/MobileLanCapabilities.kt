@@ -4,6 +4,8 @@ package com.tihulu.mobile.air
  * not authentication or admission. Host must authorize every frame. */
 object MobileLanCapabilities {
     class Manifest internal constructor(val piano:Int,val pedals:Int) {
+        fun xyzLane(mask: Int): AirWireLane.XYZ? =
+            if (piano == 0 && mask in 1..7 && (mask and pedals) == mask) AirWireLane.XYZ(mask, pedals) else null
         fun keysLane():AirWireLane.Keys?=if(piano>0&&pedals==0)AirWireLane.Keys(piano) else null
         fun helperLane(index:Int):AirWireLane.Helper?=if(piano==0&&index in 0..2&&(pedals and (1 shl index))!=0)AirWireLane.Helper(index,pedals) else null
     }
