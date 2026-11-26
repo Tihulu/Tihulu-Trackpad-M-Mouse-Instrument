@@ -19,7 +19,12 @@ object FingerGeometry {
     }
 }
 enum class AirMode { PINCH_KEYS, CHORDS, STRINGS, HORIZONTAL, VERTICAL, APERTURE, SPEED,
-    PINCH_HELPER, TOGGLE_HELPER, BEAM_KEYS, BEAM_HELPER }
+    PINCH_HELPER, TOGGLE_HELPER, BEAM_KEYS, BEAM_HELPER;
+    val isHelper:Boolean get() = when(this) {
+        HORIZONTAL, VERTICAL, APERTURE, SPEED, PINCH_HELPER, TOGGLE_HELPER, BEAM_HELPER -> true
+        else -> false
+    }
+}
 enum class HandRole { SINGLE, LEFT, RIGHT }
 enum class Orientation { UP, CLOCKWISE, DOWN, COUNTERCLOCKWISE }
 data class AirOutput(val keys:Int=0,val level:Double?=null)
@@ -35,7 +40,7 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
     private val allowEstimatedDepth:Boolean=false) {
     private val keyList=(0..24).filter {(authorized and (1 shl it))!=0}
     private val shapes=listOf(listOf(0,4,7),listOf(2,5,9),listOf(4,7,11),listOf(5,9,12),listOf(7,11,14))
-    private val helper=mode in setOf(AirMode.HORIZONTAL,AirMode.VERTICAL,AirMode.APERTURE,AirMode.SPEED,AirMode.PINCH_HELPER,AirMode.TOGGLE_HELPER,AirMode.BEAM_HELPER)
+    private val helper=mode.isHelper
     private val beam=mode==AirMode.BEAM_HELPER||mode==AirMode.BEAM_KEYS
     init {
         require(authorized in 0 until (1 shl 25) && (helper||keyList.isNotEmpty()))

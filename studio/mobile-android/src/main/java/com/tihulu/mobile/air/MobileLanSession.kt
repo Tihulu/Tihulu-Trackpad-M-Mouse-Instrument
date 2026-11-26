@@ -86,5 +86,18 @@ class MobileLanSession(private val selection:Selection) {
         if(phase!=Phase.READY)return poll(now)
         return translate(gate?.offer(output,observedAt,now,stringDeadlines)?:return close("Missing sender"))
     }
+    /** A paired projection may be constructed only after neutral ACK.
+     * It uses the confirmed mask, never the diagnostic full keyboard. */
+    fun newProjection(mode:AirMode,role:HandRole=HandRole.SINGLE,
+                      orientation:Orientation=Orientation.UP,mirror:Boolean=false,
+                      near:Double=.25,far:Double=.85,allowEstimatedDepth:Boolean=false):AirProjection? {
+        val assigned=readyManifest?:return null
+        val authorized=when(val selected=selection) {
+            Selection.Keys -> if(!mode.isHelper&&assigned.keysLane()!=null)assigned.piano else return null
+            is Selection.Helper -> if(mode.isHelper&&assigned.helperLane(selected.index)!=null)0 else return null
+        }
+        return try { AirProjection(mode,authorized,role,orientation,mirror,near,far,allowEstimatedDepth) }
+        catch(_:IllegalArgumentException){null}
+    }
     fun abort():Action=close("Stopped explicitly")
 }

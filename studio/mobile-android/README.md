@@ -44,3 +44,19 @@ The non-exported AirPreviewActivity is an embedding-app diagnostic view with cam
 ## Optional ARCore depth diagnostic in preview
 
 The preview APK now includes optional ARCore runtime and an explicit rear raw-depth selector (estimated/fused, not guaranteed ToF). It can request Play Services for AR installation only after the user chooses depth and presses Start. After the install flow the user must press Start again. A single-use offscreen EGL worker owns camera texture, session and local hand model. No raw frames are drawn. The UI polls a bounded latest derived reading, neutralizes stale readings, invalidates on stop/pause, and waits for teardown; a process-local capture lease prevents RGB/ARCore overlap. Beam notes/helper, three near/far presets and explicit raw image orientation are exposed. ARCore zoom/lens are locked for alignment. Camera2 DEPTH16 live acquisition, actual device validation, signed production packaging and MIDI transport remain open. The preview APK still has no Internet permission; Play Services is a separate system component.
+
+## Native LAN policy (not enabled in the APK)
+
+The experimental OkHttp adapter can negotiate the single-family host protocol,
+with normal TLS verification, private numeric LAN endpoints, one-time invitation,
+neutral ACK, per-session watchdog and no automatic retry. The camera Activity
+is still offline and the manifest explicitly removes INTERNET. The socket's
+ready assignment and paired projection factory are available only after neutral
+ACK; they reject incompatible instrument families and never substitute the full
+diagnostic keyboard. The ARCore diagnostic source now requires an explicit
+key mask. Android Air Strings supplies per-key monotonic pulse deadlines via
+projection, session and socket; the sender independently expires them and
+closes when a timely release is blocked by ACK or pacing. The local preview
+is unchanged. Before live pairing: bound incoming WebSocket message assembly,
+provision trust for a verified local CA without weakening TLS, connect the
+camera UI to the admitted lane, and validate on physical Android devices.

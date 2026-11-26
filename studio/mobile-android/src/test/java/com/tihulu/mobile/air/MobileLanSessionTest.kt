@@ -57,4 +57,38 @@ class MobileLanSessionTest {
         session.abort()
         assertNull(session.readyManifest)
     }
+
+    @Test fun pairedProjectionRequiresNeutralAckAndMatchesFamily() {
+        val s=MobileLanSession(MobileLanSession.Selection.Keys)
+        assertNull(s.newProjection(AirMode.PINCH_KEYS))
+        s.begin(true,"tihulu-touch-v1",token,0);s.receive("admitted",ms(1));s.receive(host(1 shl 19),ms(15))
+        assertNull(s.newProjection(AirMode.PINCH_KEYS))
+        s.receive("accepted",ms(20))
+        assertNull(s.newProjection(AirMode.STRINGS))
+        assertNull(s.newProjection(AirMode.CHORDS,HandRole.RIGHT))
+        assertNull(s.newProjection(AirMode.HORIZONTAL))
+        val p=checkNotNull(s.newProjection(AirMode.PINCH_KEYS))
+        fun frame(aperture:Double,t:Long)=Frame(listOf(Observation(Hand(.5,.5,aperture),"right",1f)),ms(t))
+        p.receive(frame(.5,21),ms(21));p.receive(frame(.5,40),ms(40))
+        val out=p.receive(frame(.1,60),ms(60))
+        assertEquals(1 shl 19,out.keys)
+        assertTrue(packet(s.offer(out,ms(60),ms(60))).contains("\"mask\":524288"))
+        s.abort()
+        assertNull(s.newProjection(AirMode.PINCH_KEYS))
+    }
+    @Test fun helperProjectionCannotSelectPianoOrDifferentFamily() {
+        val s=MobileLanSession(MobileLanSession.Selection.Helper(2))
+        s.begin(true,"tihulu-touch-v1",token,0);s.receive("admitted",ms(1));s.receive(host(0,4),ms(15))
+        s.receive("accepted",ms(20))
+        assertNull(s.newProjection(AirMode.PINCH_KEYS))
+        assertNotNull(s.newProjection(AirMode.HORIZONTAL))
+        assertNull(s.newProjection(AirMode.BEAM_HELPER,near=.9,far=.2))
+    }
+    @Test fun stringDeadlinesReachSessionWatchdog() {
+        val s=MobileLanSession(MobileLanSession.Selection.Keys)
+        s.begin(true,"tihulu-touch-v1",token,0);s.receive("admitted",ms(1));s.receive(host(7),ms(15));s.receive("accepted",ms(20))
+        assertTrue(packet(s.offer(AirOutput(keys=1),ms(30),ms(30),mapOf(0 to ms(100)))).contains("\"mask\":1"))
+        s.receive("accepted",ms(40))
+        assertTrue(packet(s.poll(ms(100))).contains("\"mask\":0"))
+    }
 }

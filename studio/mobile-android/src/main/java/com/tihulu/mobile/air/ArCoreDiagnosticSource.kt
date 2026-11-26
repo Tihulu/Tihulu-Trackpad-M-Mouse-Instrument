@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicReference
 class ArCoreDiagnosticSource(private val context:Context,private val model:LocalHandModel?,
     private val rotation:Int,private val displayRotation:Int,private val role:HandRole,
     private val mode:AirMode,private val orientation:Orientation,private val mirror:Boolean,
-    private val near:Double,private val far:Double) {
+    private val near:Double,private val far:Double,private val authorized:Int) {
     data class Reading(val output:AirOutput=AirOutput(),val observedAt:Long?=null,val status:String="Stopped")
     private val state=AtomicReference(Reading())
     private val started=AtomicBoolean(false)
@@ -50,7 +50,7 @@ class ArCoreDiagnosticSource(private val context:Context,private val model:Local
                 try {
                     if(cancelled.get()){cleanup();return@post}
                     initGL()
-                    val next=ArCoreAirStage(context,"hand_landmarker.task",rotation,role,mode,(1 shl 25)-1,orientation,mirror,near,far,model)
+                    val next=ArCoreAirStage(context,"hand_landmarker.task",rotation,role,mode,authorized,orientation,mirror,near,far,model)
                     stage=next
                     val session=Session(context)
                     if(!next.start(session,texture,displayRotation,640,480))error("Raw depth or session unavailable")

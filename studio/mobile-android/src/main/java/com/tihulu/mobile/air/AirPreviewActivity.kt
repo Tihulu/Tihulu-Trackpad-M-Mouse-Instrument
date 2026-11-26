@@ -242,7 +242,7 @@ class AirPreviewActivity: ComponentActivity() {
             @Suppress("DEPRECATION") val displayRotation=windowManager.defaultDisplay.rotation
             val s=ArCoreDiagnosticSource(applicationContext,model,imageRotation.selectedItemPosition*90,displayRotation,
                 HandRole.entries[rolePick.selectedItemPosition],depthModes[modePick.selectedItemPosition],
-                Orientation.entries[orientationPick.selectedItemPosition],mirror.isChecked,range.first,range.second)
+                Orientation.entries[orientationPick.selectedItemPosition],mirror.isChecked,range.first,range.second,(1 shl 25)-1)
             depthSource=s;controls();s.start();status.text="Starting ARCore diagnostic sensor"
         }catch(_:Exception){end("ARCore unavailable, unsupported or install declined")}
         catch(_:LinkageError){end("ARCore runtime not included by embedding app")}

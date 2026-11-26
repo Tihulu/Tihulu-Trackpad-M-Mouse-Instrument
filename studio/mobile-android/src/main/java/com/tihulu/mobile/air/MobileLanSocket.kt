@@ -59,6 +59,13 @@ class MobileLanSocket(private val endpoint:MobileLanEndpoint, selection:MobileLa
     fun offer(output:AirOutput,observedAt:Long,stringDeadlines:Map<Int,Long> = emptyMap())=synchronized(lock){
         if(!terminal&&opened)dispatch(policy.offer(output,observedAt,nowNs(),stringDeadlines))
     }
+    /** Camera owner must discard the returned projection when the session ends.
+     * A later offer still passes the independent current-session gate. */
+    fun newProjection(mode:AirMode,role:HandRole=HandRole.SINGLE,
+                      orientation:Orientation=Orientation.UP,mirror:Boolean=false,
+                      near:Double=.25,far:Double=.85,allowEstimatedDepth:Boolean=false):AirProjection?=synchronized(lock) {
+        if(terminal)null else policy.newProjection(mode,role,orientation,mirror,near,far,allowEstimatedDepth)
+    }
     fun stop()=synchronized(lock){finish("Stopped explicitly")}
     private fun watchdog(){
         if(terminal)return
