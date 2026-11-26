@@ -22,7 +22,8 @@ sealed class AirWireLane {
         init {require(index in 0..2 && authorized in 1..63 && (authorized and (1 shl index))!=0)}
         override fun encode(output:AirOutput,sequence:Long):ByteArray {
             require(output.keys==0 && (output.level?.let {it.isFinite()&&it in 0.0..1.0}?:true))
-            val levels=(0..5).map {i->if(i==index)output.level?:0.0 else 0.0}
+            // Inactive lanes must use the canonical integer token 0, not 0.0.
+            val levels=(0..5).map {i->if(i==index && output.level!=null && output.level!=0.0) output.level.toString() else "0"}
             val mask=if(output.level==null)0 else 1 shl index
             return packet(sequence,6,"pedalboard","\"mask\":$mask,\"levels\":[${levels.joinToString(",")}]")
         }

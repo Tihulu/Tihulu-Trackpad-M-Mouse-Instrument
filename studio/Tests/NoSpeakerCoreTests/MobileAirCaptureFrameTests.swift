@@ -74,9 +74,14 @@ private func observed(_ x:Double=0.5,open:Bool=true,fingers:Int?=nil) -> MobileA
 
 @Test func androidLogicalWireFixturesAreAcceptedByHostParser() throws {
     let keys = try RemoteTouchFrame.read(Data(#"{"kind":"pianoKeys","version":5,"sequence":1,"mask":145}"#.utf8))
-    let zero = try RemoteTouchFrame.read(Data(#"{"kind":"pedalboard","version":6,"sequence":3,"mask":4,"levels":[0.0,0.0,0.0,0.0,0.0,0.0]}"#.utf8))
-    let release = try RemoteTouchFrame.read(Data(#"{"kind":"pedalboard","version":6,"sequence":4,"mask":0,"levels":[0.0,0.0,0.0,0.0,0.0,0.0]}"#.utf8))
+    let zero = try RemoteTouchFrame.read(Data(#"{"kind":"pedalboard","version":6,"sequence":3,"mask":4,"levels":[0,0,0,0,0,0]}"#.utf8))
+    let release = try RemoteTouchFrame.read(Data(#"{"kind":"pedalboard","version":6,"sequence":4,"mask":0,"levels":[0,0,0,0,0,0]}"#.utf8))
     #expect(keys.mask == 145 && keys.kind == .pianoKeys)
     #expect(zero.mask == 4 && zero.kind == .pedalboard)
     #expect(release.mask == 0 && release.kind == .pedalboard)
+}
+
+@Test func androidNoncanonicalInactiveLevelsRemainRejected() {
+    #expect(throws:RemoteTouchError.invalidFrame) { try RemoteTouchFrame.read(Data(#"{"kind":"pedalboard","version":6,"sequence":3,"mask":4,"levels":[0.0,0,0,0,0,0]}"#.utf8)) }
+    #expect(throws:RemoteTouchError.invalidFrame) { try RemoteTouchFrame.read(Data(#"{"kind":"pedalboard","version":6,"sequence":4,"mask":0,"levels":[0,0,-0,0,0,0]}"#.utf8)) }
 }

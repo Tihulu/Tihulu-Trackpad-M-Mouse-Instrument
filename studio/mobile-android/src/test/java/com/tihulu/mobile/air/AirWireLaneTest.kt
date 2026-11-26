@@ -10,8 +10,8 @@ class AirWireLaneTest {
     }
     @Test fun activeZeroIsDifferentFromRelease() {
         val lane=AirWireLane.Helper(2,4)
-        assertEquals("""{"kind":"pedalboard","version":6,"sequence":3,"mask":4,"levels":[0.0,0.0,0.0,0.0,0.0,0.0]}""",lane.encode(AirOutput(level=0.0),3).decodeToString())
-        assertEquals("""{"kind":"pedalboard","version":6,"sequence":4,"mask":0,"levels":[0.0,0.0,0.0,0.0,0.0,0.0]}""",lane.encode(AirOutput(),4).decodeToString())
+        assertEquals("""{"kind":"pedalboard","version":6,"sequence":3,"mask":4,"levels":[0,0,0,0,0,0]}""",lane.encode(AirOutput(level=0.0),3).decodeToString())
+        assertEquals("""{"kind":"pedalboard","version":6,"sequence":4,"mask":0,"levels":[0,0,0,0,0,0]}""",lane.encode(AirOutput(),4).decodeToString())
     }
     @Test fun rejectsUnauthorizedAndNonfiniteValues() {
         fun rejected(f:()->Unit) {try {f();fail("invalid snapshot accepted")}catch(_:IllegalArgumentException){}}
@@ -25,4 +25,13 @@ class AirWireLaneTest {
         rejected {AirWireLane.Helper(2,4).encode(AirOutput(level=1.01),1)}
         rejected {AirWireLane.Helper(2,4).encode(AirOutput(keys=1),1)}
     }
+
+@Test fun canonicalInactiveTokensAcrossAllThreeHelperLanes() {
+    for(i in 0..2) {
+        val lane=AirWireLane.Helper(i,7)
+        val expected=(0..5).joinToString(",") { if(it==i) "0.25" else "0" }
+        assertTrue(lane.encode(AirOutput(level=.25),1).decodeToString().contains("\"levels\":[$expected]"))
+        assertTrue(lane.encode(AirOutput(level=-0.0),2).decodeToString().contains("\"levels\":[0,0,0,0,0,0]"))
+    }
+}
 }
