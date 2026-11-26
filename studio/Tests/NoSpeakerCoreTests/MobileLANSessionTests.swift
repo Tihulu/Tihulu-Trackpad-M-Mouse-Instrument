@@ -156,3 +156,56 @@ private func host(_ piano:Int=1,_ pedals:Int=0)throws->String {
     #expect(s.readyManifest == nil)
     #expect(s.receive(text:"accepted",now:ns(181)) == .close("Already closed"))
 }
+
+@Test func mobileLANModeChangeReleasesOnlyItsOwnGroupAndKeepsOtherPlayerBound() throws {
+    let phone=PerformanceInstrumentGroup(name:"Changing phone",patch:.init(routes:[.init(id:"phone0",source:.phone,signal:.pianoKey0,destination:.init(.note,number:60),velocity:93),.init(id:"phone1",source:.phone,signal:.pianoKey1,destination:.init(.note,number:62),velocity:91)]))
+    let tablet=PerformanceInstrumentGroup(name:"Independent tablet",patch:.init(routes:[.init(id:"tablet0",source:.tablet,signal:.pianoKey0,destination:.init(.note,number:64))]))
+    var hostSession=try PerformanceGroupGamepadSession(profile:.init(groups:[phone,tablet]),allowRemote:true)
+    var bridge=PerformanceGroupRemoteBridge()
+    let peer=UUID(),other=UUID(),secret=Data(repeating:0xab,count:32),otherSecret=Data(repeating:2,count:32)
+    var sent:[PerformanceGroupCommand]=[]
+    let sink:(PerformanceGroupCommand)->Bool={sent.append($0);return true}
+    _=bridge.process([.ready],now:1,session:&hostSession,send:sink)
+    try bridge.issue(secret:otherSecret,source:.tablet,now:1,session:hostSession)
+    _=bridge.process([.invitation(other,otherSecret,1.01)],now:1.01,session:&hostSession,send:sink)
+    _=bridge.process([.frame(other,Data(#"{"kind":"pianoKeys","version":5,"sequence":1,"mask":0}"#.utf8),1.02)],now:1.02,session:&hostSession,send:sink)
+    _=bridge.process([.frame(other,Data(#"{"kind":"pianoKeys","version":5,"sequence":2,"mask":1}"#.utf8),1.03)],now:1.03,session:&hostSession,send:sink)
+    #expect(sent.last?.groupID==tablet.id && sent.last?.command.value != 0)
+    try bridge.issue(secret:secret,source:.phone,now:1.04,session:hostSession)
+    var client=MobileLANSession(selection:.keys)
+    guard case .binary(let binary)=client.begin(trustedTLS:true,subprotocol:"tihulu-touch-v1",invitation:invitation,now:ns(40)) else{throw RemoteTouchError.invalidFrame}
+    _=bridge.process([.invitation(peer,binary,1.05)],now:1.05,session:&hostSession,send:sink)
+    guard case .text(let cap)=client.receive(text:"admitted",now:ns(50)) else{throw RemoteTouchError.invalidFrame}
+    let capability=bridge.process([.frame(peer,cap,1.06)],now:1.06,session:&hostSession,send:sink)
+    guard case .capabilities(let id,let manifest)=capability.actions.first else{throw RemoteTouchError.invalidFrame}
+    #expect(id==peer)
+    let response=String(decoding:try manifest.encoded(),as:UTF8.self)
+    guard case .text(let neutral)=client.receive(text:response,now:ns(64)) else{throw RemoteTouchError.invalidFrame}
+    _=bridge.process([.frame(peer,neutral,1.065)],now:1.065,session:&hostSession,send:sink)
+    _=client.receive(text:"accepted",now:ns(80))
+    #expect(client.readyManifest?.piano==3)
+    guard case .text(let attack)=client.offer(.init(keys:1),observedAt:ns(81),now:ns(81)) else{throw RemoteTouchError.invalidFrame}
+    _=bridge.process([.frame(peer,attack,1.082)],now:1.082,session:&hostSession,send:sink)
+    _=client.receive(text:"accepted",now:ns(90))
+    sent.removeAll()
+    guard case .text(let release)=client.pauseForModeChange(now:ns(95)) else{throw RemoteTouchError.invalidFrame}
+    let releaseACK=bridge.process([.frame(peer,release,1.095)],now:1.095,session:&hostSession,send:sink)
+    #expect(releaseACK.actions == [.acknowledge(peer,true)])
+    #expect(sent.count==1 && sent.first?.groupID==phone.id && sent.first?.command.destination.number==60 && sent.first?.command.value==0)
+    #expect(client.readyManifest==nil)
+    #expect(client.offer(.init(keys:2),observedAt:ns(96),now:ns(96)) == .wait)
+    _=client.receive(text:"accepted",now:ns(100))
+    #expect(client.readyManifest?.piano==3)
+    sent.removeAll()
+    guard case .text(let next)=client.offer(.init(keys:2),observedAt:ns(110),now:ns(110)) else{throw RemoteTouchError.invalidFrame}
+    let newACK=bridge.process([.frame(peer,next,1.11)],now:1.11,session:&hostSession,send:sink)
+    #expect(newACK.actions == [.acknowledge(peer,true)])
+    #expect(sent.count==1 && sent.first?.groupID==phone.id && sent.first?.command.destination.number==62 && sent.first?.command.value==91)
+    #expect(bridge.connectionIDs == [peer,other])
+    #expect(hostSession.boundSources == [.phone,.tablet])
+    sent.removeAll()
+    _=bridge.process([.disconnected(peer)],now:1.12,session:&hostSession,send:sink)
+    #expect(sent.count==1 && sent.first?.groupID==phone.id && sent.first?.command.destination.number==62 && sent.first?.command.value==0)
+    #expect(bridge.connectionIDs == [other])
+    #expect(hostSession.boundSources == [.tablet])
+}
