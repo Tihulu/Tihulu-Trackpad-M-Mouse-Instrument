@@ -105,3 +105,57 @@ private func bridgeRuntime() throws -> PhysicalPatchRuntime {
     let release=bridge.process([.disconnected(id)],now:1.04,runtime:&runtime)
     #expect(release.deliveryReceipt==nil && release.commands == [.init(bridgeNote,value:0)])
 }
+
+
+@Test func builderRemoteRejectsSameBatchReinvitationAndPreIssueReceipt() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    let stale=bridge.process([.invitation(id,bridgeSecret,0.99)],now:1.01,runtime:&runtime)
+    #expect(stale.actions == [.acknowledge(id,false)] && bridge.connectionIDs.isEmpty)
+    let other=UUID()
+    let rejected=bridge.process([.frame(other,bridgeTouch,1.02),.invitation(other,bridgeSecret,1.02),
+                                 .frame(other,bridgeTouch,1.02)],now:1.02,runtime:&runtime)
+    #expect(rejected.actions == [.acknowledge(other,false),.acknowledge(other,false),.acknowledge(other,false)])
+    #expect(rejected.commands.isEmpty && bridge.connectionIDs.isEmpty)
+    let fresh=UUID()
+    #expect(bridge.process([.invitation(fresh,bridgeSecret,1.03)],now:1.03,runtime:&runtime).actions == [.acknowledge(fresh,true)])
+}
+
+@Test func builderRemoteSuppressesMetadataQueuedBeforeRejection() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    let capabilities=Data("{\"version\":7,\"sequence\":1,\"kind\":\"capabilities\"}".utf8)
+    let result=bridge.process([.frame(id,capabilities,1.01),.frame(id,Data([0xff]),1.01)],now:1.01,runtime:&runtime)
+    #expect(result.actions == [.acknowledge(id,false)] && result.commands.isEmpty)
+    #expect(bridge.connectionIDs.isEmpty && runtime.remotePeerIDs.isEmpty)
+}
+
+@Test func builderRemoteSimultaneousDeparturesDoNotRestoreDyingContinuousOwner() throws {
+    var runtime=PhysicalPatchRuntime()
+    let target=SensorDestination(.controlChange,number:74)
+    try runtime.configure(.init(routes:[
+        .init(id:"high",source:.phone,signal:.x,destination:target,priority:10),
+        .init(id:"low",source:.tablet,signal:.x,destination:target,priority:0)
+    ]),allowRemote:true)
+    var bridge=RemoteHostBridge()
+    let a=UUID(),b=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(a,bridgeSecret,1)],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.tablet,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(b,bridgeSecret,1)],now:1,runtime:&runtime)
+    let high=Data("{\"version\":1,\"sequence\":1,\"kind\":\"touch\",\"x\":0.8,\"y\":0.5}".utf8)
+    let low=Data("{\"version\":1,\"sequence\":1,\"kind\":\"touch\",\"x\":0.3,\"y\":0.5}".utf8)
+    _=bridge.process([.frame(a,high,1.01)],now:1.01,runtime:&runtime)
+    _=bridge.process([.frame(b,low,1.2)],now:1.2,runtime:&runtime)
+    let result=bridge.process([.disconnected(b)],now:1.37,runtime:&runtime)
+    #expect(result.commands == [.init(target,value:0)])
+    #expect(result.actions == [.revoke(a)] && bridge.connectionIDs.isEmpty)
+}

@@ -37,6 +37,7 @@ public struct RemoteHostBatch: Sendable {
 /// listener lifetime; a retired bridge cannot accept more events.
 public struct RemoteHostBridge: Sendable {
     private var bindings: [UUID: UUID] = [:]
+    private var invitationIssuedAt:Double?
     public private(set) var ready = false
     public private(set) var stopped = false
     public var connectionIDs: Set<UUID> { Set(bindings.keys) }
@@ -46,6 +47,7 @@ public struct RemoteHostBridge: Sendable {
                                runtime: inout PhysicalPatchRuntime, mappingDetails: Bool = false, mappingLabels: Bool = false) throws {
         guard ready, !stopped else { throw RemoteTouchError.unavailable }
         try runtime.issueRemotePairing(secret: secret, source: source, now: now, mappingDetails: mappingDetails, mappingLabels: mappingLabels)
+        invitationIssuedAt = now
     }
 
     public mutating func revoke(_ connection: UUID, runtime: inout PhysicalPatchRuntime) -> RemoteHostBatch {
@@ -61,6 +63,7 @@ public struct RemoteHostBridge: Sendable {
         stopped = true
         ready = false
         bindings.removeAll()
+        invitationIssuedAt = nil
         var result = RemoteHostBatch()
         result.commands = runtime.disableRemote()
         result.actions = [.stop]
@@ -78,39 +81,40 @@ public struct RemoteHostBridge: Sendable {
             return result
         }
         var result = RemoteHostBatch()
-        // Expire before processing delayed events. Never resurrect a timed-out peer.
-        result.commands += runtime.expire(now: now)
-        let expired = bindings.filter { !runtime.remotePeerIDs.contains($0.value) }.map(\.key)
-        for id in expired {
-            bindings.removeValue(forKey: id)
-            result.actions.append(.revoke(id))
-        }
-        // A disconnected connection cannot emit a queued note from this batch.
+        // Remove known transport departures and expired owners together.
         let disconnected = Set(events.compactMap { event -> UUID? in
             if case .disconnected(let id) = event { return id }; return nil
         })
-        for id in disconnected.sorted(by: { $0.uuidString < $1.uuidString }) {
-            if let peer = bindings.removeValue(forKey: id) { result.commands += runtime.revokeRemote(peer) }
+        let departures = Set(disconnected.compactMap { bindings.removeValue(forKey:$0) })
+        result.commands += runtime.expire(now:now,removingRemote:departures)
+        let expired = Set(bindings.filter { !runtime.remotePeerIDs.contains($0.value) }.map(\.key))
+        var rejected = disconnected.union(expired)
+        for id in expired.sorted(by:{ $0.uuidString < $1.uuidString }) {
+            bindings.removeValue(forKey: id)
+            result.actions.append(.revoke(id))
         }
         for event in events {
             switch event {
             case .ready: ready = true
             case .fault, .disconnected: break
             case .invitation(let connection, let secret, let time):
-                guard ready, !disconnected.contains(connection), bindings[connection] == nil,
-                      !expired.contains(connection), fresh(time, now: now),
+                guard ready, !rejected.contains(connection), bindings[connection] == nil,
+                      fresh(time, now: now),let issued = invitationIssuedAt,time >= issued,
                       let peer = try? runtime.admitRemote(secret: secret, now: now)
                 else {
                     if let peer = bindings.removeValue(forKey: connection) { result.commands += runtime.revokeRemote(peer) }
+                    rejected.insert(connection)
                     result.actions.append(.acknowledge(connection, false))
                     continue
                 }
+                invitationIssuedAt = nil
                 bindings[connection] = peer
                 result.actions.append(.acknowledge(connection, true))
             case .frame(let connection, let bytes, let time):
-                guard !disconnected.contains(connection), let peer = bindings[connection],
+                guard !rejected.contains(connection), let peer = bindings[connection],
                       fresh(time, now: now) else {
                     if let peer = bindings.removeValue(forKey: connection) { result.commands += runtime.revokeRemote(peer) }
+                    rejected.insert(connection)
                     result.actions.append(.acknowledge(connection, false))
                     continue
                 }
@@ -124,6 +128,7 @@ public struct RemoteHostBridge: Sendable {
                         } else {
                             result.commands += runtime.revokeRemote(peer)
                             bindings.removeValue(forKey: connection)
+                            rejected.insert(connection)
                             result.actions.append(.acknowledge(connection, false))
                         }
                     } else if let frame, frame.kind == .mapping {
@@ -133,6 +138,7 @@ public struct RemoteHostBridge: Sendable {
                         } else {
                             result.commands += runtime.revokeRemote(peer)
                             bindings.removeValue(forKey: connection)
+                            rejected.insert(connection)
                             result.actions.append(.acknowledge(connection,false))
                         }
                     } else if let frame, frame.kind == .mappingLabels {
@@ -142,6 +148,7 @@ public struct RemoteHostBridge: Sendable {
                         } else {
                             result.commands += runtime.revokeRemote(peer)
                             bindings.removeValue(forKey: connection)
+                            rejected.insert(connection)
                             result.actions.append(.acknowledge(connection,false))
                         }
                     } else {
@@ -150,8 +157,18 @@ public struct RemoteHostBridge: Sendable {
                 case .close(let commands):
                     result.commands += commands
                     bindings.removeValue(forKey: connection)
+                    rejected.insert(connection)
                     result.actions.append(.acknowledge(connection, false))
                 }
+            }
+        }
+        // Metadata is published only after the batch returns. Do not
+        // disclose a queued response to a connection retired in this batch.
+        result.actions.removeAll { action in
+            switch action {
+            case .capabilities(let id,_),.mapping(let id,_),.mappingLabels(let id,_):
+                return bindings[id] == nil
+            default: return false
             }
         }
         return result

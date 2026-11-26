@@ -717,6 +717,12 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     public mutating func expire(now: Double) -> [SensorCommand] {
+        expire(now:now,removingRemote:[])
+    }
+
+    // Known transport departures and already expired owners must be
+    // disconnected in one router transaction, never restored in between.
+    mutating func expire(now:Double,removingRemote departures:Set<UUID>) -> [SensorCommand] {
         guard now.isFinite else { return [] }
         let dualExpired = (airDualEnabled || cameraHandsEnabled) && (seen[.camera].map { now - $0 >= 0.25 } ?? false)
         if dualExpired { airDual.reset(); airActiveSlot = nil; airStrum?.reset(); cameraHands.reset() }
@@ -732,8 +738,8 @@ public struct PhysicalPatchRuntime: Sendable {
             }
             if let id = sessions.removeValue(forKey:source) { removed.insert(id) }
         }
-        let expiredPeers = remotePeers.filter { $0.value.expired(now:now) }.map(\.key)
-        for id in expiredPeers { removed.formUnion(removeRemoteSessions(id)) }
+        let expiredPeers = Set(remotePeers.filter { $0.value.expired(now:now) }.map(\.key))
+        for id in expiredPeers.union(departures) { removed.formUnion(removeRemoteSessions(id)) }
         if let id = hybridSession,let last = hybridReceipt, !Self.admitsPhysicalReceipt(last,now:now) {
             removed.insert(id); hybridSession = nil; hybridReceipt = nil
         }
