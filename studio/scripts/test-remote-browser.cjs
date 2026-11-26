@@ -13,7 +13,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
@@ -1257,5 +1257,31 @@ test("air stick permission denial does not send attacks",async()=>{
   const a=setup("denied",{...touchOnly,touch:false,drums:1},false);
   a.elements.playMode.value="stick";a.elements.playMode.emit("change");await a.elements.airStickStart.emit("click");
   assert.match(a.elements.airStickStatus.textContent,/denied/);assert.equal(a.window.events.has("devicemotion"),false);
+  assert.equal(a.socket.frames.length,0);
+});
+
+
+test("chord mode uses only authorized complete logical chord and releases it",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:145},false);
+  a.elements.playMode.value="chord";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  assert.equal(a.elements.chord0.disabled,false);assert.equal(a.elements.chord1.disabled,true);
+  const e={button:0,pointerId:1,preventDefault(){}};
+  a.elements.chord0.emit("pointerdown",e);a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"pianoKeys");assert.equal(a.socket.frames.at(-1).mask,145);a.ack();
+  a.elements.chord0.emit("pointerup",e);a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+});
+test("step sequencer uses mapped keys, explicit start and stop",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="seq";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseStep0.value="0";
+  a.elements.phraseStart.emit("click");a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"pianoKeys");assert.equal(a.socket.frames.at(-1).mask,1);a.ack();
+  a.elements.phraseStop.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  const count=a.socket.frames.length;a.step(100);assert.equal(a.socket.frames.length,count);
+});
+test("arp selection cannot start with an unmapped chord",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="arp";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.arpChoice.value="0";a.elements.phraseStart.emit("click");
   assert.equal(a.socket.frames.length,0);
 });
