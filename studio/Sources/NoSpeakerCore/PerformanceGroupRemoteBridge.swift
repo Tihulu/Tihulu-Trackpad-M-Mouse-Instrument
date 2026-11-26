@@ -272,9 +272,18 @@ public struct PerformanceGroupRemoteBridge: Sendable {
             let timedOut=Set(bindings.compactMap { id,binding in
                 binding.metadataExpired(now:current) ? id : nil
             })
-            guard !timedOut.isEmpty else { break }
-            result.reports += remove(timedOut,session:&session,refreshNow:refreshNow,send:send)
+            var departures:[SensorSource:UUID] = [:]
+            for id in timedOut {
+                if let binding = bindings.removeValue(forKey:id) { departures[binding.source] = binding.token }
+            }
+            // The final clock observation must govern physical and remote
+            // leases too, not only the ten-second metadata negotiation.
+            // Batch known departures with all expired leases before restoring.
+            result.reports += session.expire(now:current,removingRemote:departures,
+                                             refreshNow:refreshNow,send:send)
             result.actions += timedOut.sorted(by:{ $0.uuidString < $1.uuidString }).map { .revoke($0) }
+            result.actions += reconcileRevoked(session:session)
+            guard !timedOut.isEmpty else { break }
         }
         // Another peer's cleanup can expire an authenticated slot.
         result.actions += reconcileRevoked(session:session)

@@ -631,3 +631,36 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
         #expect(bridge.connectionIDs == (layered ? [a,b] : [b]))
     }
 }
+
+
+@Test func groupRemoteFinalBatchClockDrainsExpiredLocalAndRemoteLeases() throws {
+    let local = groupRemoteFixture(.gamepad1,.padA,64)
+    let phone = groupRemoteFixture(.phone,.drumPad1,36)
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[local,phone]),allowRemote:true)
+    var bridge = PerformanceGroupRemoteBridge()
+    let localToken = try session.bind(.gamepad1,now:1)
+    let peer = UUID(), secret = Data(repeating:7,count:32)
+    let ok:(PerformanceGroupCommand)->Bool = {_ in true}
+    _ = bridge.process([.ready],now:1,session:&session,send:ok)
+    try bridge.issue(secret:secret,source:.phone,now:1,session:session)
+    _ = bridge.process([.invitation(peer,secret,1)],now:1,session:&session,send:ok)
+    let neutral = try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+    var buttons = Array(repeating:0.0,count:12); buttons[0] = 1
+    let held = try #require(GamepadFrame(buttons:buttons,triggers:[0,0],sticks:[0,0,0,0]))
+    _ = session.receive(.gamepad1,token:localToken,frame:neutral,now:1,send:ok)
+    _ = bridge.process([.frame(peer,groupRemoteWire("drumPads",4,1,",\"mask\":0"),1)],now:1,session:&session,send:ok)
+    _ = session.receive(.gamepad1,token:localToken,frame:held,now:1.01,send:ok)
+    _ = bridge.process([.frame(peer,groupRemoteWire("drumPads",4,2,",\"mask\":1"),1.01)],now:1.01,session:&session,send:ok)
+    #expect(session.activeSessions == 2)
+    var reads = 0
+    var sent:[PerformanceGroupCommand] = []
+    let result = bridge.process([],now:1.2,refreshNow:{
+        reads += 1
+        return reads <= 2 ? 1.2 : 1.37
+    },session:&session,send:{sent.append($0);return true})
+    #expect(Set(sent.map(\.groupID)) == [local.id,phone.id] && sent.count == 2)
+    #expect(sent.allSatisfy { $0.command.value == 0 })
+    #expect(result.actions == [.revoke(peer)] && bridge.connectionIDs.isEmpty)
+    #expect(session.activeSessions == 0 && session.pendingCleanup.isEmpty)
+    #expect(session.sourceStates[.gamepad1] == .waitingForNeutral)
+}

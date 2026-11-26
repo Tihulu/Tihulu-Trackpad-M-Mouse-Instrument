@@ -209,10 +209,14 @@ private func gamepadGroup(_ source: SensorSource) -> PerformanceInstrumentGroup 
         let z = try engine.bind(.gamepad3,now:0)
         let neutral = try gamepadSnapshot()
         let held = try gamepadSnapshot(true)
-        for (source,token) in [(SensorSource.gamepad1,x),(.gamepad2,y),(.gamepad3,z)] {
+        let sources:[(SensorSource,UUID)] = [(.gamepad1,x),(.gamepad2,y),(.gamepad3,z)]
+        for (source,token) in sources {
             _ = engine.receive(source,token:token,frame:neutral,now:0,send:{ _ in true })
+        }
+        for (source,token) in sources {
             _ = engine.receive(source,token:token,frame:held,now:0.01,send:{ _ in true })
         }
+        #expect(engine.activeSessions == 3)
         if retry {
             let failed = engine.stopGroup(a.id,send:{ _ in false })
             #expect(failed.pendingCleanup == [a.id])
@@ -245,10 +249,14 @@ private func gamepadGroup(_ source: SensorSource) -> PerformanceInstrumentGroup 
     let y = try engine.bind(.gamepad2,now:0)
     let neutral = try gamepadSnapshot()
     let held = try gamepadSnapshot(true)
-    for (source,token) in [(SensorSource.gamepad1,x),(.gamepad2,y)] {
+    let sources:[(SensorSource,UUID)] = [(.gamepad1,x),(.gamepad2,y)]
+    for (source,token) in sources {
         _ = engine.receive(source,token:token,frame:neutral,now:0,send:{_ in true})
+    }
+    for (source,token) in sources {
         _ = engine.receive(source,token:token,frame:held,now:0.01,send:{_ in true})
     }
+    #expect(engine.activeSessions == 2)
     let first = engine.stopGroup(a.id,send:{_ in false})
     #expect(first.pendingCleanup == [a.id])
     var now = 0.25
