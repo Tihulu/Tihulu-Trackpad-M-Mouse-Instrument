@@ -967,17 +967,48 @@ struct PerformanceGroupEditorView: View {
             Set(ids).isSubset(of:Set(studio.gamepadChoices.map(\.id)))
     }
 
+    private var quickReadiness:PerformanceGroupQuickReadiness {
+        .init(profile:profile,selected:studio.gamepadBindings,
+              available:Set(studio.gamepadChoices.map(\.id)),
+              allowLayering:profile==saved && allowLayering,
+              mobileEnabled:StudioController.groupRemoteStartEnabled)
+    }
+
+    private func readinessMessage(_ blocker:PerformanceGroupQuickReadiness.Blocker) -> String {
+        switch blocker {
+        case .invalidProfile: "Fix invalid group names or mappings."
+        case .emptyProfile: "Load a preset or create a group with mappings."
+        case .unsupportedMappings: "Review unsupported live mappings in advanced setup."
+        case .portIdentityConflict: "Group port identities conflict. Review the layout."
+        case .layeringNeedsConsent: "Shared inputs require explicit layering approval in advanced setup."
+        case .mobileSetupRequired: "Mobile layout: save and complete trusted connection setup."
+        case .mobileDisabled: "Mobile Start is disabled in this build."
+        case .controllerMissing(let source): "Select a connected " + sourceLabel(source) + "."
+        case .controllerDuplicate(let source): "Choose a distinct controller for " + sourceLabel(source) + "."
+        }
+    }
+
     private var quickSaveAndStart:Bool {
         didLoad && !readFailed && !editingLocked && !studio.patchRunning &&
         !tuningDraft.isDirty && tuningPreview == nil && hapticSelection.isEmpty &&
-        profile != saved && profile.layeredInputs.isEmpty && draftControllersReady &&
-        PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true,allowScalars:true,allowCamera:true)
+        profile != saved && quickReadiness.readyForLocalStart
     }
 
     private var quickPlayPanel:some View {
         GroupBox("Play / setup") {
             VStack(alignment:.leading,spacing:6) {
                 Text(studio.groupGamepadStatus).font(.caption)
+                if !studio.groupGamepadsRunning && didLoad && !readFailed {
+                    if quickReadiness.readyForLocalStart {
+                        Text("Layout and controller selections pass offline checks. Start still checks hardware and ports.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(quickReadiness.blockers.enumerated()),id:\.offset) { item in
+                            Label(readinessMessage(item.element),systemImage:"info.circle")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 if !profile.groups.isEmpty {
                     Text(profile == saved ? "Saved layout" : "Unsaved layout · retained until app closes")
                         .font(.caption.weight(.semibold))
@@ -1028,7 +1059,7 @@ struct PerformanceGroupEditorView: View {
                     } else {
                         Button("Start standard MIDI") { startSavedGroups() }
                             .buttonStyle(.borderedProminent)
-                            .disabled(!canStartGroups || studio.patchRunning || tuningPreview != nil || !hapticSelection.isEmpty)
+                            .disabled(!canStartGroups || !quickReadiness.readyForLocalStart || studio.patchRunning || tuningPreview != nil || !hapticSelection.isEmpty)
                     }
                     Button("Stop / Release All") { studio.stopGroupGamepads() }
                         .disabled(!studio.groupGamepadsRunning)

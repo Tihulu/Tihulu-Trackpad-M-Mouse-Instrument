@@ -193,3 +193,26 @@ import Testing
     #expect(library.entries.first?.id==first.id && library.entries.last==second)
     #expect(try PerformanceGroupPresetLibrary.read(library.archive())==library)
 }
+
+
+@Test func quickGroupReadinessSeparatesOfflineConfigurationFromRuntimeReadiness() throws {
+    let local=try #require(PerformanceGroupStarterPreset.trackpadSolo.makeProfile())
+    let xbox=try #require(PerformanceGroupStarterPreset.xboxDuo.makeProfile())
+    let mobile=try #require(PerformanceGroupStarterPreset.pocketJam.makeProfile())
+    let a=UUID(),b=UUID()
+    #expect(PerformanceGroupQuickReadiness(profile:local,selected:[:],available:[]).readyForLocalStart)
+    #expect(PerformanceGroupQuickReadiness(profile:.init(),selected:[:],available:[]).blockers == [.emptyProfile])
+    #expect(PerformanceGroupQuickReadiness(profile:xbox,selected:[.gamepad1:a],available:[a,b]).blockers == [.controllerMissing(.gamepad2)])
+    #expect(PerformanceGroupQuickReadiness(profile:xbox,selected:[.gamepad1:a,.gamepad2:a],available:[a,b]).blockers == [.controllerDuplicate(.gamepad2)])
+    #expect(PerformanceGroupQuickReadiness(profile:xbox,selected:[.gamepad1:a,.gamepad2:b],available:[a,b]).readyForLocalStart)
+    #expect(PerformanceGroupQuickReadiness(profile:mobile,selected:[:],available:[]).blockers == [.mobileDisabled])
+    #expect(PerformanceGroupQuickReadiness(profile:mobile,selected:[:],available:[],mobileEnabled:true).blockers == [.mobileSetupRequired])
+    var invalid=local
+    invalid.groups[0].name=""
+    #expect(PerformanceGroupQuickReadiness(profile:invalid,selected:[:],available:[]).blockers == [.invalidProfile])
+    var layered=local
+    let duplicated=layered.duplicate(local.groups[0].id)
+    #expect(duplicated)
+    #expect(PerformanceGroupQuickReadiness(profile:layered,selected:[:],available:[]).blockers == [.layeringNeedsConsent])
+    #expect(PerformanceGroupQuickReadiness(profile:layered,selected:[:],available:[],allowLayering:true).readyForLocalStart)
+}
