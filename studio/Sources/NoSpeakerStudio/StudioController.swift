@@ -360,8 +360,9 @@ final class StudioController: ObservableObject {
                 return
             }
         }
-        guard releaseBuilderOutput() else {
-            groupGamepadStatus = "Builder MIDI cleanup remains pending. Retry Builder Stop."
+        let builderCleanup=BuilderStopSequence.release(notes:releaseBuilderOutput,clock:clearEnsembleClockDebt)
+        guard builderCleanup.complete else {
+            groupGamepadStatus = builderCleanup.notice(reason:"Builder MIDI cleanup remains pending. Retry Builder Stop.")
             return
         }
         guard builderGamepads.bind(required:sources,choices:gamepadBindings) else {
@@ -1418,8 +1419,9 @@ final class StudioController: ObservableObject {
                 }
             }
         }
-        guard releaseBuilderOutput() else {
-            patchStatus = "Unreleased MIDI controls. Reset the DAW and retry Stop."
+        let builderCleanup=BuilderStopSequence.release(notes:releaseBuilderOutput,clock:clearEnsembleClockDebt)
+        guard builderCleanup.complete else {
+            patchStatus = builderCleanup.notice(reason:"Builder restart refused.")
             return
         }
         do {
@@ -1432,8 +1434,7 @@ final class StudioController: ObservableObject {
                 airTunedPlan = requestedTuning
                 try airTunedMIDI.open()
                 guard airTunedSelectors.configure(requestedTuning.setupCommands,send:{ airTunedMIDI.send($0) }) else {
-                    stopInstrumentPatch()
-                    patchStatus = "Tuned Air MPE setup failed. Check DAW and retry Stop."
+                    stopInstrumentPatch(reason:"Tuned Air MPE setup failed. Check DAW and retry Stop.")
                     return
                 }
             } else if sendMIDI { try patchMIDI.open() }
@@ -1450,14 +1451,12 @@ final class StudioController: ObservableObject {
                     touch?.setPatchMailbox(mailbox)
                     refreshSharedSurfaceMonitoring()
                     guard touchPreviewRunning else {
-                        stopInstrumentPatch()
-                        patchStatus = "Shared native surface monitoring failed."
+                        stopInstrumentPatch(reason:"Shared native surface monitoring failed.")
                         return
                     }
                     let physicalSources = Set(sources).filter { $0 != synthetic }
                     if let message = missingNativeSurfaceMessage(nativeSurfaces(for:physicalSources)) {
-                        stopInstrumentPatch()
-                        patchStatus = message
+                        stopInstrumentPatch(reason:message)
                         return
                     }
                 }
@@ -1477,8 +1476,7 @@ final class StudioController: ObservableObject {
                 try output.start { [weak self] message in
                     Task { @MainActor in
                         guard let self, self.gamepadHapticToken == token else { return }
-                        self.stopInstrumentPatch()
-                        self.patchStatus = "Gamepad Trackpad output failed: " + message
+                        self.stopInstrumentPatch(reason:"Gamepad Trackpad output failed: " + message)
                     }
                 }
             }
@@ -1517,9 +1515,8 @@ final class StudioController: ObservableObject {
                     }
                     if !sensor.start() {
                         let reason = sensor.status
-                        stopInstrumentPatch()
+                        stopInstrumentPatch(reason:reason)
                         patchLidStatus = reason
-                        patchStatus = reason
                         return
                     }
                     guard patchRunning, patchNativeToken == token else { sensor.stop(); return }
@@ -1564,8 +1561,7 @@ final class StudioController: ObservableObject {
                 startAirDebugWatchdog()
             }
         } catch {
-            stopInstrumentPatch()
-            patchStatus = error.localizedDescription
+            stopInstrumentPatch(reason:error.localizedDescription)
         }
     }
 
@@ -1619,8 +1615,7 @@ final class StudioController: ObservableObject {
         recordPatchCommands(result.commands)
         guard patchRunning,patchRemoteTransport === transport else { return }
         if result.fault {
-            stopInstrumentPatch()
-            patchStatus = "Remote clock fault. Outputs released; restart explicitly."
+            stopInstrumentPatch(reason:"Remote clock fault. Restart explicitly.")
             return
         }
         for action in result.actions {
@@ -1633,8 +1628,7 @@ final class StudioController: ObservableObject {
         if let page = patchRemotePage {
             switch page.status {
             case .failed, .stopped:
-                stopInstrumentPatch()
-                patchStatus = "HTTPS page server failed. Outputs released."
+                stopInstrumentPatch(reason:"HTTPS page server failed.")
                 return
             case .ready: if !patchRemotePageReady { patchRemotePageReady = true }
             case .starting: break
@@ -1649,8 +1643,7 @@ final class StudioController: ObservableObject {
         // MIDI failure or receipt expiry can retire the entire Builder while delivering commands.
         guard patchRunning, patchRemoteTransport === transport else { return }
         if result.fault {
-            stopInstrumentPatch()
-            patchStatus = "Remote transport fault. Outputs released; restart explicitly."
+            stopInstrumentPatch(reason:"Remote transport fault. Restart explicitly.")
             return
         }
         for action in result.actions {
@@ -1670,8 +1663,7 @@ final class StudioController: ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         let receipt=hostTime ?? now
         guard PhysicalPatchRuntime.admitsPhysicalReceipt(receipt,now:now) else {
-            stopInstrumentPatch()
-            patchStatus = "Scalar input expired before delivery. Restart Builder explicitly."
+            stopInstrumentPatch(reason:"Scalar input expired before delivery. Restart Builder explicitly.")
             return
         }
         let commands = patchPhysicalRuntime.receiveScalar(source: source, value: value, hostTime:receipt, now:now)
@@ -1816,8 +1808,7 @@ final class StudioController: ObservableObject {
         let now=ProcessInfo.processInfo.systemUptime
         let receipt=hostTime ?? now
         guard PhysicalPatchRuntime.admitsPhysicalReceipt(receipt,now:now) else {
-            stopInstrumentPatch()
-            patchStatus = "Controller snapshot expired before delivery. Restart Builder explicitly."
+            stopInstrumentPatch(reason:"Controller snapshot expired before delivery. Restart Builder explicitly.")
             return
         }
         let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:now,hostTime:receipt)
@@ -1867,8 +1858,7 @@ final class StudioController: ObservableObject {
         }
         let now = ProcessInfo.processInfo.systemUptime
         if batch.overflow || batch.samples.contains(where: { !PhysicalPatchRuntime.admitsPhysicalReceipt($0.time,now:now) }) {
-            stopInstrumentPatch()
-            patchStatus = "Native input backlog or stale frames. Output released; restart explicitly."
+            stopInstrumentPatch(reason:"Native input backlog or stale frames. Restart explicitly.")
             return
         }
         for sample in batch.samples {
@@ -1877,8 +1867,7 @@ final class StudioController: ObservableObject {
             // receipt budget. Revalidate before every physical frame.
             let admissionNow=ProcessInfo.processInfo.systemUptime
             guard PhysicalPatchRuntime.admitsPhysicalReceipt(sample.time,now:admissionNow) else {
-                stopInstrumentPatch()
-                patchStatus = "Native input expired during processing. Output released; restart explicitly."
+                stopInstrumentPatch(reason:"Native input expired during processing. Restart explicitly.")
                 return
             }
             let surface = sample.frame.surface
@@ -2166,9 +2155,8 @@ final class StudioController: ObservableObject {
                 ensembleTake?.interrupt(now:ProcessInfo.processInfo.systemUptime)
                 updateEnsembleTakeState()
             }
-            stopInstrumentPatch()
             let reason=outcome == .expired ? "Physical receipt expired during delivery. Restart Builder explicitly." : "MIDI delivery failed. Check DAW."
-            patchStatus = reason + " " + patchStatus
+            stopInstrumentPatch(reason:reason)
         }
         // Deliver synchronously in the original order, publish the bounded
         // monitor only once. A failure still includes the attempted command.
@@ -2209,17 +2197,27 @@ final class StudioController: ObservableObject {
     }
 
     func stopInstrumentPatch() {
+        stopInstrumentPatch(reason:nil)
+    }
+
+    private func stopInstrumentPatch(reason:String?) {
         if groupGamepadsRunning { stopGroupGamepads() }
-        // Invalidate input and scheduled publication before sending releases.
-        // Camera, HID, TLS and shared-monitor teardown must not delay MIDI
-        // note-off or selector cleanup. The ledger retains failed debt.
-        patchRunning = false
-        patchNativeToken = nil
-        patchWatchdog?.cancel()
-        patchWatchdog = nil
-        gamepadHapticToken = nil
-        patchMIDIEnabled = false
-        let released = releaseBuilderOutput()
+        let result=BuilderStopSequence.run(invalidate:{
+            // Fence publication before any wire cleanup.
+            patchRunning = false
+            patchNativeToken = nil
+            patchWatchdog?.cancel()
+            patchWatchdog = nil
+            gamepadHapticToken = nil
+            patchMIDIEnabled = false
+        },notes:releaseBuilderOutput,clock:{
+            stopEnsembleClock()
+            return !ensembleClockStopDebt
+        },teardown:finishBuilderStop)
+        patchStatus = result.notice(reason:reason)
+    }
+
+    private func finishBuilderStop() {
         flushPatchMonitor()
         gamepadHaptics?.stop()
         gamepadHaptics = nil
@@ -2231,7 +2229,6 @@ final class StudioController: ObservableObject {
         gamepadOutputPlan = nil
         builderGamepads.stop()
         stopEnsembleTake()
-        stopEnsembleClock()
         stopAirTrace()
         patchAirReplayToken = nil
         patchAirReplayTask?.cancel()
@@ -2287,7 +2284,6 @@ final class StudioController: ObservableObject {
         patchInputs = []
         debugCameraRunToken = nil
         patchTunedAirActive = false
-        patchStatus = released ? "Builder idle" : "MIDI release failed. Reset DAW and retry Stop."
     }
 
     private static func readChordBank() -> ChordBank {

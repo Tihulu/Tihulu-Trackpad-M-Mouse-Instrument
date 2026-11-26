@@ -29,3 +29,32 @@ public struct EnsembleClock: Sendable {
         return .pulse(beat:beat)
     }
 }
+
+
+/// Keep independent note/selector and realtime-clock cleanup attempts
+/// ahead of native teardown. Failure of either must not skip the other.
+public enum BuilderStopSequence {
+    public struct Result:Equatable,Sendable {
+        public let notesReleased:Bool
+        public let clockReleased:Bool
+        public var complete:Bool { notesReleased && clockReleased }
+        public func notice(reason:String? = nil) -> String {
+            var parts=[reason ?? "Builder idle"]
+            if !notesReleased { parts.append("MIDI note or selector release failed. Reset DAW and retry Stop.") }
+            if !clockReleased { parts.append("MIDI Clock Stop failed. Reset DAW and retry Stop.") }
+            return parts.joined(separator:" ")
+        }
+    }
+    public static func release(notes:()->Bool,clock:()->Bool) -> Result {
+        let notesReleased=notes()
+        let clockReleased=clock()
+        return Result(notesReleased:notesReleased,clockReleased:clockReleased)
+    }
+    public static func run(invalidate:()->Void,notes:()->Bool,clock:()->Bool,
+                           teardown:()->Void) -> Result {
+        invalidate()
+        let result=release(notes:notes,clock:clock)
+        teardown()
+        return result
+    }
+}
