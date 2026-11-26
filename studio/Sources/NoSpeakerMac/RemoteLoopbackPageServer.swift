@@ -195,7 +195,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <div id="remoteBar"><nav aria-label="Controller views"><button id="navPlay" aria-pressed="false" disabled>Play</button><button id="navSetup" aria-pressed="false" disabled>Setup</button><button id="navConnection" aria-pressed="true">Connection</button></nav><button id="releaseAll" disabled>Release my controls</button><button id="disconnect" disabled>Disconnect / release</button><p id="navStatus" role="status"></p><p id="playWorkloadStatus" role="status"></p><p id="status" role="status" aria-live="polite">Not connected.</p><small id="ackLatency">Mac ACK round trip: no sample.</small></div>
 <section id="connectionView"><label for="secret">One-time invitation (64 hexadecimal characters)</label>
 <input id="secret" type="password" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
-<button id="connect">Connect</button><p>Use the matching trusted TLS certificate and a new invitation for each connection. ACK round trip includes Mac processing; it is not audio or MIDI latency.</p><details><summary>Browser camera check (optional)</summary><p>Local camera preview only. No hand recognition, depth or MIDI output in this check. Stop before pairing. Nothing is recorded or sent to the Mac.</p><label for="webCameraFacing">Camera direction</label><select id="webCameraFacing"><option value="environment">Rear</option><option value="user">Front</option></select><label for="webCameraDevice">Available camera</label><select id="webCameraDevice"><option value="">Default for direction</option></select><button id="webCameraStart" type="button">Start camera check</button><button id="webCameraStop" type="button" disabled>Stop camera</button><video id="webCameraVideo" muted playsinline autoplay hidden style="width:100%;max-width:480px;border-radius:12px"></video><label for="webCameraZoom">Device zoom</label><input id="webCameraZoom" type="range" disabled><p id="webCameraStatus" role="status">Camera off.</p><small>Camera access requires a trusted HTTPS connection. Lens and zoom availability are browser/device dependent. Native LiDAR/ToF APIs are not available in this preview.</small></details></section>
+<button id="connect">Connect</button><p>Use the matching trusted TLS certificate and a new invitation for each connection. ACK round trip includes Mac processing; it is not audio or MIDI latency.</p><details id="webCameraPanel"><summary>Browser camera check (optional)</summary><p>Local camera preview only. No hand recognition, depth or MIDI output in this check. Stop before pairing. Nothing is recorded or sent to the Mac.</p><label for="webCameraFacing">Camera direction</label><select id="webCameraFacing"><option value="environment">Rear</option><option value="user">Front</option></select><label for="webCameraDevice">Available camera</label><select id="webCameraDevice"><option value="">Default for direction</option></select><button id="webCameraStart" type="button">Start camera check</button><button id="webCameraStop" type="button" disabled>Stop camera</button><video id="webCameraVideo" muted playsinline autoplay hidden style="width:100%;max-width:480px;border-radius:12px"></video><label for="webCameraZoom">Device zoom</label><input id="webCameraZoom" type="range" disabled><p id="webCameraStatus" role="status">Camera off.</p><small>Camera access requires a trusted HTTPS connection. Lens and zoom availability are browser/device dependent. Native LiDAR/ToF APIs are not available in this preview.</small></details></section>
 <div id="setupView" hidden>
 <section id="mappingSection" hidden><h2>Mapped MIDI destinations</h2><p id="mappingStatus" role="status"></p><pre id="mappingDetails" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></section>
 <section id="workloadSection" hidden aria-labelledby="workloadTitle"><h2 id="workloadTitle">Performance combinations</h2>
@@ -297,13 +297,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const get = id => document.getElementById(id);
   const pad=get("pad"), dot=get("dot"), secret=get("secret"), connect=get("connect"), disconnect=get("disconnect"), status=get("status");
   let ws=null, admitted=false, pending=false, sequence=0, pointer=null, position=null, timer=null, deadline=null, lastSend=0;
-  const cameraFacing=get("webCameraFacing"),cameraDevice=get("webCameraDevice"),cameraStart=get("webCameraStart"),cameraStop=get("webCameraStop"),cameraVideo=get("webCameraVideo"),cameraZoom=get("webCameraZoom"),cameraStatus=get("webCameraStatus");
+  const cameraPanel=get("webCameraPanel"),cameraFacing=get("webCameraFacing"),cameraDevice=get("webCameraDevice"),cameraStart=get("webCameraStart"),cameraStop=get("webCameraStop"),cameraVideo=get("webCameraVideo"),cameraZoom=get("webCameraZoom"),cameraStatus=get("webCameraStatus");
   let cameraStream=null,cameraEpoch=0,cameraPending=false,cameraInFlight=false,cameraZoomPending=false,cameraDevices=[],cameraZoomRange=null;
   const cameraMedia=()=>window.isSecureContext===true&&typeof navigator!=="undefined"&&navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==="function"?navigator.mediaDevices:null;
   function syncCamera(){
     cameraStart.disabled=!!ws||!cameraMedia()||cameraInFlight||!!cameraStream||document.hidden;
+    if(!cameraMedia()&&!cameraStream&&!cameraPending)cameraStatus.textContent="Camera unavailable in this browser or insecure context. Touch controls remain separate.";
     cameraStop.disabled=!cameraPending&&!cameraStream;
-    cameraFacing.disabled=!!ws||cameraPending||!!cameraStream;
+    cameraFacing.disabled=!!ws||cameraInFlight||!!cameraStream;
     cameraDevice.disabled=cameraFacing.disabled||cameraDevices.length===0;
     cameraZoom.disabled=!!ws||!cameraStream||!cameraZoomRange||cameraZoomPending;
   }
@@ -322,6 +323,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     cameraDevice.value="";
   }
   cameraFacing.addEventListener("change",()=>{cameraDevice.value="";});
+  cameraPanel.addEventListener("toggle",()=>{if(cameraPanel.open===false&&(cameraStream||cameraPending))stopCamera("Camera panel closed.");});
   cameraStart.addEventListener("click",async()=>{
     const media=cameraMedia();
     if(!media||ws||cameraInFlight||cameraStream||document.hidden)return;
@@ -330,7 +332,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const epoch=++cameraEpoch;cameraPending=true;cameraInFlight=true;cameraStatus.textContent="Requesting local camera…";syncCamera();
     let stream=null;
     try{
-      stream=await media.getUserMedia({audio:false,video:{...(id?{deviceId:{exact:id}}:{facingMode:{ideal:facing}}),width:{ideal:640},height:{ideal:480}}});
+      stream=await media.getUserMedia({audio:false,video:{...(id?{deviceId:{exact:id}}:{facingMode:{exact:facing}}),width:{ideal:640},height:{ideal:480}}});
       if(epoch!==cameraEpoch||ws||document.hidden){disposeCamera(stream);return;}
       const tracks=stream.getVideoTracks();
       if(tracks.length!==1||stream.getTracks().length!==1||tracks[0].readyState==="ended")throw Error("Invalid camera stream");
@@ -343,9 +345,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         const current=typeof track.getSettings==="function"?track.getSettings().zoom:null;
         cameraZoom.value=String(Number.isFinite(current)?Math.max(zoom.min,Math.min(zoom.max,current)):Math.max(zoom.min,Math.min(zoom.max,1)));
       }
-      cameraPending=false;cameraStatus.textContent="Camera active locally. Stop before pairing.";syncCamera();
+      cameraPending=false;const actualFacing=track.getSettings?.().facingMode;
+      cameraStatus.textContent="Camera active locally"+(actualFacing==="user"?" · front":actualFacing==="environment"?" · rear":" · direction not reported")+". Stop before pairing.";syncCamera();
       if(typeof media.enumerateDevices==="function"){
-        try{const devices=await media.enumerateDevices();if(epoch===cameraEpoch&&cameraStream===stream){showCameraChoices(devices);syncCamera();}}catch{}
+        // Inventory is best effort and must never hold the capture request fence.
+        Promise.resolve().then(()=>media.enumerateDevices()).then(devices=>{if(epoch===cameraEpoch&&cameraStream===stream){showCameraChoices(devices);syncCamera();}}).catch(()=>{});
       }
     }catch{if(epoch===cameraEpoch&&cameraStream===stream)stopCamera("Camera denied or unavailable. Check browser permission and HTTPS.");else{disposeCamera(stream);if(epoch===cameraEpoch)stopCamera("Camera denied or unavailable. Check browser permission and HTTPS.");}}
     finally{cameraInFlight=false;syncCamera();}
