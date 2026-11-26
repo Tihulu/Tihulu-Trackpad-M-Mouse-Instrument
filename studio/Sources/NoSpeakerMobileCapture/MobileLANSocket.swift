@@ -77,6 +77,10 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
             dispatch(policy.offer(output, observedAt: observedAt, now: Self.nowNS, stringDeadlines: stringDeadlines))
         }
     }
+    public func pauseForModeChange(){queue.sync {
+        guard !terminal,opened else {return}
+        dispatch(policy.pauseForModeChange(now:Self.nowNS))
+    }}
     public func stop(){queue.sync {finish("Stopped explicitly")}}
     private func watchdog(){
         guard !terminal else{return}
@@ -88,7 +92,9 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
     private func dispatch(_ action:MobileLANSession.Action){
         guard !terminal,let task=socket else{return}
         switch action {
-        case .wait:if policy.phase == .ready {message="Ready · assigned lane"}
+        case .wait:
+            if policy.phase == .ready {message="Ready · assigned lane"}
+            else if policy.phase == .reconfiguring {message="Waiting for neutral ACK"}
         case .close(let reason):finish(reason)
         case .binary(let bytes):send(.data(bytes),task:task)
         case .text(let bytes):

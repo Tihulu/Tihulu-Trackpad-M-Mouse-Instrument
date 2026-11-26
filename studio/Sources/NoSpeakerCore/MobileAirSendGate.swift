@@ -188,5 +188,26 @@ public struct MobileAirSendGate: Sendable {
         if sent == .init(),elapsed>=Self.idleNS {return send(.init(),now:now,heartbeat:true)}
         return .wait
     }
+    var neutralReady:Bool {
+        started && admitted && !closed && pendingAt == nil && !neutralFence && sent == .init() && sample == nil
+    }
+    mutating func requestNeutral(now:Int64)->Action {
+        if let failure=check(now){return failure}
+        guard started,admitted else {return close("Neutral transition before admission")}
+        if sourceExpired(now),sent != .init(),pendingAt != nil,!pendingNeutral {
+            return close("Source expired while active ACK outstanding")
+        }
+        let mask=sent.keys
+        let activeStrings=stringDeadlines.keys.contains {mask & (1 << $0) != 0}
+        if activeStrings,!pendingNeutral,pendingAt != nil || lastSend.map({now-$0<Self.paceNS}) == true {
+            return close("Mode change cannot delay string release")
+        }
+        let debt=min(releaseDebtAt ?? now,now)
+        let origin=sampledAt.flatMap {now-$0>=Self.freshNS ? $0+Self.freshNS : nil}
+        rememberReleaseDeadlines()
+        sample=nil;sampledAt=nil;stringDeadlines=[:]
+        neutralFence=true;releaseDebtAt=min(debt,origin ?? now)
+        return poll(now:now)
+    }
     public mutating func abort()->Action {close("Stopped explicitly")}
 }

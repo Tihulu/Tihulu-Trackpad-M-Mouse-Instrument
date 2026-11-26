@@ -6,7 +6,7 @@ import Foundation
 /// This type cannot open sockets, verify certificates or grant host authority.
 public struct MobileLANSession: Sendable {
     public enum Selection: Sendable { case keys, helper(Int) }
-    public enum Phase: Equatable, Sendable { case idle, admission, capabilities, neutralDelay, neutralACK, ready, closed }
+    public enum Phase: Equatable, Sendable { case idle, admission, capabilities, neutralDelay, neutralACK, ready, reconfiguring, closed }
     public enum Action: Equatable, Sendable { case wait, binary(Data), text(Data), close(String) }
     public private(set) var phase:Phase = .idle
     private let selection:Selection
@@ -70,12 +70,13 @@ public struct MobileLANSession: Sendable {
             self.manifest = manifest
             pendingAt=nil;phase = .neutralDelay
             return poll(now:now)
-        case .neutralACK,.ready:
+        case .neutralACK,.ready,.reconfiguring:
             guard var sender=gate else {return close("Missing sender")}
             let initial=phase == .neutralACK
             let result=sender.acknowledge(text,now:now)
             gate=sender
             if initial,case .wait=result {phase = .ready}
+            if phase == .reconfiguring,sender.neutralReady {phase = .ready}
             return translate(result)
         default:return close("Unexpected response")
         }
@@ -90,9 +91,10 @@ public struct MobileLANSession: Sendable {
             let result=sender.begin(now:now);gate=sender;phase = .neutralACK
             return translate(result)
         }
-        if phase == .neutralACK || phase == .ready {
+        if phase == .neutralACK || phase == .ready || phase == .reconfiguring {
             guard var sender=gate else {return close("Missing sender")}
             let result=sender.poll(now:now);gate=sender
+            if phase == .reconfiguring,sender.neutralReady {phase = .ready}
             return translate(result)
         }
         return .wait
@@ -105,6 +107,13 @@ public struct MobileLANSession: Sendable {
         guard phase == .ready else {return poll(now:now)}
         guard var sender=gate else {return close("Missing sender")}
         let result=sender.offer(output,observedAt:observedAt,now:now,stringDeadlines:stringDeadlines);gate=sender
+        return translate(result)
+    }
+    public mutating func pauseForModeChange(now:Int64)->Action {
+        if let failure=check(now){return failure}
+        guard phase == .ready,var sender=gate else {return close("Mode change requires ready session")}
+        phase = .reconfiguring
+        let result=sender.requestNeutral(now:now);gate=sender
         return translate(result)
     }
     public mutating func abort()->Action {close("Stopped explicitly")}

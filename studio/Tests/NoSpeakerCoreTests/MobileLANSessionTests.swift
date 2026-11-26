@@ -128,3 +128,31 @@ private func host(_ piano:Int=1,_ pedals:Int=0)throws->String {
         #expect(MobileAirCaptureFrame.nanoseconds(value) == nil)
     }
 }
+
+@Test func mobileLANSessionModeChangeRequiresNewNeutralACKAndPreservesLane() throws {
+    var s=MobileLANSession(selection:.keys)
+    _=s.begin(trustedTLS:true,subprotocol:"tihulu-touch-v1",invitation:invitation,now:0)
+    _=s.receive(text:"admitted",now:ns(1))
+    _=s.receive(text:try host(7),now:ns(15))
+    _=s.receive(text:"accepted",now:ns(20))
+    _=s.offer(.init(keys:1),observedAt:ns(30),now:ns(30))
+    _=s.receive(text:"accepted",now:ns(40))
+    #expect(try packet(s.pauseForModeChange(now:ns(45))).mask == 0)
+    #expect(s.phase == .reconfiguring && s.readyManifest == nil)
+    #expect(s.offer(.init(keys:2),observedAt:ns(46),now:ns(46)) == .wait)
+    _=s.receive(text:"accepted",now:ns(50))
+    #expect(s.phase == .ready && s.readyManifest?.piano == 7)
+    #expect(s.offer(.init(keys:2),observedAt:ns(49),now:ns(51)) == .wait)
+    #expect(try packet(s.offer(.init(keys:2),observedAt:ns(60),now:ns(60))).mask == 2)
+}
+@Test func mobileLANSessionModeChangeCannotOutliveReleaseDeadline() throws {
+    var s=MobileLANSession(selection:.helper(0))
+    _=s.begin(trustedTLS:true,subprotocol:"tihulu-touch-v1",invitation:invitation,now:0)
+    _=s.receive(text:"admitted",now:ns(1))
+    _=s.receive(text:try host(0,1),now:ns(15))
+    _=s.receive(text:"accepted",now:ns(20))
+    _=s.pauseForModeChange(now:ns(30))
+    #expect(s.poll(now:ns(180)) == .close("Release overdue"))
+    #expect(s.readyManifest == nil)
+    #expect(s.receive(text:"accepted",now:ns(181)) == .close("Already closed"))
+}

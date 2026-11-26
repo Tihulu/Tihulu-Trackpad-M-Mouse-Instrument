@@ -40,9 +40,10 @@ import NoSpeakerCore
     public init() {}
     private var busy:Bool {pending || source != nil || retiring != nil}
     private var configurationLocked: Bool { busy || socket != nil || scanning || askingPermission }
+    private var instrumentLocked: Bool {busy || scanning || askingPermission || (socket != nil && assignment == nil)}
     private var playableAssignment: Bool {
         guard useMac else { return true }
-        guard let assignment else { return false }
+        guard let assignment, mode.isHelper == (assignment.piano == 0) else { return false }
         return MobileAirCaptureProjection(mode: mode, keys: assignment.piano, role: role,
             orientation: musicalOrientation, mirrorX: mirror, near: near, far: far) != nil
     }
@@ -122,7 +123,7 @@ import NoSpeakerCore
                             Slider(value:$far,in:0.2...3,step:0.05)
                         }
                     }
-                }.disabled(configurationLocked)
+                }.disabled(instrumentLocked)
                 if !valid {
                     Text("Select a supported sensor, valid range and a distinct performing hand for chords.").foregroundStyle(.orange)
                 }
@@ -152,6 +153,10 @@ import NoSpeakerCore
                     Button(useMac ? "Start playing" : "Start sensors", action: start).buttonStyle(.borderedProminent)
                         .disabled(busy || scanning || askingPermission || !valid || !playableAssignment || scenePhase != .active)
                     Button("Stop / release") { stop("Stopped") }.buttonStyle(.bordered).disabled(!busy)
+                    if useMac,socket != nil {
+                        Button("Pause / change instrument",action:pauseInstrument)
+                            .buttonStyle(.bordered).disabled(assignment == nil || (source == nil && !pending))
+                    }
                 }
                 Text(useMac ? "Your hand position and depth are processed on this device. The Mac receives assigned keys or helper levels." : "Preview keys and helper levels on this device.").font(.caption).foregroundStyle(.secondary)
             }.padding().frame(maxWidth:640).frame(maxWidth:.infinity)
@@ -206,14 +211,14 @@ import NoSpeakerCore
                 Button("Disconnect and release") { stop("Disconnected") }
             }
             if let assignment {
-                if mode.isHelper {
+                if assignment.piano == 0 {
                     Text("Mac assigned pedal " + String(helperIndex + 1))
                 } else {
                     let keys = (0..<25).filter { assignment.piano & (1 << $0) != 0 }
                     Text("Mac assigned keys " + keys.map { String($0 + 1) }.joined(separator: ", "))
                 }
                 if !playableAssignment {
-                    Text("This assignment has too few matching keys for the selected instrument. Disconnect to change it.")
+                    Text("Choose a compatible mode in the assigned family, or disconnect and pair again.")
                 }
             }
             if !connectionStatus.isEmpty { Text(connectionStatus).font(.caption) }
@@ -273,6 +278,15 @@ import NoSpeakerCore
             projection=next;source=capture;pending=false;status="Starting sensors"
             capture.start(backend:backend,orientation:sensorOrientation,cameraID:backend == .lidar ? nil:cameraID,zoom:backend == .lidar ? 1:zoom)
         }
+    }
+    private func pauseInstrument() {
+        guard let socket,assignment != nil else {return}
+        generation=UUID();pending=false
+        assignment=nil
+        socket.pauseForModeChange()
+        if let source {source.stop();retiring=source}
+        source=nil;projection=nil;output = .init();sample=nil;depth=nil
+        status="Waiting for neutral ACK; choose a mode and restart."
     }
     private func stop(_ message:String) {
         generation=UUID();pending=false
