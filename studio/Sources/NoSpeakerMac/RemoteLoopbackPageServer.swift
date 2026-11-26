@@ -308,6 +308,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(host!==cameraHost){get(helper?"webCameraPlayHost":"webCameraConnectionHost").appendChild(cameraPanel);cameraHost=host;}
     get("webCameraPlayHost").hidden=!helper;
     textIfChanged("webCameraSummary",helper?"Camera source and controls":"Browser camera check (optional)");
+    textIfChanged("webCameraStart",helper?"Start motion helper":"Start camera check");
     textIfChanged("webCameraDescription",helper?"Local video is analyzed for image motion. Only the assigned helper level is sent to the Mac. No recording, hand recognition or depth.":"Local camera preview only. No hand recognition, depth or MIDI output in this check. Stop before pairing. Nothing is recorded or sent to the Mac.");
     const targetKey=String(caps?.pedals??0);
     if(targetKey!==cameraTargetKey){cameraTarget.replaceChildren(...Array.from({length:3},(_,i)=>i).filter(i=>has("pedals",i)).map(i=>{const o=document.createElement("option");o.value=String(i);o.textContent=["Expression","Volume","Wah / filter"][i];return o;}));cameraTarget.value=String(Array.from({length:3},(_,i)=>i).find(i=>has("pedals",i))??0);cameraTargetKey=targetKey;}
@@ -1789,7 +1790,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function tick(){
     if(!admitted||!caps)return;
     const now=performance.now();syncLatency();
-    if(cameraReleaseAt!==null){if(!pedalBusy()&&pedalMask===0)cameraReleaseAt=null;else if(now-cameraReleaseAt>=150){close("Camera helper release overdue. Reconnect explicitly.");return;}}
+    if(cameraReleaseAt!==null){if(now-cameraReleaseAt>=150){close("Camera helper release overdue. Reconnect explicitly.");return;}if(!pedalBusy()&&pedalMask===0)cameraReleaseAt=null;}
     if(cameraHelper&&cameraStream&&((cameraAt!==null&&now-cameraAt>=150)||(cameraAt===null&&now-cameraStartedAt>=3000))){close("Camera frames stopped. Reconnect explicitly.");return;}
     if(stickState==="waiting"&&now-stickAt>=3000){resetStick("No valid motion data.");drumEnabled=false;syncControls();}
     if(stickState==="active"&&now-stickAt>=250){close("Air stick motion stopped. Reconnect explicitly.");return;}
@@ -1891,7 +1892,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         finishReady(armed.manifest,armed.rows,armed.labels);return;
       }
       if(!pending||!caps||e.data!=="accepted"){close("Unexpected response.");return;}
+      if(cameraReleaseAt!==null&&performance.now()-cameraReleaseAt>=150){close("Camera helper release ACK overdue. Reconnect explicitly.");return;}
+      if(cameraHelper&&cameraAt!==null&&performance.now()-cameraAt>=150){close("Camera frames stopped. Reconnect explicitly.");return;}
       recordAck();clearDeadline();pending=false;const kind=pendingKind;pendingKind=null;
+      if(kind==="pedalboard"&&cameraReleaseAt!==null&&pedalSentMask===0&&pedalMask===0&&!pedalEmergency&&!pedalQueue.length)cameraReleaseAt=null;
       if(kind==="orientationArm"&&mode==="arming"){mode="active";motionStatus.textContent="Tilt active. Move gently; release when finished.";}
       if(kind==="motionRelease")resetMotion("Tilt released.");
       for(const s of streams){
@@ -2009,8 +2013,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   pedalEnable.addEventListener("click",togglePedals);
   get("customPedalEnable").addEventListener("click",()=>{if(customActive.some(id=>id[0]==="p"))togglePedals();});
-  pedalRelease.addEventListener("click",releasePedals);
+  pedalRelease.addEventListener("click",()=>{if(!cameraHelper&&modeAllows("pedals"))releasePedals();});
   get("customPedalRelease").addEventListener("click",()=>{
+    if(cameraHelper||!modeAllows("pedals"))return;
     if(currentView==="play"&&admitted&&!releasingAll&&pedalEnabled&&customActive.some(id=>id[0]==="p"))releasePedals();
   });
   pedalToggles.forEach((b,i)=>{

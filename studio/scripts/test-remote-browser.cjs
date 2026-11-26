@@ -1628,3 +1628,24 @@ test("camera mode excludes manual pedal activation and repeated video frames",as
   assert.equal(a.socket.frames.filter(x=>x.kind==="pedalboard"&&x.mask!==0).length,0);
   a.step(126);assert.equal(a.socket.closed,true);
 });
+
+test("late release ACK without an intervening tick cannot revive camera helper",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(100,2);a.ack();a.step(25);
+  a.elements.webCameraStop.emit("click");
+  assert.equal(a.socket.frames.at(-1).mask,0);
+  a.ack(150);
+  assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);
+});
+test("camera mode switch waits for release ACK and stops video",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(100,2);a.ack();a.step(25);
+  a.elements.playMode.value="piano";a.elements.playMode.emit("change");
+  assert.equal(c.track.stops,1);assert.equal(a.socket.frames.at(-1).mask,0);
+  assert.equal(a.elements.playMode.disabled,true);a.ack();
+  assert.equal(a.elements.playMode.value,"piano");assert.equal(a.elements.pianoSection.hidden,false);
+});
