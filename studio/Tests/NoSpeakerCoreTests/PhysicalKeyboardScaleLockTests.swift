@@ -52,3 +52,16 @@ import Testing
     #expect(PhysicalKeyboardScaleLock(intervals:[0,0],root:60) == nil)
     #expect(PhysicalKeyboardScaleLock(intervals:[0,2],root:60,channel:16) == nil)
 }
+
+@Test func standardScaleUnlockPassesOriginalNotesAndReleasesThem() throws {
+    var lock=try #require(PhysicalKeyboardScaleLock(intervals:[0,2,4,7,9],root:60,channel:3,allowOutsideScale:true))
+    var sent:[SensorCommand]=[]
+    let sink:(SensorCommand)->Bool={sent.append($0);return true}
+    let attack=lock.note(61,velocity:95,send:sink)
+    #expect(attack == .delivered)
+    let release=lock.note(61,velocity:0,send:sink)
+    #expect(release == .delivered)
+    #expect(sent == [.init(.init(.note,channel:3,number:61),value:95),.init(.init(.note,channel:3,number:61),value:0)])
+    let duplicate=lock.note(61,velocity:0,send:sink)
+    #expect(duplicate == .ignored)
+}

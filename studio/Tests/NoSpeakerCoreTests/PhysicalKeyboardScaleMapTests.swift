@@ -66,3 +66,21 @@ import Testing
     #expect(pitch.anchor == 69 && pitch.bend < 8192)
     #expect(map.memberPitch(60,bendRangeSemitones:0) == nil)
 }
+
+@Test func physicalKeyboardUnlockPreservesTuningAndOriginalUnassignedKeys() throws {
+    var scale=CustomScale()
+    scale.intervals=[0,2,4,7,9]
+    scale.centOffsets=[2:-25]
+    let locked=try #require(PhysicalKeyboardScaleMap.legacy(scale,inputRoot:60,outputRoot:62))
+    let unlocked=try #require(PhysicalKeyboardScaleMap.legacy(scale,inputRoot:60,outputRoot:62,allowOutsideScale:true))
+    #expect(locked.output(62) == unlocked.output(62))
+    #expect(unlocked.key(62)?.pitch?.centsFromRoot == 175)
+    #expect(locked.output(61) == .muted)
+    #expect(unlocked.output(61) == .originalMIDI(61))
+    #expect(unlocked.key(61)?.isMapped == false)
+    #expect(unlocked.memberPitch(61) == nil)
+    let tuning=try #require(MicrotonalKeyboardTuning.edo(24,rootMIDI:127))
+    let map=try #require(PhysicalKeyboardScaleMap(tuning:tuning,inputRoot:60,layout:.allKeys,allowOutsideScale:true))
+    #expect(map.output(61) == .unavailable)
+    #expect(map.output(-1) == .unavailable)
+}
