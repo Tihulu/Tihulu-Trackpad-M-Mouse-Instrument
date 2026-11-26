@@ -22,14 +22,14 @@ public final class CustomSurfaceEndpointReservations {
     /// Refuse an occupied ID, even if the caller offers a new incarnation.
     /// The registry strongly retains its ledger until explicit clean close.
     public func open(endpointID: Int32, incarnation: UUID,
-                     plan: CustomSurfaceMixedPlan, clock: @escaping () -> Int64,
+                     plan: CustomSurfaceMixedPlan, permitsNeutralSilence: Bool = false, clock: @escaping () -> Int64,
                      admitsLive: @escaping () -> Bool,
                      ownsEndpoint: @escaping (Int32, UUID) -> Bool,
                      send: @escaping (Int32, UUID, SensorCommand) -> Bool) -> Lease? {
         guard endpointID != 0, sessions[endpointID] == nil,
               ownsEndpoint(endpointID, incarnation), admitsLive() else { return nil }
         let lease = Lease(endpointID: endpointID, incarnation: incarnation, token: UUID())
-        let delivery = CustomSurfaceExclusiveDelivery(plan: plan, clock: clock,
+        let delivery = CustomSurfaceExclusiveDelivery(plan: plan, permitsNeutralSilence: permitsNeutralSilence, clock: clock,
             admitsExclusiveEndpoint: admitsLive,
             ownsCleanupEndpoint: { ownsEndpoint(endpointID, incarnation) },
             send: { send(endpointID, incarnation, $0) })

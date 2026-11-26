@@ -27,10 +27,10 @@ public final class CustomSurfaceExclusiveDelivery {
     private var lastClock:Int64?
     public private(set) var retirement:Retirement?
 
-    public init(plan:CustomSurfaceMixedPlan,clock:@escaping ()->Int64,
+    public init(plan:CustomSurfaceMixedPlan,permitsNeutralSilence:Bool = false,clock:@escaping ()->Int64,
                 admitsExclusiveEndpoint:@escaping ()->Bool,
                 ownsCleanupEndpoint:@escaping ()->Bool,send:@escaping (SensorCommand)->Bool) {
-        self.plan=plan;projection = .init(layout:plan.layout)
+        self.plan=plan;projection = .init(layout:plan.layout,permitsNeutralSilence:permitsNeutralSilence)
         self.clock=clock;admits=admitsExclusiveEndpoint
         self.ownsCleanupEndpoint=ownsCleanupEndpoint;self.send=send
     }

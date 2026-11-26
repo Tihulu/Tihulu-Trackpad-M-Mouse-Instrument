@@ -47,7 +47,14 @@ public struct CustomSurfaceContactProjection: Sendable {
     private var lastSequence:UInt64?
     private var lastObservation:Int64?
     private var lastReceipt:Int64?
-    public init(layout:CustomSurfacePadLayout) {self.layout=layout}
+    /// Callback-driven physical devices may cease publishing while genuinely
+    /// neutral. Only a proven neutral snapshot permits idle silence; any
+    /// held contact (even in an unmapped gap) retains the strict deadline.
+    private let permitsNeutralSilence: Bool
+    public init(layout:CustomSurfacePadLayout, permitsNeutralSilence: Bool = false) {
+        self.layout=layout;self.permitsNeutralSilence=permitsNeutralSilence
+    }
+    private var safelyIdle: Bool { permitsNeutralSilence && neutralSeen && down.isEmpty }
     /// Initial neutral snapshot required; no note from a finger already
     /// down when a source is first armed.
     private var neutralSeen=false
@@ -57,7 +64,7 @@ public struct CustomSurfaceContactProjection: Sendable {
               now-observedAt<MobileAirSendGate.freshNS,
               lastReceipt.map({now >= $0}) ?? true,
               lastSequence.map({sequence > $0}) ?? true,
-              lastObservation.map({observedAt > $0 && now-$0<MobileAirSendGate.freshNS}) ?? true,
+              lastObservation.map({observedAt > $0 && (safelyIdle || now-$0<MobileAirSendGate.freshNS)}) ?? true,
               contacts.count<=Self.maximumContacts,contacts.allSatisfy(\.valid),
               Set(contacts.map(\.id)).count==contacts.count else{return retire()}
         lastReceipt=now;lastObservation=observedAt;lastSequence=sequence
@@ -95,7 +102,7 @@ public struct CustomSurfaceContactProjection: Sendable {
     /// create a fresh projection after neutral.
     public mutating func poll(now:Int64)->Watchdog {
         guard !retired,now>=0,lastReceipt.map({now >= $0}) ?? true,
-              lastObservation.map({now-$0<MobileAirSendGate.freshNS}) ?? true else{
+              lastObservation.map({safelyIdle || now-$0<MobileAirSendGate.freshNS}) ?? true else{
             _=retire()
             return .init(retired:true)
         }

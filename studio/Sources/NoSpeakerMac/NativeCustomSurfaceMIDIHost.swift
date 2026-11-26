@@ -30,8 +30,8 @@ public final class NativeCustomSurfaceMIDIHost {
 
     /// No input capture or automatic rearm. Non-live returned states are
     /// recovery records, not successful activation.
-    public func open(plan: CustomSurfaceMixedPlan, admitsLive: @escaping () -> Bool) -> Status? {
-        let status = host.open(plan: plan, clock: { Self.monotonicNow() }, admitsLive: admitsLive)
+    public func open(plan: CustomSurfaceMixedPlan, permitsNeutralSilence: Bool = false, admitsLive: @escaping () -> Bool) -> Status? {
+        let status = host.open(plan: plan, permitsNeutralSilence: permitsNeutralSilence, clock: { Self.monotonicNow() }, admitsLive: admitsLive)
         reconcileWatchdog()
         return status
     }

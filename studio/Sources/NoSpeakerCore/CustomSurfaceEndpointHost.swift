@@ -77,7 +77,7 @@ public final class CustomSurfaceEndpointHost {
 
     /// Returns nil only when no owned handle was created or capacity/admission
     /// refused. A nonnil recovery status is not a successful activation.
-    public func open(plan: CustomSurfaceMixedPlan, clock: @escaping () -> Int64,
+    public func open(plan: CustomSurfaceMixedPlan, permitsNeutralSilence: Bool = false, clock: @escaping () -> Int64,
                      admitsLive: @escaping () -> Bool) -> Status? {
         guard entries.count < Self.capacity, admitsLive() else { return nil }
         let id = UUID()
@@ -96,7 +96,7 @@ public final class CustomSurfaceEndpointHost {
         }
         let backend = self.backend
         entry.lease = registry.open(endpointID: endpoint.uniqueID, incarnation: id,
-            plan: plan, clock: clock, admitsLive: admitsLive,
+            plan: plan, permitsNeutralSilence: permitsNeutralSilence, clock: clock, admitsLive: admitsLive,
             ownsEndpoint: { _, _ in entry.validate(backend) },
             send: { _, _, command in
                 guard entry.phase != .identityLost,

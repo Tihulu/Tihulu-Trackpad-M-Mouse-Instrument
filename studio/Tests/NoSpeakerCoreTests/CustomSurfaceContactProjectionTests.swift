@@ -64,3 +64,33 @@ private func mixedPadProjection() throws -> Projection {
     let retired=p.retire()
     #expect(retired.observedAt==nil && retired.intents.isEmpty && retired.retired)
 }
+
+@Test func customSurfaceNativeNeutralSilenceDoesNotRelaxOccupiedDeadline() throws {
+    let base = try mixedPadProjection()
+    var p = Projection(layout: base.layout, permitsNeutralSilence: true)
+    _ = p.frame([], sequence: 1, observedAt: 0, now: 0)
+    #expect(!p.poll(now: 1_000_000_000).retired)
+    let touch = Projection.Contact(id: 1, x: 0.2, y: 0.5)
+    #expect(p.frame([touch], sequence: 2, observedAt: 1_000_000_001, now: 1_000_000_001).intents.count == 1)
+    #expect(p.poll(now: 1_150_000_001).retired)
+
+    var unarmed = Projection(layout: base.layout, permitsNeutralSilence: true)
+    _ = unarmed.frame([touch], sequence: 1, observedAt: 0, now: 0)
+    #expect(unarmed.poll(now: 150_000_000).retired)
+
+    var gap = Projection(layout: base.layout, permitsNeutralSilence: true)
+    _ = gap.frame([], sequence: 1, observedAt: 0, now: 0)
+    _ = gap.frame([.init(id: 1, x: 0.45, y: 0.5)], sequence: 2, observedAt: 1, now: 1)
+    #expect(gap.poll(now: 150_000_001).retired)
+
+    var strict = Projection(layout: base.layout)
+    _ = strict.frame([], sequence: 1, observedAt: 0, now: 0)
+    #expect(strict.poll(now: 150_000_000).retired)
+}
+@Test func customSurfaceNeutralSilenceStillRejectsStaleNewFrame() throws {
+    let base = try mixedPadProjection()
+    var p = Projection(layout: base.layout, permitsNeutralSilence: true)
+    _ = p.frame([], sequence: 1, observedAt: 0, now: 0)
+    let touch = Projection.Contact(id: 1, x: 0.2, y: 0.5)
+    #expect(p.frame([touch], sequence: 2, observedAt: 1, now: 150_000_001).retired)
+}
