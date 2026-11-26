@@ -56,6 +56,7 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
         name.hint="Calibration name";name.setSingleLine();addView(name)
         addView(Button(context).apply{text="Save new calibration";setOnClickListener {save()}})
         addView(Button(context).apply{text="Load named calibration";setOnClickListener {restore()}})
+        addView(Button(context).apply{text="Update named calibration";setOnClickListener {update()}})
         addView(Button(context).apply{text="Delete named calibration";setOnClickListener {delete()}})
         addView(message)
     }
@@ -75,7 +76,7 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
         val keys=prefs.all.keys.sorted()
         if(keys.isEmpty()){message.text="No calibrations for this camera";return}
         android.app.AlertDialog.Builder(context).setTitle("Load calibration").setItems(keys.toTypedArray()){_,position->
-            if(!isEnabled)return@setItems
+            if(!isEnabled || store()!=prefs)return@setItems
             val key=keys[position]
             try{
                 val data=JSONArray(prefs.getString(key,""))
@@ -90,6 +91,29 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
                 enabledAxes.forEachIndexed {i,box->box.isChecked=bits and (1 shl i)!=0}
                 name.setText(key);message.text="Loaded "+key
             }catch(_:Exception){message.text="Invalid saved calibration"}
+        }.show()
+    }
+    private fun update(){
+        val prefs=store()?:return
+        val v=volume()
+        val bits=mask
+        val roleIndex=role.selectedItemPosition
+        if(v==null || bits !in 1..7 || roleIndex !in 0..6){message.text="Set valid calibration and role first";return}
+        val replacement=JSONArray(listOf(v.left,v.right,v.bottom,v.top,v.near,v.far,bits,roleIndex)).toString()
+        val keys=prefs.all.keys.sorted()
+        if(keys.isEmpty()){message.text="No calibrations for this camera";return}
+        android.app.AlertDialog.Builder(context).setTitle("Update calibration with current settings").setItems(keys.toTypedArray()){_,position->
+            if(!isEnabled || store()!=prefs)return@setItems
+            val key=keys[position]
+            val original=prefs.all[key]
+            android.app.AlertDialog.Builder(context).setTitle("Replace "+key+"?")
+                .setNegativeButton("Cancel",null)
+                .setPositiveButton("Replace"){_,_->
+                    if(isEnabled && store()==prefs && prefs.contains(key) && prefs.all[key]==original){
+                        prefs.edit().putString(key,replacement).apply()
+                        message.text="Calibration updated"
+                    }else message.text="Calibration changed; load again"
+                }.show()
         }.show()
     }
     private fun delete(){

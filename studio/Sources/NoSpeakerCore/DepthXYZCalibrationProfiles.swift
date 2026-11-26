@@ -17,7 +17,7 @@ public struct DepthXYZCalibrationProfiles: Codable, Equatable, Sendable {
 
     public init() {}
 
-    public enum Failure: Error, Equatable { case invalidName, invalidSettings, duplicate, full }
+    public enum Failure: Error, Equatable { case invalidName, invalidSettings, duplicate, full, changed }
 
     /// Saving never overwrites an existing calibration.
     public mutating func save(name: String, volume: DepthXYZVolume, axisMask: Int, pitchAxis: DepthXYZPitchAxis? = nil, hybrid: Bool = false) throws {
@@ -30,6 +30,17 @@ public struct DepthXYZCalibrationProfiles: Codable, Equatable, Sendable {
         guard !profiles.contains(where: { $0.id == key.lowercased() }) else { throw Failure.duplicate }
         guard profiles.count < Self.capacity else { throw Failure.full }
         profiles.append(Profile(name: key, volume: volume, axisMask: axisMask, hybrid: hybrid ? true : nil, pitchAxis: pitchAxis))
+    }
+
+    /// Compare the complete saved record before replacing it. A stale
+    /// confirmation must not overwrite an independently changed profile.
+    public mutating func replace(expected: Profile, volume: DepthXYZVolume, axisMask: Int,
+                                 pitchAxis: DepthXYZPitchAxis? = nil, hybrid: Bool = false) throws {
+        guard let index = profiles.firstIndex(of: expected) else { throw Failure.changed }
+        var validated = Self()
+        try validated.save(name: expected.name, volume: volume, axisMask: axisMask,
+                           pitchAxis: pitchAxis, hybrid: hybrid)
+        profiles[index] = validated.profiles[0]
     }
 
     public mutating func remove(id: String) { profiles.removeAll { $0.id == id } }
