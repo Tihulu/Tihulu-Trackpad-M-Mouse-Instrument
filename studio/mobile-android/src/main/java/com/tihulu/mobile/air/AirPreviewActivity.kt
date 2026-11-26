@@ -23,6 +23,7 @@ import com.google.ar.core.ArCoreApk
  * permissioned experimental companion. Raw camera/depth images stay local. */
 class AirPreviewActivity: ComponentActivity() {
     private val handler=Handler(Looper.getMainLooper())
+    private lateinit var touchPreview:Button
     private lateinit var cameraPick:Spinner
     private lateinit var modePick:Spinner
     private lateinit var rolePick:Spinner
@@ -223,6 +224,9 @@ class AirPreviewActivity: ComponentActivity() {
             it.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,labels);column.addView(it)
         }
         label("TIHULU · Android Air stage")
+        touchPreview=button("Touch piano · local preview") {
+            if(!locked)startActivity(android.content.Intent(this,TouchPianoPreviewActivity::class.java))
+        }
         label(if(pairedAllowed)"Local preview by default · explicit Mac pairing · no camera image transmission" else "RGB / optional ARCore diagnostics · no MIDI, no app network, no stored images")
         paired=CheckBox(this).also {it.text="Play through paired Mac";it.visibility=if(pairedAllowed)View.VISIBLE else View.GONE;column.addView(it)}
         pairPanel=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL;visibility=View.GONE}
@@ -333,6 +337,7 @@ class AirPreviewActivity: ComponentActivity() {
         depthRange.isEnabled=canEditInstrument&&depth;imageRotation.isEnabled=canEditInstrument&&depth
         flip.isEnabled=canEditInstrument&&!depth&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_FRONT}&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_BACK}
         for(v in listOf(zoomBar,minus,plus,reset))v.isEnabled=canEditInstrument&&!depth&&r!=null&&r.max>r.min
+        touchPreview.isEnabled=!b
         modelButton.isEnabled=!b
         paired.isEnabled=!b&&pairedAllowed
         for(v in listOf(address,invitation,fingerprint,qrButton,rootButton,helperPick))v.isEnabled=!b&&wantsPair
