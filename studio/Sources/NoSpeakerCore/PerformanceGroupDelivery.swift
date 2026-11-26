@@ -74,7 +74,7 @@ public struct PerformanceGroupDelivery: Sendable {
         return deliver(commands,send:send)
     }
 
-    /// Receipt-bound frame for the live remote adapter. The router is
+    /// Receipt-bound frame for the live input adapters. The router is
     /// speculative until the wire batch completes. On expiry, roll back
     /// silent joins and unattempted groups; retire only groups whose wire
     /// state may have changed. The caller must batch-disconnect the expired
@@ -118,8 +118,16 @@ public struct PerformanceGroupDelivery: Sendable {
     public func hasLease(_ id: UUID) -> Bool { router.hasLease(id) }
 
     public mutating func disconnectBatch(_ leases: Set<UUID>, send: (PerformanceGroupCommand) -> Bool) -> Report {
+        disconnectBatch(leases,admitRestoration:nil,send:send)
+    }
+
+    /// A departing owner may restore another owner's non-neutral CC or
+    /// bend. Those are live output, not cleanup. Check before and after
+    /// such a restoration; never fence actual neutral/off commands.
+    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:(()->Bool)?,
+                                  send:(PerformanceGroupCommand)->Bool) -> Report {
         let commands = router.disconnectBatch(leases)
-        return deliver(commands,send:send)
+        return deliver(commands,admitRestoration:admitRestoration,send:send)
     }
 
     public mutating func expire(now: Double, timeout: Double, send: (PerformanceGroupCommand) -> Bool) -> Report {
@@ -133,6 +141,7 @@ public struct PerformanceGroupDelivery: Sendable {
     private mutating func deliver(_ commands: [PerformanceGroupCommand],
                                   admit: () -> Bool = { true },
                                   onAttempt: (UUID) -> Void = { _ in },
+                                  admitRestoration:(()->Bool)? = nil,
                                   send: (PerformanceGroupCommand) -> Bool) -> Report {
         var report = Report()
         for item in commands {
@@ -141,25 +150,41 @@ public struct PerformanceGroupDelivery: Sendable {
             // Check before touching the ledger. Cleanup itself remains
             // unfenced so an expired input cannot suppress a necessary off.
             guard admit() else { report.admissionExpired = true; break }
+            let restoring = !output.ledger.isRelease(item.command)
+            if restoring,let admitRestoration,!admitRestoration() {
+                report.admissionExpired = true
+                retire(id,send:send,report:&report)
+                continue
+            }
             let ok = output.ledger.deliver(item.command) { command in
                 onAttempt(id)
                 return send(.init(groupID:id,command:command))
             }
             outputs[id] = output
-            if ok { report.accepted += 1 }
-            else {
-                report.failedGroups.insert(id)
-                // Router releases are logical only. The ledger is authoritative
-                // for wire cleanup and avoids sending unattempted targets.
-                _ = router.stopGroup(id)
-                output.retired = true
-                output.faulted = true
-                outputs[id] = output
-                clean(id,send:send,report:&report)
+            if ok {
+                report.accepted += 1
+                if restoring,let admitRestoration,!admitRestoration() {
+                    report.admissionExpired = true
+                    retire(id,send:send,report:&report)
+                }
+            } else {
+                retire(id,send:send,report:&report)
             }
         }
         report.pendingCleanup = pendingCleanup
         return report
+    }
+
+    private mutating func retire(_ id:UUID,send:(PerformanceGroupCommand)->Bool,report:inout Report) {
+        guard var output = outputs[id],!output.retired else { return }
+        report.failedGroups.insert(id)
+        // Router releases are logical only. The actual wire ledger owns
+        // cleanup, including failed sends, not speculative restorations.
+        _ = router.stopGroup(id)
+        output.retired = true
+        output.faulted = true
+        outputs[id] = output
+        clean(id,send:send,report:&report)
     }
 
     /// A normal stop also uses delivery history, not the router's logical

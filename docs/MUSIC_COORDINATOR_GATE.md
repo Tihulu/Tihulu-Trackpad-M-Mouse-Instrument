@@ -65,3 +65,10 @@ All live Group surface, Xbox, scalar and camera adapters use the same injected m
 ## Native due-work and compound cancellation candidate
 
 Avoid an extra executor yield when the next playback deadline has already arrived during synchronous work; keep the absolute monotonic wait, 20 ms planned poll cap, identity checks and 50 ms event fence. The due-work branch is bounded by actual schedule advancement. This is a targeted scheduling improvement, not proof of the hosted wake-delay cause. Compound runAndClose now samples cancellation through disposal; cancellation after playback returns still completes owned cleanup but cannot claim compound completion. One general wake-target test and one mandatory isolated native cancellation/finalization fixture added. No timing gate loosened, no retry masking or future timestamp sends.
+
+
+## Disconnect restoration fence, delivery primitive
+
+Verified c873f672 run 45737653943: 745 portable / 794 macOS general and native gates PASS. f5b7638d run 45737777165: 751 portable / 800 macOS general PASS but mandatory receiver and prepared timing trials FAIL at 106,998,959 ns and 63,195,917 ns; preserve failures. c71bce01 run 45737900166: 751 portable / 802 macOS general, isolated fixtures and mandatory trials PASS; maximum event lateness in those reported trials 10,788,083 ns. Native acceptance remains open.
+
+Separate live-owner restoration from unconditional neutral cleanup on Group disconnect. Before and after a non-neutral restoration, the caller may supply an admission fence; if it fails, retire that endpoint and release actual wire debt. Other endpoints' note-offs and configured neutral releases remain unfenced; fixed tuning translates only after admission, dynamic uses its validated fixed neutral policy. Three regressions exercise pre/post restoration expiry, custom release and dynamic master bend. Primitive only; live clock wiring follows. No deadlines or release policy changed.

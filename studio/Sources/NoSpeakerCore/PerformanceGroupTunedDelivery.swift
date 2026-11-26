@@ -81,9 +81,14 @@ public struct PerformanceGroupTunedDelivery: Sendable {
     }
 
     public mutating func disconnectBatch(_ leases:Set<UUID>,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        disconnectBatch(leases,admitRestoration:nil,send:send)
+    }
+
+    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:(()->Bool)?,
+                                  send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
         guard state == .ready else { return .init() }
         let frozen = plan
-        return delivery.disconnectBatch(leases) {
+        return delivery.disconnectBatch(leases,admitRestoration:admitRestoration) {
             guard let translated = frozen.translate($0) else { return false }
             return send(translated)
         }

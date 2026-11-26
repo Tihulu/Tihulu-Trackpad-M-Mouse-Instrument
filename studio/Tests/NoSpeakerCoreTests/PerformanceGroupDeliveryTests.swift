@@ -183,3 +183,49 @@ private func deliveryGroup(_ source: SensorSource, signal: SensorSignal = .conta
     _ = delivery.disconnect(y) { _ in Issue.record("Unadmitted owner has no debt"); return false }
     #expect(delivery.faultedGroups.isEmpty)
 }
+
+
+@Test func groupDisconnectFencesRestorationButNotCustomNeutralOrNoteOff() throws {
+    let cc = SensorDestination(.controlChange,number:74)
+    let note = SensorDestination(.note,number:60)
+    let shared = PerformanceInstrumentGroup(name:"Shared",patch:.init(routes:[
+        .init(id:"low",source:.lid,signal:.angle,destination:cc,priority:0,response:.init(release:0.25)),
+        .init(id:"high",source:.touchBar,signal:.x,destination:cc,priority:10,response:.init(release:0.25))
+    ]))
+    let independent = PerformanceInstrumentGroup(name:"Other",patch:.init(routes:[
+        .init(id:"note",source:.touchBar,signal:.x,destination:note)
+    ]))
+    for stallAfterRestoration in [false,true] {
+        var state = try PerformanceGroupDelivery(profile:.init(groups:[shared,independent]),allowLayering:true)
+        let low = try state.connect(.lid,now:1)
+        let high = try state.connect(.touchBar,now:1)
+        _ = state.frame(lease:low,sequence:1,now:1,values:[.angle:0.4]) { _ in true }
+        _ = state.frame(lease:high,sequence:1,now:1,values:[.x:0.8]) { _ in true }
+        var fresh = stallAfterRestoration
+        var wire:[PerformanceGroupCommand] = []
+        let report = state.disconnectBatch([high],admitRestoration:{fresh}) {
+            wire.append($0)
+            if $0.groupID == shared.id && $0.command.value == 51 { fresh = false }
+            return true
+        }
+        #expect(report.admissionExpired && report.failedGroups == [shared.id])
+        #expect(wire.filter { $0.groupID == shared.id }.map(\.command.value) == (stallAfterRestoration ? [51,32] : [32]))
+        #expect(wire.contains(.init(groupID:independent.id,command:.init(note,value:0))))
+        #expect(report.pendingCleanup.isEmpty && !state.hasLease(low) && !state.hasLease(high))
+        #expect(state.faultedGroups == [shared.id])
+    }
+}
+
+@Test func groupDisconnectAlwaysAttemptsConfiguredNeutralEvenWhenRestoreNotAdmitted() throws {
+    let cc = SensorDestination(.controlChange,number:74)
+    let group = PerformanceInstrumentGroup(name:"Custom release",patch:.init(routes:[
+        .init(id:"cc",source:.lid,signal:.angle,destination:cc,response:.init(release:0.25))
+    ]))
+    var state = try PerformanceGroupDelivery(profile:.init(groups:[group]))
+    let lease = try state.connect(.lid,now:1)
+    _ = state.frame(lease:lease,sequence:1,now:1,values:[.angle:0.8]) { _ in true }
+    var wire:[PerformanceGroupCommand] = []
+    let report = state.disconnectBatch([lease],admitRestoration:{false}) { wire.append($0); return true }
+    #expect(!report.admissionExpired && report.failedGroups.isEmpty && report.pendingCleanup.isEmpty)
+    #expect(wire == [.init(groupID:group.id,command:.init(cc,value:32))])
+}

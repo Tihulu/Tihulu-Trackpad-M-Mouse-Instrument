@@ -103,9 +103,14 @@ public struct DynamicMPEGroupDelivery: Sendable {
     }
 
     public mutating func disconnectBatch(_ leases:Set<UUID>,send:(PerformanceGroupCommand)->Bool) -> Report {
+        disconnectBatch(leases,admitRestoration:nil,send:send)
+    }
+
+    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:(()->Bool)?,
+                                  send:(PerformanceGroupCommand)->Bool) -> Report {
         guard state == .ready else { return Report(pending:pendingCleanup) }
         let commands = router.disconnectBatch(leases)
-        return deliver(commands,send:send)
+        return deliver(commands,admitRestoration:admitRestoration,send:send)
     }
 
     public mutating func expire(now:Double,timeout:Double,send:(PerformanceGroupCommand)->Bool) -> Report {
@@ -116,17 +121,36 @@ public struct DynamicMPEGroupDelivery: Sendable {
 
     private mutating func deliver(_ commands:[PerformanceGroupCommand],
                                   admit:()->Bool = { true },onAttempt:(UUID)->Void = { _ in },
+                                  admitRestoration:(()->Bool)? = nil,
                                   send:(PerformanceGroupCommand)->Bool) -> Report {
         var report = Report()
         for item in commands {
             guard var pool = pools[item.groupID],pool.state == .ready else { continue }
             guard admit() else { report.admissionExpired = true; break }
+            // Dynamic pools admit only notes, hold sustain and master bend.
+            // Their cleanup neutral policy is fixed by the validated plan.
+            let restoring = item.command.value != PatchOutputLedger.neutral(item.command.destination)
+            if restoring,let admitRestoration,!admitRestoration() {
+                report.admissionExpired = true
+                report.failedGroups.insert(item.groupID)
+                _ = router.stopGroup(item.groupID)
+                _ = pool.stop { send(.init(groupID:item.groupID,command:$0)) }
+                pools[item.groupID] = pool
+                continue
+            }
             let result = pool.receive(item.command) {
                 onAttempt(item.groupID)
                 return send(.init(groupID:item.groupID,command:$0))
             }
             switch result {
-            case .delivered: report.delivered += 1
+            case .delivered:
+                report.delivered += 1
+                if restoring,let admitRestoration,!admitRestoration() {
+                    report.admissionExpired = true
+                    report.failedGroups.insert(item.groupID)
+                    _ = router.stopGroup(item.groupID)
+                    _ = pool.stop { send(.init(groupID:item.groupID,command:$0)) }
+                }
             case .capacity: report.capacityRefused += 1
             case .ignored: break
             case .failed,.invalid,.notReady:
