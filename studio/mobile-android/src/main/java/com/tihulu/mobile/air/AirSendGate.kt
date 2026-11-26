@@ -38,6 +38,7 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
     private var lastInput:Long?=null
     private var releaseDebtAt:Long?=null
     private var neutralFence=false
+    private var neutralConfirmedAt:Long?=null
     private fun close(reason:String):Action.Close {
         closed=true;admitted=false;pendingAt=null;sample=null;releaseDebtAt=null
         return Action.Close(reason)
@@ -73,7 +74,7 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
         if(!started||pendingAt==null||response!="accepted")return close("Unexpected ACK")
         pendingAt=null
         if(pendingNeutral) {
-            admitted=true;neutralFence=false;releaseDebtAt=null
+            admitted=true;neutralFence=false;releaseDebtAt=null;neutralConfirmedAt=now
             // Do not reuse a gesture observed before release ACK.
             sample=null;sampledAt=null
         }
@@ -91,7 +92,7 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
             lastInput?.let {observedAt<=it}==true)return close("Stale or replayed observation")
         lastInput=observedAt
         try {lane.encode(output,1)}catch(_:IllegalArgumentException){return close("Invalid logical snapshot")}
-        if(!admitted||neutralFence)return Action.Wait
+        if(!admitted||neutralFence||neutralConfirmedAt?.let {observedAt<=it}!=false)return Action.Wait
         if(output==AirOutput()) {
             val hadActive=sent!=AirOutput()
             sample=null;sampledAt=null
