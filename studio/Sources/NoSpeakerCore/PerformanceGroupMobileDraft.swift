@@ -282,7 +282,8 @@ extension PerformanceGroupMobileDraft {
         for (signal, value) in zip(RemotePedalboard.signals, preset.destinations) {
             guard var destination = value else { continue }
             destination.channel = channel
-            next.routes.append(.init(id: UUID().uuidString, source: source, signal: signal, destination: destination))
+            let response: ContinuousResponse? = destination.kind == .controlChange && [7,11].contains(destination.number) ? .init(release: 0) : nil
+            next.routes.append(.init(id: UUID().uuidString, source: source, signal: signal, destination: destination, response: response))
         }
         guard next.xyzHelperIsCompatible else { return false }
         self = next

@@ -11,8 +11,8 @@ import NoSpeakerCore
         switch view?.window?.windowScene?.interfaceOrientation {
         case .portrait: return .right
         case .portraitUpsideDown: return .left
-        case .landscapeLeft: return .up
-        case .landscapeRight: return .down
+        case .landscapeRight: return .up
+        case .landscapeLeft: return .down
         default: return nil
         }
     }
