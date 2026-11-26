@@ -11,6 +11,9 @@ struct PerformanceGroupEditorView: View {
     let editInBuilder:(InstrumentPatch)->Void
     @State private var starter:PerformanceGroupStarterPreset = .trackpadSolo
     @State private var groupsExpanded=false
+    @State private var offlinePreview:PerformanceGroupOfflinePreview?
+    @State private var previewMessage=""
+    @State private var previewLayering=false
     @State private var confirmStarterReplacement=false
     @State private var pendingStarter:PerformanceGroupStarterPreset?
     @State private var pendingStarterDraft:PerformanceGroupProfile?
@@ -985,6 +988,56 @@ struct PerformanceGroupEditorView: View {
         profile != saved && quickReadiness.readyForLocalStart
     }
 
+    private func previewCommandLabel(_ row:PerformanceGroupOfflinePreview.Row) -> String {
+        let command=row.command.command
+        let group=profile.groups.first(where:{$0.id==row.command.groupID})?.name ?? "Unknown group"
+        let destination=command.destination
+        let kind:String
+        switch destination.kind {
+        case .note: kind=(command.value>0 ? "Note On " : "Note Off ")+String(destination.number)
+        case .sustain: kind="Sustain CC64"
+        case .pitchBend: kind="Pitch Bend"
+        case .controlChange: kind="CC"+String(destination.number)
+        }
+        return (row.source.map(sourceLabel) ?? "Release all")+" → "+group+" · CH"+String(destination.channel+1)+" · "+kind+" = "+String(command.value)
+    }
+
+    private var offlinePreviewPanel:some View {
+        GroupBox("Try without hardware") {
+            VStack(alignment:.leading,spacing:6) {
+                Text("Run one normalized sample per mapped source, then release all. Logical standard MIDI commands only; no devices, sound or MIDI output.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !profile.layeredInputs.isEmpty {
+                    Toggle("Preview shared input layering",isOn:$previewLayering)
+                }
+                Button("Run offline preview") {
+                    do {
+                        offlinePreview=try PerformanceGroupOfflinePreview(profile:profile,allowLayering:previewLayering)
+                        previewMessage=""
+                    } catch {
+                        offlinePreview=nil
+                        previewMessage="Preview rejected: "+String(describing:error)
+                    }
+                }.disabled(!profile.isValid || profile.groups.allSatisfy { $0.patch.routes.isEmpty } ||
+                            (!profile.layeredInputs.isEmpty && !previewLayering))
+                if let preview=offlinePreview {
+                    Text("\(preview.sourceCount) simulated sources · \(preview.rows.count) commands · \(preview.cleanupCount) cleanup commands")
+                        .font(.caption.weight(.semibold))
+                    ScrollView {
+                        VStack(alignment:.leading,spacing:3) {
+                            ForEach(Array(preview.rows.prefix(100).enumerated()),id:\.offset) { item in
+                                Text(previewCommandLabel(item.element)).font(.system(.caption,design:.monospaced))
+                                    .textSelection(.enabled)
+                            }
+                        }.frame(maxWidth:.infinity,alignment:.leading)
+                    }.frame(maxHeight:200)
+                    if preview.rows.count>100 { Text("Showing first 100 commands.").font(.caption) }
+                }
+                if !previewMessage.isEmpty { Text(previewMessage).font(.caption) }
+            }.padding(6)
+        }.disabled(!didLoad || readFailed || studio.groupGamepadsRunning || studio.patchRunning)
+    }
+
     private var quickPlayPanel:some View {
         GroupBox("Play / setup") {
             VStack(alignment:.leading,spacing:6) {
@@ -1087,6 +1140,7 @@ struct PerformanceGroupEditorView: View {
             starterPanel
             userPresetPanel
             quickPlayPanel
+            offlinePreviewPanel
             // Keep pairing state independent of the advanced disclosure.
             // Collapsing manual controls must not retire a pending invitation.
             if supportedRemoteProfile && StudioController.groupRemoteStartEnabled {
@@ -1149,7 +1203,13 @@ struct PerformanceGroupEditorView: View {
             }.padding(6)
             }
         }.onAppear { load(); loadPresetLibrary() }
-        .onChange(of:profile) { _ in rememberGroupDraft() }
+        .onChange(of:profile) { _ in
+            rememberGroupDraft()
+            offlinePreview=nil
+            previewMessage=""
+            previewLayering=false
+        }
+        .onChange(of:previewLayering) { _ in offlinePreview=nil;previewMessage="" }
         .onDisappear { rememberGroupDraft() }
         .onChange(of:studio.groupGamepadsRunning) { running in
             if !running { hapticSelection = [] }
