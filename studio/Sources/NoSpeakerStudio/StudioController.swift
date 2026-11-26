@@ -3637,7 +3637,6 @@ final class StudioController: ObservableObject {
         customPadStatus = "Waiting for a fresh physical lift · cursor free · Esc stops"
         let started = NativeCustomSurfaceMIDIHost.monotonicNow()
         customPadTask = Task { [weak self, weak inbox] in
-            var received = false
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(12)) } catch { return }
                 guard let self, let inbox, self.customPadInbox === inbox,
@@ -3646,13 +3645,19 @@ final class StudioController: ObservableObject {
                     self.stopCustomPad(reason: "Escape monitor lost. Performance stopped.")
                     return
                 }
+                // Receiving occupied frames is not readiness. Bound the
+                // initial lift handshake even if a held finger keeps reporting.
+                if !self.customPadHost.statuses.contains(where: { $0.id == opened.id && $0.hasNeutralHandshake }),
+                   NativeCustomSurfaceMIDIHost.monotonicNow() - started >= 10_000_000_000 {
+                    self.stopCustomPad(reason: "No confirmed physical lift within 10 seconds. Restart explicitly.")
+                    return
+                }
                 let batch = inbox.drain()
                 guard !batch.faulted else {
                     self.stopCustomPad(reason: "Native contact backlog or invalid frame. Restart explicitly.")
                     return
                 }
                 for sample in batch.samples {
-                    received = true
                     guard let status = self.customPadHost.frame(opened.id, surface: sample.surface,
                         contacts: sample.contacts, sequence: sample.sequence, observedAt: sample.observedAt),
                         status.phase == .live else {
@@ -3668,10 +3673,6 @@ final class StudioController: ObservableObject {
                 }
                 if live.hasNeutralHandshake && self.customPadStatus != "Ready · play the frozen pad layout · Esc stops" {
                     self.customPadStatus = "Ready · play the frozen pad layout · Esc stops"
-                }
-                if !received && NativeCustomSurfaceMIDIHost.monotonicNow() - started >= 10_000_000_000 {
-                    self.stopCustomPad(reason: "No physical contact frames received. Restart explicitly.")
-                    return
                 }
             }
         }

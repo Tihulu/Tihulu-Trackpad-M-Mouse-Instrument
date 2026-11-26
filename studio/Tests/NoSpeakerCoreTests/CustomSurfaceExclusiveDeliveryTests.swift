@@ -188,3 +188,43 @@ private let sustain=SensorDestination(.sustain,channel:2)
     #expect(stopped.pendingCleanup.isEmpty)
     #expect(wire==[.init(n60,value:90),.init(n60,value:0)])
 }
+
+@Test func customPadExclusiveDeliveryHoldsOneNoteAcrossFiveSecondsOfFreshFrames() throws {
+    var now:Int64=0
+    var wire:[SensorCommand]=[]
+    let d=CustomSurfaceExclusiveDelivery(plan:try deliveryPlan(),permitsNeutralSilence:true,clock:{now},
+        admitsExclusiveEndpoint:{true},ownsCleanupEndpoint:{true},send:{wire.append($0);return true})
+    _=d.frame([],sequence:1,observedAt:0)
+    // Idle silence is allowed only after a genuine neutral frame.
+    now=1_000_000_000
+    #expect(!d.poll().retired)
+    for index in 0...50 {
+        now=1_000_000_001+Int64(index)*100_000_000
+        let report=d.frame([note],sequence:UInt64(index+2),observedAt:now)
+        #expect(!report.retired && report.outstanding==Set([n60]))
+    }
+    #expect(wire==[.init(n60,value:100)])
+    now+=100_000_000
+    let off=d.frame([],sequence:53,observedAt:now)
+    #expect(!off.retired && off.outstanding.isEmpty)
+    #expect(wire==[.init(n60,value:100),.init(n60,value:0)])
+    now+=1_000_000_000
+    #expect(!d.poll().retired)
+}
+@Test func customPadExclusiveDeliveryDoesNotResumeAfterOccupiedCadenceLoss() throws {
+    var now:Int64=0
+    var wire:[SensorCommand]=[]
+    let d=CustomSurfaceExclusiveDelivery(plan:try deliveryPlan(),permitsNeutralSilence:true,clock:{now},
+        admitsExclusiveEndpoint:{true},ownsCleanupEndpoint:{true},send:{wire.append($0);return true})
+    _=d.frame([],sequence:1,observedAt:0)
+    now=1
+    _=d.frame([note,pedal],sequence:2,observedAt:now)
+    now=150_000_001
+    #expect(d.poll().retirement == .expiredOrInvalid)
+    #expect(wire==[.init(sustain,value:127),.init(n60,value:100),.init(n60,value:0),.init(sustain,value:0)])
+    now+=1
+    #expect(d.frame([],sequence:3,observedAt:now).retired)
+    now+=1
+    #expect(d.frame([note],sequence:4,observedAt:now).retired)
+    #expect(wire.count==4)
+}
