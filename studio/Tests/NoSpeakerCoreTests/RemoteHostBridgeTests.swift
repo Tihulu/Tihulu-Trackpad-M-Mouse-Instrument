@@ -68,3 +68,40 @@ private func bridgeRuntime() throws -> PhysicalPatchRuntime {
     let localRelease = runtime.receive(source: .trackpad, x: nil,y:nil,size:nil,hostTime:1.53,now:1.53)
     #expect(localRelease == [.init(bridgeNote,value:0)])
 }
+
+@Test func builderRemoteBatchRetainsOldestCommandProducingReceipt() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    let paired=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    #expect(paired.deliveryReceipt==nil)
+    let release=Data("{\"version\":1,\"sequence\":2,\"kind\":\"release\"}".utf8)
+    let batch=bridge.process([.frame(id,bridgeTouch,1.01),.frame(id,release,1.03)],now:1.04,runtime:&runtime)
+    #expect(batch.deliveryReceipt==1.01)
+    #expect(batch.commands.first == .init(bridgeNote,value:100))
+    var fence=batch.deliveryReceipt.map { PhysicalReceiptSendFence(receipt:$0,maximumAge:0.1) }
+    var ledger=PatchOutputLedger()
+    var now=1.04
+    var sent:[SensorCommand]=[]
+    let result=PhysicalReceiptCommandBatch.dispatch(batch.commands,fence:&fence,now:{now},send:{cmd in
+        ledger.deliver(cmd,send:{sent.append($0);now=1.11;return true})
+    })
+    #expect(result == .expired)
+    #expect(sent == [.init(bridgeNote,value:100)])
+    let clean=ledger.releaseAll(send:{sent.append($0);return true})
+    #expect(clean && sent == [.init(bridgeNote,value:100),.init(bridgeNote,value:0)])
+}
+
+@Test func builderRemoteDisconnectCleanupHasNoNewReceipt() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    _=bridge.process([.frame(id,bridgeTouch,1.02)],now:1.03,runtime:&runtime)
+    let release=bridge.process([.disconnected(id)],now:1.04,runtime:&runtime)
+    #expect(release.deliveryReceipt==nil && release.commands == [.init(bridgeNote,value:0)])
+}

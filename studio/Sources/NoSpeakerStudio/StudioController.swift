@@ -1612,8 +1612,8 @@ final class StudioController: ObservableObject {
         patchRemoteBridge = bridge
         if patchRemoteReady != bridge.ready { patchRemoteReady = bridge.ready }
         if patchRemotePeers != bridge.connectionIDs { patchRemotePeers = bridge.connectionIDs }
-        recordPatchCommands(result.commands)
-        // MIDI failure can retire the entire Builder while delivering commands.
+        recordPatchCommands(result.commands,receipt:result.deliveryReceipt,maximumAge:0.1)
+        // MIDI failure or receipt expiry can retire the entire Builder while delivering commands.
         guard patchRunning, patchRemoteTransport === transport else { return }
         if result.fault {
             stopInstrumentPatch()
@@ -1903,7 +1903,8 @@ final class StudioController: ObservableObject {
                 case .combinedFrame(let count,let confidence,let left,let right,let time):
                     let l = left?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
                     let r = right?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
-                    if now >= time && now-time < 0.25 {
+                    let fresh=MonotonicReceiptAdmission.permits(receipt:time,now:now,maximumAge:0.25)
+                    if fresh {
                         patchCameraReceivedFrame = true
                         patchCameraLastFrame = time
                         if patchAirRecording {
@@ -1920,11 +1921,12 @@ final class StudioController: ObservableObject {
                         patchCameraStatus = "Stale combined frame · released"
                     }
                     recordPatchCommands(patchPhysicalRuntime.receiveCombinedHands(count:count,confidence:confidence,
-                        left:l,right:r,swapRoles:patchCameraSwapRoles,hostTime:time,now:now))
+                        left:l,right:r,swapRoles:patchCameraSwapRoles,hostTime:time,now:now),receipt:fresh ? time : nil,maximumAge:0.25)
                 case .helperFrame(let left, let right, let time):
                     let l = left?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
                     let r = right?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
-                    if now >= time && now-time < 0.25 {
+                    let fresh=MonotonicReceiptAdmission.permits(receipt:time,now:now,maximumAge:0.25)
+                    if fresh {
                         patchCameraReceivedFrame = true
                         patchCameraLastFrame = time
                         patchCameraHand = l ?? r
@@ -1934,9 +1936,9 @@ final class StudioController: ObservableObject {
                         patchCameraHand = nil
                         patchCameraStatus = "Stale helper frame · released"
                     }
-                    recordPatchCommands(patchPhysicalRuntime.receiveHelperHands(left:l,right:r,hostTime:time,now:now))
+                    recordPatchCommands(patchPhysicalRuntime.receiveHelperHands(left:l,right:r,hostTime:time,now:now),receipt:fresh ? time : nil,maximumAge:0.25)
                 case .dualFrame(let count, let confidence, let helper, let time):
-                    guard now >= time, now - time < 0.25 else {
+                    guard MonotonicReceiptAdmission.permits(receipt:time,now:now,maximumAge:0.25) else {
                         recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: nil, confidence: 0, helper: nil, hostTime: time, now: now))
                         stopAirTrace()
                         patchCameraHand = nil
@@ -1954,9 +1956,9 @@ final class StudioController: ObservableObject {
                     patchCameraHand = oriented
                     patchCameraStatus = count.map { "Chord fingers: \($0) · pinch helper to play" } ?? "Two reliable hands required"
                     recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: count, confidence: confidence,
-                                                                            helper: oriented, hostTime: time, now: now))
+                                                                            helper: oriented, hostTime: time, now: now),receipt:time,maximumAge:0.25)
                 case .frame(let hand, let time):
-                    guard now >= time, now - time < PhysicalPatchRuntime.timeout else {
+                    guard PhysicalPatchRuntime.admitsPhysicalReceipt(time,now:now) else {
                         stopBuilderCamera(reason: "Stale camera frames. Restart Builder explicitly.")
                         return
                     }
@@ -1967,7 +1969,7 @@ final class StudioController: ObservableObject {
                     patchCameraHand = accepted
                     patchCameraStatus = accepted != nil ? "One hand tracked" :
                         (hand == nil ? "No reliable single hand" : "Acquiring hand")
-                    recordPatchCommands(patchPhysicalRuntime.receiveHand(accepted, hostTime: time, now: now))
+                    recordPatchCommands(patchPhysicalRuntime.receiveHand(accepted, hostTime: time, now: now),receipt:time)
                 }
             }
             guard patchRunning else { return }
@@ -2056,7 +2058,8 @@ final class StudioController: ObservableObject {
         if !patchSimulation.running { stopInstrumentPatch() }
     }
 
-    private func recordPatchCommands(_ commands: [SensorCommand],receipt:Double? = nil) {
+    private func recordPatchCommands(_ commands: [SensorCommand],receipt:Double? = nil,
+                                     maximumAge:Double = PhysicalPatchRuntime.timeout) {
         guard !commands.isEmpty else { return }
         var attempted: [SensorCommand] = []
         var hapticAttack = false
@@ -2067,7 +2070,7 @@ final class StudioController: ObservableObject {
             builderPerformanceMetrics.recordBatch(start:batchStart,end:ProcessInfo.processInfo.systemUptime,
                 commands:attempted.count,attempts:midiAttempts,failures:midiFailures)
         }
-        var fence=receipt.map { PhysicalReceiptSendFence(receipt:$0,maximumAge:PhysicalPatchRuntime.timeout) }
+        var fence=receipt.map { PhysicalReceiptSendFence(receipt:$0,maximumAge:maximumAge) }
         let outcome=PhysicalReceiptCommandBatch.dispatch(commands,fence:&fence,
             now:{ ProcessInfo.processInfo.systemUptime }) { command in
             attempted.append(command)

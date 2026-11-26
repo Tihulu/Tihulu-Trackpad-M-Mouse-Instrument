@@ -19,8 +19,17 @@ public enum RemoteHostAction: Equatable, Sendable {
 
 public struct RemoteHostBatch: Sendable {
     public var commands: [SensorCommand] = []
+    /// Oldest wire receipt contributing accepted performance commands.
+    /// The flattened Builder batch must not outlive that receipt. Cleanup
+    /// without accepted frame output has no new performance receipt.
+    public private(set) var deliveryReceipt:Double?
     public var actions: [RemoteHostAction] = []
     public var fault = false
+    mutating func appendFrameCommands(_ commands:[SensorCommand],receipt:Double) {
+        guard !commands.isEmpty else { return }
+        deliveryReceipt=min(deliveryReceipt ?? receipt,receipt)
+        self.commands += commands
+    }
 }
 
 /// Main-actor/serial caller owns this value and the existing physical runtime.
@@ -107,7 +116,7 @@ public struct RemoteHostBridge: Sendable {
                 }
                 switch runtime.receiveRemote(peer, bytes: bytes, now: now) {
                 case .accepted(let commands):
-                    result.commands += commands
+                    result.appendFrameCommands(commands,receipt:time)
                     let frame = try? RemoteTouchFrame.read(bytes)
                     if frame?.kind == .capabilities {
                         if let capabilities = runtime.remoteCapabilities(peer) {

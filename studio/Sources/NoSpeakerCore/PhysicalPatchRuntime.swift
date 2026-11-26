@@ -334,8 +334,8 @@ public struct PhysicalPatchRuntime: Sendable {
     public mutating func receiveHelperHands(left:AirHandSample?,right:AirHandSample?,
                                             hostTime:Double,now:Double,synthetic:Bool = false) -> [SensorCommand] {
         guard synthetic == (hybridSource == .camera), cameraHandsEnabled, !airDualEnabled else { return [] }
-        guard hostTime.isFinite, now.isFinite, hostTime >= 0, now >= hostTime,
-              now-hostTime < 0.25, hostTime > (seen[.camera] ?? -1) else { return releaseCamera() }
+        guard MonotonicReceiptAdmission.permits(receipt:hostTime,now:now,maximumAge:0.25),
+              hostTime > (seen[.camera] ?? -1) else { return releaseCamera() }
         if let last = seen[.camera], hostTime-last >= 0.25 {
             let release = releaseCamera()
             seen[.camera] = hostTime
@@ -356,7 +356,7 @@ public struct PhysicalPatchRuntime: Sendable {
                                               right:AirHandSample?,swapRoles:Bool,
                                               hostTime:Double,now:Double,synthetic:Bool = false) -> [SensorCommand] {
         guard synthetic == (hybridSource == .camera), airDualEnabled, cameraHandsEnabled else { return [] }
-        guard hostTime.isFinite,now.isFinite,hostTime >= 0,now >= hostTime,now-hostTime < 0.25,
+        guard MonotonicReceiptAdmission.permits(receipt:hostTime,now:now,maximumAge:0.25),
               seen[.camera].map({ hostTime > $0 }) ?? true else { return releaseCamera() }
         if let last = seen[.camera], hostTime-last >= 0.25 {
             let commands = releaseCamera()
@@ -394,8 +394,8 @@ public struct PhysicalPatchRuntime: Sendable {
                                          helper: AirHandSample?, hostTime: Double,
                                          now: Double,synthetic:Bool = false) -> [SensorCommand] {
         guard synthetic == (hybridSource == .camera), airDualEnabled, !cameraHandsEnabled else { return [] }
-        guard hostTime.isFinite, now.isFinite, hostTime >= 0, hostTime <= now,
-              now - hostTime < 0.25, hostTime > (seen[.camera] ?? -1)
+        guard MonotonicReceiptAdmission.permits(receipt:hostTime,now:now,maximumAge:0.25),
+              hostTime > (seen[.camera] ?? -1)
         else { return releaseCamera() }
         let slot = airDual.receive(count: count, confidence: confidence, helper: helper,
                                    time: hostTime, now: now)

@@ -183,3 +183,12 @@ private func qbNote(_ pitch:Int,_ velocity:Int)->SensorCommand {
         now:{ .nan },send:{sent.append($0);return true})
     #expect(result == .completed && sent == [qbNote(60,90)])
 }
+
+@Test func builderCameraBatchUsesExistingQuarterSecondDeadline() {
+    var fence:PhysicalReceiptSendFence? = .init(receipt:10,maximumAge:0.25)
+    var now=10.01
+    var sent:[SensorCommand]=[]
+    let result=PhysicalReceiptCommandBatch.dispatch([qbNote(60,90),qbNote(64,90)],
+        fence:&fence,now:{now},send:{cmd in sent.append(cmd);now=10.25;return true})
+    #expect(result == .expired && sent == [qbNote(60,90)])
+}
