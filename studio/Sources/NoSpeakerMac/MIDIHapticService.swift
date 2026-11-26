@@ -1503,10 +1503,11 @@ public final class PerformanceGroupMIDIHost {
         return token
     }
 
-    public func receiveGamepad(_ source: SensorSource, token: UUID, frame: GamepadFrame?, now: Double)
-        -> PerformanceGroupGamepadSession.Result? {
+    public func receiveGamepad(_ source: SensorSource, token: UUID, frame: GamepadFrame?, now: Double,
+                               hostTime:Double? = nil) -> PerformanceGroupGamepadSession.Result? {
         guard var state = gamepads else { return nil }
-        let result = state.receive(source,token:token,frame:frame,now:now,send:send)
+        let result = state.receive(source,token:token,frame:frame,now:now,hostTime:hostTime,
+                                   refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
         if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result
@@ -1516,7 +1517,8 @@ public final class PerformanceGroupMIDIHost {
                                hostTime:Double, now:Double) -> PerformanceGroupGamepadSession.Result? {
         guard var state = gamepads else { return nil }
         let result = state.receiveSurface(source,token:token,x:x,y:y,size:size,
-                                          hostTime:hostTime,now:now,send:send)
+                                          hostTime:hostTime,now:now,
+                                          refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
         if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result
@@ -1525,7 +1527,8 @@ public final class PerformanceGroupMIDIHost {
     public func receiveScalar(_ source:SensorSource, token:UUID, value:Double?,
                               hostTime:Double, now:Double) -> PerformanceGroupGamepadSession.Result? {
         guard var state = gamepads else { return nil }
-        let result = state.receiveScalar(source,token:token,value:value,hostTime:hostTime,now:now,send:send)
+        let result = state.receiveScalar(source,token:token,value:value,hostTime:hostTime,now:now,
+                                         refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
         if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result
@@ -1534,7 +1537,8 @@ public final class PerformanceGroupMIDIHost {
     public func receiveCamera(token:UUID,hand:AirHandSample?,hostTime:Double,now:Double)
         -> PerformanceGroupGamepadSession.Result? {
         guard var state = gamepads else { return nil }
-        let result = state.receiveCamera(token:token,hand:hand,hostTime:hostTime,now:now,send:send)
+        let result = state.receiveCamera(token:token,hand:hand,hostTime:hostTime,now:now,
+                                         refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
         if result.status == .lost || result.status == .admissionRejected { discardGroupHapticAttacks() }
         gamepads = state
         return result

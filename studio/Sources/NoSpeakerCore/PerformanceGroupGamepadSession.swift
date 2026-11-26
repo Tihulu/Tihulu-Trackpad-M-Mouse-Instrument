@@ -271,7 +271,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
     /// A complete snapshot, never a delta. No held button or trigger at
     /// startup or after a stall can sound until a neutral snapshot arrives.
     public mutating func receive(_ source: SensorSource, token: UUID,
-                                 frame: GamepadFrame?, now: Double,
+                                 frame: GamepadFrame?, now: Double, hostTime:Double? = nil,
+                                 refreshNow:(()->Double)? = nil,
                                  send: (PerformanceGroupCommand) -> Bool) -> Result {
         guard !retired, GamepadFrame.sources.contains(source), bindings[source]?.token == token else {
             return .init(status:.ignored,reports:[])
@@ -286,17 +287,24 @@ public struct PerformanceGroupGamepadSession: Sendable {
         if expired.contains(source) {
             return .init(status:.lost,reports:reports)
         }
+        let receipt = hostTime ?? now
+        guard let now = receiptAfterCleanup(source:source,receipt:receipt,now:now,
+                                            maximumAge:Self.timeout,refreshNow:refreshNow,reports:&reports,send:send) else {
+            return .init(status:.lost,reports:reports)
+        }
         guard var binding = bindings[source] else {
             return .init(status:.ignored,reports:reports)
         }
-        guard let frame else {
+        guard receipt >= binding.boundAt,binding.lastSurfaceReceipt.map({ receipt >= $0 }) ?? true,
+              let frame else {
             reports += reset([source],send:send)
             return .init(status:.lost,reports:reports)
         }
         if let lease = binding.lease, !delivery.hasLease(lease) {
             binding.reset()
         }
-        binding.lastSeen = now
+        binding.lastSurfaceReceipt = receipt
+        binding.lastSeen = receipt
         if !binding.armed {
             binding.armed = frame.active.isEmpty
             bindings[source] = binding
@@ -334,10 +342,9 @@ public struct PerformanceGroupGamepadSession: Sendable {
         binding.sequence += 1
         binding.lastActive = values
         bindings[source] = binding
-        reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,
-            values:values,releasing:signals.subtracting(values.keys),send:send))
-        if !delivery.hasLease(lease) { bindings[source]?.reset() }
-        return .init(status:.delivered,reports:reports)
+        return publishReceiptFrame(source:source,lease:lease,sequence:binding.sequence,now:now,
+                                   receipt:receipt,maximumAge:Self.timeout,values:values,
+                                   releasing:signals.subtracting(values.keys),refreshNow:refreshNow,reports:reports,send:send)
     }
 
     /// A primary-contact sample from the existing ordered surface mailbox.
@@ -346,7 +353,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     /// processing time is the monotonic clock used by the shared router.
     public mutating func receiveSurface(_ source:SensorSource, token:UUID,
                                         x:Double?, y:Double?, size:Double?,
-                                        hostTime:Double, now:Double,
+                                        hostTime:Double, now:Double,refreshNow:(()->Double)? = nil,
                                         send:(PerformanceGroupCommand) -> Bool) -> Result {
         guard !retired, (source == .trackpad || source == .magicMouse),
               bindings[source]?.token == token else { return .init(status:.ignored,reports:[]) }
@@ -355,6 +362,10 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         clock = now
         var reports = reset(staleSources(now:now),send:send)
+        guard let now = receiptAfterCleanup(source:source,receipt:hostTime,now:now,
+                                            maximumAge:Self.timeout,refreshNow:refreshNow,reports:&reports,send:send) else {
+            return .init(status:.lost,reports:reports)
+        }
         guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
         guard hostTime >= binding.boundAt,
               PhysicalPatchRuntime.admitsPhysicalReceipt(hostTime,now:now),
@@ -368,6 +379,10 @@ public struct PerformanceGroupGamepadSession: Sendable {
             // Ordinary touch release ends this source lease, matching the
             // existing surface policy rather than the controller toggle lift.
             reports += reset([source],send:send)
+            guard receiptAfterCleanup(source:source,receipt:hostTime,now:now,maximumAge:Self.timeout,
+                                      refreshNow:refreshNow,reports:&reports,send:send) != nil else {
+                return .init(status:.lost,reports:reports)
+            }
             bindings[source]?.armed = true
             bindings[source]?.lastSeen = nil
             return .init(status:.ready,reports:reports)
@@ -400,16 +415,16 @@ public struct PerformanceGroupGamepadSession: Sendable {
         let values: [SensorSignal:Double] = [.x:x,.y:y,.contactSize:size,.contact:1]
         let filtered = values.filter { mapped[source]?.contains($0.key) == true }
         bindings[source] = binding
-        reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,values:filtered,releasing:[],send:send))
-        if !delivery.hasLease(lease) { bindings[source]?.reset() }
-        return .init(status:.delivered,reports:reports)
+        return publishReceiptFrame(source:source,lease:lease,sequence:binding.sequence,now:now,
+                                   receipt:hostTime,maximumAge:Self.timeout,values:filtered,releasing:[],
+                                   refreshNow:refreshNow,reports:reports,send:send)
     }
 
     /// Continuous local controls only. A Touch Bar release permits another
     /// gesture. Lid loss requires an explicit new binding. Capture-time
     /// expiry cannot be renewed by another source or by delayed processing.
     public mutating func receiveScalar(_ source:SensorSource, token:UUID,
-                                       value:Double?, hostTime:Double, now:Double,
+                                       value:Double?, hostTime:Double, now:Double,refreshNow:(()->Double)? = nil,
                                        send:(PerformanceGroupCommand) -> Bool) -> Result {
         guard !retired, (source == .lid || source == .touchBar),
               bindings[source]?.token == token else { return .init(status:.ignored,reports:[]) }
@@ -418,6 +433,10 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         clock = now
         var reports = reset(staleSources(now:now),send:send)
+        guard let now = receiptAfterCleanup(source:source,receipt:hostTime,now:now,
+                                            maximumAge:Self.timeout,refreshNow:refreshNow,reports:&reports,send:send) else {
+            return .init(status:.lost,reports:reports)
+        }
         guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
         guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now, PhysicalPatchRuntime.admitsPhysicalReceipt(hostTime,now:now),
               binding.lastSurfaceReceipt.map({ hostTime >= $0 }) ?? true else {
@@ -428,7 +447,13 @@ public struct PerformanceGroupGamepadSession: Sendable {
         bindings[source] = binding
         guard let value else {
             reports += reset([source],send:send)
-            if source == .touchBar { bindings[source]?.armed = true }
+            if source == .touchBar {
+                guard receiptAfterCleanup(source:source,receipt:hostTime,now:now,maximumAge:Self.timeout,
+                                          refreshNow:refreshNow,reports:&reports,send:send) != nil else {
+                    return .init(status:.lost,reports:reports)
+                }
+                bindings[source]?.armed = true
+            }
             return .init(status:source == .touchBar ? .ready : .lost,reports:reports)
         }
         guard value.isFinite, (0...1).contains(value) else {
@@ -456,17 +481,16 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         binding.sequence += 1
         bindings[source] = binding
-        reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,
-            values:[source == .lid ? .angle : .x:value],releasing:[],send:send))
-        if !delivery.hasLease(lease) { bindings[source]?.reset() }
-        return .init(status:.delivered,reports:reports)
+        return publishReceiptFrame(source:source,lease:lease,sequence:binding.sequence,now:now,
+                                   receipt:hostTime,maximumAge:Self.timeout,values:[source == .lid ? .angle : .x:value],
+                                   releasing:[],refreshNow:refreshNow,reports:reports,send:send)
     }
 
     /// Single reliable hand, continuous controls only. Two consecutive
     /// fresh samples acquire tracking; loss clears camera ownership without
     /// affecting a different input. No images or camera access in this core.
     public mutating func receiveCamera(token:UUID, hand:AirHandSample?,
-                                       hostTime:Double, now:Double,
+                                       hostTime:Double, now:Double,refreshNow:(()->Double)? = nil,
                                        send:(PerformanceGroupCommand) -> Bool) -> Result {
         let source = SensorSource.camera
         guard !retired, bindings[source]?.token == token else {
@@ -477,6 +501,10 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         clock = now
         var reports = reset(staleSources(now:now),send:send)
+        guard let now = receiptAfterCleanup(source:source,receipt:hostTime,now:now,
+                                            maximumAge:Self.timeout,refreshNow:refreshNow,reports:&reports,send:send) else {
+            return .init(status:.lost,reports:reports)
+        }
         guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
         guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now, PhysicalPatchRuntime.admitsPhysicalReceipt(hostTime,now:now),
               binding.lastSurfaceReceipt.map({ hostTime > $0 }) ?? true else {
@@ -495,6 +523,11 @@ public struct PerformanceGroupGamepadSession: Sendable {
             if let lease = binding.lease {
                 reports.append(delivery.disconnect(lease,send:send))
                 binding.reset()
+                bindings[source] = binding
+                guard receiptAfterCleanup(source:source,receipt:hostTime,now:now,maximumAge:Self.timeout,
+                                          refreshNow:refreshNow,reports:&reports,send:send) != nil else {
+                    return .init(status:.lost,reports:reports)
+                }
             }
             binding.lastSeen = hostTime
             bindings[source] = binding
@@ -518,13 +551,10 @@ public struct PerformanceGroupGamepadSession: Sendable {
         binding.sequence += 1
         bindings[source] = binding
         let values: [SensorSignal:Double] = [.x:accepted.x,.y:accepted.y,.gesture:accepted.aperture]
-        reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,
-            values:values.filter { mapped[source]?.contains($0.key) == true },releasing:[],send:send))
-        if !delivery.hasLease(lease) {
-            bindings[source]?.reset()
-            cameraTracking.reset()
-        }
-        return .init(status:.delivered,reports:reports)
+        return publishReceiptFrame(source:source,lease:lease,sequence:binding.sequence,now:now,
+                                   receipt:hostTime,maximumAge:Self.timeout,
+                                   values:values.filter { mapped[source]?.contains($0.key) == true },releasing:[],
+                                   refreshNow:refreshNow,reports:reports,send:send)
     }
 
     /// Only a trusted, authenticated host adapter may bind a remote slot and
@@ -556,22 +586,10 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         clock = now
         var reports = reset(staleSources(now:now),send:send)
-        // The session's own expiry cleanup can block even after the bridge
-        // refreshed its clock. Reject the new frame before logical ownership.
-        let processedNow=refreshNow?() ?? now
-        guard processedNow.isFinite,processedNow>=now else {
-            reports += reset(Set(bindings.keys),send:send)
+        guard let now = receiptAfterCleanup(source:source,receipt:hostTime,now:now,
+                                            maximumAge:0.1,refreshNow:refreshNow,reports:&reports,send:send) else {
             return .init(status:.lost,reports:reports)
         }
-        clock=processedNow
-        let newlyStale=staleSources(now:processedNow)
-        if !newlyStale.isEmpty || !MonotonicReceiptAdmission.permits(receipt:hostTime,now:processedNow,maximumAge:0.1) {
-            // Remove newly expired sources together; never restore another
-            // departing owner. Other still-live leases are retained.
-            reports += reset(newlyStale.union([source]),send:send)
-            return .init(status:.lost,reports:reports)
-        }
-        let now=processedNow
         guard var binding = bindings[source] else { return .init(status:.lost,reports:reports) }
         guard binding.remoteLastReceipt.map({ hostTime >= $0 }) ?? false,
               let frame = binding.remoteFence.accept(validated,receipt:hostTime,now:now) else {
@@ -612,8 +630,12 @@ public struct PerformanceGroupGamepadSession: Sendable {
         if binding.remoteActive.isEmpty {
             if let lease = binding.lease { reports.append(delivery.disconnect(lease,send:send)) }
             binding.reset()
-            binding.armed = true
             bindings[source] = binding
+            guard receiptAfterCleanup(source:source,receipt:hostTime,now:now,maximumAge:0.1,
+                                      refreshNow:refreshNow,reports:&reports,send:send) != nil else {
+                return .init(status:.lost,reports:reports)
+            }
+            bindings[source]?.armed = true
             return .init(status:.ready,reports:reports)
         }
         // Only this family's signals are updated/released. Other families
@@ -632,20 +654,51 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         binding.sequence += 1
         bindings[source] = binding
-        // Refresh the same 100 ms receipt fence before every actual
-        // command and after the batch. A backward/nonfinite clock is a
-        // terminal input fault, not a renewed receipt.
+        return publishReceiptFrame(source:source,lease:lease,sequence:binding.sequence,now:now,
+                                   receipt:hostTime,maximumAge:0.1,values:values,
+                                   releasing:signals.subtracting(values.keys),refreshNow:refreshNow,reports:reports,send:send)
+    }
+
+    /// Resample after synchronous cleanup; a stale lift cannot rearm input.
+    private mutating func receiptAfterCleanup(source:SensorSource,receipt:Double,now:Double,maximumAge:Double,
+                                              refreshNow:(()->Double)?,reports:inout [PerformanceGroupDelivery.Report],
+                                              send:(PerformanceGroupCommand)->Bool) -> Double? {
+        let sampled = refreshNow?() ?? now
+        guard sampled.isFinite,sampled >= now,sampled >= clock else {
+            reports += reset(Set(bindings.keys),send:send)
+            return nil
+        }
+        clock = sampled
+        let stale = staleSources(now:sampled)
+        guard stale.isEmpty,MonotonicReceiptAdmission.permits(receipt:receipt,now:sampled,maximumAge:maximumAge) else {
+            reports += reset(stale.union([source]),send:send)
+            return nil
+        }
+        return sampled
+    }
+
+    /// Recheck the immutable source receipt and the other active lease
+    /// deadlines before each command. Never restore a concurrently expiring
+    /// owner by processing a partially delivered frame as fresh.
+    private mutating func publishReceiptFrame(source:SensorSource,lease:UUID,sequence:UInt64,
+                                               now:Double,receipt:Double,maximumAge:Double,
+                                               values:[SensorSignal:Double],releasing:Set<SensorSignal>,
+                                               refreshNow:(()->Double)?,reports previous:[PerformanceGroupDelivery.Report],
+                                               send:(PerformanceGroupCommand)->Bool) -> Result {
+        var reports = previous
         var admissionNow = now
         var validClock = true
-        let report = delivery.admittedFrame(lease:lease,sequence:binding.sequence,now:now,
-            values:values,releasing:signals.subtracting(values.keys),admit:{
+        let receiptBindings = bindings
+        let report = delivery.admittedFrame(lease:lease,sequence:sequence,now:now,
+            values:values,releasing:releasing,admit:{
                 let sampled = refreshNow?() ?? now
                 guard validClock,sampled.isFinite,sampled >= admissionNow else {
                     validClock = false
                     return false
                 }
                 admissionNow = sampled
-                return MonotonicReceiptAdmission.permits(receipt:hostTime,now:sampled,maximumAge:0.1)
+                return MonotonicReceiptAdmission.permits(receipt:receipt,now:sampled,maximumAge:maximumAge) &&
+                    Self.staleSources(in:receiptBindings,now:sampled).isEmpty
             },send:send)
         reports.append(report)
         if report.admissionExpired {
@@ -659,8 +712,12 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         clock = admissionNow
         if !delivery.hasLease(lease) {
-            reports += reset([source],send:send)
-            return .init(status:.lost,reports:reports)
+            if remoteModes[source] != nil {
+                reports += reset([source],send:send)
+                return .init(status:.lost,reports:reports)
+            }
+            bindings[source]?.reset()
+            if source == .camera { cameraTracking.reset() }
         }
         return .init(status:.delivered,reports:reports)
     }
@@ -716,6 +773,10 @@ public struct PerformanceGroupGamepadSession: Sendable {
     }
 
     private func staleSources(now: Double) -> Set<SensorSource> {
+        Self.staleSources(in:bindings,now:now)
+    }
+
+    private static func staleSources(in bindings:[SensorSource:Binding],now:Double) -> Set<SensorSource> {
         Set(bindings.compactMap { source,binding in
             if let last = binding.lastSeen, !PhysicalPatchRuntime.admitsPhysicalReceipt(last,now:now) { return source }
             if binding.remoteActive.values.contains(where:{ !PhysicalPatchRuntime.admitsPhysicalReceipt($0,now:now) }) { return source }

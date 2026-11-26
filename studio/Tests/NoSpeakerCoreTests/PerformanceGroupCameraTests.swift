@@ -80,3 +80,26 @@ private func cameraProfile() -> PerformanceGroupProfile {
         #expect(!PerformanceGroupGamepadSession.supports(profile,allowCamera:true))
     }
 }
+
+
+@Test func groupCameraReceiptExpiresAfterFirstControlAndRequiresFreshAcquisition() throws {
+    let group = PerformanceInstrumentGroup(name:"Camera",patch:.init(routes:[
+        .init(id:"a",source:.camera,signal:.x,destination:.init(.controlChange,number:74)),
+        .init(id:"b",source:.camera,signal:.y,destination:.init(.controlChange,number:71))
+    ]))
+    var state = try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowCamera:true)
+    let token = try state.bind(.camera,now:1)
+    let hand = try #require(AirHandSample.debugSample(x:0.8,y:0.5,aperture:0.6))
+    _ = state.receiveCamera(token:token,hand:hand,hostTime:1.01,now:1.01,send:{_ in true})
+    var now=1.08
+    var sent:[PerformanceGroupCommand] = []
+    let result = state.receiveCamera(token:token,hand:hand,hostTime:now,now:now,refreshNow:{now},send:{
+        sent.append($0)
+        if $0.command.value > 0 { now=1.44 }
+        return true
+    })
+    #expect(result.status == .lost && result.reports.contains(where:{ $0.admissionExpired }))
+    #expect(sent.count == 2 && sent.first?.command.destination == sent.last?.command.destination)
+    #expect(sent.last?.command.value == 0 && state.pendingCleanup.isEmpty)
+    #expect(state.sourceStates[.camera] == .waitingForNeutral)
+}

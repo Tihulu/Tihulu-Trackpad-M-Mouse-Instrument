@@ -475,3 +475,20 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     #expect(sent.first?.command.destination == sent.last?.command.destination)
     #expect(session.pendingCleanup.isEmpty && !session.retired)
 }
+
+
+@Test func remoteGroupLateFinalReleaseCannotRearmOrKeepAuthentication() throws {
+    let group = groupRemoteFixture(.phone,.drumPad1,36)
+    var state = try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowRemote:true)
+    let token = try state.bind(.phone,now:1)
+    _ = state.receiveRemote(.phone,token:token,bytes:groupRemoteWire("drumPads",4,1,",\"mask\":0"),
+                            hostTime:1.01,now:1.01,send:{_ in true})
+    _ = state.receiveRemote(.phone,token:token,bytes:groupRemoteWire("drumPads",4,2,",\"mask\":1"),
+                            hostTime:1.02,now:1.02,send:{_ in true})
+    var now = 1.03
+    var sent:[PerformanceGroupCommand] = []
+    let result = state.receiveRemote(.phone,token:token,bytes:groupRemoteWire("drumPads",4,3,",\"mask\":0"),
+                                     hostTime:now,now:now,refreshNow:{now},send:{sent.append($0);now=1.14;return true})
+    #expect(result.status == .lost && !state.boundSources.contains(.phone))
+    #expect(sent.count == 1 && sent.first?.command.value == 0 && state.pendingCleanup.isEmpty)
+}

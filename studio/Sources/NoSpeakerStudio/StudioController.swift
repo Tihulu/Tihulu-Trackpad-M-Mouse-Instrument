@@ -582,11 +582,12 @@ final class StudioController: ObservableObject {
     /// snapshots. Event callbacks still provide immediate individual edges.
     private func pollGroupGamepads(run:UUID) {
         guard groupRunToken == run else { return }
-        var snapshots:[(SensorSource,GamepadFrame)] = []
+        var snapshots:[(SensorSource,GamepadFrame,Double)] = []
         var departing:[SensorSource:UUID] = [:]
         for source in GamepadFrame.orderedSources {
             guard let token = groupGamepadTokens[source] else { continue }
-            if let frame = builderGamepads.read(source) { snapshots.append((source,frame)) }
+            let receipt = ProcessInfo.processInfo.systemUptime
+            if let frame = builderGamepads.read(source) { snapshots.append((source,frame,receipt)) }
             else { departing[source] = token }
         }
         if !departing.isEmpty {
@@ -596,13 +597,13 @@ final class StudioController: ObservableObject {
             if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads(); return }
             groupGamepadStatus = "Controller input lost. Affected slots released; restart to rebind."
         }
-        for (source,frame) in snapshots {
+        for (source,frame,receipt) in snapshots {
             guard groupRunToken == run else { return }
-            receiveGroupGamepad(source:source,frame:frame,run:run)
+            receiveGroupGamepad(source:source,frame:frame,run:run,hostTime:receipt)
         }
     }
 
-    private func receiveGroupGamepad(source:SensorSource,frame:GamepadFrame?,run:UUID) {
+    private func receiveGroupGamepad(source:SensorSource,frame:GamepadFrame?,run:UUID,hostTime:Double? = nil) {
         guard groupRunToken == run, let token = groupGamepadTokens[source] else { return }
         guard let frame else {
             groupGamepadTokens.removeValue(forKey:source)
@@ -611,7 +612,8 @@ final class StudioController: ObservableObject {
             if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
             return
         }
-        if let result = groupHost.receiveGamepad(source,token:token,frame:frame,now:ProcessInfo.processInfo.systemUptime) {
+        if let result = groupHost.receiveGamepad(source,token:token,frame:frame,
+                                                  now:ProcessInfo.processInfo.systemUptime,hostTime:hostTime) {
             consumeGroupReports(result.reports)
         }
     }

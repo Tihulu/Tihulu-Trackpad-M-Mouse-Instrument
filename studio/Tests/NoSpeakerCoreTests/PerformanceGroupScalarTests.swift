@@ -80,3 +80,24 @@ private func scalarGroupProfile() -> PerformanceGroupProfile {
     ]))])
     #expect(!PerformanceGroupGamepadSession.supports(wrong,allowScalars:true))
 }
+
+
+@Test func groupScalarPostSendExpirySuppressesRemainingControls() throws {
+    let group = PerformanceInstrumentGroup(name:"Controls",patch:.init(routes:[
+        .init(id:"a",source:.touchBar,signal:.x,destination:.init(.controlChange,number:74)),
+        .init(id:"b",source:.touchBar,signal:.x,destination:.init(.controlChange,number:71))
+    ]))
+    var state = try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowScalars:true)
+    let token = try state.bind(.touchBar,now:1)
+    var now = 1.01
+    var sent:[PerformanceGroupCommand] = []
+    let result = state.receiveScalar(.touchBar,token:token,value:0.8,hostTime:now,now:now,refreshNow:{now},send:{
+        sent.append($0)
+        if $0.command.value > 0 { now=1.37 }
+        return true
+    })
+    #expect(result.status == .lost && result.reports.contains(where:{ $0.admissionExpired }))
+    #expect(sent.count == 2 && sent.first?.command.destination == sent.last?.command.destination)
+    #expect(sent.first?.command.value == 102 && sent.last?.command.value == 0)
+    #expect(state.sourceStates[.touchBar] == .waitingForNeutral)
+}
