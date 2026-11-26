@@ -3,7 +3,7 @@ import Testing
 
 @Test func worldTuningCatalogIDsAndPitchDomainsAreValid() throws {
     let presets=WorldTuningLibrary.presets
-    #expect(presets.count == 63)
+    #expect(presets.count == 74)
     #expect(Set(presets.map(\.id)).count == presets.count)
     for p in presets {
         #expect(!p.source.isEmpty && !p.note.isEmpty)
@@ -35,4 +35,16 @@ import Testing
     let s=try #require(WorldTuningLibrary.preset(id:"tr.saba"))
     #expect(!s.octavePeriodic && s.tuning()==nil)
     #expect(WorldTuningLibrary.preset(id:"ar.jins-sikah")?.tuning()==nil)
+}
+
+@Test func worldTuningContextVariantsAndGlobalMeasurementsStayDistinct() throws {
+    let u=try #require(WorldTuningLibrary.preset(id:"tr.ussak"))
+    let low=try #require(WorldTuningLibrary.preset(id:"tr.ussak-lower2"))
+    #expect(abs(u.cents[1]-low.cents[1]-2400/53)<0.000001)
+    #expect(Array(u.cents.dropFirst(2)) == Array(low.cents.dropFirst(2)))
+    #expect(low.kind == .approximation)
+    for id in ["asia.koto-m0420","asia.korea-m0240","americas.peru-m0153"] {
+        let p=try #require(WorldTuningLibrary.preset(id:id))
+        #expect(p.kind == .documentedSample && p.tuning()==nil)
+    }
 }
