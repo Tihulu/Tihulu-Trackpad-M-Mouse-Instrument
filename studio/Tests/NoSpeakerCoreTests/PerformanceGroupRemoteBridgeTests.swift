@@ -748,7 +748,7 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     },session:&session,send:{sent.append($0);return true})
     #expect(result.fault && result.actions==[.stop] && bridge.stopped)
     #expect(sent.count==1 && sent.first?.command.value==0)
-    #expect(session.activeSessions==0 && session.sourceStates[.gamepad1]==.waitingForNeutral)
+    #expect(session.activeSessions==0 && session.sourceStates[.gamepad1] == .waitingForNeutral)
 }
 
 @Test func groupRemoteInitialClockBelowSessionHighWaterRetiresListener() throws {
