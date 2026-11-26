@@ -420,6 +420,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   cameraStop.addEventListener("click",()=>stopCameraExplicit("Camera off."));
   function cameraFrame(epoch,callbackTime,metadata){
     if(epoch!==cameraEpoch||!cameraHelper||!cameraMode()||!cameraStream)return;
+    const track=cameraStream.getVideoTracks()[0];
+    if(!track||track.readyState==="ended"||track.muted===true){close("Camera unavailable. Reconnect explicitly.");return;}
     cameraFrameId=null;
     const now=performance.now(),mediaTime=metadata?.mediaTime;
     if((cameraAt!==null&&now-cameraAt>=150)||(cameraAt===null&&now-cameraStartedAt>=3000)){close("Camera frames stopped. Reconnect explicitly.");return;}
@@ -461,7 +463,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
             if(cameraReleaseAt===null&&!pedalMask&&!pedalBusy()){
               for(const a of cfg.assignments)pedalPositions[a.lane]=valueFor(a.metric);
               pedalMask=cfg.mask;pedalQueue.push({snapshot:pedalSnapshot(),at:now});pedalDirty=false;syncPedals();tick();
-            }else if(pedalMask===cfg.mask){for(const a of cfg.assignments)pedalPositions[a.lane]=valueFor(a.metric);pedalDirty=true;}
+            }else if(pedalMask===cfg.mask){
+              for(const a of cfg.assignments)pedalPositions[a.lane]=valueFor(a.metric);
+              // Continuous camera values may coalesce, but never extend the original onset deadline.
+              if(pedalSentMask===0&&pedalQueue.length===1&&pedalQueue[0].snapshot.mask===cfg.mask)pedalQueue[0].snapshot=pedalSnapshot();
+              else pedalDirty=true;
+            }
           }else if(++cameraQuiet>=1&&pedalMask){
             if(pedalSentMask===0&&pendingKind!=="pedalboard"){pedalMask=0;pedalQueue=[];pedalDirty=false;}
             else if(cameraQuiet>=2){cameraReleaseAt=now;releasePedals();}

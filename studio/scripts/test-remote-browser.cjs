@@ -1803,3 +1803,23 @@ test("invalid camera profile cannot change settings and cannot be loaded during 
   assert.equal(a.elements.webCameraSave.disabled,true);a.elements.webCameraSave.emit("click");
   assert.equal(JSON.parse(stored.get("tihulu.remote.camera-settings.v1")).target,2);
 });
+
+test("first quiet frame cancels camera onset queued behind heartbeat ACK",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");
+  a.step(500);assert.equal(a.socket.frames.at(-1).kind,"heartbeat");
+  a.video(0,1);a.step(25);a.video(100,2);a.step(25);a.video(100,3);
+  a.ack();a.step(25);
+  assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+});
+test("queued continuous camera attack coalesces latest value without new sequence",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");
+  a.step(500);assert.equal(a.socket.frames.at(-1).kind,"heartbeat");
+  a.video(0,1);a.step(25);a.video(100,2);a.step(25);a.video(120,3);
+  a.ack();a.step(25);
+  const attacks=a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask);
+  assert.equal(attacks.length,1);assert.equal(attacks[0].levels[0],.27);
+});
