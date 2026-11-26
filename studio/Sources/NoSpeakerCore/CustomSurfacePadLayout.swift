@@ -24,10 +24,10 @@ public struct CustomSurfacePadLayout: Codable, Equatable, Sendable {
             }
         }
         private static func safeHelper(_ d:SensorDestination)->Bool {
-            d.isValid && d.kind != .note && (d.kind != .controlChange || ![0,6,32,38,96,97,98,99,100,101].contains(d.number))
+            d.isValid && d.kind != .note && (d.kind != .controlChange || !( [0,6,32,38,96,97,98,99,100,101].contains(d.number) || (120...127).contains(d.number) ))
         }
         private static func continuous(_ d:SensorDestination)->Bool {
-            safeHelper(d) && (d.kind == .controlChange || d.kind == .pitchBend)
+            safeHelper(d) && (d.kind == .pitchBend || (d.kind == .controlChange && !(64...69).contains(d.number)))
         }
     }
     public struct Pad:Codable,Equatable,Sendable,Identifiable {
@@ -69,6 +69,30 @@ public struct CustomSurfacePadLayout: Codable, Equatable, Sendable {
             }
         }
         return true
+    }
+    /// Validated edits never mutate the original or silently resolve overlaps.
+    public func replacing(_ pad:Pad)->Self? {
+        guard let index=pads.firstIndex(where:{$0.id==pad.id}) else{return nil}
+        var next=pads;next[index]=pad
+        return Self(surface:surface,pads:next)
+    }
+    public func adding(_ pad:Pad)->Self? {Self(surface:surface,pads:pads+[pad])}
+    public func removing(id:String)->Self? {
+        guard pads.contains(where:{$0.id==id}) else{return nil}
+        return Self(surface:surface,pads:pads.filter{$0.id != id})
+    }
+    public static func grid(surface:Surface,columns:Int,rows:Int,firstNote:Int=60)->Self? {
+        guard (1...16).contains(columns),(1...16).contains(rows),
+              columns*rows<=64,(0...127).contains(firstNote),
+              firstNote+columns*rows-1<=127 else{return nil}
+        let pads=(0..<(columns*rows)).map{index in
+            let x=index%columns,y=index/columns
+            let left=x*10000/columns,top=y*10000/rows
+            return Pad(id:"pad-"+String(index+1),label:"Pad "+String(index+1),x:left,y:top,
+                       width:(x+1)*10000/columns-left,height:(y+1)*10000/rows-top,
+                       assignment:.note(firstNote+index))
+        }
+        return Self(surface:surface,pads:pads)
     }
     private enum CodingKeys:String,CodingKey {case surface,pads}
     public init(from decoder:Decoder)throws {

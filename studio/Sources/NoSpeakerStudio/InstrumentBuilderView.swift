@@ -80,6 +80,7 @@ struct InstrumentBuilderView: View {
                         }
                     }.padding(4)
                 }
+                CustomSurfacePadEditor()
                 GroupBox("Instrument") {
                     VStack(alignment: .leading, spacing: 8) {
                         TextField("Instrument name", text: $draft.name)

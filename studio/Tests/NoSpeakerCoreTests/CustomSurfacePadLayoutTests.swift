@@ -45,3 +45,30 @@ private func surfacePad(_ id:String,_ x:Int,_ y:Int,_ w:Int,_ h:Int,_ assignment
     let invalid=try JSONSerialization.data(withJSONObject:obj)
     #expect(throws:DecodingError.self){try JSONDecoder().decode(CustomSurfacePadLayout.self,from:invalid)}
 }
+
+@Test func customSurfaceLayoutGridAndValidatedEdits() throws {
+    let layout=try #require(CustomSurfacePadLayout.grid(surface:.trackpad,columns:3,rows:2))
+    #expect(layout.pads.count==6)
+    #expect(layout.pad(x:1,y:1)?.assignment == .note(65))
+    #expect(layout.pad(x:0.3333,y:0.1)?.id == "pad-2")
+    let first=layout.pads[0]
+    let invalid=surfacePad(first.id,0,0,10000,10000)
+    #expect(layout.replacing(invalid)==nil)
+    let smaller=surfacePad(first.id,0,0,1000,1000,.drum(36))
+    let updated=try #require(layout.replacing(smaller))
+    #expect(updated.pad(x:0.2,y:0.1)==nil)
+    #expect(layout.pads[0]==first)
+    let removed=try #require(updated.removing(id:first.id))
+    #expect(removed.pads.count==5)
+    #expect(removed.adding(smaller)?.pads.count==6)
+    #expect(CustomSurfacePadLayout.grid(surface:.touchBar,columns:4,rows:2)==nil)
+    #expect(CustomSurfacePadLayout.grid(surface:.phone,columns:16,rows:16)==nil)
+    #expect(CustomSurfacePadLayout.grid(surface:.phone,columns:2,rows:2,firstNote:127)==nil)
+}
+@Test func customSurfaceLayoutRejectsChannelModeAndSwitchAxes() {
+    for cc in 120...127 {
+        #expect(!CustomSurfacePadLayout.Assignment.helper(.init(.controlChange,number:cc)).isValid)
+    }
+    #expect(!CustomSurfacePadLayout.Assignment.xy(.init(.controlChange,number:64),.init(.pitchBend)).isValid)
+    #expect(CustomSurfacePadLayout.Assignment.helper(.init(.sustain)).isValid)
+}
