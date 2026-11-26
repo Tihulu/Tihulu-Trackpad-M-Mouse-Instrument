@@ -13,8 +13,10 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["webCameraPanel","webCameraFacing","webCameraDevice","webCameraStart","webCameraStop","webCameraVideo","webCameraZoom","webCameraStatus","synthCompact","synthChoices","synthChoiceGrid","pianoArp","pianoChord","pianoSynth","arpKeyboardTools","arpClear","arpDirection","arpRate","arpSwing","arpSelected","kitBoard","kitEdit","kitEditor","kitPart","kitAdd","kitRemove","kitX","kitY","kitSize","kitSave","kitReset","kitStatus","pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
-  const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
+  const elements=Object.fromEntries(["webCameraPlayHost","webCameraConnectionHost","webCameraTarget","webCameraMotionStatus","webCameraPanel","webCameraFacing","webCameraDevice","webCameraStart","webCameraStop","webCameraVideo","webCameraZoom","webCameraStatus","synthCompact","synthChoices","synthChoiceGrid","pianoArp","pianoChord","pianoSynth","arpKeyboardTools","arpClear","arpDirection","arpRate","arpSwing","arpSelected","kitBoard","kitEdit","kitEditor","kitPart","kitAdd","kitRemove","kitX","kitY","kitSize","kitSave","kitReset","kitStatus","pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  let videoCallback=null,videoId=0,pixel=0;
+  elements.webCameraVideo.requestVideoFrameCallback=f=>{videoCallback=f;return ++videoId};elements.webCameraVideo.cancelVideoFrameCallback=()=>{videoCallback=null};
+  const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:tag=>tag==="canvas"?{getContext:()=>({drawImage(){},getImageData(){return {data:new Uint8Array(768).fill(pixel)}}})}:target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
   class WS{
@@ -34,7 +36,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
   function withheldLabels(){step(50);const q=socket.frames.at(-1);if(q?.kind==="mappingLabels"){socket.frames.pop();time+=13;socket.onmessage({data:JSON.stringify({kind:"mappingLabels",version:8,sequence:q.sequence,page:0,pages:1,total:0,rows:[]})});}}
   if(autoMapping&&!socket.closed&&manifest!==null){withheld();if(groupNeutral&&!socket.closed)withheldLabels();}
   if(experimental&&!socket.closed&&manifest!==null){elements.navSetup.emit("click");elements.workloadMode.emit("click");elements.navPlay.emit("click");}
-  return {query,elements,window,document,socket,step,withheld,ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
+  return {query,elements,window,document,socket,step,withheld,video(v,mediaTime){pixel=v;const cb=videoCallback;videoCallback=null;cb?.(time,{mediaTime});},ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
     orientation(beta=0){window.emit("deviceorientation",{alpha:0,beta,gamma:0})}};
 }
 test("permission denial never attaches listener or sends motion",async()=>{
@@ -1579,4 +1581,28 @@ test("browser without camera API keeps pairing path usable",()=>{
   assert.match(a.elements.webCameraStatus.textContent,/unavailable/);
   a.elements.secret.value="aa".repeat(32);a.elements.connect.emit("click");
   assert.ok(a.getSocket());
+});
+
+test("paired camera motion helper uses only mapped pedal lane and releases on stop",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraTarget.value="2";await a.elements.webCameraStart.emit("click");
+  a.video(0,1);a.step(25);a.video(100,2);
+  assert.equal(a.socket.frames.at(-1).kind,"pedalboard");assert.equal(a.socket.frames.at(-1).mask,4);
+  a.ack();a.step(25);
+  a.elements.webCameraStop.emit("click");
+  assert.equal(c.track.stops,1);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+});
+test("stale camera frames fail closed without refreshing active helper",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(100,2);a.ack();
+  a.step(151);assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);
+});
+test("camera mode requires a mapped continuous pedal",()=>{
+  const a=setup("granted",{...fullManifest,pedals:56});
+  const choice=a.elements.playMode.children.find(x=>x.value==="camera");
+  assert.equal(choice.disabled,true);
 });
