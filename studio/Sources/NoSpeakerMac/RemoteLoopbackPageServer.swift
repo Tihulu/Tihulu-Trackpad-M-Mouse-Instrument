@@ -195,7 +195,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <div id="remoteBar"><nav aria-label="Controller views"><button id="navPlay" aria-pressed="false" disabled>Play</button><button id="navSetup" aria-pressed="false" disabled>Setup</button><button id="navConnection" aria-pressed="true">Connection</button></nav><button id="releaseAll" disabled>Release my controls</button><button id="disconnect" disabled>Disconnect / release</button><p id="navStatus" role="status"></p><p id="playWorkloadStatus" role="status"></p><p id="status" role="status" aria-live="polite">Not connected.</p><small id="ackLatency">Mac ACK round trip: no sample.</small></div>
 <section id="connectionView"><label for="secret">One-time invitation (64 hexadecimal characters)</label>
 <input id="secret" type="password" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
-<button id="connect">Connect</button><p>Use the matching trusted TLS certificate and a new invitation for each connection. ACK round trip includes Mac processing; it is not audio or MIDI latency.</p><div id="webCameraConnectionHost"><details id="webCameraPanel"><summary>Browser camera check (optional)</summary><p>Local camera preview only. No hand recognition, depth or MIDI output in this check. Stop before pairing. Nothing is recorded or sent to the Mac.</p><label for="webCameraFacing">Camera direction</label><select id="webCameraFacing"><option value="environment">Rear</option><option value="user">Front</option></select><label for="webCameraDevice">Available camera</label><select id="webCameraDevice"><option value="">Default for direction</option></select><button id="webCameraStart" type="button">Start camera check</button><button id="webCameraStop" type="button" disabled>Stop camera</button><video id="webCameraVideo" muted playsinline autoplay hidden style="width:100%;max-width:480px;border-radius:12px"></video><label for="webCameraZoom">Device zoom</label><input id="webCameraZoom" type="range" disabled><p id="webCameraStatus" role="status">Camera off.</p><small>Camera access requires a trusted HTTPS connection. Lens and zoom availability are browser/device dependent. Native LiDAR/ToF APIs are not available in this preview.</small></details></div></section>
+<button id="connect">Connect</button><p>Use the matching trusted TLS certificate and a new invitation for each connection. ACK round trip includes Mac processing; it is not audio or MIDI latency.</p><div id="webCameraConnectionHost"><details id="webCameraPanel"><summary id="webCameraSummary">Browser camera check (optional)</summary><p id="webCameraDescription">Local camera preview only. No hand recognition, depth or MIDI output in this check. Stop before pairing. Nothing is recorded or sent to the Mac.</p><label for="webCameraFacing">Camera direction</label><select id="webCameraFacing"><option value="environment">Rear</option><option value="user">Front</option></select><label for="webCameraDevice">Available camera</label><select id="webCameraDevice"><option value="">Default for direction</option></select><button id="webCameraStart" type="button">Start camera check</button><button id="webCameraStop" type="button" disabled>Stop camera</button><video id="webCameraVideo" muted playsinline autoplay hidden style="width:100%;max-width:480px;border-radius:12px"></video><label for="webCameraZoom">Device zoom</label><input id="webCameraZoom" type="range" disabled><p id="webCameraStatus" role="status">Camera off.</p><small>Camera access requires a trusted HTTPS connection. Lens and zoom availability are browser/device dependent. Native LiDAR/ToF APIs are not available in this preview.</small></details></div></section>
 <div id="setupView" hidden>
 <section id="mappingSection" hidden><h2>Mapped MIDI destinations</h2><p id="mappingStatus" role="status"></p><pre id="mappingDetails" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></section>
 <section id="workloadSection" hidden aria-labelledby="workloadTitle"><h2 id="workloadTitle">Performance combinations</h2>
@@ -300,17 +300,19 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const cameraPanel=get("webCameraPanel"),cameraFacing=get("webCameraFacing"),cameraDevice=get("webCameraDevice"),cameraStart=get("webCameraStart"),cameraStop=get("webCameraStop"),cameraVideo=get("webCameraVideo"),cameraZoom=get("webCameraZoom"),cameraStatus=get("webCameraStatus");
   let cameraStream=null,cameraEpoch=0,cameraPending=false,cameraInFlight=false,cameraZoomPending=false,cameraDevices=[],cameraZoomRange=null;
   const cameraTarget=get("webCameraTarget"),cameraMotionStatus=get("webCameraMotionStatus");
-  let cameraHelper=false,cameraHost="connection",cameraTargetKey="",cameraLane=-1,cameraFrameId=null,cameraContext=null,cameraPrior=null,cameraAt=null,cameraStartedAt=0,cameraMediaTime=-Infinity,cameraQuiet=0;
+  let cameraHelper=false,cameraHost="connection",cameraTargetKey="",cameraLane=-1,cameraFrameId=null,cameraContext=null,cameraPrior=null,cameraAt=null,cameraStartedAt=0,cameraMediaTime=-Infinity,cameraQuiet=0,cameraReleaseAt=null;
   const cameraMedia=()=>window.isSecureContext===true&&typeof navigator!=="undefined"&&navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==="function"?navigator.mediaDevices:null;
   const cameraMode=()=>Boolean(ws&&admitted&&caps&&(caps.pedals&7)&&currentView==="play"&&playMode==="camera");
   function syncCamera(){
     const helper=cameraMode(),host=helper?"play":"connection";
     if(host!==cameraHost){get(helper?"webCameraPlayHost":"webCameraConnectionHost").appendChild(cameraPanel);cameraHost=host;}
     get("webCameraPlayHost").hidden=!helper;
+    textIfChanged("webCameraSummary",helper?"Camera source and controls":"Browser camera check (optional)");
+    textIfChanged("webCameraDescription",helper?"Local video is analyzed for image motion. Only the assigned helper level is sent to the Mac. No recording, hand recognition or depth.":"Local camera preview only. No hand recognition, depth or MIDI output in this check. Stop before pairing. Nothing is recorded or sent to the Mac.");
     const targetKey=String(caps?.pedals??0);
     if(targetKey!==cameraTargetKey){cameraTarget.replaceChildren(...Array.from({length:3},(_,i)=>i).filter(i=>has("pedals",i)).map(i=>{const o=document.createElement("option");o.value=String(i);o.textContent=["Expression","Volume","Wah / filter"][i];return o;}));cameraTarget.value=String(Array.from({length:3},(_,i)=>i).find(i=>has("pedals",i))??0);cameraTargetKey=targetKey;}
     cameraTarget.disabled=cameraHelper||cameraInFlight||!helper;
-    cameraStart.disabled=(!!ws&&!helper)||!cameraMedia()||cameraInFlight||!!cameraStream||document.hidden||(helper&&(pending||workloadMask()!==0||typeof cameraVideo.requestVideoFrameCallback!=="function"));
+    cameraStart.disabled=(!!ws&&!helper)||!cameraMedia()||cameraInFlight||!!cameraStream||document.hidden||(helper&&(releasingAll||pending||workloadMask()!==0||typeof cameraVideo.requestVideoFrameCallback!=="function"));
     if(!cameraMedia()&&!cameraStream&&!cameraPending)cameraStatus.textContent="Camera unavailable in this browser or insecure context. Touch controls remain separate.";
     cameraStop.disabled=!cameraPending&&!cameraStream;
     cameraFacing.disabled=(!!ws&&!helper)||cameraInFlight||!!cameraStream;
@@ -340,7 +342,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const media=cameraMedia();
     const helper=cameraMode();
     if(!media||(ws&&!helper)||cameraInFlight||cameraStream||document.hidden)return;
-    if(helper&&(pending||workloadMask()!==0||typeof cameraVideo.requestVideoFrameCallback!=="function"))return;
+    if(helper&&(releasingAll||pending||workloadMask()!==0||typeof cameraVideo.requestVideoFrameCallback!=="function"))return;
     const facing=cameraFacing.value||"environment",id=cameraDevice.value;
     if(!["user","environment"].includes(facing)||id&&!cameraDevices.some(d=>d.deviceId===id))return;
     if(helper){const lane=Number(cameraTarget.value);if(!Number.isInteger(lane)||lane<0||lane>2||!has("pedals",lane))return;cameraHelper=true;cameraLane=lane;pedalEnabled=true;}
@@ -391,9 +393,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
           const amount=gray.reduce((sum,v,i)=>sum+Math.abs(v-previous[i]),0)/(192*255);
           const level=Math.round(Math.max(0,Math.min(1,(amount-.025)/.20))*100);
           if(level>0){cameraQuiet=0;
-            if(!pedalMask&&!pedalBusy()){pedalPositions[cameraLane]=level;pedalSet(cameraLane,true);}
+            if(cameraReleaseAt===null&&!pedalMask&&!pedalBusy()){pedalPositions[cameraLane]=level;pedalSet(cameraLane,true);}
             else if(pedalMask===(1<<cameraLane)){pedalPositions[cameraLane]=level;pedalDirty=true;}
-          }else if(++cameraQuiet>=2&&pedalMask){releasePedals();}
+          }else if(++cameraQuiet>=2&&pedalMask){if(pedalSentMask!==0||pendingKind==="pedalboard")cameraReleaseAt=now;releasePedals();}
           cameraMotionStatus.textContent="Image motion: "+level+"% · "+(pedalMask?"helper active":"neutral");
           tick();
         }
@@ -953,7 +955,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function releaseMyControls(){
     if(!admitted||!caps||releasingAll)return;
     releasingAll=true;const now=performance.now();
-    if(cameraHelper)stopCamera("Camera stopped; releasing controls.");
+    if(cameraHelper){if(pedalSentMask!==0||pendingKind==="pedalboard")cameraReleaseAt??=now;stopCamera("Camera stopped; releasing controls.");}
     // Cancel unsent onsets; retain the state of every already sent owner.
     pointer=null;position=null;dot.hidden=true;touchQueue=touchSent?[{kind:"release",at:now}]:[];
     resetStick();drumEnabled=false;drumOwners.clear();drumDesired=0;drumQueue=[];drumEmergency=drumSent!==0;
@@ -1626,7 +1628,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pedalStatus.textContent="Off.";syncPedals();
   }
   function pedalAdmitted(i){
-    return currentView==="play"&&!releasingAll&&admitted&&pedalEnabled&&has("pedals",i)&&synthVisible(i)&&!pedalEmergency;
+    return currentView==="play"&&!releasingAll&&admitted&&pedalEnabled&&!cameraHelper&&modeAllows("pedals")&&has("pedals",i)&&synthVisible(i)&&!pedalEmergency;
   }
   function pedalSet(i,active){
     const next=active?pedalMask|(1<<i):pedalMask&~(1<<i);
@@ -1755,7 +1757,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
-    stopCamera("Camera off.");
+    cameraReleaseAt=null;stopCamera("Camera off.");
     const old=ws;ws=null;admitted=false;caps=null;groupReady=null;currentView="connection";ackSamples=[];playMode="all";pendingPlayMode=null;releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
     if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();syncControls();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
@@ -1787,6 +1789,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function tick(){
     if(!admitted||!caps)return;
     const now=performance.now();syncLatency();
+    if(cameraReleaseAt!==null){if(!pedalBusy()&&pedalMask===0)cameraReleaseAt=null;else if(now-cameraReleaseAt>=150){close("Camera helper release overdue. Reconnect explicitly.");return;}}
     if(cameraHelper&&cameraStream&&((cameraAt!==null&&now-cameraAt>=150)||(cameraAt===null&&now-cameraStartedAt>=3000))){close("Camera frames stopped. Reconnect explicitly.");return;}
     if(stickState==="waiting"&&now-stickAt>=3000){resetStick("No valid motion data.");drumEnabled=false;syncControls();}
     if(stickState==="active"&&now-stickAt>=250){close("Air stick motion stopped. Reconnect explicitly.");return;}
@@ -1997,7 +2000,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     b.addEventListener("blur",()=>pianoUp("k"+i));
   });
   function togglePedals(){
-    if(currentView!=="play"||releasingAll||!admitted||!caps?.pedals)return;
+    if(currentView!=="play"||releasingAll||!admitted||!caps?.pedals||cameraHelper||!modeAllows("pedals"))return;
     if(!pedalEnabled&&!requestWorkload("pedals"))return;
     pedalEnabled=!pedalEnabled;
     if(!pedalEnabled)releasePedals();
