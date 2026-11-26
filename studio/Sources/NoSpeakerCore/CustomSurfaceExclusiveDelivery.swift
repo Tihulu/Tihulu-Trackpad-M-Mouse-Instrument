@@ -11,6 +11,7 @@ public final class CustomSurfaceExclusiveDelivery {
         public let accepted:Int
         public let retirement:Retirement?
         public let outstanding:Set<SensorDestination>
+        public let hasNeutralHandshake:Bool
         public var retired:Bool {retirement != nil}
         public var pendingCleanup:Set<SensorDestination> {retired ? outstanding:[]}
     }
@@ -48,7 +49,8 @@ public final class CustomSurfaceExclusiveDelivery {
         return nil
     }
     private func report(_ count:Int)->Report {
-        .init(accepted:count,retirement:retirement,outstanding:ledger.outstanding)
+        .init(accepted:count,retirement:retirement,outstanding:ledger.outstanding,
+              hasNeutralHandshake:projection.hasNeutralHandshake)
     }
     private func clean()->Int {
         var count=0

@@ -228,7 +228,6 @@ struct CustomSurfacePadEditor:View {
                 Text(studio.customPadStatus).font(.caption).textSelection(.enabled)
                 if studio.customPadRunID != nil {
                     Button("Stop Custom Pad",role:.destructive) { studio.stopCustomPad() }
-                        .keyboardShortcut(.escape,modifiers:[])
                     Text("Esc stops this performance even outside Studio; the foreground app still receives Escape. Cursor remains free.")
                         .font(.caption)
                 } else if !studio.customPadPorts.isEmpty {
@@ -249,6 +248,9 @@ struct CustomSurfacePadEditor:View {
                         Text(port.surface.rawValue + " · " + String(describing:port.phase)).font(.caption.bold())
                         Text(port.name).font(.caption).textSelection(.enabled)
                         Text("Tracked MIDI destinations: \(port.outstanding.count)").font(.caption.monospacedDigit())
+                        if port.phase == .live {
+                            Text(port.hasNeutralHandshake ? "Physical lift confirmed" : "Waiting for physical lift").font(.caption)
+                        }
                     }
                 }
             }.frame(maxWidth:.infinity,alignment:.leading)

@@ -3095,6 +3095,11 @@ final class StudioController: ObservableObject {
 
     private func prepareEngine() {
         guard !engineReady, !speakerBusy else { return }
+        guard customPadHost.statuses.isEmpty else {
+            engineStatus = "Stopped · Custom Pad MIDI recovery pending"
+            lastError = "Resolve Custom Pad MIDI recovery before reconnecting."
+            return
+        }
         // Reconnect must not discard possibly delivered MIDI state together
         // with the old endpoint. Retry its scoped cleanup before replacement.
         if let midi, midi.hasUnconfirmedOutgoingCleanup {
@@ -3626,7 +3631,7 @@ final class StudioController: ObservableObject {
             stopCustomPad(reason: "Input or emergency admission changed while opening MIDI.")
             return
         }
-        customPadStatus = "Armed · lift all fingers once, then play · cursor free · Esc stops"
+        customPadStatus = "Waiting for a fresh physical lift · cursor free · Esc stops"
         let started = NativeCustomSurfaceMIDIHost.monotonicNow()
         customPadTask = Task { [weak self, weak inbox] in
             var received = false
@@ -3654,9 +3659,12 @@ final class StudioController: ObservableObject {
                 }
                 let ports = self.customPadHost.statuses
                 if self.customPadPorts != ports { self.customPadPorts = ports }
-                guard ports.contains(where: { $0.id == opened.id && $0.phase == .live }) else {
+                guard let live = ports.first(where: { $0.id == opened.id && $0.phase == .live }) else {
                     self.stopCustomPad(reason: "Custom Pad watchdog stopped the session.")
                     return
+                }
+                if live.hasNeutralHandshake && self.customPadStatus != "Ready · play the frozen pad layout · Esc stops" {
+                    self.customPadStatus = "Ready · play the frozen pad layout · Esc stops"
                 }
                 if !received && NativeCustomSurfaceMIDIHost.monotonicNow() - started >= 10_000_000_000 {
                     self.stopCustomPad(reason: "No physical contact frames received. Restart explicitly.")

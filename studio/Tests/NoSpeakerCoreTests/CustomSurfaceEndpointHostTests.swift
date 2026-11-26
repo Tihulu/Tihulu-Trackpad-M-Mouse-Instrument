@@ -129,3 +129,24 @@ private let hostContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5, 
     #expect(host.statuses.first?.phase == .retired)
     #expect(wire == [[0x92,60,100],[0x82,60,0]])
 }
+
+@Test func customSurfaceHostReportsActualNeutralHandshakeNotJustOpenPort() throws {
+    var now: Int64 = 0
+    var wire: [[UInt8]] = []
+    let host = CustomSurfaceEndpointHost(backend: .init(create: { name in
+        .init(endpoint: .init(handle: 12, uniqueID: 42, name: name), succeeded: true)
+    }, owns: { _ in true }, send: { _, bytes in wire.append(bytes); return true },
+       dispose: { _ in true }))
+    let opened = try #require(host.open(plan: try hostPlan(), permitsNeutralSilence: true,
+                                        clock: { now }, admitsLive: { true }))
+    #expect(!opened.hasNeutralHandshake)
+    let occupied = try #require(host.frame(opened.id, surface: .trackpad, contacts: [hostContact], sequence: 1, observedAt: 0))
+    #expect(!occupied.hasNeutralHandshake && wire.isEmpty)
+    now = 1
+    let neutral = try #require(host.frame(opened.id, surface: .trackpad, contacts: [], sequence: 2, observedAt: 1))
+    #expect(neutral.hasNeutralHandshake && wire.isEmpty)
+    now = 2
+    let playing = try #require(host.frame(opened.id, surface: .trackpad, contacts: [hostContact], sequence: 3, observedAt: 2))
+    #expect(playing.hasNeutralHandshake && wire.count == 1)
+    #expect(host.close(opened.id)?.hasNeutralHandshake == false)
+}

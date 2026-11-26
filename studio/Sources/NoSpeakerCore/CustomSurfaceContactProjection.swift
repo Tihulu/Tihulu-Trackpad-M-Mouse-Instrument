@@ -58,6 +58,7 @@ public struct CustomSurfaceContactProjection: Sendable {
     /// Initial neutral snapshot required; no note from a finger already
     /// down when a source is first armed.
     private var neutralSeen=false
+    public var hasNeutralHandshake: Bool { neutralSeen && !retired }
 
     public mutating func frame(_ contacts:[Contact],sequence:UInt64,observedAt:Int64,now:Int64)->Snapshot {
         guard !retired, now>=0,observedAt>=0,observedAt<=now,
