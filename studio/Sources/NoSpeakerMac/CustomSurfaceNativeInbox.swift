@@ -8,7 +8,7 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
     private let lock = NSLock()
     private let surface: TouchSurfaceKind
     private let orientation: SurfaceOrientation
-    private let notBefore: Int64
+    private var notBefore: Int64
     private var samples: [CustomSurfaceNativeFrame] = []
     private var faulted = false
     private var closed = false
@@ -27,6 +27,16 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
             return
         }
         samples.append(sample)
+    }
+    /// Drop all provisional samples when the actual output and emergency
+    /// admission are ready. Do not revive an already faulted or closed inbox.
+    @discardableResult
+    public func begin(at receipt: Int64) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed, !faulted, receipt >= notBefore else { return false }
+        notBefore = receipt
+        samples.removeAll(keepingCapacity: true)
+        return true
     }
     public func drain() -> (samples: [CustomSurfaceNativeFrame], faulted: Bool) {
         lock.lock(); defer { lock.unlock() }

@@ -71,6 +71,12 @@ public enum PerformanceCaptureSafety {
 
     /// An accepted emergency edge belongs to the performance engine, not
     /// the replaceable event tap. A new engine must never receive an old panic.
+    /// Explicit Custom Pad opt-in; the free-cursor event itself still passes
+    /// to the foreground application. A repeated or key-up edge cannot panic.
+    public static func shouldPanicCustomPad(armed: Bool, keyCode: Int64, down: Bool, isRepeat: Bool) -> Bool {
+        armed && keyCode == 53 && down && !isRepeat
+    }
+
     public static func acceptsEmergencyRequest(engineAtCapture:UInt64,currentEngine:UInt64) -> Bool {
         engineAtCapture == currentEngine
     }
@@ -289,6 +295,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
     private var captured = false
     private var shortcut: PerformanceCaptureShortcut = .defaultShortcut
     private var captureHotkeyEnabled = false
+    private var customPadEmergencyArmed = false
     private var keyEdges = CaptureKeyEdges()
     private var pointerEdges = CapturePointerEdges()
     private var recoveryBudget = CaptureRecoveryBudget()
@@ -388,9 +395,22 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         return captured
     }
 
+    /// Never enables cursor capture, and never consumes ordinary Escape.
+    @discardableResult
+    public func setCustomPadEmergencyArmed(_ enabled: Bool) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        customPadEmergencyArmed = enabled && physicalInputOperationalLocked && !captured && !captureHotkeyEnabled
+        return customPadEmergencyArmed
+    }
+    public var customPadEmergencyOperational: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return customPadEmergencyArmed && physicalInputOperationalLocked && !captured && !captureHotkeyEnabled
+    }
+
     public func setCaptureHotkeyEnabled(_ enabled: Bool) {
         lock.lock()
         captureHotkeyEnabled = enabled && physicalInputOperationalLocked
+        if captureHotkeyEnabled { customPadEmergencyArmed = false }
         let armed=captureHotkeyEnabled
         if !armed { captured = false }
         lock.unlock()
@@ -570,6 +590,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             listening = false
             captured = false
             captureHotkeyEnabled = false
+            customPadEmergencyArmed = false
             keyEdges.reset()
             pointerEdges.reset()
             if unexpectedExit { lastEventTapStatus = "Dedicated event loop exited" }
@@ -593,6 +614,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
         listening = false
         captured = false
         captureHotkeyEnabled = false
+        customPadEmergencyArmed = false
         keyEdges.reset()
         pointerEdges.reset()
         // Retain the last failure reason for diagnosis; do not erase it.
@@ -686,6 +708,8 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
                 tapDisabledByUserInput &+= 1
                 lastEventTapStatus = "Disabled by macOS/user input"
             }
+            // A recovered event tap cannot silently rearm Custom Pad.
+            customPadEmergencyArmed = false
             if !recovered {
                 listening = false
                 captureHotkeyEnabled = false
@@ -709,6 +733,20 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
             lock.lock()
             guard listening else { lock.unlock(); return passthrough }
+            if PerformanceCaptureSafety.shouldPanicCustomPad(armed:customPadEmergencyArmed,
+                    keyCode:keyCode,down:type == .keyDown,isRepeat:repeatKey) {
+                customPadEmergencyArmed = false
+                captured = false
+                captureHotkeyEnabled = false
+                panicLatched = true
+                let signal = physicalMailbox.invalidate()
+                lock.unlock()
+                onPanic?()
+                if signal { onPhysicalInputAvailable?() }
+                onCaptureChanged?(false)
+                // The foreground app still receives its Escape key pair.
+                return passthrough
+            }
             let action = keyEdges.handle(key:keyCode,down:type == .keyDown,repeatKey:repeatKey,
                                          matches:shortcut.matches(event),armed:listening && captureHotkeyEnabled,
                                          captured:captured)
@@ -721,6 +759,7 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             } else if action == .panic {
                 captured = false
                 captureHotkeyEnabled = false
+                customPadEmergencyArmed = false
                 panicLatched = true
                 invalidateSignal = physicalMailbox.invalidate()
                 changed = false

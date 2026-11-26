@@ -3147,8 +3147,9 @@ final class StudioController: ObservableObject {
         retireCaptureMonitor()
         captureArmed = false
         captureHotkeyArmed = false
-        stopCustomPad(reason: "Panic Stop", refresh: false)
-        retryCustomPadRecovery()
+        if customPadInbox != nil || customPadRunID != nil || !customPadHost.statuses.isEmpty {
+            stopCustomPad(reason: "Panic Stop", refresh: false)
+        }
         stopGroupGamepads()
         if !groupCleanupIDs.isEmpty || groupDisposalCount != 0 { retryGroupCleanup() }
         stopInstrumentPatch()
@@ -3598,11 +3599,18 @@ final class StudioController: ObservableObject {
             stopCustomPad(reason: "Requested physical surface unavailable.")
             return
         }
+        startPerformanceEventMonitor()
+        guard captureMonitor?.diagnosticSnapshot().operational == true,
+              captureMonitor?.setCustomPadEmergencyArmed(true) == true else {
+            stopCustomPad(reason: "Escape monitor unavailable. Enable Accessibility/Input Monitoring and retry.")
+            return
+        }
         // A dedicated run is admitted only while this exact subscriber and
         // engine generation are still current; no retain cycle into Studio.
         guard let opened = customPadHost.open(plan: plan, permitsNeutralSilence: true, admitsLive: { [weak self, weak inbox] in
             guard let self, let inbox else { return false }
-            return self.customPadInbox === inbox && self.engineGeneration == generation
+            return self.customPadInbox === inbox && self.engineGeneration == generation &&
+                self.captureMonitor?.customPadEmergencyOperational == true
         }) else {
             stopCustomPad(reason: "Dedicated MIDI port could not be opened.")
             return
@@ -3613,9 +3621,9 @@ final class StudioController: ObservableObject {
             return
         }
         customPadRunID = opened.id
-        startPerformanceEventMonitor()
-        guard captureMonitor?.diagnosticSnapshot().operational == true else {
-            stopCustomPad(reason: "Escape monitor unavailable. Enable Accessibility/Input Monitoring and retry.")
+        guard inbox.begin(at: NativeCustomSurfaceMIDIHost.monotonicNow()),
+              captureMonitor?.customPadEmergencyOperational == true else {
+            stopCustomPad(reason: "Input or emergency admission changed while opening MIDI.")
             return
         }
         customPadStatus = "Armed · lift all fingers once, then play · cursor free · Esc stops"
@@ -3626,7 +3634,7 @@ final class StudioController: ObservableObject {
                 do { try await Task.sleep(for: .milliseconds(12)) } catch { return }
                 guard let self, let inbox, self.customPadInbox === inbox,
                       self.customPadRunID == opened.id, self.engineGeneration == generation else { return }
-                guard self.captureMonitor?.diagnosticSnapshot().operational == true else {
+                guard self.captureMonitor?.customPadEmergencyOperational == true else {
                     self.stopCustomPad(reason: "Escape monitor lost. Performance stopped.")
                     return
                 }
@@ -3658,6 +3666,7 @@ final class StudioController: ObservableObject {
         }
     }
     func stopCustomPad(reason: String = "Custom Pad stopped", refresh: Bool = true) {
+        captureMonitor?.setCustomPadEmergencyArmed(false)
         customPadTask?.cancel(); customPadTask = nil
         customPadInbox?.close(); customPadInbox = nil
         touch?.setCustomSurfaceInbox(nil)
@@ -4806,7 +4815,7 @@ final class StudioController: ObservableObject {
         // A user-armed shortcut remains available in Voice, MIDI,
         // Sequencers, Audio File, Speaker and Diagnostics, even before
         // a Touch/Helper performance starts. OFF remains the default.
-        guard captureHotkeyArmed || touchRunning || midiHelperRunning || customPadRunID != nil else { return }
+        guard captureHotkeyArmed || touchRunning || midiHelperRunning || customPadInbox != nil else { return }
         var monitor = ensureCaptureMonitor()
         let before = monitor.diagnosticSnapshot()
         if before.eventTapCreated && (!before.listening || !before.eventTapEnabled) {

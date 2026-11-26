@@ -33,3 +33,16 @@ private func inboxFrame(_ n: Int, surface: TouchSurfaceKind = .trackpad, valid: 
     #expect(bad.drain().samples.isEmpty)
 }
 #endif
+
+#if os(macOS)
+@Test func customNativeInboxDiscardsProvisionalFramesAtActualArm() {
+    let inbox = CustomSurfaceNativeInbox(surface: .trackpad, orientation: .horizontal, notBefore: 0)
+    inbox.submit(inboxFrame(1))
+    #expect(inbox.begin(at: 3))
+    inbox.submit(inboxFrame(2))
+    inbox.submit(inboxFrame(4))
+    #expect(inbox.drain().samples.map(\.observedAt) == [4])
+    inbox.close()
+    #expect(!inbox.begin(at: 5))
+}
+#endif
