@@ -96,8 +96,8 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         switch zone {
         case .keys:
             let item = NSCustomTouchBarItem(identifier: identifier)
-            item.customizationLabel = "Fretted Piano"
-            let labels = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G"]
+            item.customizationLabel = "Piano keys (native tap)"
+            let labels = profile.pianoKeys.map(\.label)
             let piano = NSSegmentedControl(
                 labels: labels,
                 trackingMode: .momentary,
@@ -262,8 +262,9 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     }
 
     @objc private func pianoKeyPressed(_ sender: NSSegmentedControl) {
-        guard profileControls.contains(sender), sender.selectedSegment >= 0 else { return }
-        let note = profile.baseNote + sender.selectedSegment
+        let keys=profile.pianoKeys
+        guard profileControls.contains(sender), keys.indices.contains(sender.selectedSegment) else { return }
+        let note = keys[sender.selectedSegment].note
         // Controller owns the bounded tap and invalidates delayed releases on stop.
         controller?.recordNativeTouchBarInput()
         controller?.touchBarNativeTap(note)

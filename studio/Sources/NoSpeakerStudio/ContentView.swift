@@ -2727,7 +2727,7 @@ private struct TouchBarModeView: View {
                 }
                 GroupBox("Touch Bar layout · Customize simultaneous zones") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Choose the zones to display in your preferred order. Native Touch Bar controls appear on supported MacBook Pro models; the on-screen strip works everywhere.")
+                        Text("Choose the zones in your preferred order. Native piano segments send bounded taps; on-screen piano pads support press and hold. At least one zone is required.")
                             .font(.callout).foregroundStyle(.secondary)
                         ForEach(TouchBarZone.allCases) { zone in
                             HStack {
@@ -2735,6 +2735,7 @@ private struct TouchBarModeView: View {
                                     get: { studio.touchBarProfile.zones.contains(zone) },
                                     set: { enabled in
                                         setProfile { profile in
+                                            if !enabled && profile.zones.count == 1 && profile.zones.contains(zone) {return}
                                             profile.zones.removeAll { $0 == zone }
                                             if enabled { profile.zones.append(zone) }
                                         }
@@ -2783,6 +2784,9 @@ private struct TouchBarModeView: View {
                                     ), in: 0...115)
                             Spacer()
                         }
+                        Stepper("Piano note velocity \(studio.touchBarProfile.noteVelocity)",
+                            value:Binding(get:{studio.touchBarProfile.noteVelocity},
+                                          set:{value in setProfile{$0.noteVelocity=value}}),in:1...127)
                     }.padding(8)
                 }
 
@@ -2792,12 +2796,9 @@ private struct TouchBarModeView: View {
                             switch zone {
                             case .keys:
                                 HStack(spacing: 4) {
-                                    Text("Piano").frame(width: 115, alignment: .leading)
-                                    ForEach(0..<8, id: \.self) { index in
-                                        TouchBarNotePad(
-                                            note: studio.touchBarProfile.baseNote + index,
-                                            label: ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G"][index]
-                                        )
+                                    Text("Piano · hold").frame(width: 115, alignment: .leading)
+                                    ForEach(studio.touchBarProfile.pianoKeys) { key in
+                                        TouchBarNotePad(note:key.note,label:key.label)
                                     }
                                 }
                             case .chords:

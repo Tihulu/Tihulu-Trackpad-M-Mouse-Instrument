@@ -73,3 +73,25 @@ extension TouchBarProfileTests {
         XCTAssertEqual(profile.normalizedTilt(105),0.5)
     }
 }
+
+extension TouchBarProfileTests {
+    func testPianoKeysMatchNormalizedBaseAcrossAllSupportedNotes() throws {
+        for base in 0...115 {
+            let profile=TouchBarProfile(baseNote:base)
+            XCTAssertEqual(profile.pianoKeys.count,8)
+            for (index,key) in profile.pianoKeys.enumerated() {
+                XCTAssertEqual(key.note,base+index)
+                XCTAssertEqual(try MusicTheory.midiNumber(note:key.label),key.note)
+            }
+        }
+        XCTAssertEqual(TouchBarProfile(baseNote:62).pianoKeys.first?.label,"D4")
+        XCTAssertEqual(TouchBarProfile(baseNote:-10).pianoKeys.first?.note,0)
+        XCTAssertEqual(TouchBarProfile(baseNote:999).pianoKeys.last?.note,122)
+    }
+    func testVelocityRoundTripAndBounds() throws {
+        let profile=TouchBarProfile(noteVelocity:77)
+        XCTAssertEqual(try JSONDecoder().decode(TouchBarProfile.self,from:JSONEncoder().encode(profile)).noteVelocity,77)
+        XCTAssertEqual(TouchBarProfile(noteVelocity:0).normalized().noteVelocity,1)
+        XCTAssertEqual(TouchBarProfile(noteVelocity:128).normalized().noteVelocity,127)
+    }
+}

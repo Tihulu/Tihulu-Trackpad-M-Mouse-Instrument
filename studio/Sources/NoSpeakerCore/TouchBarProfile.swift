@@ -85,6 +85,21 @@ public struct TouchBarProfile: Codable, Equatable, Sendable {
         return copy
     }
 
+    /// Shared note identity for native tap segments and on-screen hold pads.
+    public struct PianoKey: Equatable, Sendable, Identifiable {
+        public let note:Int
+        public let label:String
+        public var id:Int { note }
+    }
+    public var pianoKeys:[PianoKey] {
+        let base=normalized().baseNote
+        return (0..<8).compactMap { index in
+            let note=base+index
+            guard let label=try? MusicTheory.noteName(midi:note) else{return nil}
+            return PianoKey(note:note,label:label.replacingOccurrences(of:"#",with:"♯"))
+        }
+    }
+
     /// Neutral values follow the same convention as the MIDI release ledger.
     /// The calibrated angle is for the simulator display, not a new live sample.
     public var neutralTilt: (zone: TouchBarZone, value: Double, angle: Double)? {
