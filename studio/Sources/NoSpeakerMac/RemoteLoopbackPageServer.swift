@@ -234,7 +234,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <small>Changes how the button sends its active state. The Mac still defines its MIDI assignment and behavior.</small></fieldset>
 <button id="layoutSave" type="button">Save on this browser</button><button id="layoutReset" type="button">Reset layout</button>
 <p id="layoutStatus" role="status"></p><small>Only presentation preferences are stored locally. Release and disable controls before editing. No invitation, mapping or device name is stored.</small></section></div>
-<div id="playView" hidden><section id="playModeSection" data-wide="true"><label for="playMode">Instrument / controller mode</label><select id="playMode" disabled aria-describedby="playModeStatus"></select><p id="playModeStatus" role="status"></p><small>Switch surfaces here. Only modes assigned on the Mac are available. Pitch bend requires a mapped XY axis or pedal slider. Switching releases previous controls before showing the new surface.</small></section><section id="webCameraPlayHost" hidden data-wide="true"><h2>Camera motion helper (experimental)</h2><p>Keep the device stationary. Image change controls a mapped continuous pedal. Not hand recognition or depth. Stop to change lens or zoom.</p><label for="webCameraTarget">Assigned helper</label><select id="webCameraTarget"></select><label for="webCameraMetric">Motion control</label><select id="webCameraMetric"><option value="amount">Motion amount</option><option value="x">Motion position X</option><option value="y">Motion position Y (up)</option></select><label for="webCameraSensitivity">Sensitivity</label><select id="webCameraSensitivity"><option value="normal">Normal</option><option value="fine">Sensitive</option><option value="low">Low</option></select><label for="webCameraRegion">Detection region</label><select id="webCameraRegion"><option value="full">Full frame</option><option value="center">Center</option><option value="left">Left half</option><option value="right">Right half</option></select><label><input id="webCameraLight" type="checkbox" style="width:auto"> Reduce uniform lighting changes</label><label><input id="webCameraInvert" type="checkbox" style="width:auto"> Invert active output</label><p id="webCameraMotionStatus" role="status">Off.</p></section><section id="customSection" hidden data-wide="true" aria-labelledby="customTitle"><h2 id="customTitle">My performance panel</h2>
+<div id="playView" hidden><section id="playModeSection" data-wide="true"><label for="playMode">Instrument / controller mode</label><select id="playMode" disabled aria-describedby="playModeStatus"></select><p id="playModeStatus" role="status"></p><small>Switch surfaces here. Only modes assigned on the Mac are available. Pitch bend requires a mapped XY axis or pedal slider. Switching releases previous controls before showing the new surface.</small></section><section id="webCameraPlayHost" hidden data-wide="true"><h2>Camera motion helper (experimental)</h2><p>Keep the device stationary. Image change controls a mapped continuous pedal. Not hand recognition or depth. Stop to change lens or zoom.</p><label for="webCameraTarget">Assigned helper</label><select id="webCameraTarget"></select><label for="webCameraMetric">Motion control</label><select id="webCameraMetric"><option value="amount">Motion amount</option><option value="x">Motion position X</option><option value="y">Motion position Y (up)</option></select><label for="webCameraSensitivity">Sensitivity</label><select id="webCameraSensitivity"><option value="normal">Normal</option><option value="fine">Sensitive</option><option value="low">Low</option></select><label for="webCameraRegion">Detection region</label><select id="webCameraRegion"><option value="full">Full frame</option><option value="center">Center</option><option value="left">Left half</option><option value="right">Right half</option></select><label for="webCameraCalibration">Startup calibration</label><select id="webCameraCalibration"><option value="quiet">Require quiet frame baseline</option><option value="direct">Direct (experimental)</option></select><label><input id="webCameraLight" type="checkbox" style="width:auto"> Reduce uniform lighting changes</label><label><input id="webCameraInvert" type="checkbox" style="width:auto"> Invert active output</label><p id="webCameraMotionStatus" role="status">Off.</p></section><section id="customSection" hidden data-wide="true" aria-labelledby="customTitle"><h2 id="customTitle">My performance panel</h2>
 <p>Enable the mapped control families separately. Existing workload limits still apply.</p>
 <button id="customDrumEnable" type="button" disabled>Enable drum pads</button><button id="customPedalEnable" type="button" disabled>Enable pedalboard</button>
 <button id="customDrumRelease" type="button" disabled>Release all drum pads</button><button id="customPedalRelease" type="button" disabled>Release all pedals</button>
@@ -300,8 +300,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const cameraPanel=get("webCameraPanel"),cameraFacing=get("webCameraFacing"),cameraDevice=get("webCameraDevice"),cameraStart=get("webCameraStart"),cameraStop=get("webCameraStop"),cameraVideo=get("webCameraVideo"),cameraZoom=get("webCameraZoom"),cameraStatus=get("webCameraStatus");
   let cameraStream=null,cameraEpoch=0,cameraPending=false,cameraInFlight=false,cameraZoomPending=false,cameraDevices=[],cameraZoomRange=null;
   const cameraTarget=get("webCameraTarget"),cameraMotionStatus=get("webCameraMotionStatus");
-  const cameraMetric=get("webCameraMetric"),cameraSensitivity=get("webCameraSensitivity"),cameraRegion=get("webCameraRegion"),cameraLight=get("webCameraLight"),cameraInvert=get("webCameraInvert");
-  let cameraConfig=null;
+  const cameraMetric=get("webCameraMetric"),cameraSensitivity=get("webCameraSensitivity"),cameraRegion=get("webCameraRegion"),cameraLight=get("webCameraLight"),cameraInvert=get("webCameraInvert"),cameraCalibration=get("webCameraCalibration");
+  let cameraConfig=null,cameraBaseline=0,cameraArmed=false;
   let cameraHelper=false,cameraHost="connection",cameraTargetKey="",cameraLane=-1,cameraFrameId=null,cameraContext=null,cameraPrior=null,cameraAt=null,cameraStartedAt=0,cameraMediaTime=-Infinity,cameraQuiet=0,cameraReleaseAt=null;
   const cameraMedia=()=>window.isSecureContext===true&&typeof navigator!=="undefined"&&navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==="function"?navigator.mediaDevices:null;
   const cameraMode=()=>Boolean(ws&&admitted&&caps&&(caps.pedals&7)&&currentView==="play"&&playMode==="camera");
@@ -314,7 +314,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     textIfChanged("webCameraDescription",helper?"Local video is analyzed for image motion. Only the assigned helper level is sent to the Mac. No recording, hand recognition or depth.":"Local camera preview only. No hand recognition, depth or MIDI output in this check. Stop before pairing. Nothing is recorded or sent to the Mac.");
     const targetKey=String(caps?.pedals??0);
     if(targetKey!==cameraTargetKey){cameraTarget.replaceChildren(...Array.from({length:3},(_,i)=>i).filter(i=>has("pedals",i)).map(i=>{const o=document.createElement("option");o.value=String(i);o.textContent=["Expression","Volume","Wah / filter"][i];return o;}));cameraTarget.value=String(Array.from({length:3},(_,i)=>i).find(i=>has("pedals",i))??0);cameraTargetKey=targetKey;}
-    for(const control of [cameraTarget,cameraMetric,cameraSensitivity,cameraRegion,cameraLight,cameraInvert])control.disabled=cameraHelper||cameraInFlight||!helper;
+    for(const control of [cameraTarget,cameraMetric,cameraSensitivity,cameraRegion,cameraLight,cameraInvert,cameraCalibration])control.disabled=cameraHelper||cameraInFlight||!helper;
     cameraStart.disabled=(!!ws&&!helper)||!cameraMedia()||cameraInFlight||!!cameraStream||document.hidden||(helper&&(releasingAll||pending||workloadMask()!==0||typeof cameraVideo.requestVideoFrameCallback!=="function"));
     if(!cameraMedia()&&!cameraStream&&!cameraPending)cameraStatus.textContent="Camera unavailable in this browser or insecure context. Touch controls remain separate.";
     cameraStop.disabled=!cameraPending&&!cameraStream;
@@ -325,7 +325,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function disposeCamera(stream){if(stream)for(const track of stream.getTracks()){try{track.stop();}catch{}}}
   function stopCamera(message="Camera off."){
     if(cameraFrameId!==null){try{cameraVideo.cancelVideoFrameCallback?.(cameraFrameId);}catch{}}cameraFrameId=null;
-    cameraHelper=false;cameraLane=-1;cameraConfig=null;cameraContext=null;cameraPrior=null;cameraAt=null;cameraMediaTime=-Infinity;cameraQuiet=0;cameraMotionStatus.textContent="Off.";
+    cameraHelper=false;cameraLane=-1;cameraConfig=null;cameraBaseline=0;cameraArmed=false;cameraContext=null;cameraPrior=null;cameraAt=null;cameraMediaTime=-Infinity;cameraQuiet=0;cameraMotionStatus.textContent="Off.";
     cameraEpoch++;cameraPending=false;cameraZoomPending=false;cameraZoomRange=null;
     const previous=cameraStream;cameraStream=null;
     cameraVideo.srcObject=null;cameraVideo.hidden=true;disposeCamera(previous);
@@ -349,9 +349,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const facing=cameraFacing.value||"environment",id=cameraDevice.value;
     if(!["user","environment"].includes(facing)||id&&!cameraDevices.some(d=>d.deviceId===id))return;
     if(helper){const lane=Number(cameraTarget.value);if(!Number.isInteger(lane)||lane<0||lane>2||!has("pedals",lane))return;
-      const metric=cameraMetric.value||"amount",sensitivity=cameraSensitivity.value||"normal",region=cameraRegion.value||"full";
-      if(!["amount","x","y"].includes(metric)||!["normal","fine","low"].includes(sensitivity)||!["full","center","left","right"].includes(region))return;
-      cameraConfig={metric,sensitivity,region,light:cameraLight.checked===true,invert:cameraInvert.checked===true};cameraHelper=true;cameraLane=lane;pedalEnabled=true;}
+      const metric=cameraMetric.value||"amount",sensitivity=cameraSensitivity.value||"normal",region=cameraRegion.value||"full",calibration=cameraCalibration.value||"quiet";
+      if(!["amount","x","y"].includes(metric)||!["normal","fine","low"].includes(sensitivity)||!["full","center","left","right"].includes(region)||!["quiet","direct"].includes(calibration))return;
+      cameraConfig={metric,sensitivity,region,light:cameraLight.checked===true,invert:cameraInvert.checked===true,calibration};cameraArmed=calibration==="direct";cameraHelper=true;cameraLane=lane;pedalEnabled=true;}
     const epoch=++cameraEpoch;cameraPending=true;cameraInFlight=true;cameraStatus.textContent="Requesting local camera…";syncCamera();
     let stream=null;
     try{
@@ -407,6 +407,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
           const amount=total/count,threshold=cfg.sensitivity==="fine"?.012:cfg.sensitivity==="low"?.05:.025;
           const span=cfg.sensitivity==="fine"?.10:cfg.sensitivity==="low"?.35:.20;
           const strength=Math.round(Math.max(0,Math.min(1,(amount-threshold)/span))*100);
+          if(!cameraArmed){
+            cameraBaseline=strength===0?Math.min(3,cameraBaseline+1):0;
+            cameraArmed=cameraBaseline>=3;
+            cameraMotionStatus.textContent=cameraArmed?"Calibrated · move to control":"Keep camera and scene still · "+cameraBaseline+"/3";
+            tick();
+            if(epoch===cameraEpoch&&cameraHelper)cameraFrameId=cameraVideo.requestVideoFrameCallback((t,m)=>cameraFrame(epoch,t,m));
+            return;
+          }
           const active=strength>0;
           let level=active?(cfg.metric==="x"?Math.round(weightedX/total*100):cfg.metric==="y"?Math.round(weightedY/total*100):strength):0;
           if(active&&cfg.invert)level=100-level;
