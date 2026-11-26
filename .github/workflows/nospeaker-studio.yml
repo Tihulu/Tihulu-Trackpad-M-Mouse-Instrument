@@ -331,7 +331,7 @@ jobs:
         run: python3 ../../tools/android_gradle_ci.py
       - name: Compile library and run local tests
         working-directory: studio/mobile-android
-        run: gradle --no-daemon :assembleDebug :testDebugUnitTest :preview:assembleDebug
+        run: gradle --no-daemon :assembleDebug :testDebugUnitTest :preview:assembleDebug :paired:assembleDebug
       - name: Record debug APK provenance
         working-directory: studio/mobile-android/preview/build/outputs/apk/debug
         run: |
@@ -348,4 +348,30 @@ jobs:
             studio/mobile-android/preview/build/outputs/apk/debug/preview-debug.apk
             studio/mobile-android/preview/build/outputs/apk/debug/APK-*.txt
             studio/mobile-android/preview/build/outputs/apk/debug/APK-SHA256SUMS
+          if-no-files-found: error
+
+      - name: Record separate paired debug APK provenance and permission boundary
+        working-directory: studio/mobile-android/paired/build/outputs/apk/debug
+        run: |
+          set -euo pipefail
+          test -s paired-debug.apk
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          "$AAPT" dump permissions paired-debug.apk > APK-PERMISSIONS.txt
+          grep -F "android.permission.INTERNET" APK-PERMISSIONS.txt
+          grep -F "android.permission.CAMERA" APK-PERMISSIONS.txt
+          "$AAPT" dump badging paired-debug.apk > APK-BADGING.txt
+          grep -F "package: name='com.tihulu.mobile.paired'" APK-BADGING.txt
+          "$AAPT" dump xmltree paired-debug.apk AndroidManifest.xml > APK-MANIFEST.txt
+          grep -F "com.tihulu.mobile.PAIRED_AIR" APK-MANIFEST.txt
+          grep -E 'android:usesCleartextTraffic.*0x0$' APK-MANIFEST.txt
+          grep -E 'android:allowBackup.*0x0$' APK-MANIFEST.txt
+          sha256sum paired-debug.apk > APK-SHA256SUMS
+          printf "checkout_sha=%s\ncheckout_tree=%s\nrun_id=%s\n" "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" "$GITHUB_RUN_ID" > APK-PROVENANCE.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TIHULU-Android-paired-experimental-debug-APK
+          path: |
+            studio/mobile-android/paired/build/outputs/apk/debug/paired-debug.apk
+            studio/mobile-android/paired/build/outputs/apk/debug/APK-*.txt
+            studio/mobile-android/paired/build/outputs/apk/debug/APK-SHA256SUMS
           if-no-files-found: error

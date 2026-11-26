@@ -102,3 +102,31 @@ late response, admission, ownership, and explicit stop; actual TLS/provider
 behavior, scheduling and physical Mac/Android MIDI still need validation.
 The existing preview deliberately has no INTERNET permission; neither the
 alternative transport nor the old OkHttp adapter is activated in the camera UI.
+
+## Separate experimental paired companion
+
+The original `:preview:assembleDebug` APK stays network-disabled.
+`:paired:assembleDebug` builds a separate debug app with ID
+`com.tihulu.mobile.paired`, explicit INTERNET permission and the paired
+Air opt-in manifest flag. Both default to local preview; only the latter
+can display the pairing controls. The experimental debug artifact is not
+a production release. No credentials or CA are bundled.
+
+1. Choose a reviewed local hand-landmarker model before pairing.
+2. On the Mac group host, assign one piano family or a supported continuous
+   pedal lane. Start the authenticated private TLS listener for its numeric IP.
+3. On Android select **Play through paired Mac**, choose an instrument and
+   hand, enter the exact controller address and separate one-time invitation.
+   Import the verified root DER certificate and independently compare its
+   SHA-256 on the Mac; type the expected fingerprint. No automatic trust.
+4. Connect explicitly, allow camera permission if needed (press Connect again),
+   and check the host assignment after neutral ACK. Start playing. Only
+   assigned derived keys/helper levels are sent, not camera or depth images.
+5. Stop/release, backgrounding, permission loss, capture failure or connection
+   failure retires the session. A new invitation is required to reconnect.
+   ARCore installation can interrupt the session; finish setup before pairing.
+
+Current limitations: manual address entry (native QR scanning still pending),
+single-family assignment, no live mode reconfiguration, no signed production
+release, no physical Android/ARCore/Mac/Logic acceptance. JVM loopback TLS tests
+exercise the same upgrade path but do not certify Android TLS provider behavior.
