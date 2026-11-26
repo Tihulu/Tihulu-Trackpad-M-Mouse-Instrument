@@ -94,7 +94,7 @@ struct TouchBarSynthPanel:View {
 private struct TouchBarSynthPerformanceControl:View {
     let control:TouchBarSynthBank.Control
     @EnvironmentObject private var studio:StudioController
-    @State private var value:Double=0
+    private var value:Double {studio.touchBarSynthPosition(control)}
     @State private var revision:UInt64?
     @State private var knobStart:Double?
     @GestureState private var knobDragging=false
@@ -146,11 +146,10 @@ private struct TouchBarSynthPerformanceControl:View {
             Text("Ch \((control.channel ?? studio.touchBarProfile.channel)+1) · CC \(control.cc) · \(control.value(normalized:value) ?? control.neutral)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
         }.padding(6)
          .disabled(!studio.touchBarSynthAvailable)
-         .onAppear{value=control.initialPosition}
-         .onChange(of:studio.touchBarGestureEpoch.revision){_ in value=control.initialPosition}
+         .help("Local control intent, not receiver feedback.")
     }
     private func send(_ normalized:Double){
-        if studio.touchBarSynthValue(id:control.id,normalized:normalized,revision:revision){value=normalized}
+        _=studio.touchBarSynthValue(id:control.id,normalized:normalized,revision:revision)
     }
 }
 #endif

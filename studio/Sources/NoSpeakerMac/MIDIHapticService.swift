@@ -869,6 +869,17 @@ public final class MIDIHapticService: @unchecked Sendable {
             value:.init(value,neutral:neutral,bendRange:bendRange)))
     }
 
+    /// The custom bank admits only validated continuous CCs on a running
+    /// source. True means the local intent was accepted, not DAW feedback.
+    public func sendTouchBarSynthControl(_ target:SensorDestination,value:Int,neutral:Int)->Bool {
+        guard target.isValid,target.kind == .controlChange,
+              TouchBarSynthBank.permitsCC(target.number),
+              (0...127).contains(value),(0...127).contains(neutral),
+              permitsOutgoingSend,!requiresManualDAWReset else{return false}
+        sendTouchBarControl(target,value:value,neutralOverride:neutral)
+        return permitsOutgoingSend && !requiresManualDAWReset
+    }
+
     public func releaseTouchBarControls() {
         sendContinuousUpdates(continuousOwners.release(.touchBar))
     }

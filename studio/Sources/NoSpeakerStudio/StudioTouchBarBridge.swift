@@ -105,11 +105,11 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             if control.style == .toggle {
                 let button=NSButton(checkboxWithTitle:control.name,target:self,action:#selector(synthToggleChanged(_:)))
                 button.identifier = .init(id.uuidString)
-                button.state=control.initialPosition>=0.5 ? .on:.off
+                button.state=(controller?.touchBarSynthPosition(control) ?? control.initialPosition)>=0.5 ? .on:.off
                 profileControls.add(button)
                 item.view=button
             } else {
-                let slider=PerformanceTouchSlider(value:control.initialPosition,minValue:0,maxValue:1,target:self,action:#selector(synthSliderChanged(_:)))
+                let slider=PerformanceTouchSlider(value:controller?.touchBarSynthPosition(control) ?? control.initialPosition,minValue:0,maxValue:1,target:self,action:#selector(synthSliderChanged(_:)))
                 slider.identifier = .init(id.uuidString)
                 slider.sliderType=control.style == .knob ? .circular:.linear
                 slider.isContinuous=true
@@ -284,12 +284,27 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         controller?.triggerChordPad(slot)
     }
 
+    func refreshSynthControls(){
+        guard let controller else{return}
+        for view in profileControls.allObjects {
+            guard let id=view.identifier.flatMap({UUID(uuidString:$0.rawValue)}),
+                  let control=profile.effectiveSynthBank.controls.first(where:{$0.id==id}) else{continue}
+            let position=controller.touchBarSynthPosition(control)
+            if let slider=view as? PerformanceTouchSlider {
+                if slider.gesture == nil {slider.doubleValue=position}
+            } else if let button=view as? NSButton {
+                button.state=position>=0.5 ? .on:.off
+            }
+        }
+    }
     @objc private func synthSliderChanged(_ sender:NSSlider){
         guard profileControls.contains(sender),let controller,
               let slider=sender as? PerformanceTouchSlider,
               let id=sender.identifier.flatMap({UUID(uuidString:$0.rawValue)}) else{return}
         if controller.touchBarSynthValue(id:id,normalized:sender.doubleValue,revision:slider.gesture) {
             controller.recordNativeTouchBarInput()
+        } else if let control=profile.effectiveSynthBank.controls.first(where:{$0.id==id}) {
+            sender.doubleValue=controller.touchBarSynthPosition(control)
         }
     }
 

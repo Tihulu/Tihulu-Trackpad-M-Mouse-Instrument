@@ -1207,6 +1207,7 @@ final class StudioController: ObservableObject {
     @Published var captureStatus = "Cursor free · capture is OFF by default"
     @Published var touchBarProfile = StudioController.readTouchBarProfile()
     @Published var touchBarSustainOn = false
+    @Published private(set) var touchBarSynthIntent:[UUID:Double]=[:]
     @Published private(set) var touchBarSlideSustain = SustainSlideLock()
     @Published var simulatedHingeAngle = 90.0
     @Published var liveHingeEnabled = false
@@ -2725,6 +2726,8 @@ final class StudioController: ObservableObject {
 
     func releaseTouchBarNotes() {
         touchBarGestureEpoch.invalidate()
+        touchBarSynthIntent.removeAll()
+        touchBarBridge?.refreshSynthControls()
         touchBarSlideSustain.reset()
         nativePianoTokens.removeAll()
         releaseOptionalTouchBarNotes()
@@ -2759,7 +2762,11 @@ final class StudioController: ObservableObject {
     /// Custom synth controls use the existing explicitly running MIDI source.
     /// They never auto-start MIDI or enter the dedicated haptic/MPE path.
     var touchBarSynthAvailable:Bool {
-        midiRunning && !groupGamepadsRunning && !touchBarProfile.effectiveOutput.sendsHaptics
+        midiRunning && !groupGamepadsRunning && !touchBarProfile.effectiveOutput.sendsHaptics &&
+        midi?.outgoingFailureStatus == nil && midi?.requiresManualDAWReset == false
+    }
+    func touchBarSynthPosition(_ control:TouchBarSynthBank.Control)->Double {
+        touchBarSynthIntent[control.id] ?? control.initialPosition
     }
     @discardableResult
     func touchBarSynthValue(id:UUID,normalized:Double,revision:UInt64?=nil)->Bool {
@@ -2768,7 +2775,11 @@ final class StudioController: ObservableObject {
               let control=touchBarProfile.effectiveSynthBank.controls.first(where:{$0.id==id}),
               let value=control.value(normalized:normalized),
               let target=control.destination(profileChannel:touchBarProfile.channel) else{return false}
-        midi.sendTouchBarControl(target,value:value,neutralOverride:control.neutral)
+        guard midi.sendTouchBarSynthControl(target,value:value,neutral:control.neutral) else{return false}
+        if touchBarSynthIntent[id] != normalized {
+            touchBarSynthIntent[id]=normalized
+            touchBarBridge?.refreshSynthControls()
+        }
         return true
     }
 
