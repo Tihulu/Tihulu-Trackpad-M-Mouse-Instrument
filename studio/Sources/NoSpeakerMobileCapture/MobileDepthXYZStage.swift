@@ -34,6 +34,10 @@ private struct XYZSceneProbe: UIViewRepresentable {
     @State private var window = XYZWindow()
     @State private var volume = DepthXYZVolume()
     @State private var axes = 7
+    @State private var instrument = false
+    @State private var pitchAxis = DepthXYZPitchAxis.z
+    @State private var keyboard: DepthXYZKeys?
+    @State private var activeKey: Int?
     @State private var name = ""
     @State private var paired = false
     @State private var address = ""
@@ -78,7 +82,7 @@ private struct XYZSceneProbe: UIViewRepresentable {
                     if sensor == nil {
                         Button("Start", action: start)
                             .disabled(scene != .active || !MobileAirSensorSource.hasLiDAR || !volume.isValid ||
-                                      axes == 0 || retiring != nil || requesting || (paired && !ready))
+                                      (!instrument && axes == 0) || retiring != nil || requesting || (paired && !ready))
                     }
                     Button("Stop") { stop("Stopped · outputs released") }.disabled(!locked)
                     Button("Panic", role: .destructive) { stop("Panic · this device disconnected") }.disabled(!locked)
@@ -108,23 +112,33 @@ private struct XYZSceneProbe: UIViewRepresentable {
                 Text(String(format: "Palm landmark confidence %.0f%%", palm.confidence*100)).font(.caption)
             }
             Text(axesDescription).font(.caption)
+            if instrument { Text(activeKey.map { "Logical key " + String($0 + 1) } ?? "No active key") }
         }
     }
     private var axesDescription: String {
-        ["X", "Y", "Z"].enumerated().compactMap { index, axis in
+        if instrument { return pitchAxis.rawValue.uppercased() + (paired ? " → Mac-assigned keys" : " → preview keys") }
+        return ["X", "Y", "Z"].enumerated().compactMap { index, axis in
             axes & (1 << index) == 0 ? nil : "\(axis) → Mac control \(index + 1)"
         }.joined(separator: " · ")
     }
     private var setup: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Move one palm right for X, up for Y, and away from the rear camera for Z.")
-            HStack {
+            Picker("Role", selection: $instrument) {
+                Text("Helper").tag(false)
+                Text("Instrument").tag(true)
+            }.pickerStyle(.segmented).disabled(locked)
+            if instrument {
+                Picker("Pitch axis", selection: $pitchAxis) {
+                    ForEach(DepthXYZPitchAxis.allCases) { Text($0.rawValue.uppercased()).tag($0) }
+                }.disabled(locked)
+            } else { HStack {
                 ForEach(0..<3) { i in
                     Toggle(["X", "Y", "Z"][i], isOn: Binding(
                         get: { axes & (1 << i) != 0 },
                         set: { on in if on { axes |= 1 << i } else { axes &= ~(1 << i) } }))
                 }
-            }.disabled(locked)
+            }.disabled(locked) }
             DisclosureGroup("Playing volume and profiles") {
                 bound("Left", $volume.left, 0...1)
                 bound("Right", $volume.right, 0...1)
@@ -134,17 +148,18 @@ private struct XYZSceneProbe: UIViewRepresentable {
                 bound("Far (m)", $volume.farMeters, 0.1...3)
                 TextField("Calibration name", text: $name).textFieldStyle(.roundedBorder)
                 Button("Save new calibration") { save() }
-                    .disabled(!volume.isValid || axes == 0 || name.isEmpty || library == nil)
+                    .disabled(!volume.isValid || (!instrument && axes == 0) || name.isEmpty || library == nil)
                 if let library {
                     ForEach(library.profiles) { profile in
                         Button(profile.name) {
                             volume = profile.volume; axes = profile.axisMask; name = profile.name
+                            instrument = profile.pitchAxis != nil; pitchAxis = profile.pitchAxis ?? .z
                             status = "Loaded " + profile.name
                         }
                     }
                 } else { Text("Saved calibration data could not be read.") }
             }.disabled(locked)
-            if !volume.isValid || axes == 0 { Text("Enable an axis and set ordered bounds with sufficient spacing.") }
+            if !volume.isValid || (!instrument && axes == 0) { Text("Enable an axis and set ordered bounds with sufficient spacing.") }
             Toggle("Send to paired Mac", isOn: $paired).disabled(locked)
             if paired {
                 Text(axesDescription)
@@ -152,7 +167,7 @@ private struct XYZSceneProbe: UIViewRepresentable {
                 TextField("Mac controller address", text: $address).textInputAutocapitalization(.never)
                     .autocorrectionDisabled().keyboardType(.URL).disabled(locked)
                 SecureField("One-time invitation", text: $invitation).privacySensitive().disabled(locked)
-                Button("Connect", action: connect).disabled(locked || scene != .active || axes == 0 ||
+                Button("Connect", action: connect).disabled(locked || scene != .active || (!instrument && axes == 0) ||
                     MobileLANEndpoint(pageAddress: address) == nil || MobileLANEndpoint.invitationBytes(invitation) == nil)
             }
         }
@@ -163,15 +178,15 @@ private struct XYZSceneProbe: UIViewRepresentable {
     private func save() {
         guard var library else { return }
         do {
-            try library.save(name: name, volume: volume, axisMask: axes)
+            try library.save(name: name, volume: volume, axisMask: instrument ? 7 : axes, pitchAxis: instrument ? pitchAxis : nil)
             stored = try JSONEncoder().encode(library)
             status = "Calibration saved"
         } catch { status = "Choose a unique calibration name and valid volume (up to 32 profiles)." }
     }
     private func connect() {
-        guard !locked, scene == .active, (1...7).contains(axes),
+        guard !locked, scene == .active, (instrument || (1...7).contains(axes)),
               let endpoint = MobileLANEndpoint(pageAddress: address) else { return }
-        let client = MobileLANSocket(endpoint: endpoint, selection: .xyz(mask: axes))
+        let client = MobileLANSocket(endpoint: endpoint, selection: instrument ? .keys : .xyz(mask: axes))
         let token = invitation
         invitation = ""
         guard client.connect(invitation: token) else { client.stop(); status = "Pairing failed"; return }
@@ -180,7 +195,7 @@ private struct XYZSceneProbe: UIViewRepresentable {
     private func start() {
         guard sensor == nil, retiring == nil, !requesting, scene == .active, MobileAirSensorSource.hasLiDAR,
               let pose = window.orientation, let tracker = DepthXYZTracking(volume: volume),
-              (1...7).contains(axes), !paired || socket?.status().assignment?.xyzLane(mask: axes) != nil else { return }
+              (instrument || (1...7).contains(axes)), !paired || assigned(socket?.status().assignment) else { return }
         guard MobileAirSensorSource.authorization == .authorized else {
             if MobileAirSensorSource.authorization == .notDetermined {
                 requesting = true
@@ -192,23 +207,31 @@ private struct XYZSceneProbe: UIViewRepresentable {
             } else { status = "Camera access unavailable · check Settings" }
             return
         }
+        if instrument {
+            let mask = paired ? socket?.status().assignment?.piano ?? 0 : (1 << 25) - 1
+            guard let keys = DepthXYZKeys(authorized: mask, axis: pitchAxis) else { return }
+            keyboard = keys
+        }
         orientation = pose; tracking = tracker
         let capture = MobileAirSensorSource()
         sensor = capture
         capture.start(backend: .lidar, orientation: pose)
         status = "Waiting for measured palm"
     }
+    private func assigned(_ manifest: MobileLANCapabilities.Manifest?) -> Bool {
+        instrument ? manifest?.keysLane() != nil : manifest?.xyzLane(mask: axes) != nil
+    }
     private func stop(_ reason: String) {
         socket?.stop(); socket = nil; ready = false; invitation = ""
         if let sensor { sensor.stop(); retiring = sensor }
-        sensor = nil; tracking = nil; levels = nil; palm = nil; orientation = nil; status = reason
+        sensor = nil; tracking = nil; keyboard = nil; activeKey = nil; levels = nil; palm = nil; orientation = nil; status = reason
     }
     private func poll() {
         if retiring?.isStopped == true { retiring = nil }
         if let socket {
             let state = socket.status()
             if state.phase == .closed { stop(state.message); return }
-            ready = state.assignment?.xyzLane(mask: axes) != nil
+            ready = assigned(state.assignment)
             if sensor == nil { status = state.message }
         }
         guard let sensor, var tracker = tracking else { return }
@@ -223,10 +246,13 @@ private struct XYZSceneProbe: UIViewRepresentable {
                 levels = tracker.observe(point, at: frame.time, now: MobileAirSensorSource.now)
                 palm = levels == nil ? nil : point
                 status = levels == nil ? "Tracking lost or acquiring · controls released" : "Tracking"
+                let keyOutput = keyboard?.output(levels)
+                activeKey = keyOutput.flatMap { $0.keys == 0 ? nil : $0.keys.trailingZeroBitCount }
                 if let socket {
                     guard let time = MobileAirCaptureFrame.nanoseconds(frame.time) else { stop("Invalid capture time"); return }
                     var output = MobileAirOutput()
-                    if let levels {
+                    if let keyOutput { output = keyOutput }
+                    else if let levels {
                         output.xyz = [levels.x,levels.y,levels.z].enumerated().map { i, value in
                             axes & (1 << i) == 0 ? nil : value
                         }
@@ -236,6 +262,7 @@ private struct XYZSceneProbe: UIViewRepresentable {
             }
         }
         if tracker.expire(now: MobileAirSensorSource.now) {
+            _ = keyboard?.output(nil); activeKey = nil
             levels = nil; palm = nil; status = "Sensor frames expired · controls released"
         }
         tracking = tracker

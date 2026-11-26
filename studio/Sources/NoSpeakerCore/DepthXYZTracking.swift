@@ -118,3 +118,37 @@ public struct DepthXYZTracking: Sendable {
         return false
     }
 }
+
+public enum DepthXYZPitchAxis: String, Codable, CaseIterable, Identifiable, Sendable {
+    case x, y, z
+    public var id: Self { self }
+}
+
+/// One exclusive key family. Only keys in the Mac grant are playable; local
+/// previews must explicitly provide their preview mask. Hysteresis limits
+/// repeated attacks near the boundary of two adjacent authorized keys.
+public struct DepthXYZKeys: Sendable {
+    private let keys: [Int]
+    private let axis: DepthXYZPitchAxis
+    private var zone: Int?
+
+    public init?(authorized: Int, axis: DepthXYZPitchAxis) {
+        guard (1..<(1 << 25)).contains(authorized) else { return nil }
+        keys = (0..<25).filter { authorized & (1 << $0) != 0 }
+        self.axis = axis
+    }
+
+    public mutating func output(_ levels: DepthXYZLevels?) -> MobileAirOutput {
+        guard let levels else { zone = nil; return .init() }
+        let value: Double
+        switch axis { case .x: value = levels.x; case .y: value = levels.y; case .z: value = levels.z }
+        guard (0...1).contains(value) else { zone = nil; return .init() }
+        let position = value * Double(keys.count)
+        let chosen: Int
+        if let previous = zone, position >= Double(previous) - 0.12 && position < Double(previous + 1) + 0.12 {
+            chosen = previous
+        } else { chosen = min(keys.count - 1, Int(position)) }
+        zone = chosen
+        return .init(keys: 1 << keys[chosen])
+    }
+}

@@ -62,3 +62,13 @@ private let palm = DepthXYZPoint(x: 0.4, y: 0.5, meters: 0.4, confidence: 0.8)
     #expect(tracker.observe(palm, at: 0.45, now: 0.46) == nil)
     #expect(tracker.observe(palm, at: .infinity, now: .nan) == nil)
 }
+
+@Test func depthXYZKeysUseOnlyGrantedZonesAndForgetHysteresisOnLoss() throws {
+    var keys = try #require(DepthXYZKeys(authorized: (1 << 3) | (1 << 15), axis: .y))
+    #expect(keys.output(.init(x: 1,y: 0,z: 1)).keys == 1 << 3)
+    #expect(keys.output(.init(x: 1,y: 0.53,z: 1)).keys == 1 << 3)
+    #expect(keys.output(nil).keys == 0)
+    #expect(keys.output(.init(x: 1,y: 0.53,z: 1)).keys == 1 << 15)
+    #expect(keys.output(.init(x: 0,y: 1,z: 0)).keys == 1 << 15)
+    #expect(DepthXYZKeys(authorized: RemotePiano.sustainBit, axis: .z) == nil)
+}
