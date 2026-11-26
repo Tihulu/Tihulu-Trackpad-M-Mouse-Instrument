@@ -1,0 +1,90 @@
+import Foundation
+
+/// Offline, device-specific layout. Integer coordinates in 0...10000
+/// make adjacent boundaries exact. No route authorization or MIDI output.
+public struct CustomSurfacePadLayout: Codable, Equatable, Sendable {
+    public enum Surface:String,Codable,CaseIterable,Sendable {
+        case trackpad,magicMouse,touchBar,phone,tablet
+    }
+    public enum Assignment:Codable,Equatable,Sendable {
+        case note(Int)
+        case chord([Int])
+        case degree(Int)
+        case drum(Int)
+        case helper(SensorDestination)
+        case xy(SensorDestination,SensorDestination)
+        public var isValid:Bool {
+            switch self {
+            case .note(let n),.drum(let n): return (0...127).contains(n)
+            case .chord(let notes): return (1...15).contains(notes.count) && Set(notes).count==notes.count && notes.allSatisfy{(0...127).contains($0)}
+            case .degree(let step): return (-1408...1408).contains(step)
+            case .helper(let d): return Self.safeHelper(d)
+            case .xy(let x,let y):
+                return x != y && Self.continuous(x) && Self.continuous(y)
+            }
+        }
+        private static func safeHelper(_ d:SensorDestination)->Bool {
+            d.isValid && d.kind != .note && (d.kind != .controlChange || ![0,6,32,38,96,97,98,99,100,101].contains(d.number))
+        }
+        private static func continuous(_ d:SensorDestination)->Bool {
+            safeHelper(d) && (d.kind == .controlChange || d.kind == .pitchBend)
+        }
+    }
+    public struct Pad:Codable,Equatable,Sendable,Identifiable {
+        public let id:String
+        public let label:String
+        public let x:Int
+        public let y:Int
+        public let width:Int
+        public let height:Int
+        public let assignment:Assignment
+        public init(id:String,label:String,x:Int,y:Int,width:Int,height:Int,assignment:Assignment){
+            self.id=id;self.label=label;self.x=x;self.y=y;self.width=width;self.height=height;self.assignment=assignment
+        }
+        public var isValid:Bool {
+            !id.isEmpty && id.utf8.count<=64 && label.utf8.count<=64 &&
+            !id.unicodeScalars.contains{CharacterSet.controlCharacters.contains($0)} &&
+            !label.unicodeScalars.contains{CharacterSet.controlCharacters.contains($0)} &&
+            (0..<10000).contains(x) && (0..<10000).contains(y) &&
+            (1...10000).contains(width) && (1...10000).contains(height) &&
+            width<=10000-x && height<=10000-y && assignment.isValid
+        }
+        fileprivate func overlaps(_ other:Self)->Bool {
+            x<other.x+other.width && other.x<x+width && y<other.y+other.height && other.y<y+height
+        }
+    }
+    public let surface:Surface
+    public let pads:[Pad]
+    public init?(surface:Surface,pads:[Pad]){
+        guard Self.valid(surface:surface,pads:pads) else{return nil}
+        self.surface=surface;self.pads=pads
+    }
+    private static func valid(surface:Surface,pads:[Pad])->Bool {
+        guard (1...64).contains(pads.count),Set(pads.map(\.id)).count==pads.count,
+              pads.allSatisfy(\.isValid) else{return false}
+        if surface == .touchBar && !pads.allSatisfy({$0.y==0 && $0.height==10000}){return false}
+        for i in pads.indices {
+            for j in pads.indices where j>i {
+                if pads[i].overlaps(pads[j]){return false}
+            }
+        }
+        return true
+    }
+    private enum CodingKeys:String,CodingKey {case surface,pads}
+    public init(from decoder:Decoder)throws {
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        let surface=try c.decode(Surface.self,forKey:.surface)
+        let pads=try c.decode([Pad].self,forKey:.pads)
+        guard let valid=Self(surface:surface,pads:pads) else{
+            throw DecodingError.dataCorruptedError(forKey:.pads,in:c,debugDescription:"Invalid or overlapping physical pad layout")
+        }
+        self=valid
+    }
+    /// Top-left normalized coordinates. Device adapter must convert its
+    /// own axis direction. Right/bottom edge belongs to the last cell.
+    public func pad(x:Double,y:Double)->Pad? {
+        guard x.isFinite,y.isFinite,(0...1).contains(x),(0...1).contains(y) else{return nil}
+        let px=min(9999,Int(x*10000)),py=min(9999,Int(y*10000))
+        return pads.first{px >= $0.x && px < $0.x+$0.width && py >= $0.y && py < $0.y+$0.height}
+    }
+}
