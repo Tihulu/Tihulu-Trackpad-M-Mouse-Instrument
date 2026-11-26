@@ -186,6 +186,38 @@ public struct PhysicalChordGates<Contact: Hashable & Comparable> {
         return result
     }
 
+    /// Same acquire-before-release order as reconcile, but acquire each new
+    /// contact/target only while the originating physical receipt is fresh.
+    /// On rejection held records exactly the admitted owners, so the caller's
+    /// existing scoped retirement does not release an unattempted note.
+    public mutating func reconcileAdmitted<Owner: Hashable>(
+        _ desired:[Contact:Set<SensorDestination>],velocity:[Contact:Int],
+        ledger:inout LegacyNoteOwners<Owner>,owner:(Contact,SensorDestination)->Owner,
+        permits:()->Bool,send:(SensorCommand)->Void
+    )->Bool {
+        let proposed=desired.filter { !$0.value.isEmpty }
+        let next=proposed.allSatisfy({ entry in
+            (1...127).contains(velocity[entry.key] ?? 0) &&
+            entry.value.allSatisfy { $0.kind == .note && $0.isValid }
+        }) ? proposed : [:]
+        for contact in next.keys.sorted() {
+            let targets=next[contact] ?? []
+            for target in targets.subtracting(held[contact] ?? []).sorted(by:Self.less) {
+                guard ledger.pressAdmitted(owner(contact,target),channel:target.channel,note:target.number,
+                    velocity:velocity[contact] ?? 1,permits:permits,send:send) else { return false }
+                held[contact,default:[]].insert(target)
+            }
+        }
+        // Ordinary release and retirement are never rejected by the attack fence.
+        for contact in held.keys.sorted() {
+            for target in (held[contact] ?? []).subtracting(next[contact] ?? []).sorted(by:Self.less) {
+                for command in ledger.release(owner(contact,target)) { send(command) }
+            }
+        }
+        held=next
+        return permits()
+    }
+
     private static func less(_ lhs: SensorDestination, _ rhs: SensorDestination) -> Bool {
         lhs.channel == rhs.channel ? lhs.number < rhs.number : lhs.channel < rhs.channel
     }

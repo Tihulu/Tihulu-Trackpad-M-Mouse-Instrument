@@ -87,6 +87,26 @@ public enum MonotonicReceiptAdmission {
     }
 }
 
+/// A single receipt has one monotonic admission fence, shared across synchronous
+/// consumers. A rejection is irreversible even if the clock later recovers.
+public struct PhysicalReceiptSendFence: Sendable {
+    private let receipt,maximumAge:Double
+    private var lastNow:Double?
+    public private(set) var rejected=false
+    public init(receipt:Double,maximumAge:Double,initialNow:Double? = nil) {
+        self.receipt=receipt; self.maximumAge=maximumAge; self.lastNow=initialNow
+    }
+    public mutating func permits(now:Double)->Bool {
+        guard !rejected, lastNow.map({ now >= $0 }) ?? true,
+              MonotonicReceiptAdmission.permits(receipt:receipt,now:now,maximumAge:maximumAge) else {
+            rejected=true
+            return false
+        }
+        lastNow=now
+        return true
+    }
+}
+
 /// The shared Touch/Helper inbox cannot authorize onsets from a
 /// future, nonfinite or expired monotonic publication timestamp.
 public enum TouchPublicationAdmission {
@@ -100,12 +120,18 @@ public enum TouchPublicationAdmission {
     /// On false the caller retires the physical session and its ownership.
     public static func dispatch(queuedAt:Double,now:()->Double,
                                 prepare:()->Void,touch:()->Void,helper:()->Void)->Bool {
-        guard permits(queuedAt:queuedAt,now:now()) else { return false }
+        var fence=PhysicalReceiptSendFence(receipt:queuedAt,maximumAge:maximumAge)
+        return dispatch(permits:{ fence.permits(now:now()) },prepare:prepare,touch:touch,helper:helper)
+    }
+
+    /// The controller may share this exact same fence with individual sends.
+    public static func dispatch(permits:()->Bool,prepare:()->Void,touch:()->Void,helper:()->Void)->Bool {
+        guard permits() else { return false }
         prepare()
-        guard permits(queuedAt:queuedAt,now:now()) else { return false }
+        guard permits() else { return false }
         touch()
-        guard permits(queuedAt:queuedAt,now:now()) else { return false }
+        guard permits() else { return false }
         helper()
-        return true
+        return permits()
     }
 }
