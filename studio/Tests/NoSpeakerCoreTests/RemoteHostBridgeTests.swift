@@ -287,3 +287,24 @@ private func bridgeRuntime() throws -> PhysicalPatchRuntime {
     #expect(result.commands==[.init(bridgeNote,value:0)])
     #expect(runtime.activeSources.isEmpty && runtime.remotePeerIDs.isEmpty)
 }
+
+
+@Test func directRemoteReleaseOrRejectionBatchesExpiredPhysicalOwner() throws {
+    for reject in [false,true] {
+        let cc=SensorDestination(.controlChange,number:74)
+        var runtime=PhysicalPatchRuntime()
+        try runtime.configure(.init(routes:[
+            .init(id:"local",source:.trackpad,signal:.x,destination:cc,priority:0),
+            .init(id:"remote",source:.phone,signal:.x,destination:cc,priority:10)
+        ]),allowRemote:true)
+        try runtime.issueRemotePairing(secret:bridgeSecret,source:.phone,now:1)
+        let id=try runtime.admitRemote(secret:bridgeSecret,now:1)
+        _=runtime.receive(source:.trackpad,x:0.3,y:0.5,size:0.5,hostTime:1,now:1)
+        _=runtime.receiveRemote(id,bytes:bridgeTouch,now:1.2)
+        let release=Data("{\"version\":1,\"sequence\":2,\"kind\":\"release\"}".utf8)
+        let result=runtime.receiveRemote(id,bytes:reject ? Data([0xff]) : release,now:1.36)
+        #expect(result == (reject ? .close([.init(cc,value:0)]) : .accepted([.init(cc,value:0)])))
+        #expect(runtime.activeSources.isEmpty && runtime.activeRouterSessionCount==0)
+        #expect(runtime.remotePeerIDs == (reject ? [] : [id]))
+    }
+}

@@ -564,17 +564,17 @@ public struct PhysicalPatchRuntime: Sendable {
     mutating func receiveRemote(_ id:UUID,bytes:Data,receipt:Double,now processingTime:Double) -> RemoteTouchResult {
         guard var peer = remotePeers[id], remoteEnabled else { return .close([]) }
         guard MonotonicReceiptAdmission.permits(receipt:receipt,now:processingTime,maximumAge:0.1),
-              !peer.expired(now:processingTime) else { return .close(revokeRemote(id)) }
+              !peer.expired(now:processingTime) else { return .close(revokeRemote(id,now:processingTime)) }
         let now = receipt
         guard let frame = try? RemoteTouchFrame.read(bytes), peer.accept(frame, now: now)
-        else { return .close(revokeRemote(id)) }
+        else { return .close(revokeRemote(id,now:processingTime)) }
         // Legacy clients may omit v8 entirely. Once metadata begins, only the
         // next mapping page is accepted until that snapshot is complete.
         if peer.mappingStarted != nil && !peer.mappingComplete && frame.kind != .mapping {
-            return .close(revokeRemote(id))
+            return .close(revokeRemote(id,now:processingTime))
         }
         if peer.labelStarted && !peer.labelComplete && frame.kind != .mappingLabels {
-            return .close(revokeRemote(id))
+            return .close(revokeRemote(id,now:processingTime))
         }
         if frame.kind != .heartbeat && frame.kind != .capabilities && frame.kind != .mapping && frame.kind != .mappingLabels {
             peer.performanceStarted = true
@@ -589,7 +589,7 @@ public struct PhysicalPatchRuntime: Sendable {
                   let index = frame.page, index == peer.mappingNext,
                   peer.mappingLast.map({ now-$0 >= 0.05-1e-9 }) ?? true,
                   let page = try? remoteMappingPage(id,page:index,sequence:frame.sequence),
-                  (try? page.encoded()) != nil else { return .close(revokeRemote(id)) }
+                  (try? page.encoded()) != nil else { return .close(revokeRemote(id,now:processingTime)) }
             if peer.mappingStarted == nil { peer.mappingStarted = now }
             peer.mappingLast = now
             peer.mappingNext += 1
@@ -602,7 +602,7 @@ public struct PhysicalPatchRuntime: Sendable {
                   let index = frame.page, index == peer.labelNext,
                   let last = peer.mappingLast, now-last >= 0.05-1e-9,
                   let page = try? remoteMappingLabelPage(id,page:index,sequence:frame.sequence),
-                  (try? page.encoded()) != nil else { return .close(revokeRemote(id)) }
+                  (try? page.encoded()) != nil else { return .close(revokeRemote(id,now:processingTime)) }
             peer.labelStarted = true
             peer.mappingLast = now
             peer.labelNext += 1
@@ -610,16 +610,16 @@ public struct PhysicalPatchRuntime: Sendable {
             remotePeers[id] = peer
             return .accepted([])
         case .release:
-            let commands = peer.routerSession.map { router.disconnect($0) } ?? []
+            let departing = peer.routerSession
             peer.routerSession = nil
             peer.lastTouch = nil
             remotePeers[id] = peer
-            return .accepted(commands)
+            return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([departing].compactMap { $0 })))
         case .touch:
-            guard touchSources.contains(peer.source) else { return .close(revokeRemote(id)) }
+            guard touchSources.contains(peer.source) else { return .close(revokeRemote(id,now:processingTime)) }
             if peer.routerSession == nil { peer.routerSession = try? router.connect(peer.source, now: now) }
             guard let session = peer.routerSession, let x = frame.x, let y = frame.y
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             peer.lastTouch = now
             remotePeers[id] = peer
             var commands: [SensorCommand] = []
@@ -634,7 +634,7 @@ public struct PhysicalPatchRuntime: Sendable {
                   peer.tilt == nil, let angles = frame.angles,
                   let calibration = RemoteTiltCalibration(neutral: angles),
                   peer.motionFreshness.arm(receipt: now, now: now)
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             peer.tilt = calibration
             peer.lastOrientation = now
             remotePeers[id] = peer
@@ -642,9 +642,9 @@ public struct PhysicalPatchRuntime: Sendable {
         case .orientation:
             guard let tilt = peer.tilt, let angles = frame.angles,
                   peer.motionFreshness.accept(receipt: now, now: now)
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             if peer.motionSession == nil { peer.motionSession = try? router.connect(peer.source, now: now) }
-            guard let session = peer.motionSession else { return .close(revokeRemote(id)) }
+            guard let session = peer.motionSession else { return .close(revokeRemote(id,now:processingTime)) }
             peer.lastOrientation = now
             remotePeers[id] = peer
             let values = tilt.normalize(angles)
@@ -656,26 +656,26 @@ public struct PhysicalPatchRuntime: Sendable {
             }
             return .accepted(commands)
         case .motionRelease:
-            guard peer.tilt != nil else { return .close(revokeRemote(id)) }
-            let commands = peer.motionSession.map { router.disconnect($0) } ?? []
+            guard peer.tilt != nil else { return .close(revokeRemote(id,now:processingTime)) }
+            let departing = peer.motionSession
             peer.motionSession = nil
             peer.tilt = nil
             peer.lastOrientation = nil
             peer.motionFreshness.disarm()
             remotePeers[id] = peer
-            return .accepted(commands)
+            return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([departing].compactMap { $0 })))
         case .pedalboard:
             guard let mask = frame.mask, let levels = frame.levels,
                   let allowed = pedalMasks[peer.source], mask & ~allowed == 0
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             if mask == 0 {
-                let commands = peer.pedalSession.map { router.disconnect($0) } ?? []
+                let departing = peer.pedalSession
                 peer.pedalSession = nil; peer.pedalMask = 0; peer.lastPedalReceipt = nil
                 remotePeers[id] = peer
-                return .accepted(commands)
+                return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([departing].compactMap { $0 })))
             }
             if peer.pedalSession == nil { peer.pedalSession = try? router.connect(peer.source, now: now) }
-            guard let session = peer.pedalSession else { return .close(revokeRemote(id)) }
+            guard let session = peer.pedalSession else { return .close(revokeRemote(id,now:processingTime)) }
             var commands: [SensorCommand] = []
             for (index, signal) in RemotePedalboard.signals.enumerated() where mask & (1 << index) != 0 {
                 sequence &+= 1
@@ -690,15 +690,15 @@ public struct PhysicalPatchRuntime: Sendable {
             return .accepted(commands)
         case .pianoKeys:
             guard let mask = frame.mask, let allowed = pianoMasks[peer.source], mask & ~allowed == 0
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             if mask == 0 {
-                let commands = peer.pianoSession.map { router.disconnect($0) } ?? []
+                let departing = peer.pianoSession
                 peer.pianoSession = nil; peer.pianoMask = 0; peer.lastPianoReceipt = nil
                 remotePeers[id] = peer
-                return .accepted(commands)
+                return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([departing].compactMap { $0 })))
             }
             if peer.pianoSession == nil { peer.pianoSession = try? router.connect(peer.source, now: now) }
-            guard let session = peer.pianoSession else { return .close(revokeRemote(id)) }
+            guard let session = peer.pianoSession else { return .close(revokeRemote(id,now:processingTime)) }
             var commands: [SensorCommand] = []
             // Engage sustain before new notes; release it after old notes.
             // Add owners before removing old ones, preserving shared notes.
@@ -716,15 +716,15 @@ public struct PhysicalPatchRuntime: Sendable {
             return .accepted(commands)
         case .drumPads:
             guard let mask = frame.mask, let allowed = drumMasks[peer.source], mask & ~allowed == 0
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             if mask == 0 {
-                let commands = peer.drumSession.map { router.disconnect($0) } ?? []
+                let departing = peer.drumSession
                 peer.drumSession = nil; peer.drumMask = 0; peer.lastDrumReceipt = nil
                 remotePeers[id] = peer
-                return .accepted(commands)
+                return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([departing].compactMap { $0 })))
             }
             if peer.drumSession == nil { peer.drumSession = try? router.connect(peer.source, now: now) }
-            guard let session = peer.drumSession else { return .close(revokeRemote(id)) }
+            guard let session = peer.drumSession else { return .close(revokeRemote(id,now:processingTime)) }
             var commands: [SensorCommand] = []
             // Add new owners before removing old ones. A shared destination
             // stays held when transferred between pads in one snapshot.
@@ -742,7 +742,7 @@ public struct PhysicalPatchRuntime: Sendable {
         case .accelerationArm, .rotationArm:
             let signal: SensorSignal = frame.kind == .accelerationArm ? .accelerationMagnitude : .rotationMagnitude
             guard inertialSignals[peer.source]?.contains(signal) == true, peer.inertial[signal] == nil
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             var stream = RemoteInertialStream(lastReceipt: now, session: nil)
             if signal == .accelerationMagnitude, let settings = strikeSettings[peer.source] {
                 stream.strikeDetector = AirStrikeDetector(settings: settings)
@@ -753,9 +753,9 @@ public struct PhysicalPatchRuntime: Sendable {
         case .acceleration, .rotation:
             let signal: SensorSignal = frame.kind == .acceleration ? .accelerationMagnitude : .rotationMagnitude
             guard var stream = peer.inertial[signal], now > stream.lastReceipt, let value = frame.inertialValue
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             if stream.session == nil { stream.session = try? router.connect(peer.source, now: now) }
-            guard let session = stream.session else { return .close(revokeRemote(id)) }
+            guard let session = stream.session else { return .close(revokeRemote(id,now:processingTime)) }
             stream.lastReceipt = now
             var commands: [SensorCommand] = []
             if let deadline = stream.strikeReleaseAt, now >= deadline {
@@ -778,15 +778,19 @@ public struct PhysicalPatchRuntime: Sendable {
             return .accepted(commands)
         case .accelerationRelease, .rotationRelease:
             let signal: SensorSignal = frame.kind == .accelerationRelease ? .accelerationMagnitude : .rotationMagnitude
-            guard let stream = peer.inertial.removeValue(forKey: signal) else { return .close(revokeRemote(id)) }
-            let commands = stream.session.map { router.disconnect($0) } ?? []
+            guard let stream = peer.inertial.removeValue(forKey: signal) else { return .close(revokeRemote(id,now:processingTime)) }
             remotePeers[id] = peer
-            return .accepted(commands)
+            return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([stream.session].compactMap { $0 })))
         }
     }
 
     public mutating func revokeRemote(_ id: UUID) -> [SensorCommand] {
         router.disconnect(sessions:removeRemoteSessions(id))
+    }
+
+    private mutating func revokeRemote(_ id:UUID,now:Double) -> [SensorCommand] {
+        guard now.isFinite,now>=0 else { return revokeRemote(id) }
+        return expire(now:now,removingRemote:[id])
     }
 
     private mutating func removeRemoteSessions(_ id: UUID) -> Set<UUID> {
@@ -817,7 +821,8 @@ public struct PhysicalPatchRuntime: Sendable {
     mutating func expire(now:Double,removingRemote departures:Set<UUID>,
                          removingPhysical physical:Set<SensorSource> = [],
                          removingHybrid:Bool = false,
-                         releasingSignals:[UUID:Set<SensorSignal>] = [:]) -> [SensorCommand] {
+                         releasingSignals:[UUID:Set<SensorSignal>] = [:],
+                         removingSessions:Set<UUID> = []) -> [SensorCommand] {
         guard now.isFinite else { return [] }
         let dualExpired = (airDualEnabled || cameraHandsEnabled) && (seen[.camera].map { now - $0 >= 0.25 } ?? false)
         if dualExpired { airDual.reset(); airActiveSlot = nil; airStrum?.reset(); cameraHands.reset() }
@@ -827,7 +832,7 @@ public struct PhysicalPatchRuntime: Sendable {
         }).union(physical).union(gamepadArmed.filter {
             !Self.admitsPhysicalReceipt(seen[$0] ?? 0,now:now)
         }).sorted { $0.rawValue < $1.rawValue }
-        var removed: Set<UUID> = []
+        var removed = removingSessions
         for source in stale {
             if GamepadFrame.sources.contains(source) {
                 gamepadArmed.remove(source); seen.removeValue(forKey:source)
