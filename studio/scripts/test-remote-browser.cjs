@@ -13,7 +13,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
@@ -1165,4 +1165,53 @@ test("malformed stored alias selections fail closed and reset clears unsaved tex
     assert.equal(a.elements.customSection.hidden,true);
     assert.equal(a.socket.frames.length,0);
   }
+});
+
+
+test("device mode menu switches only after old touch release ACK",()=>{
+  const a=setup(),e=a.elements;
+  const down={pointerId:1,button:0,clientX:25,clientY:25,preventDefault(){}};
+  e.pad.emit("pointerdown",down);assert.equal(a.socket.frames.at(-1).kind,"touch");
+  e.playMode.value="piano";e.playMode.emit("change");
+  assert.equal(e.playMode.disabled,true);assert.equal(e.pianoEnable.disabled,true);
+  a.ack();a.step(50);assert.equal(a.socket.frames.at(-1).kind,"release");
+  assert.equal(e.playMode.disabled,true);
+  a.ack();assert.equal(e.playMode.disabled,false);
+  assert.equal(e.playMode.value,"piano");assert.equal(e.touchSection.hidden,true);assert.equal(e.pianoSection.hidden,false);
+  assert.equal(e.pianoEnable.disabled,false);assert.equal(e.drumEnable.disabled,true);
+  const count=a.socket.frames.length;
+  e.pad.emit("pointerdown",down);assert.equal(a.socket.frames.length,count);
+  e.pianoEnable.emit("click");assert.equal(a.socket.frames.length,count);
+});
+
+test("device mode menu refuses unassigned modes and never auto-arms",()=>{
+  const a=setup("granted",{...fullManifest,touch:true,tilt:false,acceleration:false,rotation:false,airDrums:false,drums:0,piano:0,pedals:0},false),e=a.elements;
+  assert.equal(e.playMode.children.find(x=>x.value==="gyro").disabled,true);
+  e.playMode.value="gyro";e.playMode.emit("change");assert.equal(e.playMode.value,"all");
+  e.playMode.value="xy";e.playMode.emit("change");assert.equal(e.playMode.value,"xy");
+  assert.equal(a.socket.frames.length,0);
+  assert.equal(e.pianoSection.hidden,true);assert.equal(e.touchSection.hidden,false);
+});
+
+test("device mode transition with missing release acknowledgement closes without opening next mode",()=>{
+  const a=setup(),e=a.elements;
+  e.pad.emit("pointerdown",{pointerId:1,button:0,clientX:25,clientY:25,preventDefault(){}});a.ack();
+  e.playMode.value="drums";e.playMode.emit("change");a.step(50);
+  assert.equal(a.socket.frames.at(-1).kind,"release");
+  a.step(350);assert.equal(a.socket.closed,true);
+  assert.equal(e.playMode.disabled,true);assert.equal(e.playMode.value,"all");
+  assert.equal(e.drumEnable.disabled,true);
+});
+
+test("device mode menu keeps motion permission explicit and releases active gyro before selecting pedals",async()=>{
+  const a=setup(),e=a.elements;
+  e.playMode.value="gyro";e.playMode.emit("change");
+  assert.equal(e.tiltSection.hidden,true);assert.equal(e.rotationSection.hidden,false);assert.equal(e.accelSection.hidden,true);
+  assert.equal(a.window.events.has("devicemotion"),false);
+  await e.rotationStart.emit("click");
+  a.window.emit("devicemotion",{rotationRate:{alpha:0,beta:0,gamma:0}});a.step();a.ack();
+  e.playMode.value="pedals";e.playMode.emit("change");a.step(50);
+  assert.equal(a.socket.frames.at(-1).kind,"rotationRelease");
+  a.ack();assert.equal(e.playMode.value,"pedals");assert.equal(e.pedalSection.hidden,false);
+  assert.equal(a.window.events.has("devicemotion"),false);
 });

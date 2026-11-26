@@ -160,7 +160,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #drumGrid[data-columns="3"],#pedalGrid[data-columns="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}
 #drumGrid[data-columns="4"],#pedalGrid[data-columns="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}
 @media(max-width:360px){#drumGrid[data-columns="4"],#pedalGrid[data-columns="4"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
-#layoutSection select{max-width:100%;font:inherit;padding:10px;background:#252525;color:inherit}
+#layoutSection select,#playMode{max-width:100%;font:inherit;padding:10px;background:#252525;color:inherit}#playModeSection{grid-column:1/-1;order:-2}#playMode{width:100%;min-height:44px}
 #layoutSection button{min-height:44px}
 #layoutDragList{display:grid;gap:4px;max-width:460px}
 #layoutDragList button{margin:0;text-align:left;touch-action:none;user-select:none}
@@ -220,7 +220,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <small>Changes how the button sends its active state. The Mac still defines its MIDI assignment and behavior.</small></fieldset>
 <button id="layoutSave" type="button">Save on this browser</button><button id="layoutReset" type="button">Reset layout</button>
 <p id="layoutStatus" role="status"></p><small>Only presentation preferences are stored locally. Release and disable controls before editing. No invitation, mapping or device name is stored.</small></section></div>
-<div id="playView" hidden><section id="customSection" hidden data-wide="true" aria-labelledby="customTitle"><h2 id="customTitle">My performance panel</h2>
+<div id="playView" hidden><section id="playModeSection" data-wide="true"><label for="playMode">Instrument / controller mode</label><select id="playMode" disabled aria-describedby="playModeStatus"></select><p id="playModeStatus" role="status"></p><small>Switch surfaces here. Only modes assigned on the Mac are available. Pitch bend requires a mapped XY axis or pedal slider. Switching releases previous controls before showing the new surface.</small></section><section id="customSection" hidden data-wide="true" aria-labelledby="customTitle"><h2 id="customTitle">My performance panel</h2>
 <p>Enable the mapped control families separately. Existing workload limits still apply.</p>
 <button id="customDrumEnable" type="button" disabled>Enable drum pads</button><button id="customPedalEnable" type="button" disabled>Enable pedalboard</button>
 <button id="customDrumRelease" type="button" disabled>Release all drum pads</button><button id="customPedalRelease" type="button" disabled>Release all pedals</button>
@@ -284,6 +284,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   let groupReady=null;
   let releasingAll=false,releaseAllTimer=null;
   let currentView="connection",ackSamples=[];
+  let playMode="all",pendingPlayMode=null,modeOptionsKey="";
   const viewNames=["play","setup","connection"];
   const navId=v=>"nav"+v[0].toUpperCase()+v.slice(1);
   function navigationBusy(){return releasingAll||pending||workloadMask()!==0;}
@@ -459,8 +460,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function localAlias(id){return customActive.includes(id)?(details.customAliases[id]??""):"";}
   function customEditorLabel(id){const original=customLabel(id);return details.customAliases[id]?details.customAliases[id]+" · "+original:original;}
   function syncCustom(){
-    const drums=Boolean(caps)&&customActive.some(id=>id[0]==="d");
-    const pedals=Boolean(caps)&&customActive.some(id=>id[0]==="p");
+    const drums=Boolean(caps)&&modeAllows("drums")&&customActive.some(id=>id[0]==="d");
+    const pedals=Boolean(caps)&&modeAllows("pedals")&&customActive.some(id=>id[0]==="p");
+    for(const id of customActive)customNode(id).hidden=!modeAllows(id[0]==="d"?"drums":"pedals")||!customMapped(id);
     get("customSection").hidden=!drums&&!pedals;
     for(const [id,visible,enabled,label] of [["customDrumEnable",drums,drumEnabled,"drum pads"],["customPedalEnable",pedals,pedalEnabled,"pedalboard"]]){
       const b=get(id);b.hidden=!visible;b.disabled=!visible||!admitted||releasingAll;
@@ -713,6 +715,51 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     catch{layoutMessage="Default layout restored for this page; saved data could not be removed.";}
     applyLayout();syncLayout();
   }
+  const playModes=[
+    ["all","All assigned controls",[]],
+    ["xy","XY / pitch bend (as mapped)",["touch"]],
+    ["piano","Piano / note strips",["piano"]],
+    ["drums","Drum pads",["drums"]],
+    ["pedals","Pedals / effects",["pedals"]],
+    ["tilt","Tilt / orientation",["tilt"]],
+    ["gyro","Gyro / rotation",["rotation"]],
+    ["accel","Acceleration / Air Drums",["acceleration"]],
+    ["motion","All assigned motion sensors",["tilt","rotation","acceleration"]]
+  ];
+  function modeAvailable(id){
+    const entry=playModes.find(p=>p[0]===id);
+    return Boolean(caps&&entry&&(id==="all"||entry[2].some(kind=>Boolean(caps[kind]))));
+  }
+  function modeAllows(kind){
+    return playMode==="all"||Boolean(playModes.find(p=>p[0]===playMode)?.[2].includes(kind));
+  }
+  function syncPlayMode(){
+    const select=get("playMode");
+    const key=JSON.stringify(playModes.map(p=>[p[0],modeAvailable(p[0])]));
+    if(key!==modeOptionsKey){
+      select.replaceChildren(...playModes.map(([id,label])=>{
+        const option=document.createElement("option");option.value=id;
+        const available=modeAvailable(id);
+        option.disabled=!available;option.textContent=label+(available?"":" — not assigned");
+        return option;
+      }));
+      modeOptionsKey=key;
+    }
+    select.value=pendingPlayMode??playMode;
+    select.disabled=!admitted||!caps||currentView!=="play"||releasingAll;
+    textIfChanged("playModeStatus",pendingPlayMode!==null?"Releasing previous controls; waiting for Mac acknowledgments…":
+      "Select an assigned mode. Enable notes, pedals or sensors explicitly when needed.");
+  }
+  function choosePlayMode(){
+    const id=get("playMode").value;
+    if(currentView!=="play"||!admitted||!caps||releasingAll||!modeAvailable(id)||id===playMode){
+      syncPlayMode();return;
+    }
+    // Global release already cancels unsent onsets, waits for ACKs and
+    // closes on timeout. Never open a second lane or arm automatically.
+    pendingPlayMode=id;
+    releaseMyControls();
+  }
   function syncNavigation(){
     for(const v of viewNames){
       get(v+"View").hidden=currentView!==v;
@@ -743,6 +790,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function finishGlobalRelease(){
     if(!releasingAll||pending||workloadMask()!==0)return false;
     cancelGlobalTimer();releasingAll=false;
+    if(pendingPlayMode!==null){
+      if(modeAvailable(pendingPlayMode))playMode=pendingPlayMode;
+      pendingPlayMode=null;
+    }
     drumStatus.textContent=pianoStatus.textContent=pedalStatus.textContent="Off.";
     status.textContent="My controls released locally; required Mac acknowledgments received. MIDI/audio output not confirmed. Enable controls again to play.";
     syncControls();return true;
@@ -961,7 +1012,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     return discrete===0?sensors<=3:discrete===1&&sensors<=2;
   }
   function workloadAllows(group){
-    return !releasingAll&&(experimentalWorkload||conservativeCombination(workloadMask()|workloadBits[group]));
+    return !releasingAll&&modeAllows(group)&&(experimentalWorkload||conservativeCombination(workloadMask()|workloadBits[group]));
   }
   function requestWorkload(group){
     if(workloadAllows(group)){workloadRefusal="";return true;}
@@ -1023,13 +1074,13 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     // has moved; restoring any one control immediately restores its panel.
     const originalDrums=indices(8).some(i=>has("drums",i)&&!customActive.includes("d"+i));
     const originalPedals=indices(6).some(i=>has("pedals",i)&&!customActive.includes("p"+i));
-    for(const [id,visible] of [["touchSection",caps?.touch],["drumSection",originalDrums],["pianoSection",caps?.piano],["pedalSection",originalPedals],["tiltSection",caps?.tilt],["inertialSection",caps?.acceleration||caps?.rotation],["accelSection",caps?.acceleration],["rotationSection",caps?.rotation],["airDrumNotice",caps?.airDrums]])get(id).hidden=!visible;
+    for(const [id,visible] of [["touchSection",caps?.touch&&modeAllows("touch")],["drumSection",originalDrums&&modeAllows("drums")],["pianoSection",caps?.piano&&modeAllows("piano")],["pedalSection",originalPedals&&modeAllows("pedals")],["tiltSection",caps?.tilt&&modeAllows("tilt")],["inertialSection",(caps?.acceleration&&modeAllows("acceleration"))||(caps?.rotation&&modeAllows("rotation"))],["accelSection",caps?.acceleration&&modeAllows("acceleration")],["rotationSection",caps?.rotation&&modeAllows("rotation")],["airDrumNotice",caps?.airDrums&&modeAllows("acceleration")]])get(id).hidden=!visible;
   }
   const drumButtons=Array.from({length:8},(_,i)=>get("drum"+i));
   const drumEnable=get("drumEnable"),drumRelease=get("drumRelease"),drumStatus=get("drumStatus");
   let drumEnabled=false,drumOwners=new Map(),drumQueue=[],drumDesired=0,drumSent=0,lastDrumSend=-Infinity,drumEmergency=false;
   function syncDrums(){
-    drumEnable.disabled=!admitted||!caps?.drums;drumEnable.textContent=drumEnabled?"Disable drum pads":"Enable drum pads";
+    drumEnable.disabled=!admitted||!caps?.drums||!modeAllows("drums");drumEnable.textContent=drumEnabled?"Disable drum pads":"Enable drum pads";
     drumRelease.disabled=!admitted||(!drumDesired&&!drumSent&&!drumQueue.length);
     drumButtons.forEach((b,i)=>{b.hidden=!has("drums",i);b.disabled=!admitted||!drumEnabled||!has("drums",i)||drumEmergency;b.setAttribute("aria-pressed",String(Boolean(drumDesired&(1<<i))));});
   }
@@ -1062,7 +1113,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   let pianoEnabled=false,pianoOctave=0,pianoOwners=new Map(),pianoQueue=[],pianoDesired=0,pianoSent=0,lastPianoSend=-Infinity,pianoEmergency=false;
   function pianoBusy(){return pianoDesired!==0||pianoSent!==0||pianoQueue.length!==0||pianoEmergency||pendingKind==="pianoKeys";}
   function syncPiano(){
-    pianoEnable.disabled=!admitted||!caps?.piano;pianoEnable.textContent=pianoEnabled?"Disable piano":"Enable piano";
+    pianoEnable.disabled=!admitted||!caps?.piano||!modeAllows("piano");pianoEnable.textContent=pianoEnabled?"Disable piano":"Enable piano";
     pianoRelease.disabled=!admitted||!pianoBusy();
     octaveDown.disabled=!admitted||!pianoEnabled||pianoOctave===0||!octaveAvailable(0)||pianoBusy();
     octaveUp.disabled=!admitted||!pianoEnabled||pianoOctave===1||!octaveAvailable(1)||pianoBusy();
@@ -1142,7 +1193,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   let pedalEnabled=false,pedalMask=0,pedalSentMask=0,pedalPositions=[...details.sliderDefaults],pedalQueue=[],pedalDirty=false,lastPedalSend=-Infinity,pedalEmergency=false;
   function pedalBusy(){return pedalMask!==0||pedalSentMask!==0||pedalQueue.length!==0||pedalEmergency||pendingKind==="pedalboard";}
   function syncPedals(){
-    pedalEnable.disabled=!admitted||!caps?.pedals;pedalEnable.textContent=pedalEnabled?"Disable pedalboard":"Enable pedalboard";
+    pedalEnable.disabled=!admitted||!caps?.pedals||!modeAllows("pedals");pedalEnable.textContent=pedalEnabled?"Disable pedalboard":"Enable pedalboard";
     pedalRelease.disabled=!admitted||!pedalBusy();
     pedalToggles.forEach((b,i)=>{
       const active=Boolean(pedalMask&(1<<i));
@@ -1244,12 +1295,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     s.epoch++;s.mode="releasing";s.sample=null;s.status.textContent="Releasing…";syncInertialListener();syncControls();tick();
   }
   function syncControls(){
-    pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncCustom();syncWorkload();syncNavigation();syncLatency();syncLayout();
+    pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncCustom();syncWorkload();syncNavigation();syncPlayMode();syncLatency();syncLayout();
     releaseAll.disabled=!admitted||!caps||releasingAll;
     const asking=releasingAll||mode==="requesting"||streams.some(s=>s.mode==="requesting");
     if(releasingAll){drumEnable.disabled=true;pianoEnable.disabled=true;pedalEnable.disabled=true;}
-    motionStart.disabled=!admitted||!caps?.tilt||mode!=="idle"||asking;
-    for(const s of streams){s.start.disabled=!admitted||!caps?.[s.kind]||s.mode!=="idle"||asking;s.stop.disabled=!admitted||s.mode==="idle"||s.mode==="releasing";}
+    motionStart.disabled=!admitted||!caps?.tilt||!modeAllows("tilt")||mode!=="idle"||asking;
+    for(const s of streams){s.start.disabled=!admitted||!caps?.[s.kind]||!modeAllows(s.kind)||s.mode!=="idle"||asking;s.stop.disabled=!admitted||s.mode==="idle"||s.mode==="releasing";}
     motionStop.disabled=!admitted||mode==="idle"||mode==="releasing";
   }
   function resetMotion(message){
@@ -1293,7 +1344,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
-    const old=ws;ws=null;admitted=false;caps=null;groupReady=null;currentView="connection";ackSamples=[];releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
+    const old=ws;ws=null;admitted=false;caps=null;groupReady=null;currentView="connection";ackSamples=[];playMode="all";pendingPlayMode=null;releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
     if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();syncControls();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
@@ -1568,6 +1619,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("layoutSave").addEventListener("click",saveLayout);
   get("layoutReset").addEventListener("click",resetLayout);
   for(const v of viewNames)get(navId(v)).addEventListener("click",()=>chooseView(v));
+  get("playMode").addEventListener("change",choosePlayMode);
   releaseAll.addEventListener("click",releaseMyControls);
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);
