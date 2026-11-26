@@ -37,6 +37,9 @@ public final class NativeMIDIPlayback {
         /// Timer dispatch and actor-resume are separate scheduling costs.
         public let maximumTimerLatenessNS:UInt64
         public let maximumActorResumeDelayNS:UInt64
+        public let maximumSoundingWakeLatenessNS:UInt64
+        public let maximumAwaitingEventWakeLatenessNS:UInt64
+        public let maximumTrailingRestWakeLatenessNS:UInt64
     }
 
     /// The successful close report is distinct from receiver confirmation.
@@ -88,6 +91,9 @@ public final class NativeMIDIPlayback {
     private var maximumWakeLatenessNS:UInt64=0
     private var maximumTimerLatenessNS:UInt64=0
     private var maximumActorResumeDelayNS:UInt64=0
+    private var maximumSoundingWakeLatenessNS:UInt64=0
+    private var maximumAwaitingEventWakeLatenessNS:UInt64=0
+    private var maximumTrailingRestWakeLatenessNS:UInt64=0
 
     public init(clip:MIDIClip) throws {
         player=try BoundedMIDIPlayback(clip:clip)
@@ -203,6 +209,7 @@ public final class NativeMIDIPlayback {
             guard let deadline=player.nextDeadline else { break }
             let current=Self.now()
             if let wakeTarget=Self.nextWakeTarget(deadline:deadline,current:current) {
+                let phase=player.waitPhase
                 do {
                     let fired=try await NativeMIDIPlaybackWake.wait(until:wakeTarget)
                     let woke=Self.now()
@@ -213,7 +220,14 @@ public final class NativeMIDIPlayback {
                         maximumActorResumeDelayNS=max(maximumActorResumeDelayNS,woke-fired)
                     }
                     if woke>=wakeTarget {
-                        maximumWakeLatenessNS=max(maximumWakeLatenessNS,woke-wakeTarget)
+                        let late=woke-wakeTarget
+                        maximumWakeLatenessNS=max(maximumWakeLatenessNS,late)
+                        switch phase {
+                        case .some(.sounding): maximumSoundingWakeLatenessNS=max(maximumSoundingWakeLatenessNS,late)
+                        case .some(.awaitingEvent): maximumAwaitingEventWakeLatenessNS=max(maximumAwaitingEventWakeLatenessNS,late)
+                        case .some(.trailingRest): maximumTrailingRestWakeLatenessNS=max(maximumTrailingRestWakeLatenessNS,late)
+                        case .none: break
+                        }
                     }
                 } catch {
                     player.stop { gate.send($0) }
@@ -344,7 +358,10 @@ public final class NativeMIDIPlayback {
               maximumIdentityCheckNS:maximumIdentityCheckNS,maximumNativeSendNS:maximumNativeSendNS,
               maximumWakeLatenessNS:maximumWakeLatenessNS,
               maximumTimerLatenessNS:maximumTimerLatenessNS,
-              maximumActorResumeDelayNS:maximumActorResumeDelayNS)
+              maximumActorResumeDelayNS:maximumActorResumeDelayNS,
+              maximumSoundingWakeLatenessNS:maximumSoundingWakeLatenessNS,
+              maximumAwaitingEventWakeLatenessNS:maximumAwaitingEventWakeLatenessNS,
+              maximumTrailingRestWakeLatenessNS:maximumTrailingRestWakeLatenessNS)
     }
 
     // Nil means a due deadline, not permission to sleep or yield.

@@ -127,3 +127,8 @@ Capture monotonic receipt before synchronous HID lid report/controller snapshot 
 ## Group fault presentation
 
 Do not describe every receipt retirement as a failed MIDI send. Derive the notice from admission expiry and failed Group reports, including mixed/ambiguous outcomes. Preserve the reason when the final Group is automatically stopped; cleanup debt remains independently visible. One portable regression verifies admission-only, wire-failure and mixed summaries. No output policy change.
+
+
+## Native wake phase diagnostics
+
+Strict Dispatch timer run 45739869197 completed all CI with 760 portable / 813 macOS general, reported maximum event lateness 5,498,500 ns and actor resume 666,791 ns. 45740360263 completed all CI with 765/818, maximum event 9,191,542 ns. 45739973910 completed all CI with 761/814; event maximum only 1,042,167 ns but aggregate wake maximum 242,260,250 ns (timer callback maximum 242,101,042 ns; actor-resume maximum 42,650,583 ns). Do not claim hard real-time or assume the spike happened in a trailing rest without evidence. Add wait-start phase telemetry (owned notes, awaiting next event while silent, trailing rest), retaining all prior metrics and mandatory gates unchanged. One portable classification regression. No retries, thresholds or scheduling changes.

@@ -497,3 +497,25 @@ private func playbackClip() -> MIDIClip {
     let complete=try BoundedMIDISimulation.audit(schedule)
     #expect(complete.scenarios==complete.passedScenarios && complete.allCleanAfterRetry)
 }
+
+
+@Test func boundedPlaybackWaitPhaseDistinguishesOwnedNotesFromSilentAndTrailingWaits() throws {
+    let clip=MIDIClip(bpm:120,length:1920,notes:[
+        .init(start:480,duration:480,channel:0,pitch:60,velocity:90),
+        .init(start:1200,duration:120,channel:0,pitch:64,velocity:90)
+    ])
+    var player=try BoundedMIDIPlayback(clip:clip)
+    #expect(player.waitPhase==nil)
+    _=try player.begin(now:0)
+    #expect(player.waitPhase == .awaitingEvent)
+    player.advance(now:250_000_000){_ in true}
+    #expect(player.waitPhase == .sounding)
+    player.advance(now:500_000_000){_ in true}
+    #expect(player.waitPhase == .awaitingEvent)
+    player.advance(now:625_000_000){_ in true}
+    #expect(player.waitPhase == .sounding)
+    player.advance(now:687_500_000){_ in true}
+    #expect(player.waitPhase == .trailingRest)
+    player.advance(now:1_000_000_000){_ in true}
+    #expect(player.waitPhase==nil && player.state == .finished)
+}

@@ -126,7 +126,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
             running.cancel()
         }
         let report=try await running.value
-        print("TIHULU_NATIVE_TIMING receiver cancel=\(cancel) state=\(report.state) fault=\(report.faultReason ?? "none") late_ns=\(report.maximumObservedLatenessNS) wake_ns=\(report.maximumWakeLatenessNS) timer_ns=\(report.maximumTimerLatenessNS) resume_ns=\(report.maximumActorResumeDelayNS) identity_ns=\(report.maximumIdentityCheckNS) send_ns=\(report.maximumNativeSendNS)")
+        print("TIHULU_NATIVE_TIMING receiver cancel=\(cancel) state=\(report.state) fault=\(report.faultReason ?? "none") late_ns=\(report.maximumObservedLatenessNS) wake_ns=\(report.maximumWakeLatenessNS) timer_ns=\(report.maximumTimerLatenessNS) resume_ns=\(report.maximumActorResumeDelayNS) sounding_wake_ns=\(report.maximumSoundingWakeLatenessNS) awaiting_wake_ns=\(report.maximumAwaitingEventWakeLatenessNS) trailing_wake_ns=\(report.maximumTrailingRestWakeLatenessNS) identity_ns=\(report.maximumIdentityCheckNS) send_ns=\(report.maximumNativeSendNS)")
         let deadline=ContinuousClock().now.advanced(by:.milliseconds(250))
         while trace.snapshot().count<2 && ContinuousClock().now<deadline {
             try await Task.sleep(nanoseconds:5_000_000)
@@ -332,7 +332,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     defer { _=MIDIPortDispose(port) }
     try #require(MIDIPortConnectSource(port,source,nil)==noErr)
     let result=try await player.runAndClose()
-    print("TIHULU_NATIVE_TIMING prepared state=\(result.playback.state) fault=\(result.playback.faultReason ?? "none") late_ns=\(result.playback.maximumObservedLatenessNS) wake_ns=\(result.playback.maximumWakeLatenessNS) timer_ns=\(result.playback.maximumTimerLatenessNS) resume_ns=\(result.playback.maximumActorResumeDelayNS) identity_ns=\(result.playback.maximumIdentityCheckNS) send_ns=\(result.playback.maximumNativeSendNS)")
+    print("TIHULU_NATIVE_TIMING prepared state=\(result.playback.state) fault=\(result.playback.faultReason ?? "none") late_ns=\(result.playback.maximumObservedLatenessNS) wake_ns=\(result.playback.maximumWakeLatenessNS) timer_ns=\(result.playback.maximumTimerLatenessNS) resume_ns=\(result.playback.maximumActorResumeDelayNS) sounding_wake_ns=\(result.playback.maximumSoundingWakeLatenessNS) awaiting_wake_ns=\(result.playback.maximumAwaitingEventWakeLatenessNS) trailing_wake_ns=\(result.playback.maximumTrailingRestWakeLatenessNS) identity_ns=\(result.playback.maximumIdentityCheckNS) send_ns=\(result.playback.maximumNativeSendNS)")
     #expect(result.completed && result.sourceDisposed && !result.recoveryRequired,
             "state=\(result.playback.state), reason=\(result.playback.faultReason ?? "none"), max lateness ns=\(result.playback.maximumObservedLatenessNS), identity ns=\(result.playback.maximumIdentityCheckNS), native send ns=\(result.playback.maximumNativeSendNS), wake lateness ns=\(result.playback.maximumWakeLatenessNS)")
     #expect(result.playback.state=="finished" && !result.playback.receiverConfirmed)
