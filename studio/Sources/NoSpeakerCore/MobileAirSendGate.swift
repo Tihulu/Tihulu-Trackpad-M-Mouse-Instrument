@@ -31,13 +31,15 @@ public struct MobileAirSendGate: Sendable {
     private var releaseDebtAt: Int64?
     private var neutralFence = false
     private var neutralConfirmedAt: Int64?
+    private var releaseSourceAt: Int64?
+    private var releaseStringDeadline: Int64?
     public init?(lane: MobileAirWireLane, initialSequence: UInt64) {
         guard initialSequence < Self.maximumSequence,
               (try? lane.encode(.init(),sequence:1)) != nil else {return nil}
         self.lane=lane; sequence=initialSequence
     }
     private mutating func close(_ reason:String) -> Action {
-        closed=true;admitted=false;pendingAt=nil;sample=nil;stringDeadlines=[:];releaseDebtAt=nil
+        closed=true;admitted=false;pendingAt=nil;sample=nil;stringDeadlines=[:];releaseDebtAt=nil;releaseSourceAt=nil;releaseStringDeadline=nil
         return .close(reason)
     }
     private mutating func check(_ now:Int64) -> Action? {
@@ -46,6 +48,14 @@ public struct MobileAirSendGate: Sendable {
         clock=now
         if let pendingAt,now-pendingAt>=Self.ackNS {return close("ACK timeout")}
         if let releaseDebtAt,now-releaseDebtAt>=Self.freshNS {return close("Release overdue")}
+        if sent != .init(),pendingAt != nil,!pendingNeutral,
+           let at=releaseSourceAt,now-at>=Self.freshNS {
+            return close("Source expired while active ACK outstanding")
+        }
+        if sent.keys != 0,let deadline=releaseStringDeadline,now>=deadline,
+           pendingAt != nil || lastSend.map({now-$0<Self.paceNS}) == true {
+            return close("String release deadline blocked")
+        }
         return nil
     }
     private mutating func send(_ value:MobileAirOutput,now:Int64,heartbeat:Bool=false) -> Action {
@@ -76,6 +86,7 @@ public struct MobileAirSendGate: Sendable {
         pendingAt=nil
         if pendingNeutral {
             admitted=true;neutralFence=false;releaseDebtAt=nil;neutralConfirmedAt=now
+            releaseSourceAt=nil;releaseStringDeadline=nil
             sample=nil;sampledAt=nil;stringDeadlines=[:]
         }
         pendingNeutral=false
@@ -137,6 +148,7 @@ public struct MobileAirSendGate: Sendable {
         expireSample(now)
         if neutralFence || !(neutralConfirmedAt.map {observedAt>$0} ?? false) {return poll(now:now)}
         if output == .init() {
+            rememberReleaseDeadlines()
             sample=nil;sampledAt=nil;self.stringDeadlines=[:]
             if sent != .init() {neutralFence=true;releaseDebtAt=observedAt}
             return poll(now:now)
@@ -148,6 +160,14 @@ public struct MobileAirSendGate: Sendable {
         self.stringDeadlines = stringDeadlines
         sample=output;sampledAt=observedAt
         return poll(now:now)
+    }
+    private mutating func rememberReleaseDeadlines() {
+        guard sent != .init() else {return}
+        if let at=sampledAt {releaseSourceAt=min(releaseSourceAt ?? at,at)}
+        let mask=sent.keys
+        if let deadline=stringDeadlines.filter({mask & (1 << $0.key) != 0}).values.min() {
+            releaseStringDeadline=min(releaseStringDeadline ?? deadline,deadline)
+        }
     }
     public mutating func poll(now:Int64)->Action {
         if let failure=check(now){return failure}

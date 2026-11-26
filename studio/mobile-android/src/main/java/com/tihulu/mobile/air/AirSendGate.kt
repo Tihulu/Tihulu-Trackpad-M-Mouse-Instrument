@@ -40,10 +40,10 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
     private var releaseDebtAt:Long?=null
     private var neutralFence=false
     private var neutralConfirmedAt:Long?=null
-    private var releaseSourceDeadline:Long?=null
+    private var releaseSourceAt:Long?=null
     private var releaseStringDeadline:Long?=null
     private fun close(reason:String):Action.Close {
-        closed=true;admitted=false;pendingAt=null;sample=null;stringDeadlines=emptyMap();releaseDebtAt=null;releaseSourceDeadline=null;releaseStringDeadline=null
+        closed=true;admitted=false;pendingAt=null;sample=null;stringDeadlines=emptyMap();releaseDebtAt=null;releaseSourceAt=null;releaseStringDeadline=null
         return Action.Close(reason)
     }
     private fun check(now:Long):Action.Close? {
@@ -52,7 +52,7 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
         clock=now
         if(pendingAt?.let {now-it>=ACK_NS}==true)return close("ACK timeout")
         if(releaseDebtAt?.let {now-it>=FRESH_NS}==true)return close("Release overdue")
-        if(sent!=AirOutput()&&pendingAt!=null&&!pendingNeutral&&releaseSourceDeadline?.let{now>=it}==true)
+        if(sent!=AirOutput()&&pendingAt!=null&&!pendingNeutral&&releaseSourceAt?.let{now-it>=FRESH_NS}==true)
             return close("Source expired while active ACK outstanding")
         if(sent.keys!=0&&releaseStringDeadline?.let{now>=it}==true&&
             (pendingAt!=null||lastSend?.let{now-it<PACE_NS}==true))
@@ -86,7 +86,7 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
         pendingAt=null
         if(pendingNeutral) {
             admitted=true;neutralFence=false;releaseDebtAt=null;neutralConfirmedAt=now
-            releaseSourceDeadline=null;releaseStringDeadline=null
+            releaseSourceAt=null;releaseStringDeadline=null
             // Do not reuse a gesture observed before release ACK.
             sample=null;sampledAt=null;stringDeadlines=emptyMap()
         }
@@ -135,10 +135,7 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
     }
     private fun rememberReleaseDeadlines() {
         if(sent==AirOutput())return
-        sampledAt?.let {at->
-            val deadline=at+FRESH_NS
-            releaseSourceDeadline=minOf(releaseSourceDeadline?:deadline,deadline)
-        }
+        sampledAt?.let {at->releaseSourceAt=minOf(releaseSourceAt?:at,at)}
         val stringAt=stringDeadlines.filterKeys{sent.keys and (1 shl it)!=0}.values.minOrNull()
         if(stringAt!=null)releaseStringDeadline=minOf(releaseStringDeadline?:stringAt,stringAt)
     }

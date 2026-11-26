@@ -108,3 +108,18 @@ private func packet(_ action:MobileAirSendGate.Action) throws -> RemoteTouchFram
     _ = gate.acknowledge("accepted", now: ms(30))
     #expect(try packet(gate.offer(.init(keys: 1), observedAt: ms(100), now: ms(100), stringDeadlines: [0: ms(220)])).mask == 0)
 }
+
+@Test func mobileSenderNeutralCannotHideStringDeadline() throws {
+    var g=try #require(MobileAirSendGate(lane:.keys(authorized:1),initialSequence:0))
+    _=g.begin(now:0);_=g.acknowledge("accepted",now:ms(20))
+    _=g.offer(.init(keys:1),observedAt:ms(21),now:ms(21),stringDeadlines:[0:ms(100)])
+    #expect(g.offer(.init(),observedAt:ms(22),now:ms(22)) == .wait)
+    #expect(g.poll(now:ms(100)) == .close("String release deadline blocked"))
+}
+@Test func mobileSenderNeutralCannotHideEarlierSourceExpiry() throws {
+    var g=try #require(MobileAirSendGate(lane:.keys(authorized:1),initialSequence:0))
+    _=g.begin(now:0);_=g.acknowledge("accepted",now:ms(20))
+    _=g.offer(.init(keys:1),observedAt:ms(21),now:ms(21))
+    #expect(g.offer(.init(),observedAt:ms(100),now:ms(100)) == .wait)
+    #expect(g.acknowledge("accepted",now:ms(171)) == .close("Source expired while active ACK outstanding"))
+}
