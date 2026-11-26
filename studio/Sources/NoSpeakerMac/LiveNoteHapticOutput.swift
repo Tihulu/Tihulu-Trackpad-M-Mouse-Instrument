@@ -2,6 +2,20 @@
 import Foundation
 import NoSpeakerCore
 
+/// Independent publication gate; never held across an actuator call.
+final class LiveHapticPublicationGate: @unchecked Sendable {
+    private let lock=NSLock()
+    private var open=false
+    var permits:Bool {
+        lock.lock(); defer { lock.unlock() }
+        return open
+    }
+    func set(_ value:Bool) {
+        lock.lock(); defer { lock.unlock() }
+        open=value
+    }
+}
+
 /// A reusable live-note output. Its private serial queue owns the timer and
 /// frame. Stopping synchronously drains any in-flight actuation before return.
 /// The host must reserve the shared actuator before creating this output.
@@ -14,6 +28,7 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
     private var groupMailbox:GroupHapticMailbox?
     private enum StartError:Error { case incompatibleSharedOutput }
     private var lease: HapticMixLease?
+    private let publicationGate=LiveHapticPublicationGate()
     private let queue = DispatchQueue(label: "com.tihulu.live-note-haptics", qos: .userInitiated)
     private var timer: DispatchSourceTimer?
     private var frame: HapticFrame?
@@ -38,8 +53,15 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
                 groupMailbox = .init(now:ProcessInfo.processInfo.systemUptime)
                 groupMailboxLock.unlock()
             }
+            publicationGate.set(true)
             if let shared {
-                lease = try shared.begin(sourceKind, onFailure: onFailure)
+                do {
+                    let gate=publicationGate
+                    lease=try shared.begin(sourceKind,admitted:{ gate.permits },onFailure:onFailure)
+                } catch {
+                    publicationGate.set(false)
+                    throw error
+                }
                 return
             }
             failure = onFailure
@@ -63,6 +85,7 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
             return
         }
         queue.sync {
+            guard publicationGate.permits else { return }
             if let shared, let lease {
                 shared.update(lease, frame: frame, level: masterLevel,
                               attack: attack, discardPendingAttacks: discardPendingAttacks)
@@ -89,8 +112,15 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
     /// can then release MIDI before draining the actuator queue.
     public func invalidateGroupFrames() { closeGroupMailbox() }
 
-    public func stop() {
+    /// Fence future rendering before synchronous MIDI cleanup. A slice
+    /// already admitted to the driver may finish its bounded duration.
+    public func invalidateFrames() {
+        publicationGate.set(false)
         closeGroupMailbox()
+    }
+
+    public func stop() {
+        invalidateFrames()
         queue.sync {
             if let shared, let lease { shared.release(lease) }
             lease = nil
@@ -106,7 +136,7 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
     }
 
     private func clear() {
-        closeGroupMailbox()
+        invalidateFrames()
         frame = nil
         attacks.removeAll()
         timer?.cancel()
@@ -136,7 +166,7 @@ public final class LiveNoteHapticOutput: @unchecked Sendable {
             }
             return
         }
-        guard masterLevel > 0,
+        guard publicationGate.permits,masterLevel > 0,
               let frame = LiveHapticFrameSelection.select(held:frame,
                   attack:attacks.take(now:ProcessInfo.processInfo.systemUptime)) else { return }
         do { try driver.play(frame, masterLevel: masterLevel) }

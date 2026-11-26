@@ -203,4 +203,29 @@ private final class SharedNoteMockSink: @unchecked Sendable {
     #expect(sink.read().1 == 2)
 }
 
+
+@Test func sharedLiveNoteEarlyInvalidationSilencesOnlyStoppedSource() throws {
+    let sink=SharedNoteMockSink()
+    let host=SharedLiveNoteOutput(coordinator:HapticOutputCoordinator(clock:{1},sink:{try sink.write($0)}),
+                                  automaticScheduling:false,clock:{1})
+    let gate=LiveHapticPublicationGate()
+    gate.set(true)
+    let pad=try host.begin(.gamepad,admitted:{gate.permits},onFailure:{_ in sink.recordFailure()})
+    let chord=try host.begin(.chords){_ in sink.recordFailure()}
+    let a=HapticFrame(tones:[.init(frequencyHz:220)],durationMS:18,level:0.5)
+    let b=HapticFrame(tones:[.init(frequencyHz:440)],durationMS:18,level:0.5)
+    host.update(pad,frame:a,level:1,attack:true)
+    host.update(chord,frame:b,level:1)
+    host.renderOnce()
+    #expect(Set(sink.read().0.last?.tones.map(\.frequencyHz) ?? [])==Set([220.0,440.0]))
+    gate.set(false)
+    host.update(pad,frame:a,level:1,attack:true)
+    host.renderOnce()
+    #expect(sink.read().0.last?.tones==b.tones)
+    host.release(pad)
+    host.renderOnce()
+    #expect(sink.read().0.last?.tones==b.tones)
+    #expect(sink.read().1==0)
+    host.retire()
+}
 #endif

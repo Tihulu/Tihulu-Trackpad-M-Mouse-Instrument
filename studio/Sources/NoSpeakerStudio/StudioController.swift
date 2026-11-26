@@ -2236,6 +2236,7 @@ final class StudioController: ObservableObject {
             patchWatchdog?.cancel()
             patchWatchdog = nil
             gamepadHapticToken = nil
+            gamepadHaptics?.invalidateFrames()
             patchMIDIEnabled = false
         },notes:releaseBuilderOutput,clock:{
             stopEnsembleClock()
