@@ -139,12 +139,16 @@ public enum LegacyAdmittedBendRange {
         guard permits() else {
             return .init(completed:false,attempted:false,dataAttempted:false,cleanupConfirmed:true)
         }
-        begin()
         var dataAttempted=false
         var completed=true
         let parts=[(101,0),(100,0),(6,max(0,min(24,semitones))),(38,0)]
-        for (cc,value) in parts {
-            guard permits() else { completed=false;break }
+        for (index,part) in parts.enumerated() {
+            let (cc,value)=part
+            // The initial permit authorizes exactly the first attempt.
+            // Do not create range debt or send null selectors for a
+            // transaction that never reached its first wire call.
+            if index==0 { begin() }
+            else if !permits() { completed=false;break }
             if cc==6 || cc==38 { dataAttempted=true }
             guard wire(cc,value) else { completed=false;break }
         }

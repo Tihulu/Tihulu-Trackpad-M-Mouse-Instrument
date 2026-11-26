@@ -296,3 +296,37 @@ private func qbPedal(_ channel:Int,_ value:Int)->SensorCommand {
     #expect(result.attempted && result.dataAttempted && !result.completed && !result.cleanupConfirmed)
     #expect(sent == [101,100,6,38,101,100])
 }
+
+
+@Test func qb04PressureSlowChannelDoesNotInstallUnsentChannel() {
+    var owner=LegacyChannelPressure()
+    _=owner.replace([9:50])
+    var now=1.01
+    var fence=PhysicalReceiptSendFence(receipt:1,maximumAge:0.150)
+    var wire:[LegacyChannelPressure.Update]=[]
+    let result=owner.replaceAdmitted([1:80,2:90,9:50],
+        permits:{fence.permits(now:now)},send:{wire.append($0);now=1.15;return true})
+    #expect(!result && wire == [.init(1,80)])
+    #expect(owner.values == [1:80,9:50])
+    let release=owner.release(1)
+    #expect(release == [.init(1,0)] && owner.values == [9:50])
+}
+
+@Test func qb04PressureFailedWriteKeepsPriorLogicalStateAndNoLaterWrites() {
+    var owner=LegacyChannelPressure()
+    _=owner.replace([1:40])
+    var wire:[LegacyChannelPressure.Update]=[]
+    let result=owner.replaceAdmitted([1:90,2:100],permits:{true},send:{
+        wire.append($0);return false
+    })
+    #expect(!result && wire == [.init(1,90)] && owner.values == [1:40])
+}
+
+@Test func qb04RangeFirstAdmissionAuthorizesExactlyOneAttempt() {
+    var checks=0,begins=0
+    var wire:[Int]=[]
+    let result=LegacyAdmittedBendRange.send(semitones:12,permits:{checks+=1;return checks==1},
+        begin:{begins+=1},wire:{cc,_ in wire.append(cc);return true})
+    #expect(result.attempted && !result.completed && result.cleanupConfirmed && !result.dataAttempted)
+    #expect(begins==1 && wire == [101,101,100])
+}

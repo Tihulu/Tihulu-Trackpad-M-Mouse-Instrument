@@ -540,7 +540,7 @@ public final class MIDIHapticService: @unchecked Sendable {
                     if isMPE {
                         var pressure = outgoingPressure.values
                         pressure[channel] = framePressure[channel]
-                        sendPressureUpdates(outgoingPressure.replace(pressure))
+                        guard replaceAdmittedPressure(pressure,permits:admitOnset) else { return }
                     }
                 }
             }
@@ -599,7 +599,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         for (channel,value) in outgoingPressure.values where mpeChannels.reserved.contains(channel) {
             framePressure[channel] = framePressure[channel] ?? value
         }
-        sendPressureUpdates(outgoingPressure.replace(framePressure))
+        _=replaceAdmittedPressure(framePressure,permits:admitOnset)
     }
 
     private func outgoingSustainChannels() -> Set<Int> {
@@ -900,6 +900,15 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     private func sendPressureUpdates(_ updates: [LegacyChannelPressure.Update]) {
         for update in updates { sendChannelPressure(update.value,channel:update.channel) }
+    }
+
+    private func replaceAdmittedPressure(_ values:[Int:Int],permits:()->Bool)->Bool {
+        var staged=outgoingPressure
+        let accepted=staged.replaceAdmitted(values,permits:{
+            permits() && self.permitsOutgoingSend
+        },send:{ self.sendMIDI1(status:0xd0|$0.channel,data1:$0.value,data2:0) })
+        outgoingPressure=staged
+        return accepted
     }
 
     public func sendChannelPressure(_ value: Int, channel: Int) {
