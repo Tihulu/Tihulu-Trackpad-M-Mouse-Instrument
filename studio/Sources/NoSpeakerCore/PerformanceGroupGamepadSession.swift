@@ -521,7 +521,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
             if let lease = binding.lease {
                 binding.reset()
                 bindings[source] = binding
-                reports.append(disconnectWithRestorationFence([lease],refreshNow:refreshNow,send:send))
+                reports += disconnectWithRestorationFence([lease],refreshNow:refreshNow,send:send)
                 guard receiptAfterCleanup(source:source,receipt:hostTime,now:now,maximumAge:Self.timeout,
                                           refreshNow:refreshNow,reports:&reports,send:send) != nil else {
                     return .init(status:.lost,reports:reports)
@@ -630,7 +630,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
             binding.reset()
             bindings[source] = binding
             if let lease {
-                reports.append(disconnectWithRestorationFence([lease],refreshNow:refreshNow,send:send))
+                reports += disconnectWithRestorationFence([lease],refreshNow:refreshNow,send:send)
             }
             guard receiptAfterCleanup(source:source,receipt:hostTime,now:now,maximumAge:0.1,
                                       refreshNow:refreshNow,reports:&reports,send:send) != nil else {
@@ -671,7 +671,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         clock = sampled
         let stale = staleSources(now:sampled)
-        guard stale.isEmpty,MonotonicReceiptAdmission.permits(receipt:receipt,now:sampled,maximumAge:maximumAge) else {
+        guard !reports.contains(where:{ $0.admissionExpired }),stale.isEmpty,
+              MonotonicReceiptAdmission.permits(receipt:receipt,now:sampled,maximumAge:maximumAge) else {
             reports += reset(stale.union([source]),refreshNow:refreshNow,send:send)
             return nil
         }
@@ -789,19 +790,28 @@ public struct PerformanceGroupGamepadSession: Sendable {
     /// Check surviving leases before and after live restoration. Neutral
     /// cleanup remains unconditional; a clock fault latches for this batch.
     private mutating func disconnectWithRestorationFence(_ leases:Set<UUID>,refreshNow:(()->Double)?,
-                                                        send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+                                                        send:(PerformanceGroupCommand)->Bool) -> [PerformanceGroupDelivery.Report] {
         guard let refreshNow else {
-            return delivery.disconnectBatch(leases,admitRestoration:nil,send:send)
+            return [delivery.disconnectBatch(leases,admitRestoration:nil,send:send)]
         }
         let survivors = bindings
         var sampled = clock
         var valid = true
-        return delivery.disconnectBatch(leases,admitRestoration:{
+        let report = delivery.disconnectBatch(leases,admitRestoration:{
             let current = refreshNow()
             guard valid,current.isFinite,current >= sampled else { valid=false; return false }
             sampled=current
             return Self.staleSources(in:survivors,now:current).isEmpty
         },send:send)
+        // Preserve the highest observed clock even if the next sample
+        // regresses. A bad clock retires every remaining source once.
+        // The complete removal has no surviving owner to restore.
+        clock = sampled
+        var reports = [report]
+        if !valid {
+            reports += reset(Set(bindings.keys),refreshNow:nil,send:send)
+        }
+        return reports
     }
 
     /// Standalone expiry and explicit unbind lack a following input frame.
@@ -852,6 +862,6 @@ public struct PerformanceGroupGamepadSession: Sendable {
             }
         }
         guard !leases.isEmpty else { return [] }
-        return [disconnectWithRestorationFence(leases,refreshNow:refreshNow,send:send)]
+        return disconnectWithRestorationFence(leases,refreshNow:refreshNow,send:send)
     }
 }

@@ -521,3 +521,32 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     #expect(result.actions.contains(.revoke(a)) && result.actions.contains(.revoke(b)))
     #expect(bridge.connectionIDs.isEmpty && session.boundSources.isEmpty && session.activeSessions==0)
 }
+
+
+@Test func remoteGroupExplicitRevokeReportsPeerExpiredDuringCleanup() throws {
+    let phone=groupRemoteFixture(.phone,.drumPad1,36)
+    let tablet=groupRemoteFixture(.tablet,.pianoKey0,60)
+    var session=try PerformanceGroupGamepadSession(profile:.init(groups:[phone,tablet]),allowRemote:true)
+    var bridge=PerformanceGroupRemoteBridge()
+    let a=UUID(),b=UUID(),sa=Data(repeating:1,count:32),sb=Data(repeating:2,count:32)
+    let ok:(PerformanceGroupCommand)->Bool={_ in true}
+    _=bridge.process([.ready],now:1,session:&session,send:ok)
+    try bridge.issue(secret:sa,source:.phone,now:1,session:session)
+    _=bridge.process([.invitation(a,sa,1.01)],now:1.01,session:&session,send:ok)
+    try bridge.issue(secret:sb,source:.tablet,now:1.02,session:session)
+    _=bridge.process([.invitation(b,sb,1.03)],now:1.03,session:&session,send:ok)
+    _=bridge.process([.frame(a,groupRemoteWire("drumPads",4,1,",\"mask\":0"),1.04),
+                      .frame(b,groupRemoteWire("pianoKeys",5,1,",\"mask\":0"),1.04)],now:1.04,session:&session,send:ok)
+    _=bridge.process([.frame(a,groupRemoteWire("drumPads",4,2,",\"mask\":1"),1.05)],now:1.05,session:&session,send:ok)
+    _=bridge.process([.frame(b,groupRemoteWire("pianoKeys",5,2,",\"mask\":1"),1.2)],now:1.2,session:&session,send:ok)
+    var now=1.3
+    var sent:[PerformanceGroupCommand]=[]
+    let result=bridge.revoke(a,session:&session,refreshNow:{now},send:{
+        sent.append($0)
+        if $0.groupID==phone.id { now=1.56 }
+        return true
+    })
+    #expect(sent.map(\.groupID)==[phone.id,tablet.id] && sent.allSatisfy { $0.command.value==0 })
+    #expect(result.actions == [.revoke(a),.revoke(b)])
+    #expect(bridge.connectionIDs.isEmpty && session.boundSources.isEmpty && session.activeSessions==0)
+}

@@ -77,3 +77,8 @@ Separate live-owner restoration from unconditional neutral cleanup on Group disc
 ## Live restoration admission
 
 Native Group watchdog, explicit unbind, remote bridge and physical/remote receipt paths supply fresh monotonic time for non-neutral ownership restoration. Departure cleanup snapshots remaining sources; if a survivor expires during a synchronous send, reject later restorations and retire the affected endpoint via its real ledger. Neutral/off and custom configured releases are never suppressed. Standalone expiry and unbind re-evaluate newly expired sources in bounded rounds; remote bridge reconciles revoked tokens in the same batch. Conservative admission checks all remaining source deadlines, so an unrelated expired source can suppress a pending restoration on an otherwise live endpoint. No global panic or deadline change. Three additional integration regressions and correction of the dynamic fixture's left-stick enum spelling. Earlier intermediate CI evidence preserved.
+
+
+## Restoration clock and revocation follow-up
+
+Latch the highest observed monotonic time during restoration; a clock regression retires remaining sources with scoped neutral cleanup (no restoration). A rejected restoration cannot be treated as a fresh neutral rearm even if the next clock sample looks valid. Explicit remote revoke also emits revocations for other peers expired during cleanup. Two additional regressions. First restoration primitive run 45739112745 had a test compile error (padLX spelling); successor corrected to padLSX. Preserve failed intermediate evidence. No change to safety limits, release or physical acceptance.

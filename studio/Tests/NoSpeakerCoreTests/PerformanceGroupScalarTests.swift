@@ -153,3 +153,33 @@ private func scalarGroupProfile() -> PerformanceGroupProfile {
     #expect(sent.map(\.groupID)==[a.id,b.id] && sent.allSatisfy { $0.command.value==0 })
     #expect(state.activeSessions==0 && state.pendingCleanup.isEmpty)
 }
+
+
+@Test func groupRestorationClockRegressionRetiresOtherActiveSourcesAndCannotRearm() throws {
+    let shared=PerformanceInstrumentGroup(name:"Effects",patch:.init(routes:[
+        .init(id:"low",source:.lid,signal:.angle,destination:.init(.controlChange,number:74),priority:0),
+        .init(id:"high",source:.touchBar,signal:.x,destination:.init(.controlChange,number:74),priority:10)
+    ]))
+    let other=PerformanceInstrumentGroup(name:"Notes",patch:.init(routes:[
+        .init(id:"n",source:.trackpad,signal:.contact,destination:.init(.note,number:60))
+    ]))
+    var state=try PerformanceGroupGamepadSession(profile:.init(groups:[shared,other]),allowSurfaces:true,allowScalars:true)
+    let low=try state.bind(.lid,now:1),high=try state.bind(.touchBar,now:1),touch=try state.bind(.trackpad,now:1)
+    _=state.receiveScalar(.lid,token:low,value:0.2,hostTime:1.01,now:1.01,send:{_ in true})
+    _=state.receiveScalar(.touchBar,token:high,value:0.8,hostTime:1.02,now:1.02,send:{_ in true})
+    _=state.receiveSurface(.trackpad,token:touch,x:nil,y:nil,size:nil,hostTime:1.03,now:1.03,send:{_ in true})
+    _=state.receiveSurface(.trackpad,token:touch,x:0.5,y:0.5,size:0.5,hostTime:1.04,now:1.04,send:{_ in true})
+    var sample=1.1
+    var sent:[PerformanceGroupCommand]=[]
+    let result=state.receiveScalar(.touchBar,token:high,value:nil,hostTime:1.1,now:1.1,
+                                    refreshNow:{sample},send:{
+        sent.append($0)
+        if $0.command.value==25 { sample=1.09 }
+        else if $0.command.value==0 { sample=1.12 }
+        return true
+    })
+    #expect(result.status == .lost && result.reports.contains(where:{ $0.admissionExpired }))
+    #expect(sent.contains(.init(groupID:other.id,command:.init(.init(.note,number:60),value:0))))
+    #expect(state.activeSessions==0 && state.sourceStates[.touchBar] == .waitingForNeutral)
+    #expect(state.pendingCleanup.isEmpty)
+}

@@ -63,6 +63,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         var result = PerformanceGroupRemoteBatch()
         result.reports = remove([connection],session:&session,refreshNow:refreshNow,send:send)
         result.actions = [.revoke(connection)]
+        result.actions += reconcileRevoked(session:session)
         return result
     }
 
@@ -234,15 +235,16 @@ public struct PerformanceGroupRemoteBridge: Sendable {
             }
         }
         // Another peer's cleanup can expire an authenticated slot.
-        let newlyRevoked=bindings.keys.filter { id in
-            guard let binding=bindings[id] else { return false }
-            return !session.matchesRemoteBinding(binding.source,token:binding.token)
-        }
-        for id in newlyRevoked.sorted(by:{ $0.uuidString < $1.uuidString }) {
-            bindings.removeValue(forKey:id)
-            result.actions.append(.revoke(id))
-        }
+        result.actions += reconcileRevoked(session:session)
         return result
+    }
+
+    private mutating func reconcileRevoked(session:PerformanceGroupGamepadSession) -> [RemoteHostAction] {
+        let expired=bindings.compactMap { id,binding in
+            session.matchesRemoteBinding(binding.source,token:binding.token) ? nil : id
+        }.sorted(by:{ $0.uuidString < $1.uuidString })
+        for id in expired { bindings.removeValue(forKey:id) }
+        return expired.map { .revoke($0) }
     }
 
     private mutating func remove(_ ids:Set<UUID>,session:inout PerformanceGroupGamepadSession,refreshNow:(()->Double)? = nil,
