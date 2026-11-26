@@ -78,6 +78,8 @@ public struct SurfaceTouchFrame: Sendable, Equatable {
     public let validNativeEnvelope: Bool
     /// Actual native record count, before the legacy state filter. nil is not evidence.
     public let rawNativeContactCount: Int?
+    /// Bounded raw state codes only; no additional private record fields.
+    public let rawNativeStates: [Int]
 
     public init(
         surface: TouchSurfaceKind,
@@ -86,7 +88,8 @@ public struct SurfaceTouchFrame: Sendable, Equatable {
         frameNumber: Int,
         acquisitionNS: Int64? = nil,
         validNativeEnvelope: Bool = false,
-        rawNativeContactCount: Int? = nil
+        rawNativeContactCount: Int? = nil,
+        rawNativeStates: [Int] = []
     ) {
         self.surface = surface
         self.contacts = contacts
@@ -95,6 +98,7 @@ public struct SurfaceTouchFrame: Sendable, Equatable {
         self.acquisitionNS = acquisitionNS
         self.validNativeEnvelope = validNativeEnvelope
         self.rawNativeContactCount = rawNativeContactCount
+        self.rawNativeStates = Array(rawNativeStates.prefix(NativeTouchFramePolicy.maximumContacts))
     }
 }
 
@@ -173,13 +177,16 @@ private final class TouchBridge: @unchecked Sendable {
         guard let surface, let callback else { return }
         let decision = NativeTouchFramePolicy.decision(knownDevice:true,count:Int(count),hasData:data != nil)
         var contacts: [SurfaceContact] = []
+        var rawStates: [Int] = []
         if case let .decode(contactCount) = decision, let data {
             contacts.reserveCapacity(contactCount)
+            rawStates.reserveCapacity(contactCount)
             for index in 0..<contactCount {
                 // Canonical 96-byte MTTouch layout used by the existing upstream-derived path.
                 let record = data.advanced(by: index * 96)
                 let pathIndex = Int(record.load(fromByteOffset: 16, as: Int32.self))
                 let state = Int(record.load(fromByteOffset: 20, as: Int32.self))
+                rawStates.append(state)
                 guard (3...5).contains(state) else { continue }
                 contacts.append(.init(
                     id: pathIndex,
@@ -202,7 +209,8 @@ private final class TouchBridge: @unchecked Sendable {
             frameNumber: Int(frame),
             acquisitionNS: acquisitionNS,
             validNativeEnvelope: count == 0 || (count > 0 && count <= NativeTouchFramePolicy.maximumContacts && data != nil),
-            rawNativeContactCount: Int(count)
+            rawNativeContactCount: Int(count),
+            rawNativeStates: rawStates
         ))
     }
 }

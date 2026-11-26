@@ -63,3 +63,33 @@ private func inboxFrame(_ n: Int, surface: TouchSurfaceKind = .trackpad, valid: 
     #expect(!closed.admitsDelivery)
 }
 #endif
+
+#if os(macOS)
+@Test func customNativeDiagnosticOnlyNeverAdmitsOrQueuesMIDIAndRetainsInvalidEvidence() {
+    let inbox = CustomSurfaceNativeInbox(surface: .trackpad, orientation: .horizontal,
+                                         notBefore: 10, diagnosticOnly: true)
+    inbox.submit(inboxFrame(9))
+    inbox.submit(inboxFrame(10, surface: .magicMouse))
+    inbox.submit(inboxFrame(11, valid: false))
+    for n in 12...100 { inbox.submit(inboxFrame(n)) }
+    #expect(!inbox.admitsDelivery)
+    #expect(inbox.drain().samples.isEmpty && !inbox.drain().faulted)
+    #expect(inbox.captureEvidence().frames == 90)
+    #expect(inbox.captureEvidence().invalidFrames == 1)
+    inbox.close()
+    inbox.submit(inboxFrame(101))
+    #expect(inbox.captureEvidence().frames == 90)
+}
+@Test func customNativeLiveEvidencePreservesFaultAndResetsAtArmBoundary() {
+    let inbox = CustomSurfaceNativeInbox(surface: .trackpad, orientation: .horizontal, notBefore: 0)
+    inbox.submit(inboxFrame(1))
+    #expect(inbox.captureEvidence().frames == 1)
+    #expect(inbox.begin(at: 2))
+    #expect(inbox.captureEvidence().frames == 0)
+    inbox.submit(inboxFrame(3, valid: false))
+    #expect(inbox.captureEvidence().invalidFrames == 1)
+    #expect(!inbox.admitsDelivery)
+    inbox.submit(inboxFrame(4))
+    #expect(inbox.captureEvidence().frames == 1)
+}
+#endif
