@@ -38,6 +38,7 @@ public struct RemoteHostBatch: Sendable {
 public struct RemoteHostBridge: Sendable {
     private var bindings: [UUID: UUID] = [:]
     private var invitationIssuedAt:Double?
+    private var observedHostClock=0.0
     public private(set) var ready = false
     public private(set) var stopped = false
     public var connectionIDs: Set<UUID> { Set(bindings.keys) }
@@ -46,8 +47,10 @@ public struct RemoteHostBridge: Sendable {
     public mutating func issue(secret: Data, source: SensorSource, now: Double,
                                runtime: inout PhysicalPatchRuntime, mappingDetails: Bool = false, mappingLabels: Bool = false) throws {
         guard ready, !stopped else { throw RemoteTouchError.unavailable }
+        guard now.isFinite,now>=observedHostClock else { throw RemoteTouchError.invalidPairing }
         try runtime.issueRemotePairing(secret: secret, source: source, now: now, mappingDetails: mappingDetails, mappingLabels: mappingLabels)
         invitationIssuedAt = now
+        observedHostClock = now
     }
 
     public mutating func revoke(_ connection: UUID, runtime: inout PhysicalPatchRuntime) -> RemoteHostBatch {
@@ -63,11 +66,11 @@ public struct RemoteHostBridge: Sendable {
     /// restore a second owner whose deadline has already passed.
     public mutating func revoke(_ connection:UUID,now:Double,
                                 runtime:inout PhysicalPatchRuntime) -> RemoteHostBatch {
-        guard now.isFinite,now>=0 else {
-            var result=stop(runtime:&runtime)
-            result.fault=true
-            return result
+        guard !stopped else { return .init() }
+        guard now.isFinite,now>=observedHostClock else {
+            return retireClockFault(runtime:&runtime)
         }
+        observedHostClock=now
         guard let peer=bindings.removeValue(forKey:connection) else {
             var result=RemoteHostBatch()
             result.actions=[.revoke(connection)]
@@ -98,7 +101,11 @@ public struct RemoteHostBridge: Sendable {
     public mutating func process(_ events: [RemoteHostEvent], now: Double,
                                  runtime: inout PhysicalPatchRuntime) -> RemoteHostBatch {
         guard !stopped else { return RemoteHostBatch() }
-        guard now.isFinite, now >= 0, events.count <= 32,
+        guard now.isFinite,now>=observedHostClock else {
+            return retireClockFault(runtime:&runtime)
+        }
+        observedHostClock=now
+        guard events.count <= 32,
               !events.contains(where: { if case .fault = $0 { return true }; return false })
         else {
             var result = stop(runtime: &runtime)
@@ -196,6 +203,20 @@ public struct RemoteHostBridge: Sendable {
             default: return false
             }
         }
+        return result
+    }
+
+    /// Broken trusted host time invalidates all physical and remote
+    /// leases. Remove them in one panic, with no stale owner restoration.
+    private mutating func retireClockFault(runtime:inout PhysicalPatchRuntime) -> RemoteHostBatch {
+        stopped=true
+        ready=false
+        bindings.removeAll()
+        invitationIssuedAt=nil
+        var result=RemoteHostBatch()
+        result.commands=runtime.stop()
+        result.actions=[.stop]
+        result.fault=true
         return result
     }
 

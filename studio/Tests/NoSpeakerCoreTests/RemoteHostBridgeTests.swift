@@ -253,3 +253,37 @@ private func bridgeRuntime() throws -> PhysicalPatchRuntime {
     else { Issue.record("Surviving peer metadata was lost") }
     #expect(retained.last == .revoke(a))
 }
+
+
+@Test func builderRemoteClockRegressionRetiresPhysicalAndRemoteOwnersTogether() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    #expect(runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1.01,now:1.01)==[.init(bridgeNote,value:100)])
+    _=bridge.process([.frame(id,bridgeTouch,1.02)],now:1.02,runtime:&runtime)
+    #expect(bridge.process([],now:1.1,runtime:&runtime).commands.isEmpty)
+    let result=bridge.process([],now:1.09,runtime:&runtime)
+    #expect(result.fault && result.actions==[.stop] && bridge.stopped)
+    #expect(result.commands==[.init(bridgeNote,value:0)])
+    #expect(runtime.activeSources.isEmpty && runtime.remotePeerIDs.isEmpty)
+    #expect(bridge.process([.ready],now:2,runtime:&runtime).actions.isEmpty)
+    #expect(runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:2,now:2).isEmpty)
+}
+
+@Test func builderRemoteManualRevokeWithInvalidHostClockCannotRestoreOtherOwner() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    _=runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1.01,now:1.01)
+    _=bridge.process([.frame(id,bridgeTouch,1.02)],now:1.02,runtime:&runtime)
+    let result=bridge.revoke(id,now:.nan,runtime:&runtime)
+    #expect(result.fault && result.actions==[.stop] && bridge.stopped)
+    #expect(result.commands==[.init(bridgeNote,value:0)])
+    #expect(runtime.activeSources.isEmpty && runtime.remotePeerIDs.isEmpty)
+}
