@@ -95,3 +95,32 @@ extension TouchBarProfileTests {
         XCTAssertEqual(TouchBarProfile(noteVelocity:128).normalized().noteVelocity,127)
     }
 }
+
+extension TouchBarProfileTests {
+    func testVisibleKeysRoundTripAndOldProfilesKeepEight() throws {
+        let old=TouchBarProfile(baseNote:115)
+        let encoded=try JSONEncoder().encode(old)
+        XCTAssertEqual(try JSONDecoder().decode(TouchBarProfile.self,from:encoded).effectiveKeyCount,8)
+        var profile=old
+        profile.visibleKeyCount=13
+        XCTAssertEqual(profile.pianoKeys.count,13)
+        XCTAssertEqual(profile.pianoKeys.last?.note,127)
+        XCTAssertEqual(try JSONDecoder().decode(TouchBarProfile.self,from:JSONEncoder().encode(profile)).effectiveKeyCount,13)
+        profile.visibleKeyCount=Int.max
+        XCTAssertEqual(profile.normalized().visibleKeyCount,13)
+        profile.visibleKeyCount=Int.min
+        XCTAssertEqual(profile.normalized().visibleKeyCount,2)
+    }
+    func testLayoutPresetsChangeZonesOnly() {
+        var profile=TouchBarProfile(sustainMode:.hold,channel:9,baseNote:45,noteVelocity:77)
+        profile.visibleKeyCount=5
+        let original=profile
+        for preset in TouchBarLayoutPreset.allCases {
+            profile.zones=preset.zones
+            XCTAssertEqual(profile.normalized().zones,preset.zones)
+            var restored=profile
+            restored.zones=original.zones
+            XCTAssertEqual(restored,original)
+        }
+    }
+}

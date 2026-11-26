@@ -2729,7 +2729,22 @@ private struct TouchBarModeView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Choose the zones in your preferred order. Native piano segments send bounded taps; on-screen piano pads support press and hold. At least one zone is required.")
                             .font(.callout).foregroundStyle(.secondary)
-                        ForEach(TouchBarZone.allCases) { zone in
+                        Text("Layout presets").font(.caption.bold())
+                        ViewThatFits(in:.horizontal) {
+                            HStack {
+                                ForEach(TouchBarLayoutPreset.allCases) { preset in
+                                    Button(preset.rawValue) {setProfile{$0.zones=preset.zones}}
+                                        .disabled(studio.touchBarProfile.zones==preset.zones)
+                                }
+                            }
+                            Menu("Choose layout preset") {
+                                ForEach(TouchBarLayoutPreset.allCases) { preset in
+                                    Button(preset.rawValue) {setProfile{$0.zones=preset.zones}}
+                                }
+                            }
+                        }
+                        Text("Enabled zones in left-to-right order, followed by available zones. Native macOS customization may override the displayed default order.").font(.caption).foregroundStyle(.secondary)
+                        ForEach(studio.touchBarProfile.zones + TouchBarZone.allCases.filter{!studio.touchBarProfile.zones.contains($0)}) { zone in
                             HStack {
                                 Toggle(zone.rawValue, isOn: Binding(
                                     get: { studio.touchBarProfile.zones.contains(zone) },
@@ -2743,20 +2758,20 @@ private struct TouchBarModeView: View {
                                 ))
                                 Spacer()
                                 if studio.touchBarProfile.zones.contains(zone) {
-                                    Button("↑") {
-                                        setProfile { profile in
-                                            guard let index = profile.zones.firstIndex(of: zone),
-                                                  index > 0 else { return }
-                                            profile.zones.swapAt(index, index - 1)
-                                        }
-                                    }.help("Move zone left")
-                                    Button("↓") {
-                                        setProfile { profile in
-                                            guard let index = profile.zones.firstIndex(of: zone),
-                                                  index < profile.zones.count - 1 else { return }
-                                            profile.zones.swapAt(index, index + 1)
-                                        }
-                                    }.help("Move zone right")
+                                    Button {setProfile { profile in
+                                        guard let index=profile.zones.firstIndex(of:zone),index>0 else{return}
+                                        profile.zones.swapAt(index,index-1)
+                                    }} label:{Image(systemName:"arrow.left")}
+                                    .disabled(studio.touchBarProfile.zones.first==zone)
+                                    .accessibilityLabel("Move \(zone.rawValue) left")
+                                    .help("Move zone left")
+                                    Button {setProfile { profile in
+                                        guard let index=profile.zones.firstIndex(of:zone),index<profile.zones.count-1 else{return}
+                                        profile.zones.swapAt(index,index+1)
+                                    }} label:{Image(systemName:"arrow.right")}
+                                    .disabled(studio.touchBarProfile.zones.last==zone)
+                                    .accessibilityLabel("Move \(zone.rawValue) right")
+                                    .help("Move zone right")
                                 }
                             }
                         }
@@ -2783,6 +2798,12 @@ private struct TouchBarModeView: View {
                                         set: { value in setProfile { $0.baseNote = value } }
                                     ), in: 0...115)
                             Spacer()
+                        }
+                        if studio.touchBarProfile.zones.contains(.keys) {
+                            Stepper("Visible piano keys \(studio.touchBarProfile.effectiveKeyCount)",
+                                value:Binding(get:{studio.touchBarProfile.effectiveKeyCount},
+                                              set:{value in setProfile{$0.visibleKeyCount=value}}),in:2...13)
+                            Text("Fewer keys leave more space for helpers. Physical Touch Bar space depends on the Mac and enabled zones.").font(.caption).foregroundStyle(.secondary)
                         }
                         Stepper("Piano note velocity \(studio.touchBarProfile.noteVelocity)",
                             value:Binding(get:{studio.touchBarProfile.noteVelocity},
@@ -2890,13 +2911,13 @@ private struct TouchBarSlideSustainPad:View {
     var body:some View {
         GeometryReader { geo in
             HStack(spacing:0) {
-                Text(locked ? "Sustain locked" : studio.touchBarSustainOn ? "Sustain active" : "Sustain")
+                Text("Sustain")
                     .frame(maxWidth:.infinity)
                 Image(systemName:locked ? "lock.fill":"lock.open")
-                    .frame(width:44)
+                    .frame(width:36)
                     .background(lockTarget || locked ? Color.accentColor.opacity(0.45):Color.secondary.opacity(0.15))
             }
-            .frame(height:36)
+            .frame(height:34)
             .background(studio.touchBarSustainOn ? Color.accentColor.opacity(0.30):Color.secondary.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius:6))
             .contentShape(Rectangle())
@@ -2907,20 +2928,20 @@ private struct TouchBarSlideSustainPad:View {
                         revision=studio.touchBarGestureEpoch.revision
                         if let revision {studio.touchBarSlideEvent(.begin,owner:.screen,revision:revision)}
                     }
-                    lockTarget=value.startLocation.x < geo.size.width-44 &&
-                        value.translation.width >= 24 && value.location.x >= geo.size.width-44 &&
-                        value.location.x <= geo.size.width && (0...36).contains(value.location.y)
+                    lockTarget=value.startLocation.x < geo.size.width-36 &&
+                        value.translation.width >= 24 && value.location.x >= geo.size.width-36 &&
+                        value.location.x <= geo.size.width && (0...34).contains(value.location.y)
                 }
                 .onEnded{value in
                     if let revision {
-                        let latch=value.startLocation.x < geo.size.width-44 && value.translation.width>=24 &&
-                            value.location.x>=geo.size.width-44 && value.location.x<=geo.size.width &&
-                            (0...36).contains(value.location.y)
+                        let latch=value.startLocation.x < geo.size.width-36 && value.translation.width>=24 &&
+                            value.location.x>=geo.size.width-36 && value.location.x<=geo.size.width &&
+                            (0...34).contains(value.location.y)
                         studio.touchBarSlideEvent(.end(lock:latch),owner:.screen,revision:revision)
                     }
                     revision=nil;lockTarget=false
                 })
-        }.frame(width:220,height:36)
+        }.frame(width:146,height:34)
         .accessibilityLabel("Sustain")
         .accessibilityValue(locked ? "Locked":studio.touchBarSustainOn ? "Active":"Released")
         .accessibilityHint("Hold to sustain; slide right into the lock and lift to latch. Press again to unlock.")
