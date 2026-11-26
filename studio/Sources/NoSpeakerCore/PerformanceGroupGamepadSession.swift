@@ -523,21 +523,21 @@ public struct PerformanceGroupGamepadSession: Sendable {
     /// One selected surface per slot; an explicit neutral snapshot arms it.
     /// Idle heartbeats never renew a held note, pad or control.
     public mutating func receiveRemote(_ source:SensorSource,token:UUID,bytes:Data,
-                                       hostTime:Double,now:Double,
+                                       hostTime:Double,now:Double,refreshNow:(()->Double)? = nil,
                                        send:(PerformanceGroupCommand)->Bool) -> Result {
         // Unauthenticated callers still cannot trigger wire decoding.
         guard !retired,remoteModes[source] != nil,bindings[source]?.token == token else {
             return .init(status:.ignored,reports:[])
         }
         return receiveRemoteValidated(source,token:token,validated:try? .init(bytes:bytes),
-                                      hostTime:hostTime,now:now,send:send)
+                                      hostTime:hostTime,now:now,refreshNow:refreshNow,send:send)
     }
 
     /// Internal shared path for the bridge's already strictly parsed frame.
     /// Authentication, receipt freshness, rate and sequence fences remain
     /// authoritative here; a caller cannot construct a proof from a raw frame.
     mutating func receiveRemoteValidated(_ source:SensorSource,token:UUID,validated:ValidatedGroupRemoteFrame?,
-                                         hostTime:Double,now:Double,
+                                         hostTime:Double,now:Double,refreshNow:(()->Double)? = nil,
                                          send:(PerformanceGroupCommand)->Bool) -> Result {
         guard !retired, let modes = remoteModes[source], bindings[source]?.token == token else {
             return .init(status:.ignored,reports:[])
@@ -547,6 +547,22 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         clock = now
         var reports = reset(staleSources(now:now),send:send)
+        // The session's own expiry cleanup can block even after the bridge
+        // refreshed its clock. Reject the new frame before logical ownership.
+        let processedNow=refreshNow?() ?? now
+        guard processedNow.isFinite,processedNow>=now else {
+            reports += reset(Set(bindings.keys),send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        clock=processedNow
+        let newlyStale=staleSources(now:processedNow)
+        if !newlyStale.isEmpty || !MonotonicReceiptAdmission.permits(receipt:hostTime,now:processedNow,maximumAge:0.1) {
+            // Remove newly expired sources together; never restore another
+            // departing owner. Other still-live leases are retained.
+            reports += reset(newlyStale.union([source]),send:send)
+            return .init(status:.lost,reports:reports)
+        }
+        let now=processedNow
         guard var binding = bindings[source] else { return .init(status:.lost,reports:reports) }
         guard binding.remoteLastReceipt.map({ hostTime >= $0 }) ?? false,
               let frame = binding.remoteFence.accept(validated,receipt:hostTime,now:now) else {

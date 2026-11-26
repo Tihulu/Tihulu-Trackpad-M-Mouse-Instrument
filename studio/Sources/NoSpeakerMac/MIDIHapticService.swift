@@ -684,7 +684,9 @@ public final class MIDIHapticService: @unchecked Sendable {
             // service lock across synchronous CoreMIDI calls.
             var staged=sustainOwners
             lock.unlock()
-            _=staged.replaceFrameAdmitted(updates,permits:admitOnset,send:{ command in
+            _=staged.replaceFrameAdmitted(updates,permits:{
+                admitOnset() && self.permitsOutgoingSend
+            },send:{ command in
                 self.sendControlChange(controller:64,value:command.value,channel:command.destination.channel)
             })
             lock.lock()

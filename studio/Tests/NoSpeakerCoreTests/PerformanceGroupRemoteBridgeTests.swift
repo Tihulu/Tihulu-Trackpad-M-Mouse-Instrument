@@ -414,3 +414,35 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
         #expect(!session.retired)
     }
 }
+
+@Test func remoteGroupSessionRechecksReceiptAfterItsOwnSynchronousExpiryCleanup() throws {
+    for stall in [false,true] {
+        let local=groupRemoteFixture(.gamepad1,.padA,64)
+        let phone=groupRemoteFixture(.phone,.contact,60)
+        var session=try PerformanceGroupGamepadSession(profile:.init(groups:[local,phone]),allowRemote:true)
+        let localToken=try session.bind(.gamepad1,now:1)
+        let neutral=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+        var buttons=Array(repeating:0.0,count:12)
+        buttons[0]=1
+        let held=try #require(GamepadFrame(buttons:buttons,triggers:[0,0],sticks:[0,0,0,0]))
+        _=session.receive(.gamepad1,token:localToken,frame:neutral,now:1,send:{_ in true})
+        _=session.receive(.gamepad1,token:localToken,frame:held,now:1.01,send:{_ in true})
+        let phoneToken=try session.bind(.phone,now:1.2)
+        _=session.receiveRemote(.phone,token:phoneToken,bytes:groupRemoteWire("release",1,1),
+                                hostTime:1.3,now:1.3,send:{_ in true})
+        var now=1.37
+        var sent:[PerformanceGroupCommand]=[]
+        let result=session.receiveRemote(.phone,token:phoneToken,
+            bytes:groupRemoteWire("touch",1,2,",\"x\":0.5,\"y\":0.5"),
+            hostTime:1.36,now:now,refreshNow:{now},send:{command in
+                sent.append(command)
+                if stall && command.groupID==local.id { now=1.47 }
+                return true
+            })
+        #expect(sent.first?.groupID==local.id && sent.first?.command.value==0)
+        #expect(sent.filter{$0.command.value>0}.map(\.groupID) == (stall ? [] : [phone.id]))
+        #expect(result.status == (stall ? .lost : .delivered))
+        #expect(session.boundSources.contains(.phone) == !stall)
+        #expect(!session.retired)
+    }
+}

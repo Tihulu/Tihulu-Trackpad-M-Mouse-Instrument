@@ -183,7 +183,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                     continue
                 }
                 let received = session.receiveRemoteValidated(binding.source,token:binding.token,validated:validated,
-                                                              hostTime:receipt,now:now,send:send)
+                                                              hostTime:receipt,now:now,refreshNow:refreshNow,send:send)
                 result.reports += received.reports
                 guard received.status == .ready || received.status == .waitingForNeutral || received.status == .delivered else {
                     result.reports += remove([id],session:&session,send:send)
