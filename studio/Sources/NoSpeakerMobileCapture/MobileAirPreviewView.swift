@@ -14,6 +14,7 @@ import NoSpeakerCore
     @State private var assignment: MobileLANCapabilities.Manifest?
     @State private var connectionStatus = ""
     @State private var scanning = false
+    @State private var touchPreview = false
     @State private var askingPermission = false
     @State private var backend:MobileAirSensorSource.Backend = .rearCamera
     @State private var cameras:[MobileAirSensorSource.CameraChoice]=[]
@@ -39,7 +40,7 @@ import NoSpeakerCore
 
     public init() {}
     private var busy:Bool {pending || source != nil || retiring != nil}
-    private var configurationLocked: Bool { busy || socket != nil || scanning || askingPermission }
+    private var configurationLocked: Bool { busy || socket != nil || scanning || askingPermission || touchPreview }
     private var instrumentLocked: Bool {busy || scanning || askingPermission || (socket != nil && assignment == nil)}
     private var playableAssignment: Bool {
         guard useMac else { return true }
@@ -64,6 +65,7 @@ import NoSpeakerCore
         ScrollView {
             VStack(alignment:.leading,spacing:16) {
                 Text("TIHULU · Air stage").font(.largeTitle.bold())
+                Button("Touch piano · local preview") { touchPreview=true }.disabled(configurationLocked)
                 Picker("Output", selection: $useMac) {
                     Text("Local preview").tag(false)
                     Text("Paired Mac").tag(true)
@@ -164,6 +166,13 @@ import NoSpeakerCore
         .onAppear {if !busy {refreshCameras()}}
         .onChange(of:backend) {_,_ in if !busy {refreshCameras()}}
         .onChange(of:cameraID) {_,_ in if !busy {zoom=selectedCamera?.zoom.defaultFactor ?? 1}}
+        .sheet(isPresented: $touchPreview) {
+            NavigationStack {
+                MobileTouchPianoPreview()
+                    .navigationTitle("Touch piano")
+                    .toolbar { Button("Done") {touchPreview=false} }
+            }
+        }
         .sheet(isPresented: $scanning) {
             NavigationStack {
                 MobileAddressScanner { address in
@@ -182,7 +191,7 @@ import NoSpeakerCore
         }
         .onReceive(timer) {_ in poll()}
         .onChange(of:scenePhase) {_,phase in
-            if phase != .active { scanning = false; stop("App inactive · stopped") }
+            if phase != .active { scanning = false; touchPreview=false; stop("App inactive · stopped") }
         }
         .onDisappear {stop("View closed")}
     }
