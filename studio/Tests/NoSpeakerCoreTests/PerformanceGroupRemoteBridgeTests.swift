@@ -727,3 +727,36 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     #expect(result.actions == [.revoke(peer)] && bridge.connectionIDs.isEmpty)
     #expect(session.activeSessions == 0 && !session.boundSources.contains(.phone))
 }
+
+
+@Test func groupRemoteNestedClockRegressionRemainsFaultEvenAfterRecovery() throws {
+    let local=groupRemoteFixture(.gamepad1,.padA,64)
+    let phone=groupRemoteFixture(.phone,.contact,60)
+    var session=try PerformanceGroupGamepadSession(profile:.init(groups:[local,phone]),allowRemote:true)
+    var bridge=PerformanceGroupRemoteBridge()
+    let token=try session.bind(.gamepad1,now:1)
+    let neutral=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+    var buttons=Array(repeating:0.0,count:12);buttons[0]=1
+    let held=try #require(GamepadFrame(buttons:buttons,triggers:[0,0],sticks:[0,0,0,0]))
+    _=session.receive(.gamepad1,token:token,frame:neutral,now:1,send:{_ in true})
+    _=session.receive(.gamepad1,token:token,frame:held,now:1.01,send:{_ in true})
+    var reads=0
+    var sent:[PerformanceGroupCommand]=[]
+    let result=bridge.process([.ready],now:1.2,refreshNow:{
+        reads+=1
+        return reads==1 ? 1.3 : reads==2 ? 1.25 : 1.31
+    },session:&session,send:{sent.append($0);return true})
+    #expect(result.fault && result.actions==[.stop] && bridge.stopped)
+    #expect(sent.count==1 && sent.first?.command.value==0)
+    #expect(session.activeSessions==0 && session.sourceStates[.gamepad1]==.waitingForNeutral)
+}
+
+@Test func groupRemoteInitialClockBelowSessionHighWaterRetiresListener() throws {
+    let local=groupRemoteFixture(.gamepad1,.padA,64)
+    let phone=groupRemoteFixture(.phone,.contact,60)
+    var session=try PerformanceGroupGamepadSession(profile:.init(groups:[local,phone]),allowRemote:true)
+    var bridge=PerformanceGroupRemoteBridge()
+    _=try session.bind(.gamepad1,now:2)
+    let result=bridge.process([.ready],now:1.9,session:&session,send:{_ in Issue.record("No live notes");return true})
+    #expect(result.fault && result.actions==[.stop] && bridge.stopped && !bridge.ready)
+}

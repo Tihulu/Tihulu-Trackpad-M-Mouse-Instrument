@@ -83,7 +83,10 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                                  session:inout PerformanceGroupGamepadSession,
                                  send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupRemoteBatch {
         guard !stopped else { return .init() }
-        guard now.isFinite,now >= 0,events.count <= 32,
+        guard now.isFinite,now>=session.observedHostClock else {
+            return retireClockFault(.init(),session:&session,send:send)
+        }
+        guard events.count <= 32,
               !events.contains(where:{ if case .fault = $0 { return true }; return false }) else {
             var result = stop(session:&session,refreshNow:refreshNow,send:send)
             result.fault = true
@@ -91,6 +94,23 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         }
         if session.retired { return stop(session:&session,refreshNow:refreshNow,send:send) }
         var result = PerformanceGroupRemoteBatch()
+        // Observe every nested clock read, including those inside session
+        // expiry and synchronous restoration fences. A transient regression
+        // must remain a fault even if the next sample recovers.
+        var highWater=now
+        var clockFault=false
+        let trackedClock:(()->Double)? = refreshNow.map { sample in
+            return {
+                guard !clockFault else { return .nan }
+                let current=sample()
+                guard current.isFinite,current>=highWater else {
+                    clockFault=true
+                    return .nan
+                }
+                highWater=current
+                return current
+            }
+        }
         let disconnected = Set(events.compactMap { event -> UUID? in
             if case .disconnected(let id) = event { return id }; return nil
         })
@@ -103,7 +123,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         for id in disconnected.union(metadataExpired) {
             if let binding = bindings.removeValue(forKey:id) { departing[binding.source] = binding.token }
         }
-        result.reports += session.expire(now:now,removingRemote:departing,refreshNow:refreshNow,send:send)
+        result.reports += session.expire(now:now,removingRemote:departing,refreshNow:trackedClock,send:send)
         let expired = Set(bindings.compactMap { id,binding in
             session.matchesRemoteBinding(binding.source,token:binding.token) ? nil : id
         })
@@ -113,11 +133,12 @@ public struct PerformanceGroupRemoteBridge: Sendable {
             bindings.removeValue(forKey:id)
             result.actions.append(.revoke(id))
         }
+        guard !clockFault else { return retireClockFault(result,session:&session,send:send) }
         var lastProcessingTime=now
         for event in events {
             // Expiry/disconnect cleanup and earlier frames synchronously
             // invoke the sink. Never reuse the batch-start receipt budget.
-            let eventNow=refreshNow?() ?? now
+            let eventNow=trackedClock?() ?? now
             guard eventNow.isFinite,eventNow>=lastProcessingTime else {
                 return retireClockFault(result,session:&session,send:send)
             }
@@ -131,7 +152,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                       fresh(receipt,now:now),
                       let issued = invitationIssuedAt,receipt >= issued,
                       let source = try? pairing.consume(secret:secret,now:now) else {
-                    result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
+                    result.reports += remove([id],session:&session,refreshNow:trackedClock,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
                     continue
@@ -150,7 +171,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                 guard !rejected.contains(id),var binding = bindings[id],
                       !binding.metadataExpired(now:now),
                       fresh(receipt,now:now),let validated = try? ValidatedGroupRemoteFrame(bytes:bytes) else {
-                    result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
+                    result.reports += remove([id],session:&session,refreshNow:trackedClock,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
                     continue
@@ -175,16 +196,16 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                     metadataAllowed = binding.nextLabelPage == 0 || binding.labelsComplete
                 }
                 guard metadataAllowed else {
-                    result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
+                    result.reports += remove([id],session:&session,refreshNow:trackedClock,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
                     continue
                 }
                 let received = session.receiveRemoteValidated(binding.source,token:binding.token,validated:validated,
-                                                              hostTime:receipt,now:now,refreshNow:refreshNow,send:send)
+                                                              hostTime:receipt,now:now,refreshNow:trackedClock,send:send)
                 result.reports += received.reports
                 guard received.status == .ready || received.status == .waitingForNeutral || received.status == .delivered else {
-                    result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
+                    result.reports += remove([id],session:&session,refreshNow:trackedClock,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
                     continue
@@ -193,13 +214,13 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                 // source. An incomplete negotiation cannot cross its
                 // absolute budget during that work and then start play
                 // or disclose a label page as if still timely.
-                let completedAt=refreshNow?() ?? now
+                let completedAt=trackedClock?() ?? now
                 guard completedAt.isFinite,completedAt>=now else {
                     return retireClockFault(result,session:&session,send:send)
                 }
                 lastProcessingTime=completedAt
                 guard !binding.metadataExpired(now:completedAt) else {
-                    result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
+                    result.reports += remove([id],session:&session,refreshNow:trackedClock,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
                     continue
@@ -207,7 +228,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                 switch frame.kind {
                 case .capabilities:
                     guard let capabilities = session.remoteCapabilities(binding.source) else {
-                        result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
+                        result.reports += remove([id],session:&session,refreshNow:trackedClock,send:send)
                         rejected.insert(id)
                         result.actions.append(.acknowledge(id,false))
                         continue
@@ -250,7 +271,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         // that peer (or no events at all). Drain newly expired negotiations
         // in bounded rounds, with the original ten-second deadline.
         for _ in 0...(bindings.count + session.boundSources.count) {
-            let current=refreshNow?() ?? now
+            let current=trackedClock?() ?? now
             guard current.isFinite,current>=lastProcessingTime else {
                 return retireClockFault(result,session:&session,send:send)
             }
@@ -266,7 +287,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
             // leases too, not only the ten-second metadata negotiation.
             // Batch known departures with all expired leases before restoring.
             let drained = session.expire(now:current,removingRemote:departures,
-                                         refreshNow:refreshNow,send:send)
+                                         refreshNow:trackedClock,send:send)
             result.reports += drained
             result.actions += timedOut.sorted(by:{ $0.uuidString < $1.uuidString }).map { .revoke($0) }
             result.actions += reconcileRevoked(session:session)
@@ -274,6 +295,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
             // Repeat only after a departure or actual scoped cleanup.
             guard !timedOut.isEmpty || !drained.isEmpty else { break }
         }
+        guard !clockFault else { return retireClockFault(result,session:&session,send:send) }
         // Another peer's cleanup can expire an authenticated slot.
         result.actions += reconcileRevoked(session:session)
         discardInvalidMetadata(in:&result)

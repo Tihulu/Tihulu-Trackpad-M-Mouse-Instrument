@@ -111,6 +111,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
     private var bindings: [SensorSource:Binding] = [:]
     private var cameraTracking = AirTrackingGate()
     private var clock = 0.0
+    // Host-only monotonic high-water mark shared with the serial bridge.
+    var observedHostClock:Double { clock }
     public enum SourceState: String, Equatable, Sendable {
         case waitingForNeutral, armed, leased
     }
