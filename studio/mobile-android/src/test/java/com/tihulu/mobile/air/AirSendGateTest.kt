@@ -124,4 +124,12 @@ class AirSendGateTest {
         g.acknowledge("accepted",ms(30))
         assertTrue(send(g.offer(AirOutput(keys=1),ms(100),ms(100),mapOf(0 to ms(220)))).contains("\"mask\":0"))
     }
+
+    @Test fun stringReleaseCannotBeHiddenByPacing() {
+        val g=AirSendGate(AirWireLane.Keys(3),0)
+        g.begin(0);g.acknowledge("accepted",ms(20))
+        g.offer(AirOutput(keys=3),ms(21),ms(21),mapOf(0 to ms(31),1 to ms(100)))
+        g.acknowledge("accepted",ms(25))
+        assertTrue(g.poll(ms(31)) is AirSendGate.Action.Close)
+    }
 }

@@ -105,6 +105,7 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
             return close("Source expired while active ACK outstanding")
         if(expireStrings(now)) {
             if(pendingAt!=null)return close("String expired while active ACK outstanding")
+            if(lastSend?.let {now-it<PACE_NS}==true)return close("String release blocked by send pacing")
             // Do not replace an expired transmitted pulse with a new attack before releasing it.
             return poll(now)
         }
@@ -148,7 +149,10 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
         check(now)?.let {return it}
         if(!started||!admitted)return Action.Wait
         val expiredActive=sampledAt?.let {now-it>=FRESH_NS}==true&&sent!=AirOutput()
-        if(expireStrings(now)&&pendingAt!=null)return close("String expired while active ACK outstanding")
+        if(expireStrings(now)) {
+            if(pendingAt!=null)return close("String expired while active ACK outstanding")
+            if(lastSend?.let {now-it<PACE_NS}==true)return close("String release blocked by send pacing")
+        }
         expireSample(now)
         check(now)?.let {return it}
         if(expiredActive&&pendingAt!=null)return close("Source expired while active ACK outstanding")

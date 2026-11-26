@@ -80,7 +80,31 @@ private func packet(_ action:MobileAirSendGate.Action) throws -> RemoteTouchFram
     _ = gate.begin(now: 0)
     _ = gate.acknowledge("accepted", now: ms(15))
     _ = gate.offer(.init(keys: 1), observedAt: ms(30), now: ms(30), stringDeadlines: [0: ms(95)])
-    #expect(try packet(gate.acknowledge("accepted", now: ms(95))).mask == 0)
-    _ = gate.acknowledge("accepted", now: ms(110))
-    #expect(gate.poll(now: ms(200)) == .wait)
+    #expect(gate.acknowledge("accepted", now: ms(95)) == .close("String expired while active ACK outstanding"))
+    #expect(gate.poll(now: ms(200)) == .close("Already closed"))
+}
+
+@Test func mobileSenderStringPacingCannotHidePartialRelease() throws {
+    var gate = try #require(MobileAirSendGate(lane: .keys(authorized: 3), initialSequence: 0))
+    _ = gate.begin(now: 0)
+    _ = gate.acknowledge("accepted", now: ms(20))
+    _ = gate.offer(.init(keys: 3), observedAt: ms(21), now: ms(21), stringDeadlines: [0: ms(31), 1: ms(100)])
+    _ = gate.acknowledge("accepted", now: ms(25))
+    #expect(gate.poll(now: ms(31)) == .close("String release blocked by send pacing"))
+}
+@Test func mobileSenderRejectsIncompleteOrExtendedStringDeadline() throws {
+    for deadlines in [[0: ms(100)], [0: ms(142), 1: ms(100)], [0: ms(100), 25: ms(100)]] {
+        var gate = try #require(MobileAirSendGate(lane: .keys(authorized: 3), initialSequence: 0))
+        _ = gate.begin(now: 0)
+        _ = gate.acknowledge("accepted", now: ms(20))
+        #expect(gate.offer(.init(keys: 3), observedAt: ms(21), now: ms(21), stringDeadlines: deadlines) == .close("Invalid string expiry"))
+    }
+}
+@Test func mobileSenderNewObservationCannotMaskExpiredString() throws {
+    var gate = try #require(MobileAirSendGate(lane: .keys(authorized: 1), initialSequence: 0))
+    _ = gate.begin(now: 0)
+    _ = gate.acknowledge("accepted", now: ms(20))
+    _ = gate.offer(.init(keys: 1), observedAt: ms(21), now: ms(21), stringDeadlines: [0: ms(100)])
+    _ = gate.acknowledge("accepted", now: ms(30))
+    #expect(try packet(gate.offer(.init(keys: 1), observedAt: ms(100), now: ms(100), stringDeadlines: [0: ms(220)])).mask == 0)
 }
