@@ -2703,6 +2703,10 @@ final class StudioController: ObservableObject {
         // Stop the old producer before replacing its target or channel.
         if liveHingeEnabled { enableLiveHinge(false) }
         disarmTouchBarOutput()
+        guard touchBarOutputLedger.isEmpty else {
+            lastError = "Touch Bar release is pending. Reset the receiving DAW and retry before changing the layout."
+            return
+        }
         if touchBarProfile.zones.contains(.chords) && !next.zones.contains(.chords) {
             releaseChordPads()
         }
