@@ -64,6 +64,14 @@ class MeasuredDepthXYZTest {
         assertEquals(6,XYZCalibrationRecord.roleIndex(6.0))
         assertEquals(5,XYZCalibrationRecord.axisMask(5.0))
     }
+    @Test fun decimalCalibrationStepsHonorMinimumSpacing() {
+        val exact=XYZVolume(.3,.35,.7,.75,.2,.3)
+        assertTrue(exact.valid)
+        assertEquals(listOf(1.0,1.0,1.0),exact.axes(MeasuredXYZ(.35,.75,.3,1.0),7))
+        assertFalse(exact.copy(right=.349999).valid)
+        assertFalse(exact.copy(far=.299999).valid)
+        assertFalse(exact.copy(left=-Math.ulp(1.0)).valid)
+    }
     @Test fun pitchRolesSkipUnassignedKeysAndResetBoundaryOnLoss() {
         val keys=MeasuredXYZKeys((1 shl 2) or (1 shl 19),2)
         assertEquals(1 shl 2,keys.output(listOf(1.0,1.0,.1)).keys)

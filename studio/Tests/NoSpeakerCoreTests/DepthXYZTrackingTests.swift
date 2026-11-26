@@ -84,3 +84,20 @@ private let palm = DepthXYZPoint(x: 0.4, y: 0.5, meters: 0.4, confidence: 0.8)
     #expect(tracker.observe(palm, at: 0.18, now: 0.18) == nil)
     #expect(tracker.observe(palm, at: 0.19, now: 0.19) != nil)
 }
+
+@Test func depthXYZDecimalCalibrationStepsHonorMinimumSpacing() throws {
+    let exact = DepthXYZVolume(left: 0.3, right: 0.35, bottom: 0.7, top: 0.75,
+                               nearMeters: 0.2, farMeters: 0.3)
+    #expect(exact.isValid)
+    let normalized = try #require(exact.normalize(.init(x: 0.35, y: 0.75, meters: 0.3, confidence: 1)))
+    #expect(normalized == .init(x: 1, y: 1, z: 1))
+    var narrow = exact
+    narrow.right = 0.349999
+    #expect(!narrow.isValid)
+    narrow = exact
+    narrow.farMeters = 0.299999
+    #expect(!narrow.isValid)
+    narrow = exact
+    narrow.left = -.ulpOfOne
+    #expect(!narrow.isValid)
+}

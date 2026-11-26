@@ -8,9 +8,11 @@ data class MeasuredXYZ(val x:Double, val y:Double, val metres:Double, val confid
 
 data class XYZVolume(val left:Double=0.0, val right:Double=1.0, val bottom:Double=0.0,
                      val top:Double=1.0, val near:Double=.25, val far:Double=.85) {
-    val valid get() = left in 0.0..1.0 && right in 0.0..1.0 && right-left >= .05 &&
-        bottom in 0.0..1.0 && top in 0.0..1.0 && top-bottom >= .05 &&
-        near in .1..3.0 && far in .1..3.0 && far-near >= .1
+    // Match Swift: decimal step round-off is not an invalid calibration.
+    // Strict coordinate and depth bounds remain unchanged.
+    val valid get() = left in 0.0..1.0 && right in 0.0..1.0 && right-left >= .05-1e-12 &&
+        bottom in 0.0..1.0 && top in 0.0..1.0 && top-bottom >= .05-1e-12 &&
+        near in .1..3.0 && far in .1..3.0 && far-near >= .1-1e-12
     fun axes(p:MeasuredXYZ,mask:Int):List<Double?>? {
         if(!valid || mask !in 1..7 || p.x !in left..right || p.y !in bottom..top ||
             p.metres !in near..far || p.confidence !in .65..1.0)return null
