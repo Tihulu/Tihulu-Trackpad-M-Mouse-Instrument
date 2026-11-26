@@ -51,8 +51,10 @@ private func qbNote(_ pitch:Int,_ velocity:Int)->SensorCommand {
         #expect(accepted == !blocked)
         #expect(events == (blocked ? [qbNote(60,0)] : [qbNote(60,0),qbNote(62,90)]))
         #expect(owners.active.contains(qbNote(67,90).destination))
-        #expect(owners.release("finger") == (blocked ? [] : [qbNote(62,0)]))
-        #expect(owners.release("screen") == [qbNote(67,0)])
+        let fingerCleanup=owners.release("finger")
+        let screenCleanup=owners.release("screen")
+        #expect(fingerCleanup == (blocked ? [] : [qbNote(62,0)]))
+        #expect(screenCleanup == [qbNote(67,0)])
     }
 }
 
@@ -90,7 +92,8 @@ private func qbNote(_ pitch:Int,_ velocity:Int)->SensorCommand {
             #expect(debt.isEmpty)
         }
         #expect(owners.active == [qbNote(67,90).destination])
-        #expect(owners.release("screen") == [qbNote(67,0)])
+        let screenCleanup=owners.release("screen")
+        #expect(screenCleanup == [qbNote(67,0)])
     }
 }
 
@@ -100,12 +103,14 @@ private func qbNote(_ pitch:Int,_ velocity:Int)->SensorCommand {
     var owners=LegacyNoteOwners<String>()
     var events:[SensorCommand]=[]
     func owner(_ c:Int,_ d:SensorDestination)->String { "\(c):\(d.number)" }
-    #expect(chord.reconcileAdmitted([1:[target]],velocity:[1:90],ledger:&owners,owner:owner,
-        permits:{true},send:{events.append($0)}))
-    #expect(chord.reconcileAdmitted([2:[target]],velocity:[2:90],ledger:&owners,owner:owner,
-        permits:{true},send:{events.append($0)}))
+    let first=chord.reconcileAdmitted([1:[target]],velocity:[1:90],ledger:&owners,owner:owner,
+        permits:{true},send:{events.append($0)})
+    let second=chord.reconcileAdmitted([2:[target]],velocity:[2:90],ledger:&owners,owner:owner,
+        permits:{true},send:{events.append($0)})
+    #expect(first && second)
     #expect(events == [qbNote(60,90)])
-    #expect(chord.reconcile([:],velocity:[:],ledger:&owners,owner:owner) == [qbNote(60,0)])
+    let cleanup=chord.reconcile([:],velocity:[:],ledger:&owners,owner:owner)
+    #expect(cleanup == [qbNote(60,0)])
 }
 
 @Test func qb04FenceLatchesExactDeadlineAndClockRegression() {
@@ -113,12 +118,14 @@ private func qbNote(_ pitch:Int,_ velocity:Int)->SensorCommand {
         for origin in [1.0,10,1000,100000] {
             let deadline=origin+age
             var exact=PhysicalReceiptSendFence(receipt:origin,maximumAge:age)
-            #expect(exact.permits(now:deadline.nextDown))
-            #expect(!exact.permits(now:deadline))
-            #expect(!exact.permits(now:origin))
+            let before=exact.permits(now:deadline.nextDown)
+            let at=exact.permits(now:deadline)
+            let recovered=exact.permits(now:origin)
+            #expect(before && !at && !recovered)
             var backwards=PhysicalReceiptSendFence(receipt:origin,maximumAge:age,initialNow:origin+age/2)
-            #expect(!backwards.permits(now:origin))
-            #expect(!backwards.permits(now:origin+age/2))
+            let regressed=backwards.permits(now:origin)
+            let caughtUp=backwards.permits(now:origin+age/2)
+            #expect(!regressed && !caughtUp)
         }
     }
 }
