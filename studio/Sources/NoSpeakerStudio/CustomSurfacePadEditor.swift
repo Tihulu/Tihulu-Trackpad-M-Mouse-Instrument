@@ -9,8 +9,18 @@ struct CustomSurfacePadEditor:View {
     @State private var surface:Layout.Surface = .trackpad
     @State private var layouts:[Layout.Surface:Layout]=[:]
     @AppStorage("TIHULU.customSurfaceLayouts.v1") private var storage=Data()
-    @State private var confirmLoad=false
-    @State private var confirmSave=false
+    @State private var pending:Pending?
+    private struct Pending:Identifiable {
+        enum Action:String {case save,load,reset}
+        let action:Action
+        let surface:Layout.Surface
+        let draft:Layout?
+        let saved:Layout?
+        var id: String {action.rawValue+surface.rawValue}
+    }
+    private func request(_ action:Pending.Action) {
+        pending=Pending(action:action,surface:surface,draft:layouts[surface],saved:library?.layout(for:surface))
+    }
     private var library:CustomSurfaceLayoutLibrary? {
         storage.isEmpty ? .init() : try? JSONDecoder().decode(CustomSurfaceLayoutLibrary.self,from:storage)
     }
@@ -51,14 +61,14 @@ struct CustomSurfacePadEditor:View {
                         } else {feedback="Invalid grid; maximum 64 pads."}
                     }.disabled(layouts[surface] != nil)
                     if layouts[surface] != nil {
-                        Button("Reset draft"){layouts.removeValue(forKey:surface);selected=nil;feedback="Draft cleared."}
+                        Button("Reset draft"){request(.reset)}
                     }
                 }
                 if let library {
                     HStack {
-                        Button("Save layout"){confirmSave=true}
+                        Button("Save layout"){request(.save)}
                             .disabled(layouts[surface]==nil || layouts[surface]==library.layout(for:surface))
-                        Button("Load saved layout"){confirmLoad=true}
+                        Button("Load saved layout"){request(.load)}
                             .disabled(library.layout(for:surface)==nil)
                         Text(library.layout(for:surface)==nil ? "No saved layout":"Saved layout available").font(.caption)
                     }
@@ -154,18 +164,29 @@ struct CustomSurfacePadEditor:View {
                 if !feedback.isEmpty {Text(feedback).font(.caption)}
             }.padding(.vertical,6)
         }.onChange(of:surface){value in select(layouts[value]?.pads.first);feedback=""}
-        .confirmationDialog("Save this offline surface layout?",isPresented:$confirmSave,titleVisibility:.visible){
-            Button("Save"){
-                guard var library,let layout=layouts[surface] else{return}
-                library.save(layout)
-                guard let data=try? JSONEncoder().encode(library) else{feedback="Could not encode layout.";return}
-                storage=data;feedback="Layout saved."
-            }
-        }
-        .confirmationDialog("Replace current draft with saved layout?",isPresented:$confirmLoad,titleVisibility:.visible){
-            Button("Load"){
-                guard let layout=library?.layout(for:surface) else{return}
-                layouts[surface]=layout;select(layout.pads.first);feedback="Saved layout loaded."
+        .confirmationDialog("Confirm surface layout change",isPresented:Binding(get:{pending != nil},set:{if !$0 {pending=nil}}),titleVisibility:.visible,presenting:pending){operation in
+            Button(operation.action == .reset ? "Reset draft":operation.action == .save ? "Save layout":"Load layout",
+                   role:operation.action == .reset ? .destructive:nil){
+                guard surface==operation.surface,layouts[surface]==operation.draft else{
+                    feedback="Draft changed; repeat the operation.";return
+                }
+                switch operation.action {
+                case .reset:
+                    layouts.removeValue(forKey:surface);selected=nil;feedback="Draft cleared."
+                case .save:
+                    guard var current=library,let layout=operation.draft,
+                          current.layout(for:surface)==operation.saved else{
+                        feedback="Saved layout changed or cannot be read; repeat the operation.";return
+                    }
+                    current.save(layout)
+                    guard let data=try? JSONEncoder().encode(current) else{feedback="Could not encode layout.";return}
+                    storage=data;feedback="Layout saved."
+                case .load:
+                    guard let layout=operation.saved,library?.layout(for:surface)==layout else{
+                        feedback="Saved layout changed; repeat the operation.";return
+                    }
+                    layouts[surface]=layout;select(layout.pads.first);feedback="Saved layout loaded."
+                }
             }
         }
     }

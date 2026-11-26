@@ -130,7 +130,13 @@ public struct CustomSurfacePadLayout: Codable, Equatable, Sendable {
     /// own axis direction. Right/bottom edge belongs to the last cell.
     public func pad(x:Double,y:Double)->Pad? {
         guard x.isFinite,y.isFinite,(0...1).contains(x),(0...1).contains(y) else{return nil}
-        let px=min(9999,Int(x*10000)),py=min(9999,Int(y*10000))
-        return pads.first{px >= $0.x && px < $0.x+$0.width && py >= $0.y && py < $0.y+$0.height}
+        // Compare against normalized boundaries directly. Multiplying a
+        // decimal boundary by 10000 and truncating can move it one cell left.
+        func contains(_ value:Double,_ start:Int,_ size:Int)->Bool {
+            let end=start+size
+            return value>=Double(start)/10000 &&
+                (value<Double(end)/10000 || (end==10000 && value==1))
+        }
+        return pads.first{contains(x,$0.x,$0.width) && contains(y,$0.y,$0.height)}
     }
 }

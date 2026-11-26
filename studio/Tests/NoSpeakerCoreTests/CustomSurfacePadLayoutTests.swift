@@ -104,3 +104,22 @@ private func surfacePad(_ id:String,_ x:Int,_ y:Int,_ w:Int,_ h:Int,_ assignment
     #expect(filled.pads.last?.x==5000 && filled.pads.last?.y==5000)
     #expect(grid.addingInGap(id:"full",label:"Full",width:1,height:1,assignment:.note(60))==nil)
 }
+
+@Test func customSurfaceHitTestingHonorsEveryDecimalBoundary() throws {
+    for edge in 1..<10000 {
+        let layout=try #require(CustomSurfacePadLayout(surface:.trackpad,pads:[
+            surfacePad("left",0,0,edge,10000),
+            surfacePad("right",edge,0,10000-edge,10000)
+        ]))
+        let x=Double(edge)/10000
+        #expect(layout.pad(x:x,y:0.5)?.id=="right")
+        #expect(layout.pad(x:x.nextDown,y:0.5)?.id=="left")
+    }
+    let y=Double(3)/10000
+    let vertical=try #require(CustomSurfacePadLayout(surface:.phone,pads:[
+        surfacePad("top",0,0,10000,3),surfacePad("bottom",0,3,10000,9997)
+    ]))
+    #expect(vertical.pad(x:1,y:y)?.id=="bottom")
+    #expect(vertical.pad(x:1,y:y.nextDown)?.id=="top")
+    #expect(vertical.pad(x:1,y:1)?.id=="bottom")
+}
