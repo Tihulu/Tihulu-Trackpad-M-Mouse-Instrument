@@ -11,7 +11,11 @@ public struct CustomSurfaceNativeFrame: Sendable, Equatable {
     public let observedAt: Int64
 
     public init?(frame: SurfaceTouchFrame, orientation: SurfaceOrientation) {
-        guard frame.validNativeEnvelope, let receipt = frame.acquisitionNS, receipt >= 0,
+        // The legacy decoder ignores states outside 3...5. Until the
+        // physical semantics of those states are verified, an incomplete
+        // classification must not look like a complete or neutral frame.
+        guard frame.validNativeEnvelope, frame.rawNativeContactCount == frame.contacts.count,
+              let receipt = frame.acquisitionNS, receipt >= 0,
               frame.frameNumber >= 0,
               frame.contacts.count <= NativeTouchFramePolicy.maximumContacts,
               Set(frame.contacts.map(\.id)).count == frame.contacts.count else { return nil }

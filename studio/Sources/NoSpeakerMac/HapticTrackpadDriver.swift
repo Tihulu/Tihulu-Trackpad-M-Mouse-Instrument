@@ -76,6 +76,8 @@ public struct SurfaceTouchFrame: Sendable, Equatable {
     /// Original callback receipt; nil for synthetic/legacy callers.
     public let acquisitionNS: Int64?
     public let validNativeEnvelope: Bool
+    /// Actual native record count, before the legacy state filter. nil is not evidence.
+    public let rawNativeContactCount: Int?
 
     public init(
         surface: TouchSurfaceKind,
@@ -83,7 +85,8 @@ public struct SurfaceTouchFrame: Sendable, Equatable {
         timestamp: Double,
         frameNumber: Int,
         acquisitionNS: Int64? = nil,
-        validNativeEnvelope: Bool = false
+        validNativeEnvelope: Bool = false,
+        rawNativeContactCount: Int? = nil
     ) {
         self.surface = surface
         self.contacts = contacts
@@ -91,6 +94,7 @@ public struct SurfaceTouchFrame: Sendable, Equatable {
         self.frameNumber = frameNumber
         self.acquisitionNS = acquisitionNS
         self.validNativeEnvelope = validNativeEnvelope
+        self.rawNativeContactCount = rawNativeContactCount
     }
 }
 
@@ -197,7 +201,8 @@ private final class TouchBridge: @unchecked Sendable {
             timestamp: timestamp,
             frameNumber: Int(frame),
             acquisitionNS: acquisitionNS,
-            validNativeEnvelope: count == 0 || (count > 0 && count <= NativeTouchFramePolicy.maximumContacts && data != nil)
+            validNativeEnvelope: count == 0 || (count > 0 && count <= NativeTouchFramePolicy.maximumContacts && data != nil),
+            rawNativeContactCount: Int(count)
         ))
     }
 }

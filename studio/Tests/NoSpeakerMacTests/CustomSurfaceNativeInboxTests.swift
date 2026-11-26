@@ -4,7 +4,7 @@ import NoSpeakerCore
 @testable import NoSpeakerMac
 
 private func inboxFrame(_ n: Int, surface: TouchSurfaceKind = .trackpad, valid: Bool = true) -> SurfaceTouchFrame {
-    .init(surface: surface, contacts: [], timestamp: 0, frameNumber: n, acquisitionNS: Int64(n), validNativeEnvelope: valid)
+    .init(surface: surface, contacts: [], timestamp: 0, frameNumber: n, acquisitionNS: Int64(n), validNativeEnvelope: valid, rawNativeContactCount: 0)
 }
 @Test func customNativeInboxFiltersSurfaceAndPreArmFrames() {
     let inbox = CustomSurfaceNativeInbox(surface: .trackpad, orientation: .horizontal, notBefore: 10)
