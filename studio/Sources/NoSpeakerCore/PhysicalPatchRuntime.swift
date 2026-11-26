@@ -332,7 +332,7 @@ public struct PhysicalPatchRuntime: Sendable {
             events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:receipt))
         }
         gamepadSnapshotMetrics.record(skipped:false,events:events.count)
-        return router.ingestFrame(session:session,releasing:releasing,events:events,now:receipt)
+        return router.ingestFrame(session:session,releasing:releasing,events:events,now:receipt,controlsBeforeAttack:true)
     }
     /// Host preflight uses the same retirement fence before rejecting
     /// an expired callback. Old-generation input is ignored, not a fault

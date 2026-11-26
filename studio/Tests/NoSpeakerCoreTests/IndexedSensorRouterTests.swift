@@ -132,3 +132,33 @@ import Testing
     let stopped = router.panic()
     #expect(stopped.isEmpty)
 }
+
+
+@Test func orderedSurfaceFrameSustainEngagementPrecedesLiftAndReleaseFollowsAttack() throws {
+    let note=SensorDestination(.note,number:60)
+    let sustain=SensorDestination(.sustain)
+    let pitch=SensorDestination(.pitchBend)
+    var router=SensorRouter()
+    try router.configure([
+        .init(id:"note",source:.trackpad,signal:.x,destination:note),
+        .init(id:"pedal",source:.trackpad,signal:.y,destination:sustain),
+        .init(id:"pitch",source:.trackpad,signal:.contactSize,destination:pitch)
+    ])
+    let session=try router.connect(.trackpad,now:1)
+    let first=router.ingestFrame(session:session,releasing:[],events:[
+        .init(session:session,signal:.x,value:1,sequence:1,timestamp:1),
+        .init(session:session,signal:.y,value:0,sequence:2,timestamp:1)
+    ],now:1,controlsBeforeAttack:true)
+    #expect(first==[.init(note,value:100)])
+    let lift=router.ingestFrame(session:session,releasing:[],events:[
+        .init(session:session,signal:.x,value:0,sequence:3,timestamp:1.1),
+        .init(session:session,signal:.y,value:1,sequence:4,timestamp:1.1)
+    ],now:1.1,controlsBeforeAttack:true)
+    #expect(lift==[.init(sustain,value:127),.init(note,value:0)])
+    let attack=router.ingestFrame(session:session,releasing:[],events:[
+        .init(session:session,signal:.x,value:1,sequence:5,timestamp:1.2),
+        .init(session:session,signal:.y,value:0,sequence:6,timestamp:1.2),
+        .init(session:session,signal:.contactSize,value:1,sequence:7,timestamp:1.2)
+    ],now:1.2,controlsBeforeAttack:true)
+    #expect(attack==[.init(pitch,value:16383),.init(note,value:100),.init(sustain,value:0)])
+}

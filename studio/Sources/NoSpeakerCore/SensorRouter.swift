@@ -341,10 +341,14 @@ public struct SensorRouter: Sendable {
         for event in events { _ = accept(event,now:now) }
         let commands=reconcile()
         guard controlsBeforeAttack else { return commands }
-        // Stable partition: position, pitch and sustain updates must reach
-        // the instrument before a new attack. No intermediate owner state.
-        return commands.filter { $0.destination.kind != .note || $0.value==0 } +
-            commands.filter { $0.destination.kind == .note && $0.value>0 }
+        // Pedal engagement must precede note edges, even a lift on the
+        // same frame. Pedal release follows note edges. Other controls
+        // (including pitch) precede attacks. Preserve order within phases.
+        return commands.filter { $0.destination.kind != .note &&
+            !($0.destination.kind == .sustain && $0.value == 0) } +
+            commands.filter { $0.destination.kind == .note && $0.value == 0 } +
+            commands.filter { $0.destination.kind == .note && $0.value > 0 } +
+            commands.filter { $0.destination.kind == .sustain && $0.value == 0 }
     }
 
     /// Release an on-screen control without disconnecting its sibling axes.
