@@ -23,7 +23,7 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
     private var token:String?
     private var startAt:Int64?
     private var opened=false
-    private var sending=false
+    private var writes=MobileLANWriteFence()
     private var terminal=false
     private var message="Not connected"
     public init(endpoint:MobileLANEndpoint,selection:MobileLANSession.Selection) {
@@ -85,7 +85,10 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
     private func watchdog(){
         guard !terminal else{return}
         let now=Self.nowNS
-        if opened {dispatch(policy.poll(now:now))}
+        if opened {
+            if case .close(let reason)=writes.poll(now:now){finish(reason);return}
+            dispatch(policy.poll(now:now))
+        }
         else if let startAt,now-startAt>=5_000_000_000 {finish("TLS setup timed out")}
     }
     private func current(_ task:URLSessionWebSocketTask)->Bool {!terminal && socket === task}
@@ -103,16 +106,22 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
         }
     }
     private func send(_ payload:URLSessionWebSocketTask.Message,task:URLSessionWebSocketTask){
-        guard current(task),!sending else{finish("Send backpressure");return}
-        sending=true
+        guard current(task),let lease=writes.begin(now:Self.nowNS) else{finish("Send backpressure");return}
         task.send(payload) { [weak self,weak task] error in
             guard let self,let task else{return}
             let failed=error != nil
             self.queue.async { [weak self] in
                 guard let self,self.current(task) else{return}
-                self.sending=false
-                if failed {self.finish("Transport send failed")}
+                let now=Self.nowNS
+                self.handleWriteResult(self.writes.complete(lease,success:!failed,now:now),now:now)
             }
+        }
+    }
+    private func handleWriteResult(_ result:MobileLANWriteFence.Result,now:Int64){
+        switch result {
+        case .wait:break
+        case .close(let reason):finish(reason)
+        case .deliver(let text):dispatch(policy.receive(text:text,now:now))
         }
     }
     private func read(_ task:URLSessionWebSocketTask){
@@ -123,7 +132,8 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
                 guard let self,self.current(task) else{return}
                 switch result {
                 case .success(.string(let text)):
-                    self.dispatch(self.policy.receive(text:text,now:Self.nowNS))
+                    let now=Self.nowNS
+                    self.handleWriteResult(self.writes.receive(text,now:now),now:now)
                     self.read(task)
                 default:self.finish("Unexpected or failed WebSocket response")
                 }
@@ -132,7 +142,7 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
     }
     private func finish(_ reason:String){
         guard !terminal else{return}
-        terminal=true;token=nil;message=reason;_=policy.abort()
+        terminal=true;token=nil;message=reason;writes.retire();_=policy.abort()
         timer?.cancel();timer=nil
         if let lifecycle {NotificationCenter.default.removeObserver(lifecycle);self.lifecycle=nil}
         let old=socket;socket=nil
