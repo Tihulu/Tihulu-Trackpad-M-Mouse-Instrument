@@ -131,6 +131,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pad[aria-disabled=true]{opacity:.45}#dot{position:absolute;width:22px;height:22px;background:#e34f4f;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}#dot[hidden]{display:none}
 #releaseAll{min-height:44px;border-color:#e5a33b}#status{min-height:2.8em}small{color:#bdbdbd}
 #drumGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}#drumGrid button{margin:0;min-height:80px;padding:8px;touch-action:none;user-select:none;overflow-wrap:anywhere}#drumGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5} @media(max-width:420px){#drumGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+#kitBoard{position:relative;height:clamp(250px,48vh,430px);border:1px solid #777;border-radius:12px;background:radial-gradient(#454545 1px,transparent 1px) 0 0/16px 16px;overflow:hidden}
+#kitBoard button{position:absolute;margin:0;transform:translate(-50%,-50%);width:clamp(48px,18%,100px);aspect-ratio:1;border-radius:50%;padding:3px;touch-action:none;font-size:clamp(10px,2.4vw,14px);background:#303947;border:2px solid #8e9bad;overflow-wrap:anywhere}
+#kitBoard button[data-cymbal=true]{background:#66512a;border-color:#d9b65c}
+#kitBoard button[data-selected=true]{outline:3px solid #79c9a5;outline-offset:2px}
+#kitBoard button[data-hit=true]{background:#286b50;border-color:#79c9a5}
+#kitEditor label{display:block}#kitEditor button{min-height:44px}
 #pianoBoard{position:relative;height:clamp(145px,30vh,240px);touch-action:none;user-select:none}
 #pianoBoard button{position:absolute;margin:0;border-radius:0 0 6px 6px;padding:0 0 8px;display:flex;align-items:flex-end;justify-content:center;touch-action:none;user-select:none;font-size:12px}
 #pianoBoard .whiteKey{top:0;height:100%;background:#f1f1f1;color:#252525;border-color:#555;z-index:1}
@@ -231,7 +237,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <button id="drumEnable" disabled>Enable drum pads</button><button id="drumRelease" disabled>Release all pads</button>
 <p id="drumStatus" role="status">Off.</p><div id="drumGrid"><button id="drum0" type="button" aria-pressed="false" disabled>1 · Kick</button><button id="drum1" type="button" aria-pressed="false" disabled>2 · Snare</button><button id="drum2" type="button" aria-pressed="false" disabled>3 · Closed Hi-Hat</button><button id="drum3" type="button" aria-pressed="false" disabled>4 · Open Hi-Hat</button><button id="drum4" type="button" aria-pressed="false" disabled>5 · Low Tom</button><button id="drum5" type="button" aria-pressed="false" disabled>6 · High Tom</button><button id="drum6" type="button" aria-pressed="false" disabled>7 · Crash</button><button id="drum7" type="button" aria-pressed="false" disabled>8 · Ride</button></div>
 <small>Multiple fingers supported. Hold a pad to sustain its note; lift to release. Fixed host velocity, no pressure sensing. Release all clears pending hits.</small>
-<div id="airStickSection" hidden><h3>Air stick</h3><label for="airStickPad">Assigned strike pad</label><select id="airStickPad"></select><button id="airStickStart" type="button" disabled>Enable air stick</button><button id="airStickStop" type="button" disabled>Stop air stick</button><p id="airStickStatus" role="status">Off.</p><small>Gravity-free motion triggers a mapped pad at fixed velocity. Hold securely, use small movements and never hit a surface.</small></div></section>
+<div id="airStickSection" hidden><h3>Air stick · Drum kit</h3><div id="kitBoard" aria-label="Editable assigned drum kit"></div>
+<button id="kitEdit" type="button" aria-pressed="false">Edit kit layout</button><div id="kitEditor" hidden>
+<label for="kitPart">Kit element</label><select id="kitPart"></select><button id="kitAdd" type="button">Add to layout</button><button id="kitRemove" type="button">Remove from layout</button>
+<label for="kitX">Horizontal position</label><input id="kitX" type="range" min="12" max="88" step="1">
+<label for="kitY">Vertical position</label><input id="kitY" type="range" min="15" max="85" step="1">
+<button id="kitSave" type="button">Save layout on this browser</button><button id="kitReset" type="button">Reset kit</button><p id="kitStatus" role="status"></p>
+<small>Drag a visible element or adjust its position. Add/remove changes presentation only; the Mac owns MIDI assignments. Only assigned pads can be added.</small></div>
+<label for="airStickPad">Assigned strike pad</label><select id="airStickPad"></select><button id="airStickStart" type="button" disabled>Enable air stick</button><button id="airStickStop" type="button" disabled>Stop air stick</button><p id="airStickStatus" role="status">Off.</p><small>Gravity-free motion triggers a mapped pad at fixed velocity. Hold securely, use small movements and never hit a surface.</small></div></section>
 <section id="pianoSection" hidden aria-labelledby="piano-title"><h2 id="piano-title">Piano</h2>
 <p>Only keys and sustain mapped for this paired device are available. Key positions identify logical controls. Scale hints are available only for a verified default pitch mapping.</p>
 <button id="pianoEnable" disabled>Enable piano</button><button id="pianoRelease" disabled>Release keys &amp; pedal</button>
@@ -1091,6 +1104,66 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const drumEnable=get("drumEnable"),drumRelease=get("drumRelease"),drumStatus=get("drumStatus");
   let drumEnabled=false,drumOwners=new Map(),drumQueue=[],drumDesired=0,drumSent=0,lastDrumSend=-Infinity,drumEmergency=false;
   let stickState="idle",stickEpoch=0,stickPad=0,stickKey="",stickAt=0,stickReady=false,stickPulseAt=null,stickLast=-Infinity;
+  const kitKey="tihulu.remote.drum-kit.v1";
+  const kitNames=["Kick","Snare","Closed hi-hat","Open hi-hat","Low tom","High tom","Crash","Ride"];
+  const kitDefault=()=>[[50,78],[25,53],[16,24],[84,50],[63,43],[39,35],[38,15],[77,15]].map(([x,y])=>({x,y,visible:true}));
+  function validKit(v){return Array.isArray(v)&&v.length===8&&v.every(p=>p&&Object.keys(p).length===3&&typeof p.visible==="boolean"&&Number.isInteger(p.x)&&p.x>=12&&p.x<=88&&Number.isInteger(p.y)&&p.y>=15&&p.y<=85);}
+  function loadKit(){try{const raw=window.localStorage?.getItem(kitKey);if(typeof raw==="string"&&raw.length<1024){const v=JSON.parse(raw);if(validKit(v))return v;}}catch{}return kitDefault();}
+  let kit=loadKit(),kitEditing=false,kitPart=0,kitOptionsKey="",kitDrag=null;
+  const kitNodes=kitNames.map((name,i)=>{
+    const b=document.createElement("button");b.type="button";b.textContent=name;b.setAttribute("data-cymbal",String([2,3,6,7].includes(i)));
+    get("kitBoard").appendChild(b);
+    b.addEventListener("click",()=>{if(!kitIdle()||!has("drums",i)||!kit[i].visible)return;if(kitEditing){kitPart=i;}else{stickPad=i;get("airStickPad").value=String(i);}syncStick();});
+    b.addEventListener("pointerdown",e=>{
+      if(!kitEditing||!kitIdle()||!has("drums",i)||!kit[i].visible||e.button!==0)return;
+      e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{return;}
+      kitPart=i;kitDrag={id:e.pointerId,i};syncStick();
+    });
+    b.addEventListener("pointermove",e=>{
+      if(!kitEditing||!kitIdle()||kitDrag?.id!==e.pointerId||kitDrag.i!==i)return;
+      const r=get("kitBoard").getBoundingClientRect();
+      if(![r.left,r.top,r.width,r.height,e.clientX,e.clientY].every(Number.isFinite)||r.width<=0||r.height<=0)return;
+      kit[i].x=Math.round(Math.max(12,Math.min(88,100*(e.clientX-r.left)/r.width)));
+      kit[i].y=Math.round(Math.max(15,Math.min(85,100*(e.clientY-r.top)/r.height)));syncStick();
+    });
+    for(const event of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(event,e=>{if(kitDrag?.id===e.pointerId)kitDrag=null;});
+    return b;
+  });
+  function kitIdle(){return currentView==="play"&&playMode==="stick"&&admitted&&stickState==="idle"&&!releasingAll&&!drumBusy();}
+  function syncKit(){
+    const key=String(caps?.drums??0),idle=kitIdle();
+    if(key!==kitOptionsKey){
+      const assigned=kitNames.map((_,i)=>i).filter(i=>has("drums",i));
+      get("kitPart").replaceChildren(...assigned.map(i=>{const o=document.createElement("option");o.value=String(i);o.textContent=kitNames[i]+" · "+labelFor(9+i);return o;}));
+      kitPart=assigned[0]??0;kitOptionsKey=key;
+    }
+    if(!idle){kitEditing=false;kitDrag=null;}
+    get("kitEdit").disabled=!idle;get("kitEdit").setAttribute("aria-pressed",String(kitEditing));
+    get("kitEditor").hidden=!kitEditing;get("kitPart").value=String(kitPart);
+    for(const id of ["kitPart","kitX","kitY","kitAdd","kitRemove","kitSave","kitReset"])get(id).disabled=!kitEditing||!idle;
+    get("kitAdd").disabled||=kit[kitPart].visible;get("kitRemove").disabled||=!kit[kitPart].visible;
+    get("kitX").value=String(kit[kitPart].x);get("kitY").value=String(kit[kitPart].y);
+    kitNodes.forEach((b,i)=>{
+      b.hidden=!has("drums",i)||!kit[i].visible;b.disabled=!idle;
+      b.style.left=kit[i].x+"%";b.style.top=kit[i].y+"%";
+      b.setAttribute("data-selected",String(i===(kitEditing?kitPart:stickPad)));
+      b.setAttribute("data-hit",String(Boolean(drumDesired&(1<<i))));
+      b.textContent=kitNames[i];b.setAttribute("aria-label",kitNames[i]+" · "+labelFor(9+i));
+    });
+  }
+  function editKit(action){
+    if(!kitIdle()||!kitEditing)return;
+    if(action==="reset"){kit=kitDefault();}
+    else if(action==="save"){try{window.localStorage.setItem(kitKey,JSON.stringify(kit));get("kitStatus").textContent="Layout saved. No assignments stored.";}catch{get("kitStatus").textContent="Storage unavailable.";}}
+    else if(has("drums",kitPart)){
+      if(action==="add"||action==="remove")kit[kitPart].visible=action==="add";
+      else if(action==="x"||action==="y"){
+        const n=Number(get(action==="x"?"kitX":"kitY").value),lo=action==="x"?12:15,hi=action==="x"?88:85;
+        if(Number.isInteger(n)&&n>=lo&&n<=hi)kit[kitPart][action]=n;
+      }
+    }
+    syncStick();
+  }
   function syncStick(){
     const select=get("airStickPad"),key=String(caps?.drums??0);
     if(key!==stickKey){
@@ -1102,7 +1175,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("airStickSection").hidden=playMode!=="stick";
     select.disabled=stickState!=="idle"||!admitted||!caps?.drums;
     get("airStickStart").disabled=playMode!=="stick"||!admitted||!caps?.drums||releasingAll||stickState!=="idle"||drumBusy();
-    get("airStickStop").disabled=stickState==="idle";
+    get("airStickStop").disabled=stickState==="idle";syncKit();
   }
   function resetStick(message="Off."){
     stickEpoch++;stickState="idle";stickReady=false;stickPulseAt=null;stickLast=-Infinity;
@@ -1112,7 +1185,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(playMode!=="stick"||currentView!=="play"||!admitted||releasingAll||stickState!=="idle"||drumBusy()||!has("drums",stickPad))return;
     if(!window.isSecureContext||typeof window.DeviceMotionEvent==="undefined"){get("airStickStatus").textContent="DeviceMotion unavailable.";return;}
     if(!requestWorkload("drums"))return;
-    const epoch=++stickEpoch;stickState="requesting";drumEnabled=true;syncControls();
+    kitEditing=false;kitDrag=null;const epoch=++stickEpoch;stickState="requesting";drumEnabled=true;syncControls();
     get("airStickStatus").textContent="Waiting for motion permission…";
     try{
       const api=window.DeviceMotionEvent;
@@ -1138,7 +1211,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(now-stickLast<150||pending||drumBusy()||releasingAll)return;
     stickLast=now;stickPulseAt=now;drumDown("air-stick",stickPad);
   }
-  function stopStick(){resetStick();drumEnabled=false;releaseDrums();}
+  function stopStick(){if(playMode!=="stick"||stickState==="idle")return;resetStick();drumEnabled=false;releaseDrums();}
   function syncDrums(){
     drumEnable.disabled=!admitted||!caps?.drums||!modeAllows("drums");drumEnable.textContent=drumEnabled?"Disable drum pads":"Enable drum pads";
     drumRelease.disabled=!admitted||(!drumDesired&&!drumSent&&!drumQueue.length);
@@ -1775,6 +1848,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   for(const v of viewNames)get(navId(v)).addEventListener("click",()=>chooseView(v));
   get("playMode").addEventListener("change",choosePlayMode);
   get("airStickPad").addEventListener("change",()=>{const i=Number(get("airStickPad").value);if(stickState==="idle"&&Number.isInteger(i)&&has("drums",i))stickPad=i;else get("airStickPad").value=String(stickPad);});
+  get("kitEdit").addEventListener("click",()=>{if(kitIdle()){kitEditing=!kitEditing;kitDrag=null;syncStick();}});
+  get("kitPart").addEventListener("change",()=>{const i=Number(get("kitPart").value);if(kitIdle()&&kitEditing&&Number.isInteger(i)&&has("drums",i))kitPart=i;syncStick();});
+  for(const [id,action] of [["kitAdd","add"],["kitRemove","remove"],["kitSave","save"],["kitReset","reset"]])get(id).addEventListener("click",()=>editKit(action));
+  get("kitX").addEventListener("input",()=>editKit("x"));get("kitY").addEventListener("input",()=>editKit("y"));
   get("airStickStart").addEventListener("click",startStick);
   get("airStickStop").addEventListener("click",stopStick);
   releaseAll.addEventListener("click",releaseMyControls);
