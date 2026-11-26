@@ -30,6 +30,18 @@ try:
         assert page.evaluate("runChecks.length") == 71
         assert page.evaluate("runChecks.every(x => x.ok)")
         print("PASS: 32 desktop navigations and 71 browser-executed state checks")
+        page.locator("#navSearch").fill("patchbay")
+        assert page.locator("[data-page]:visible").count() == 1
+        page.locator('[data-page="patchbay"]').click()
+        page.locator("#navSearch").fill("")
+        assert page.locator("[data-page]:visible").count() == 32
+        page.locator('[data-page="settings"]').click()
+        page.locator('[data-vfield="pref:language"]').select_option("Türkçe")
+        assert "Ayarlar" in page.locator('[data-page="settings"]').inner_text()
+        page.locator('[data-vfield="pref:language"]').select_option("Deutsch")
+        assert "Einstellungen" in page.locator('[data-page="settings"]').inner_text()
+        page.locator('[data-vfield="pref:language"]').select_option("English")
+        print("PASS: search and sidebar language switches")
         page.locator('[data-page="profiles"]').click()
         page.locator('[data-sim="profile:2"]').click()
         page.locator('[data-page="builder"]').click()
@@ -53,11 +65,14 @@ try:
         assert page.evaluate("S.panic && !armed() && !consoleHeld.size")
         print("PASS: patchbay, layout reorder/save, cross-source sustain case, panic")
         page.set_viewport_size({"width": 390, "height": 844})
-        for name in ("home", "touchlab", "mobilelab", "settings", "patchbay", "layouteditor"):
+        for name in page.locator("[data-page]").evaluate_all("(xs) => xs.map(x => x.dataset.page)"):
             page.locator(f'[data-page="{name}"]').click()
             assert page.locator("main h1").is_visible(), name
-            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 2"), f"horizontal page overflow: {name}"
-        print("PASS: six mobile viewport navigation and overflow checks")
+            width = page.evaluate("document.documentElement.scrollWidth")
+            if width > 392:
+                offenders = page.evaluate("""() => [...document.querySelectorAll('main *')].map(e => ({tag:e.tagName, cls:typeof e.className==='string'?e.className:'svg',right:Math.round(e.getBoundingClientRect().right)})).filter(e=>e.right>innerWidth+2).slice(0,12)""")
+                raise AssertionError(f"horizontal page overflow: {name}, width={width}, candidates={offenders}")
+        print("PASS: all 32 mobile viewport navigation and overflow checks")
         assert not errors, errors
         browser.close()
 finally:
