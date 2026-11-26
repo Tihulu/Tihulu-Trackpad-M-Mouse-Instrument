@@ -38,9 +38,11 @@ try:
         page.locator('[data-v4="graphApply"]').click()
         assert page.evaluate("S.routes.length") == 5
         page.locator('[data-page="layouteditor"]').click()
-        page.locator('[data-v4="layoutOpen"]').click()
+        page.get_by_role("button", name="Reload saved layout", exact=True).click()
         assert page.locator("[data-widget]").count() == 5
-        page.locator("[data-widget]").first.drag_to(page.locator("[data-widget]").last)
+        first_widget = page.locator("[data-widget]").first.get_attribute("data-widget")
+        page.locator(f'[data-v4="layoutDown:{first_widget}"]').click()
+        assert page.locator("[data-widget]").nth(1).get_attribute("data-widget") == first_widget
         page.locator('[data-v4="layoutSave"]').click()
         assert page.evaluate("S.controlLayout.length") == 5
         page.locator('[data-page="lab"]').click()
@@ -49,7 +51,7 @@ try:
         assert page.evaluate("scenarioExpectations[14]()")
         page.locator("#panic").click()
         assert page.evaluate("S.panic && !armed() && !consoleHeld.size")
-        print("PASS: patchbay, layout drag/save, cross-source sustain case, panic")
+        print("PASS: patchbay, layout reorder/save, cross-source sustain case, panic")
         page.set_viewport_size({"width": 390, "height": 844})
         for name in ("home", "touchlab", "mobilelab", "settings", "patchbay", "layouteditor"):
             page.locator(f'[data-page="{name}"]').click()
