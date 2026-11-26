@@ -62,3 +62,22 @@ import Testing
     let released=runtime.stop()
     #expect(released==[.init(a,value:0)])
 }
+
+
+@Test func physicalGamepadCaptureReceiptIsNotRenewedByDelayedSnapshotRead() throws {
+    let note=SensorDestination(.note,number:60)
+    var state=PhysicalPatchRuntime()
+    try state.configure(.init(routes:[.init(id:"n",source:.gamepad1,signal:.padA,destination:note)]))
+    let neutral=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+    var buttons=Array(repeating:0.0,count:12);buttons[0]=1
+    let held=try #require(GamepadFrame(buttons:buttons,triggers:[0,0],sticks:[0,0,0,0]))
+    #expect(state.receiveGamepad(source:.gamepad1,frame:neutral,now:1).isEmpty)
+    #expect(state.receiveGamepad(source:.gamepad1,frame:held,now:1.02,hostTime:1.01)==[.init(note,value:100)])
+    #expect(state.receiveGamepad(source:.gamepad1,frame:held,now:1.3,hostTime:1.02).isEmpty)
+    #expect(state.expire(now:1.38)==[.init(note,value:0)])
+    #expect(state.receiveGamepad(source:.gamepad1,frame:neutral,now:2,hostTime:1.5).isEmpty)
+    #expect(state.receiveGamepad(source:.gamepad1,frame:held,now:2.01).isEmpty)
+    #expect(state.receiveGamepad(source:.gamepad1,frame:neutral,now:2.02).isEmpty)
+    #expect(state.receiveGamepad(source:.gamepad1,frame:held,now:2.03)==[.init(note,value:100)])
+    #expect(state.receiveGamepad(source:.gamepad1,frame:held,now:2.04,hostTime:2.02)==[.init(note,value:0)])
+}

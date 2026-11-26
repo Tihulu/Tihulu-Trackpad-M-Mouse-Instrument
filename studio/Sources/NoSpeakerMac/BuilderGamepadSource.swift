@@ -50,6 +50,12 @@ import NoSpeakerCore
     /// queue. Handle immediately, without creating a separate task per edge.
     /// Polling remains the heartbeat/disconnect fallback.
     public func beginEvents(onFrame: @escaping @MainActor (SensorSource,GamepadFrame?) -> Void) {
+        beginEventsWithReceipt { source,frame,_ in onFrame(source,frame) }
+    }
+
+    /// Receipt is the start of the synchronous snapshot read, not its
+    /// completion or a claim about the hardware's original event time.
+    public func beginEventsWithReceipt(onFrame: @escaping @MainActor (SensorSource,GamepadFrame?,Double) -> Void) {
         guard eventToken == nil, !bound.isEmpty else { return }
         let token = UUID()
         eventToken = token
@@ -60,7 +66,8 @@ import NoSpeakerCore
             profile.valueChangedHandler = { [weak self] _,_ in
                 MainActor.assumeIsolated {
                     guard let self, self.eventToken == token else { return }
-                    onFrame(source,self.read(source))
+                    let receipt=ProcessInfo.processInfo.systemUptime
+                    onFrame(source,self.read(source),receipt)
                 }
             }
         }

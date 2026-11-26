@@ -117,3 +117,8 @@ Preserve the maximum trusted monotonic sample across frame admission failure eve
 ## Group co-owner retirement reconciliation
 
 A send/receipt fault or explicit Group Stop can retire all members of another source's lease. Reconcile exhausted bindings immediately after frame delivery and disconnect/stop. Remove authenticated remote tokens, reset physical neutral state and camera acquisition; leave partially surviving layered leases intact. The remote bridge's next processing tick revokes the transport slot, without accepting another packet in the meantime. Regression checks shared endpoint failure with and without a surviving layer, and independent tablet preservation. No global panic, deadlines, or new permissions.
+
+
+## Native scalar and controller read receipt
+
+Capture monotonic receipt before synchronous HID lid report/controller snapshot reads rather than after completion. Group and Builder callbacks propagate that original receipt. Lid adapter refuses a blocked read or a gap beyond the existing physical timeout, including on initial probe; legacy hinge callback also receives only admitted samples. Builder rejects stale pre-delivery snapshots through its owned Stop cleanup instead of fencing note-offs with an expired receipt. Core Gamepad expiry now uses original receipt and rejects reordered samples. Existing public event callback remains available. New portable regression covers delayed renewal, stale neutral and reordered receipt. Native hardware acceptance remains separate; the snapshot receipt is host read start, not a hardware event timestamp. No deadline relaxation.

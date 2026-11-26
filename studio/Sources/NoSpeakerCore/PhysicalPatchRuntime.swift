@@ -251,13 +251,14 @@ public struct PhysicalPatchRuntime: Sendable {
 
     /// The adapter supplies a full snapshot of a previously bound controller.
     /// Neutral frame required before first play or after loss/stall.
-    public mutating func receiveGamepad(source:SensorSource,frame:GamepadFrame?,now:Double) -> [SensorCommand] {
+    public mutating func receiveGamepad(source:SensorSource,frame:GamepadFrame?,now:Double,hostTime:Double? = nil) -> [SensorCommand] {
         guard GamepadFrame.sources.contains(source),supported.contains(source) else { return [] }
-        guard let frame,now.isFinite,now >= 0 else { return releaseGamepad(source) }
-        if let last = seen[source],!Self.admitsPhysicalReceipt(last,now:now) {
+        let receipt=hostTime ?? now
+        guard let frame,Self.admitsPhysicalReceipt(receipt,now:now) else { return releaseGamepad(source) }
+        if let last = seen[source],(!Self.admitsPhysicalReceipt(last,now:now) || receipt<last) {
             return releaseGamepad(source)
         }
-        seen[source] = now
+        seen[source] = receipt
         if !gamepadArmed.contains(source) {
             if frame.active.isEmpty { gamepadArmed.insert(source) }
             return []

@@ -430,9 +430,9 @@ final class StudioController: ObservableObject {
         if sources.contains(.lid) {
             let sensor = MacBookHingeAngleSource()
             groupHinge = sensor
-            sensor.onAngle = { [weak self, weak sensor] degrees in
+            sensor.onAngle = { [weak self, weak sensor] degrees,receipt in
                 guard let self, let sensor, self.groupHinge === sensor, self.groupRunToken == token else { return }
-                self.receiveGroupScalar(.lid,value:PhysicalPatchRuntime.normalizedLid(degrees),run:token)
+                self.receiveGroupScalar(.lid,value:PhysicalPatchRuntime.normalizedLid(degrees),run:token,hostTime:receipt)
             }
             sensor.onLoss = { [weak self, weak sensor] reason in
                 guard let self, let sensor, self.groupHinge === sensor, self.groupRunToken == token else { return }
@@ -489,8 +489,8 @@ final class StudioController: ObservableObject {
         }
         pollGroupGamepads(run:token)
         guard groupRunToken == token else { return }
-        builderGamepads.beginEvents { [weak self] source,frame in
-            self?.receiveGroupGamepad(source:source,frame:frame,run:token)
+        builderGamepads.beginEventsWithReceipt { [weak self] source,frame,receipt in
+            self?.receiveGroupGamepad(source:source,frame:frame,run:token,hostTime:receipt)
         }
         groupWatchdog = Task { [weak self] in
             while !Task.isCancelled {
@@ -618,10 +618,10 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func receiveGroupScalar(_ source:SensorSource,value:Double?,run:UUID) {
+    private func receiveGroupScalar(_ source:SensorSource,value:Double?,run:UUID,hostTime:Double? = nil) {
         guard groupRunToken == run, let token = groupGamepadTokens[source] else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        guard let result = groupHost.receiveScalar(source,token:token,value:value,hostTime:now,now:now) else { return }
+        guard let result = groupHost.receiveScalar(source,token:token,value:value,hostTime:hostTime ?? now,now:now) else { return }
         consumeGroupReports(result.reports)
         if source == .lid, result.status == .lost || result.status == .waitingForNeutral {
             groupHinge?.stop()
@@ -1479,10 +1479,10 @@ final class StudioController: ObservableObject {
                     guard let token = patchNativeToken else { stopInstrumentPatch(); return }
                     let sensor = MacBookHingeAngleSource()
                     patchHinge = sensor
-                    sensor.onAngle = { [weak self] degrees in
+                    sensor.onAngle = { [weak self] degrees,receipt in
                         guard let self, self.patchNativeToken == token, self.patchRunning else { return }
                         self.patchLidDegrees = degrees
-                        self.receiveBuilderScalar(.lid, value: PhysicalPatchRuntime.normalizedLid(degrees))
+                        self.receiveBuilderScalar(.lid, value: PhysicalPatchRuntime.normalizedLid(degrees),hostTime:receipt)
                     }
                     sensor.onLoss = { [weak self, weak sensor] reason in
                         guard let self, let sensor, self.patchHinge === sensor, self.patchNativeToken == token else { return }
@@ -1528,11 +1528,12 @@ final class StudioController: ObservableObject {
                 // changes without waiting for the 20 ms watchdog.
                 if let token = patchNativeToken {
                     for source in patchGamepadPollSources {
-                        receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token)
+                        let receipt=ProcessInfo.processInfo.systemUptime
+                        receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token,hostTime:receipt)
                     }
                     if patchRunning {
-                        builderGamepads.beginEvents { [weak self] source,frame in
-                            self?.receiveBuilderGamepad(source:source,frame:frame,token:token)
+                        builderGamepads.beginEventsWithReceipt { [weak self] source,frame,receipt in
+                            self?.receiveBuilderGamepad(source:source,frame:frame,token:token,hostTime:receipt)
                         }
                     }
                 }
@@ -1634,11 +1635,17 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func receiveBuilderScalar(_ source: SensorSource, value: Double?) {
+    private func receiveBuilderScalar(_ source: SensorSource, value: Double?,hostTime:Double? = nil) {
         guard patchRunning, patchPhysical else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        let commands = patchPhysicalRuntime.receiveScalar(source: source, value: value, hostTime: now, now: now)
-        recordPatchCommands(commands,receipt:now)
+        let receipt=hostTime ?? now
+        guard PhysicalPatchRuntime.admitsPhysicalReceipt(receipt,now:now) else {
+            stopInstrumentPatch()
+            patchStatus = "Scalar input expired before delivery. Restart Builder explicitly."
+            return
+        }
+        let commands = patchPhysicalRuntime.receiveScalar(source: source, value: value, hostTime:receipt, now:now)
+        recordPatchCommands(commands,receipt:receipt)
     }
 
     var builderBarToken: UUID? { groupNativeBar ? groupRunToken : (patchNativeBar ? patchNativeToken : nil) }
@@ -1774,11 +1781,17 @@ final class StudioController: ObservableObject {
         recordPatchCommands(commands)
     }
 
-    private func receiveBuilderGamepad(source:SensorSource,frame:GamepadFrame?,token:UUID) {
+    private func receiveBuilderGamepad(source:SensorSource,frame:GamepadFrame?,token:UUID,hostTime:Double? = nil) {
         guard patchRunning, patchPhysical, patchNativeToken == token else { return }
         let now=ProcessInfo.processInfo.systemUptime
-        let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:now)
-        recordPatchCommands(commands,receipt:now)
+        let receipt=hostTime ?? now
+        guard PhysicalPatchRuntime.admitsPhysicalReceipt(receipt,now:now) else {
+            stopInstrumentPatch()
+            patchStatus = "Controller snapshot expired before delivery. Restart Builder explicitly."
+            return
+        }
+        let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:now,hostTime:receipt)
+        recordPatchCommands(commands,receipt:receipt)
     }
 
     private func startPatchWatchdog() {
@@ -1843,7 +1856,8 @@ final class StudioController: ObservableObject {
         guard patchRunning else { return }
         for source in patchGamepadPollSources {
             guard let token = patchNativeToken else { return }
-            receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token)
+            let receipt=ProcessInfo.processInfo.systemUptime
+            receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token,hostTime:receipt)
             guard patchRunning else { return }
         }
         let expired = patchPhysicalRuntime.expire(now: ProcessInfo.processInfo.systemUptime)
@@ -2877,7 +2891,7 @@ final class StudioController: ObservableObject {
         guard !liveHingeEnabled else { return }
         let sensor = MacBookHingeAngleSource()
         hingeSensor = sensor
-        sensor.onAngle = { [weak self, weak sensor] degrees in
+        sensor.onAngle = { [weak self, weak sensor] degrees,_ in
             guard let self, let sensor, self.hingeSensor === sensor else { return }
             self.applySimulatedHingeAngle(degrees)
         }
