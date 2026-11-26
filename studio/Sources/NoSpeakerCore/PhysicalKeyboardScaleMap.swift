@@ -129,6 +129,27 @@ public struct PhysicalKeyboardScaleMap: Equatable, Sendable {
                            bendRangeSemitones:bendRangeSemitones)
     }
 
+    /// Complete offline MPE member disposition. The original-note case
+    /// must use a separately owned member channel, not a shared bypass.
+    public enum MemberOutput:Equatable,Sendable {
+        case tuned(MemberPitch)
+        case original(inputNote:Int,anchor:Int,bend:Int,bendRangeSemitones:Int)
+        case muted
+        case unavailable
+    }
+    public func memberOutput(_ note:Int,bendRangeSemitones:Int=2)->MemberOutput {
+        guard (1...96).contains(bendRangeSemitones) else{return .unavailable}
+        switch output(note) {
+        case .tuned:
+            guard let member=memberPitch(note,bendRangeSemitones:bendRangeSemitones) else{return .unavailable}
+            return .tuned(member)
+        case .originalMIDI(let original):
+            return .original(inputNote:note,anchor:original,bend:8192,bendRangeSemitones:bendRangeSemitones)
+        case .muted:return .muted
+        case .unavailable:return .unavailable
+        }
+    }
+
     public func keyboard(low: Int, high: Int) -> [Key]? {
         guard (0...127).contains(low), (low...127).contains(high) else { return nil }
         return (low...high).compactMap { key($0) }

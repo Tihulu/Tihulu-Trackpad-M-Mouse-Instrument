@@ -84,3 +84,18 @@ import Testing
     #expect(map.output(61) == .unavailable)
     #expect(map.output(-1) == .unavailable)
 }
+
+@Test func physicalKeyboardUnlockedMemberOutputSeparatesOriginalAndTunedVoices() throws {
+    let tuning=try #require(MicrotonalKeyboardTuning(degrees:[0,175,400,700],rootMIDI:60))
+    let slots:[Int?]=[0,nil,1,nil,2,nil,nil,3,nil,nil,nil,nil]
+    let map=try #require(PhysicalKeyboardScaleMap(tuning:tuning,inputRoot:60,layout:.chromatic(slots),allowOutsideScale:true))
+    #expect(map.memberOutput(61) == .original(inputNote:61,anchor:61,bend:8192,bendRangeSemitones:2))
+    let tuned=try #require(map.memberPitch(62))
+    #expect(map.memberOutput(62) == .tuned(tuned))
+    #expect(tuned.bend != 8192)
+    #expect(map.memberOutput(61,bendRangeSemitones:0) == .unavailable)
+    #expect(map.memberOutput(128) == .unavailable)
+    let locked=try #require(PhysicalKeyboardScaleMap(tuning:tuning,inputRoot:60,layout:.chromatic(slots)))
+    #expect(locked.memberOutput(61) == .muted)
+    #expect(locked.memberOutput(62) == map.memberOutput(62))
+}
