@@ -30,7 +30,7 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     #expect(try PerformanceGroupProfile.read(next.archive()) == next)
 }
 
-@Test func mobileDraftRejectsStaleSourceConflictsAndThirdFamily() throws {
+@Test func mobileDraftRejectsStaleSourceConflictsAndUnsupportedSignal() throws {
     let profile = mobileDraftFixture()
     var draft = try PerformanceGroupMobileDraft(profile:profile,groupID:profile.groups[0].id,source:.phone2)
     var changed = profile
@@ -38,7 +38,11 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     #expect(throws:PerformanceGroupMobileDraft.EditError.staleProfile) { try draft.applying(to:changed) }
     let added = draft.append(.drumPad1)
     #expect(added)
-    #expect(throws:PerformanceGroupMobileDraft.EditError.unsupportedSurface) { try draft.applying(to:profile) }
+    let third = try draft.applying(to:profile)
+    #expect(PerformanceGroupGamepadSession.supports(third,allowRemote:true))
+    #expect(third.groups[1] == profile.groups[1])
+    draft.routes[draft.routes.count-1].signal = .pressure
+    #expect(throws:PerformanceGroupMobileDraft.EditError.invalidMapping) { try draft.applying(to:profile) }
     draft.routes.removeLast()
     draft.routes[0].source = .tablet
     #expect(throws:PerformanceGroupMobileDraft.EditError.invalidMapping) { try draft.applying(to:profile) }
@@ -170,14 +174,19 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     #expect(mutation11)
     let snapshot=draft.routes
     let mutation12 = draft.appendFamily(.piano)
-    #expect(!mutation12)
-    #expect(draft.routes==snapshot)
+    #expect(mutation12)
+    #expect(Array(draft.routes.prefix(snapshot.count))==snapshot)
+    let fourth = draft.appendFamily(.pedalboard)
+    #expect(fourth)
+    let all = draft.routes
+    let duplicate = draft.appendFamily(.pedalboard)
+    #expect(!duplicate && draft.routes==all)
     let next=try draft.applying(to:profile)
     #expect(PerformanceGroupGamepadSession.supports(next,allowRemote:true))
     #expect(try PerformanceGroupProfile.read(next.archive())==next)
 }
 
-@Test func mobileDraftFamilyFillRefusesPartialCapacityAndForeignFamilyConflict() throws {
+@Test func mobileDraftFamilyFillRespectsSiblingAssignmentsAndRefusesPartialCapacity() throws {
     let lead = PerformanceInstrumentGroup(name:"Lead",patch:.init(routes:[
         .init(id:"x",source:.phone,signal:.x,destination:.init(.pitchBend))
     ]))
@@ -187,8 +196,10 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     let profile=PerformanceGroupProfile(groups:[lead,sibling])
     var draft=try PerformanceGroupMobileDraft(profile:profile,groupID:lead.id,source:.phone)
     let mutation13 = draft.appendFamily(.drums)
-    #expect(!mutation13)
-    #expect(draft.routes==lead.patch.routes)
+    #expect(mutation13)
+    #expect(draft.routes.first==lead.patch.routes.first)
+    let expanded = try draft.applying(to:profile)
+    #expect(expanded.groups[1] == sibling)
     var full=profile
     for i in 0..<(PerformanceGroupProfile.maximumRoutes-3) {
         full.groups[1].patch.routes.append(.init(id:"f-\(i)",source:.phone,signal:.pedalSustain,destination:.init(.sustain)))
