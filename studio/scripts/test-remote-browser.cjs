@@ -1736,11 +1736,29 @@ test("out of range or unconfirmed performance zoom stops without sending notes",
   }
 });
 test("late zoom completion after explicit stop cannot start capture",async()=>{
-  const c=mockCamera();let resolve;c.track.applyConstraints=()=>new Promise(r=>resolve=r);
+  const c=mockCamera();let resolve,signal;const entered=new Promise(r=>signal=r);c.track.applyConstraints=()=>new Promise(r=>{resolve=r;signal();});
   const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
   a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraDesiredZoom.value="2";
-  const start=a.elements.webCameraStart.emit("click");await Promise.resolve();
+  const start=a.elements.webCameraStart.emit("click");await entered;
   a.elements.webCameraStop.emit("click");resolve();await start;
   a.video(0,1);a.step(25);a.video(100,2);
   assert.equal(c.track.stops,1);assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+});
+
+test("hung pre-arm zoom stops camera and never arms when the promise settles",async()=>{
+  const c=mockCamera();let resolve,signal;const entered=new Promise(r=>signal=r);c.track.applyConstraints=()=>new Promise(r=>{resolve=r;signal();});
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraDesiredZoom.value="2";
+  const start=a.elements.webCameraStart.emit("click");await entered;
+  a.step(3000);assert.equal(c.track.stops,1);assert.equal(a.elements.webCameraVideo.srcObject,null);
+  resolve();await start;
+  a.video(0,1);a.step(25);a.video(100,2);
+  assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+});
+test("muted camera track closes the paired helper even before another frame",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(100,2);
+  c.track.events.get("mute")();
+  assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);
 });

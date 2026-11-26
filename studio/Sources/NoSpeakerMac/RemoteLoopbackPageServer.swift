@@ -301,7 +301,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   let cameraStream=null,cameraEpoch=0,cameraPending=false,cameraInFlight=false,cameraZoomPending=false,cameraDevices=[],cameraZoomRange=null;
   const cameraTarget=get("webCameraTarget"),cameraMotionStatus=get("webCameraMotionStatus");
   const cameraMetric=get("webCameraMetric"),cameraSensitivity=get("webCameraSensitivity"),cameraRegion=get("webCameraRegion"),cameraLight=get("webCameraLight"),cameraInvert=get("webCameraInvert"),cameraCalibration=get("webCameraCalibration"),cameraDesiredZoom=get("webCameraDesiredZoom");
-  let cameraConfig=null,cameraBaseline=0,cameraArmed=false;
+  let cameraConfig=null,cameraBaseline=0,cameraArmed=false,cameraSetupTimer=null;
+  function clearCameraSetupTimer(){if(cameraSetupTimer!==null)clearTimeout(cameraSetupTimer);cameraSetupTimer=null;}
   let cameraHelper=false,cameraHost="connection",cameraTargetKey="",cameraLane=-1,cameraFrameId=null,cameraContext=null,cameraPrior=null,cameraAt=null,cameraStartedAt=0,cameraMediaTime=-Infinity,cameraQuiet=0,cameraReleaseAt=null;
   const cameraMedia=()=>window.isSecureContext===true&&typeof navigator!=="undefined"&&navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==="function"?navigator.mediaDevices:null;
   const cameraMode=()=>Boolean(ws&&admitted&&caps&&(caps.pedals&7)&&currentView==="play"&&playMode==="camera");
@@ -324,6 +325,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function disposeCamera(stream){if(stream)for(const track of stream.getTracks()){try{track.stop();}catch{}}}
   function stopCamera(message="Camera off."){
+    clearCameraSetupTimer();
     if(cameraFrameId!==null){try{cameraVideo.cancelVideoFrameCallback?.(cameraFrameId);}catch{}}cameraFrameId=null;
     cameraHelper=false;cameraLane=-1;cameraConfig=null;cameraBaseline=0;cameraArmed=false;cameraContext=null;cameraPrior=null;cameraAt=null;cameraMediaTime=-Infinity;cameraQuiet=0;cameraMotionStatus.textContent="Off.";
     cameraEpoch++;cameraPending=false;cameraZoomPending=false;cameraZoomRange=null;
@@ -363,6 +365,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if(tracks.length!==1||stream.getTracks().length!==1||tracks[0].readyState==="ended")throw Error("Invalid camera stream");
       const track=tracks[0];cameraStream=stream;cameraVideo.srcObject=stream;cameraVideo.hidden=false;
       track.addEventListener("ended",()=>{if(epoch===cameraEpoch){if(cameraHelper)close("Camera ended. Reconnect explicitly.");else stopCamera("Camera ended. Start explicitly again.");}});
+      track.addEventListener("mute",()=>{if(epoch===cameraEpoch){if(cameraHelper)close("Camera muted. Reconnect explicitly.");else stopCamera("Camera muted. Start explicitly again.");}});
+      if(track.muted===true)throw Error("Camera muted");
       const zoom=typeof track.getCapabilities==="function"?track.getCapabilities().zoom:null;
       if(zoom&&Number.isFinite(zoom.min)&&Number.isFinite(zoom.max)&&zoom.min>0&&zoom.max>zoom.min){
         cameraZoomRange={min:zoom.min,max:zoom.max,step:Number.isFinite(zoom.step)&&zoom.step>0?zoom.step:0.1};
@@ -373,7 +377,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if(helper&&cameraConfig?.desiredZoom!==null){
         const requested=cameraConfig.desiredZoom;
         if(!cameraZoomRange||requested<cameraZoomRange.min||requested>cameraZoomRange.max||typeof track.applyConstraints!=="function")throw Error("Requested zoom unavailable");
+        cameraSetupTimer=setTimeout(()=>{if(epoch===cameraEpoch)stopCameraExplicit("Camera zoom setup timed out. Stop and restart explicitly.");},3000);
         await track.applyConstraints({advanced:[{zoom:requested}]});
+        if(epoch===cameraEpoch)clearCameraSetupTimer();
         if(epoch!==cameraEpoch||!cameraMode()||cameraStream!==stream||document.hidden)return;
         const actual=track.getSettings?.().zoom;
         if(!Number.isFinite(actual)||actual<cameraZoomRange.min||actual>cameraZoomRange.max||Math.abs(actual-requested)>0.001)throw Error("Requested zoom not confirmed");
