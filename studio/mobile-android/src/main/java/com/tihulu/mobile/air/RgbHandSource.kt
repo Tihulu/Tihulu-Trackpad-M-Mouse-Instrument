@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 @OptIn(ExperimentalCamera2Interop::class)
 class RgbHandSource(private val context: Context, private val owner: LifecycleOwner,
     private val provider: ProcessCameraProvider, private val modelAsset: String,
-    private val fault: (String) -> Unit): DefaultLifecycleObserver {
+    private val localModel:LocalHandModel?=null, private val fault: (String) -> Unit): DefaultLifecycleObserver {
     private val worker = Executors.newSingleThreadExecutor()
     private val closed = AtomicBoolean(false)
     private val started = AtomicBoolean(false)
@@ -134,7 +134,9 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
             upright=rotated
             val engine=detector ?: HandLandmarker.createFromOptions(context,
                 HandLandmarker.HandLandmarkerOptions.builder()
-                    .setBaseOptions(BaseOptions.builder().setModelAssetPath(modelAsset).build())
+                    .setBaseOptions(BaseOptions.builder().apply {
+                        if(localModel!=null)setModelAssetBuffer(localModel.directBuffer()) else setModelAssetPath(modelAsset)
+                    }.build())
                     .setRunningMode(RunningMode.VIDEO).setNumHands(2)
                     .setMinHandDetectionConfidence(0.75f).setMinHandPresenceConfidence(0.75f)
                     .setMinTrackingConfidence(0.75f).build()).also { detector=it }

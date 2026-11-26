@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.os.Bundle
+import java.util.concurrent.Executors
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -34,6 +35,12 @@ class AirPreviewActivity: ComponentActivity() {
     private lateinit var plus:Button
     private lateinit var reset:Button
     private lateinit var mirror:CheckBox
+    private lateinit var modelButton:Button
+    private lateinit var modelStatus:TextView
+    private val importer=Executors.newSingleThreadExecutor()
+    private var localModel:LocalHandModel?=null
+    private var importing=false
+    private var destroyed=false
     private var choices:List<CameraChoice> = emptyList()
     private var range:ZoomRange?=null
     private var zoom=1f
@@ -43,7 +50,23 @@ class AirPreviewActivity: ComponentActivity() {
     private var pending=false
     private var ticket=0L
     private val modes=AirMode.entries.filter {it!=AirMode.BEAM_KEYS&&it!=AirMode.BEAM_HELPER}
-    private val busy get()=pending||source!=null||retiring!=null
+    private val busy get()=pending||source!=null||retiring!=null||importing
+    private val modelPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if(uri!=null&&!busy&&!destroyed) {
+            val epoch=++ticket;importing=true;controls();modelStatus.text="Reading selected local model…"
+            importer.execute {
+                val result=runCatching {contentResolver.openInputStream(uri)?.use {LocalHandModel.read(it)} ?: error("Cannot open model")}
+                handler.post {
+                    if(!destroyed&&epoch==ticket&&importing) {
+                        importing=false
+                        result.onSuccess {localModel=it;modelStatus.text="Selected model SHA-256: "+it.sha256}
+                            .onFailure {localModel=null;modelStatus.text="Model rejected: unreadable, empty or too large"}
+                        controls()
+                    }
+                }
+            }
+        }
+    }
     private val permission=registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         // Permission callback never starts capture; user must press Start again.
         status.text=if(granted)"Camera permission granted. Press Start." else "Camera permission denied."
@@ -75,6 +98,8 @@ class AirPreviewActivity: ComponentActivity() {
         }
         label("TIHULU · Android Air stage")
         label("RGB-only diagnostics · no MIDI, no network, no stored images")
+        modelButton=button("Choose trusted local hand_landmarker.task") {if(!busy)modelPicker.launch(arrayOf("application/octet-stream","application/zip","*/*"))}
+        modelStatus=label("No imported model. Select a trusted local .task file; its hash will be displayed.")
         choices=CameraInventory.list(this)
         cameraPick=spinner(choices.map { c ->
             val facing=when(c.facing){CameraCharacteristics.LENS_FACING_FRONT->"Front";CameraCharacteristics.LENS_FACING_BACK->"Rear";else->"External"}
@@ -139,6 +164,7 @@ class AirPreviewActivity: ComponentActivity() {
         for(v in listOf(cameraPick,modePick,rolePick,orientationPick,mirror))v.isEnabled=!b
         flip.isEnabled=!b&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_FRONT}&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_BACK}
         for(v in listOf(zoomBar,minus,plus,reset))v.isEnabled=!b&&r!=null&&r.max>r.min
+        modelButton.isEnabled=!b
         start.isEnabled=!b&&r?.admits(zoom)==true
         stopButton.isEnabled=pending||source!=null
     }
@@ -154,7 +180,8 @@ class AirPreviewActivity: ComponentActivity() {
             status.text="Select left or right hand for two-hand chords";return
         }
         // The local model must be supplied by the embedding application.
-        if(runCatching {assets.open("hand_landmarker.task").use {}}.isFailure) {
+        val model=localModel
+        if(model==null&&runCatching {assets.open("hand_landmarker.task").use {}}.isFailure) {
             status.text="Local hand_landmarker.task asset required";return
         }
         val epoch=++ticket;pending=true;controls();status.text="Opening camera"
@@ -162,7 +189,7 @@ class AirPreviewActivity: ComponentActivity() {
         future.addListener({
             if(epoch==ticket&&pending&&lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
                 try {
-                    val s=RgbHandSource(this,this,future.get(),"hand_landmarker.task") { message ->
+                    val s=RgbHandSource(this,this,future.get(),"hand_landmarker.task",model) { message ->
                         if(epoch==ticket)end(message)
                     }
                     source=s;projection=p;pending=false;controls()
@@ -172,11 +199,11 @@ class AirPreviewActivity: ComponentActivity() {
         },ContextCompat.getMainExecutor(this))
     }
     private fun end(message:String) {
-        ticket++;pending=false
+        ticket++;pending=false;importing=false
         source?.let {it.stop();retiring=it};source=null;projection=null
         meter.text="All preview keys released";status.text=message;controls()
     }
     override fun onResume(){super.onResume();handler.removeCallbacks(pulse);handler.post(pulse)}
     override fun onPause(){end("App inactive · stopped");handler.removeCallbacks(pulse);super.onPause()}
-    override fun onDestroy(){handler.removeCallbacks(pulse);super.onDestroy()}
+    override fun onDestroy(){destroyed=true;ticket++;importer.shutdownNow();localModel=null;handler.removeCallbacks(pulse);super.onDestroy()}
 }
