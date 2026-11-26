@@ -712,6 +712,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
                     Self.staleSources(in:receiptBindings,now:sampled).isEmpty
             },send:send)
         reports.append(report)
+        reconcileRetiredLeases()
         // Preserve the highest trusted observation even if a subsequent
         // sample regressed. A neutral input cannot rearm below that mark.
         clock = admissionNow
@@ -773,7 +774,9 @@ public struct PerformanceGroupGamepadSession: Sendable {
     }
 
     public mutating func stopGroup(_ id: UUID, send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
-        delivery.stopGroup(id,send:send)
+        let report = delivery.stopGroup(id,send:send)
+        reconcileRetiredLeases()
+        return report
     }
     public mutating func panic(send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
         bindings.removeAll()
@@ -782,6 +785,23 @@ public struct PerformanceGroupGamepadSession: Sendable {
     }
     public mutating func retryCleanup(_ id: UUID, send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
         delivery.retryCleanupReport(id,send:send)
+    }
+
+    /// A Group can retire all members of another source's lease. Do not
+    /// keep a dead remote token authenticated until its next packet, or
+    /// carry a physical source's pre-fault armed state into a new lease.
+    /// A layered lease with any surviving Group remains authoritative.
+    private mutating func reconcileRetiredLeases() {
+        for source in Array(bindings.keys) {
+            guard var binding = bindings[source],let lease = binding.lease,
+                  !delivery.hasLease(lease) else { continue }
+            if remoteModes[source] != nil { bindings.removeValue(forKey:source) }
+            else {
+                binding.reset()
+                bindings[source] = binding
+                if source == .camera { cameraTracking.reset() }
+            }
+        }
     }
 
     private func staleSources(now: Double) -> Set<SensorSource> {
@@ -802,7 +822,9 @@ public struct PerformanceGroupGamepadSession: Sendable {
     private mutating func disconnectWithRestorationFence(_ leases:Set<UUID>,refreshNow:(()->Double)?,
                                                         send:(PerformanceGroupCommand)->Bool) -> [PerformanceGroupDelivery.Report] {
         guard let refreshNow else {
-            return [delivery.disconnectBatch(leases,admitRestoration:nil,send:send)]
+            let report = delivery.disconnectBatch(leases,admitRestoration:nil,send:send)
+            reconcileRetiredLeases()
+            return [report]
         }
         let survivors = bindings
         let sourcesByTarget = restorationSources
@@ -823,6 +845,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         // regresses. A bad clock retires every remaining source once.
         // The complete removal has no surviving owner to restore.
         clock = sampled
+        reconcileRetiredLeases()
         var reports = [report]
         if !valid {
             reports += reset(Set(bindings.keys),refreshNow:nil,send:send)

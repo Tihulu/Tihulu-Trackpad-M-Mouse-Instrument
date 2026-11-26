@@ -588,3 +588,46 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     #expect(result.actions==[.acknowledge(peer,false)])
     #expect(bridge.connectionIDs.isEmpty && session.boundSources.isEmpty)
 }
+
+
+@Test func remoteGroupSharedEndpointFaultImmediatelyRetiresOnlyExhaustedLeases() throws {
+    for layered in [false,true] {
+        let shared=PerformanceInstrumentGroup(name:"Shared",patch:.init(routes:[
+            .init(id:"phone",source:.phone,signal:.drumPad1,destination:.init(.note,number:60)),
+            .init(id:"local",source:.gamepad1,signal:.padA,destination:.init(.note,number:64))
+        ]))
+        let other=groupRemoteFixture(.phone,.drumPad1,67)
+        let tablet=groupRemoteFixture(.tablet,.pianoKey0,72)
+        let profile=PerformanceGroupProfile(groups:layered ? [shared,other,tablet] : [shared,tablet])
+        var session=try PerformanceGroupGamepadSession(profile:profile,allowLayering:layered,allowRemote:true)
+        var bridge=PerformanceGroupRemoteBridge()
+        let local=try session.bind(.gamepad1,now:1)
+        let a=UUID(),b=UUID(),sa=Data(repeating:1,count:32),sb=Data(repeating:2,count:32)
+        let ok:(PerformanceGroupCommand)->Bool={_ in true}
+        _=bridge.process([.ready],now:1,session:&session,send:ok)
+        try bridge.issue(secret:sa,source:.phone,now:1,session:session)
+        _=bridge.process([.invitation(a,sa,1.01)],now:1.01,session:&session,send:ok)
+        try bridge.issue(secret:sb,source:.tablet,now:1.02,session:session)
+        _=bridge.process([.invitation(b,sb,1.03)],now:1.03,session:&session,send:ok)
+        _=bridge.process([.frame(a,groupRemoteWire("drumPads",4,1,",\"mask\":0"),1.04),
+                          .frame(b,groupRemoteWire("pianoKeys",5,1,",\"mask\":0"),1.04)],now:1.04,session:&session,send:ok)
+        _=bridge.process([.frame(a,groupRemoteWire("drumPads",4,2,",\"mask\":1"),1.05),
+                          .frame(b,groupRemoteWire("pianoKeys",5,2,",\"mask\":1"),1.05)],now:1.05,session:&session,send:ok)
+        let neutral=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+        var buttons=Array(repeating:0.0,count:12);buttons[0]=1
+        let held=try #require(GamepadFrame(buttons:buttons,triggers:[0,0],sticks:[0,0,0,0]))
+        _=session.receive(.gamepad1,token:local,frame:neutral,now:1.06,send:ok)
+        var wire:[PerformanceGroupCommand]=[]
+        let failed=session.receive(.gamepad1,token:local,frame:held,now:1.07,send:{ item in
+            wire.append(item)
+            return item.command.value==0
+        })
+        #expect(failed.status == .lost && failed.reports.contains(where:{ $0.failedGroups == [shared.id] }))
+        #expect(wire.allSatisfy { $0.groupID==shared.id } && wire.filter { $0.command.value==0 }.count==2)
+        #expect(session.boundSources.contains(.phone)==layered)
+        #expect(session.sourceStates[.tablet] == .leased && session.pendingCleanup.isEmpty)
+        let tick=bridge.process([],now:1.08,session:&session,send:{_ in Issue.record("Unexpected cleanup");return true})
+        #expect(tick.actions == (layered ? [] : [.revoke(a)]))
+        #expect(bridge.connectionIDs == (layered ? [a,b] : [b]))
+    }
+}

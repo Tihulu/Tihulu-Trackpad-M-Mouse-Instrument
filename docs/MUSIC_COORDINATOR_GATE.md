@@ -112,3 +112,8 @@ The original ten-second metadata negotiation budget is now checked at refreshed 
 ## Group frame high-water and terminal delivery status
 
 Preserve the maximum trusted monotonic sample across frame admission failure even when a later sample regresses. No other source can rearm below that mark. A physical source whose last Group lease was retired now returns lost (like remote), rather than delivered; partially live layered leases retain their scoped report semantics. Add one regression for a two-note frame with forward/backward samples and subsequent neutral rearm on an independent source, and strengthen the existing terminal transport-failure regression. No endpoint or timing policy change.
+
+
+## Group co-owner retirement reconciliation
+
+A send/receipt fault or explicit Group Stop can retire all members of another source's lease. Reconcile exhausted bindings immediately after frame delivery and disconnect/stop. Remove authenticated remote tokens, reset physical neutral state and camera acquisition; leave partially surviving layered leases intact. The remote bridge's next processing tick revokes the transport slot, without accepting another packet in the meantime. Regression checks shared endpoint failure with and without a surviving layer, and independent tablet preservation. No global panic, deadlines, or new permissions.
