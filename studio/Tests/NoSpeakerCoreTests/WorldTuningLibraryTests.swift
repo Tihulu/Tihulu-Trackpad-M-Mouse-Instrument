@@ -3,7 +3,7 @@ import Testing
 
 @Test func worldTuningCatalogIDsAndPitchDomainsAreValid() throws {
     let presets=WorldTuningLibrary.presets
-    #expect(presets.count == 62)
+    #expect(presets.count == 63)
     #expect(Set(presets.map(\.id)).count == presets.count)
     for p in presets {
         #expect(!p.source.isEmpty && !p.note.isEmpty)

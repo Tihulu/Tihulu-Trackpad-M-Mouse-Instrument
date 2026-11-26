@@ -44,6 +44,7 @@ struct CustomScalePanel: View {
                     }
                 }
                 PhysicalKeyboardScalePreview(scale:studio.chordBank.customScale ?? builtInScale)
+                WorldTuningLibraryPanel()
                 Text("Root-relative octave scale, used by generated chords, progressions and arpeggios. Custom chord MIDI notes stay fixed; tuning applies by pitch class. Copy the scale from Touch Instrument to use fretted tuning. External chord tuning requires a compatible MPE receiver.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(8)
