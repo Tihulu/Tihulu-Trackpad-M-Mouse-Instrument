@@ -13,7 +13,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
@@ -1239,4 +1239,23 @@ test("group browser arms four assigned families but retains a two-family workloa
   b.step(221);
   assert.equal(b.socket.closed,true);
   assert.equal(b.elements.playView.hidden,true);
+});
+
+
+test("air stick requires neutral and sends mapped bounded pulse",async()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:2},false);
+  a.elements.playMode.value="stick";a.elements.playMode.emit("change");
+  await a.elements.airStickStart.emit("click");
+  const motion=x=>a.window.emit("devicemotion",{acceleration:{x,y:0,z:0}});
+  motion(10);assert.equal(a.socket.frames.length,0);
+  motion(0);motion(10);a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"drumPads");assert.equal(a.socket.frames.at(-1).mask,2);
+  a.ack();a.step(80);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  a.elements.airStickStop.emit("click");assert.equal(a.window.events.has("devicemotion"),false);
+});
+test("air stick permission denial does not send attacks",async()=>{
+  const a=setup("denied",{...touchOnly,touch:false,drums:1},false);
+  a.elements.playMode.value="stick";a.elements.playMode.emit("change");await a.elements.airStickStart.emit("click");
+  assert.match(a.elements.airStickStatus.textContent,/denied/);assert.equal(a.window.events.has("devicemotion"),false);
+  assert.equal(a.socket.frames.length,0);
 });

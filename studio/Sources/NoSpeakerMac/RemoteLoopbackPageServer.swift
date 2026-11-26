@@ -230,7 +230,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <p>Only pads mapped for this paired device are available. Pad numbers identify controls, not assumed MIDI notes. Actual destinations are listed in Setup when shared.</p>
 <button id="drumEnable" disabled>Enable drum pads</button><button id="drumRelease" disabled>Release all pads</button>
 <p id="drumStatus" role="status">Off.</p><div id="drumGrid"><button id="drum0" type="button" aria-pressed="false" disabled>1 · Kick</button><button id="drum1" type="button" aria-pressed="false" disabled>2 · Snare</button><button id="drum2" type="button" aria-pressed="false" disabled>3 · Closed Hi-Hat</button><button id="drum3" type="button" aria-pressed="false" disabled>4 · Open Hi-Hat</button><button id="drum4" type="button" aria-pressed="false" disabled>5 · Low Tom</button><button id="drum5" type="button" aria-pressed="false" disabled>6 · High Tom</button><button id="drum6" type="button" aria-pressed="false" disabled>7 · Crash</button><button id="drum7" type="button" aria-pressed="false" disabled>8 · Ride</button></div>
-<small>Multiple fingers supported. Hold a pad to sustain its note; lift to release. Fixed host velocity, no pressure sensing. Release all clears pending hits.</small></section>
+<small>Multiple fingers supported. Hold a pad to sustain its note; lift to release. Fixed host velocity, no pressure sensing. Release all clears pending hits.</small>
+<div id="airStickSection" hidden><h3>Air stick</h3><label for="airStickPad">Assigned strike pad</label><select id="airStickPad"></select><button id="airStickStart" type="button" disabled>Enable air stick</button><button id="airStickStop" type="button" disabled>Stop air stick</button><p id="airStickStatus" role="status">Off.</p><small>Gravity-free motion triggers a mapped pad at fixed velocity. Hold securely, use small movements and never hit a surface.</small></div></section>
 <section id="pianoSection" hidden aria-labelledby="piano-title"><h2 id="piano-title">Piano</h2>
 <p>Only keys and sustain mapped for this paired device are available. Key positions identify logical controls. Scale hints are available only for a verified default pitch mapping.</p>
 <button id="pianoEnable" disabled>Enable piano</button><button id="pianoRelease" disabled>Release keys &amp; pedal</button>
@@ -720,6 +721,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     ["xy","XY / pitch bend (as mapped)",["touch"]],
     ["piano","Piano / note strips",["piano"]],
     ["drums","Drum pads",["drums"]],
+    ["stick","Air stick (motion to drum pad)",["drums"]],
     ["pedals","Pedals / effects",["pedals"]],
     ["tilt","Tilt / orientation",["tilt"]],
     ["gyro","Gyro / rotation",["rotation"]],
@@ -803,7 +805,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     releasingAll=true;const now=performance.now();
     // Cancel unsent onsets; retain the state of every already sent owner.
     pointer=null;position=null;dot.hidden=true;touchQueue=touchSent?[{kind:"release",at:now}]:[];
-    drumEnabled=false;drumOwners.clear();drumDesired=0;drumQueue=[];drumEmergency=drumSent!==0;
+    resetStick();drumEnabled=false;drumOwners.clear();drumDesired=0;drumQueue=[];drumEmergency=drumSent!==0;
     pianoEnabled=false;pianoOwners.clear();pianoDesired=0;pianoQueue=[];pianoEmergency=pianoSent!==0;
     pedalEnabled=false;pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;
     drumStatus.textContent=pianoStatus.textContent=pedalStatus.textContent="Off; releasing sent controls.";
@@ -1081,12 +1083,62 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const drumButtons=Array.from({length:8},(_,i)=>get("drum"+i));
   const drumEnable=get("drumEnable"),drumRelease=get("drumRelease"),drumStatus=get("drumStatus");
   let drumEnabled=false,drumOwners=new Map(),drumQueue=[],drumDesired=0,drumSent=0,lastDrumSend=-Infinity,drumEmergency=false;
+  let stickState="idle",stickEpoch=0,stickPad=0,stickKey="",stickAt=0,stickReady=false,stickPulseAt=null,stickLast=-Infinity;
+  function syncStick(){
+    const select=get("airStickPad"),key=String(caps?.drums??0);
+    if(key!==stickKey){
+      select.replaceChildren(...Array.from({length:8},(_,i)=>i).filter(i=>has("drums",i)).map(i=>{
+        const o=document.createElement("option");o.value=String(i);o.textContent=labelFor(9+i);return o;
+      }));
+      stickPad=Array.from({length:8},(_,i)=>i).find(i=>has("drums",i))??0;select.value=String(stickPad);stickKey=key;
+    }
+    get("airStickSection").hidden=playMode!=="stick";
+    select.disabled=stickState!=="idle"||!admitted||!caps?.drums;
+    get("airStickStart").disabled=playMode!=="stick"||!admitted||!caps?.drums||releasingAll||stickState!=="idle"||drumBusy();
+    get("airStickStop").disabled=stickState==="idle";
+  }
+  function resetStick(message="Off."){
+    stickEpoch++;stickState="idle";stickReady=false;stickPulseAt=null;stickLast=-Infinity;
+    get("airStickStatus").textContent=message;syncInertialListener();
+  }
+  async function startStick(){
+    if(playMode!=="stick"||currentView!=="play"||!admitted||releasingAll||stickState!=="idle"||drumBusy()||!has("drums",stickPad))return;
+    if(!window.isSecureContext||typeof window.DeviceMotionEvent==="undefined"){get("airStickStatus").textContent="DeviceMotion unavailable.";return;}
+    if(!requestWorkload("drums"))return;
+    const epoch=++stickEpoch;stickState="requesting";drumEnabled=true;syncControls();
+    get("airStickStatus").textContent="Waiting for motion permission…";
+    try{
+      const api=window.DeviceMotionEvent;
+      if(typeof api.requestPermission==="function"&&await api.requestPermission()!=="granted"){
+        if(epoch===stickEpoch){resetStick("Motion permission denied.");drumEnabled=false;syncControls();}return;
+      }
+    }catch{if(epoch===stickEpoch){resetStick("Motion permission unavailable.");drumEnabled=false;syncControls();}return;}
+    if(epoch!==stickEpoch||!admitted||stickState!=="requesting"||playMode!=="stick")return;
+    stickState="waiting";stickAt=performance.now();stickReady=false;syncInertialListener();syncControls();
+    get("airStickStatus").textContent="Hold still to arm.";
+  }
+  function stickMotion(e){
+    if(stickState!=="waiting"&&stickState!=="active")return;
+    const v=e.acceleration,axes=v?[v.x,v.y,v.z]:[];
+    if(axes.length!==3||!axes.every(x=>Number.isFinite(x)&&Math.abs(x)<=100)){
+      if(stickState==="active")close("Air stick sensor invalid. Reconnect explicitly.");return;
+    }
+    const now=performance.now(),magnitude=Math.hypot(...axes);
+    stickAt=now;
+    if(magnitude<=3){stickReady=true;stickState="active";get("airStickStatus").textContent="Ready · make a small controlled strike.";return;}
+    if(stickState!=="active"||!stickReady||magnitude<8)return;
+    stickReady=false;
+    if(now-stickLast<150||pending||drumBusy()||releasingAll)return;
+    stickLast=now;stickPulseAt=now;drumDown("air-stick",stickPad);
+  }
+  function stopStick(){resetStick();drumEnabled=false;releaseDrums();}
   function syncDrums(){
     drumEnable.disabled=!admitted||!caps?.drums||!modeAllows("drums");drumEnable.textContent=drumEnabled?"Disable drum pads":"Enable drum pads";
     drumRelease.disabled=!admitted||(!drumDesired&&!drumSent&&!drumQueue.length);
-    drumButtons.forEach((b,i)=>{b.hidden=!has("drums",i);b.disabled=!admitted||!drumEnabled||!has("drums",i)||drumEmergency;b.setAttribute("aria-pressed",String(Boolean(drumDesired&(1<<i))));});
+    drumButtons.forEach((b,i)=>{b.hidden=playMode==="stick"||!has("drums",i);b.disabled=playMode==="stick"||!admitted||!drumEnabled||!has("drums",i)||drumEmergency;b.setAttribute("aria-pressed",String(Boolean(drumDesired&(1<<i))));});
+    drumEnable.hidden=playMode==="stick";syncStick();
   }
-  function resetDrums(){drumEnabled=false;drumOwners.clear();drumQueue=[];drumDesired=0;drumSent=0;lastDrumSend=-Infinity;drumEmergency=false;drumStatus.textContent="Off.";syncDrums();}
+  function resetDrums(){resetStick();drumEnabled=false;drumOwners.clear();drumQueue=[];drumDesired=0;drumSent=0;lastDrumSend=-Infinity;drumEmergency=false;drumStatus.textContent="Off.";syncDrums();}
   function drumChanged(){
     let mask=0;for(const index of drumOwners.values())mask|=1<<index;
     if(mask===drumDesired)return;
@@ -1095,11 +1147,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     drumQueue.push({mask,at:performance.now()});syncDrums();tick();
   }
   function releaseDrums(){
+    if(stickState!=="idle"){resetStick();drumEnabled=false;}
     drumOwners.clear();drumDesired=0;drumQueue=[];
     drumEmergency=drumSent!==0;syncControls();tick();
   }
   function drumDown(owner,index){
-    if(!admitted||!drumEnabled||!has("drums",index)||drumEmergency||drumOwners.has(owner))return;
+    if(!admitted||!drumEnabled||!has("drums",index)||drumEmergency||drumOwners.has(owner)||(playMode==="stick")!==(owner==="air-stick"))return;
     if(drumOwners.size>=16){close("Too many drum contacts. Reconnect explicitly.");return;}
     drumOwners.set(owner,index);drumChanged();
   }
@@ -1258,13 +1311,15 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const capturing=s=>["waiting","arming","active"].includes(s.mode);
   function syncInertialListener(){
     window.removeEventListener("devicemotion",deviceMotion);
-    if(streams.some(capturing))window.addEventListener("devicemotion",deviceMotion);
+    if(streams.some(capturing)||stickState==="waiting"||stickState==="active")window.addEventListener("devicemotion",deviceMotion);
   }
   function resetInertial(s,message){
     s.epoch++;s.mode="idle";s.sample=null;s.at=0;s.sent=-1;s.last=-Infinity;s.meter.value=0;s.status.textContent=message;
     syncInertialListener();syncControls();
   }
   function deviceMotion(e){
+    stickMotion(e);
+    if(!admitted)return;
     for(const s of streams){
       if(!capturing(s))continue;
       const v=s.kind==="acceleration"?e.acceleration:e.rotationRate;
@@ -1377,6 +1432,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function tick(){
     if(!admitted||!caps)return;
     const now=performance.now();syncLatency();
+    if(stickState==="waiting"&&now-stickAt>=3000){resetStick("No valid motion data.");drumEnabled=false;syncControls();}
+    if(stickState==="active"&&now-stickAt>=250){close("Air stick motion stopped. Reconnect explicitly.");return;}
+    if(stickPulseAt!==null&&now-stickPulseAt>=80){
+      if(now-stickPulseAt>=150){close("Air stick pulse delayed. Reconnect explicitly.");return;}
+      stickPulseAt=null;drumOwners.delete("air-stick");drumDesired=0;drumQueue=[];drumEmergency=drumSent!==0;syncControls();
+    }
     if(mode==="waiting"&&now-waitingSince>=3000){resetMotion("No valid orientation data. Check permission and device support.");}
     if((mode==="active"||mode==="arming")&&now-sampleAt>=250){close("Orientation stopped. Host releases tilt; reconnect explicitly.");return;}
     for(const s of streams){
@@ -1504,7 +1565,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   // let host disconnect/watchdog release already delivered owners.
   for(const event of ["pointercancel","lostpointercapture"])pad.addEventListener(event,e=>{if(e.pointerId===pointer)close("Touch cancelled. Reconnect explicitly.");});
   function toggleDrums(){
-    if(currentView!=="play"||releasingAll||!admitted||!caps?.drums)return;
+    if(currentView!=="play"||releasingAll||!admitted||!caps?.drums||playMode==="stick")return;
     if(!drumEnabled&&!requestWorkload("drums"))return;
     drumEnabled=!drumEnabled;
     if(!drumEnabled)releaseDrums();
@@ -1622,6 +1683,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("layoutReset").addEventListener("click",resetLayout);
   for(const v of viewNames)get(navId(v)).addEventListener("click",()=>chooseView(v));
   get("playMode").addEventListener("change",choosePlayMode);
+  get("airStickPad").addEventListener("change",()=>{const i=Number(get("airStickPad").value);if(stickState==="idle"&&Number.isInteger(i)&&has("drums",i))stickPad=i;else get("airStickPad").value=String(stickPad);});
+  get("airStickStart").addEventListener("click",startStick);
+  get("airStickStop").addEventListener("click",stopStick);
   releaseAll.addEventListener("click",releaseMyControls);
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);

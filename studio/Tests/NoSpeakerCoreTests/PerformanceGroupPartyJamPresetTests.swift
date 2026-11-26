@@ -123,3 +123,14 @@ import Testing
         #expect(!caps.tilt && !caps.rotation && !caps.acceleration && session.boundSources.isEmpty)
     }
 }
+
+
+@Test func dualPhoneStickPresetSharesDrumPortWithDistinctScopedMasks() throws {
+    let profile=try #require(PerformanceGroupStarterPreset.dualPhoneSticks.makeProfile())
+    #expect(profile.groups.count == 1 && profile.layeredInputs.isEmpty)
+    let session=try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
+    let left=try #require(session.remoteCapabilities(.phone))
+    let right=try #require(session.remoteCapabilities(.phone2))
+    #expect(left.drums == 50 && right.drums == 204 && left.drums & right.drums == 0)
+    #expect(profile.groups[0].patch.routes.allSatisfy { $0.destination.channel == 9 && $0.destination.kind == .note })
+}
