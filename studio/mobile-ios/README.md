@@ -26,12 +26,14 @@ change the logical note. Release all, cancellation, malformed pointer
 ownership, focus/background loss, view detachment or layout resize clears
 the mask and requires a fresh explicit Arm. Back returns to the Air stage.
 
-The native preview does not require camera permissions or a hand model,
-does not open a socket, and never reuses a paired camera session. The
+The local native preview does not require camera permissions or a hand model,
+does not open a socket, and never reuses a paired camera session.
+
+For live playback, establish a paired Mac session with a piano-family assignment, but do not start the camera (or use Pause / change instrument and wait for neutral ACK and camera retirement first). Select **Open assigned touch piano**, scroll the entire playing area into view, and explicitly press **Arm**. Only assigned numbered logical keys are available. The same one-lane session carries the note masks; no new protocol or trust exception is introduced. The view owner renews stationary contacts every 50 ms, subject to the 150 ms owner-gap limit. Release / disconnect, focus loss, clipping, resize, cancellation or loss of the assignment closes the session; reconnect with a fresh invitation. Current pairing still requests camera permission; the touch surface itself does not open the camera. No local synthesizer is included. Real multi-touch, rapid note edges, scheduling jitter and Logic Pro sustain still require device testing. The
 separate touch owner liveness contract is covered by pure state-machine
 and sender integration fixtures: it may sustain a stationary contact only
 while the current foreground view explicitly proves ownership/liveness;
 a 150 ms owner gap retires the lease and the independent transport
-must release/close. It is not yet connected to the live UI or Mac. Real
+must release/close. The experimental assigned touch piano now connects this lease to the existing bounded Mac session; exact platform CI and physical acceptance remain mandatory. Real
 touch cancellation, multi-finger ergonomics, accessibility and latency
 remain physical acceptance work. No new host wire family or trust bypass.
