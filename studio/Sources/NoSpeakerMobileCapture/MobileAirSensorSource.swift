@@ -17,6 +17,24 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
         case rearCamera, frontCamera, lidar
         public var id: String { rawValue }
     }
+    public struct CameraChoice: Identifiable, Equatable, Sendable {
+        public let id:String
+        public let name:String
+        public let zoom:MobileCameraZoomRange
+        public let constituentCount:Int
+    }
+    public static func cameras(for backend:Backend) -> [CameraChoice] {
+        devices(for:backend).compactMap { device in
+            guard let zoom=MobileCameraZoomRange(minimum:Double(device.minAvailableVideoZoomFactor),maximum:Double(device.maxAvailableVideoZoomFactor),switches:device.virtualDeviceSwitchOverVideoZoomFactors.map(\.doubleValue)) else {return nil}
+            return .init(id:device.uniqueID,name:device.localizedName,zoom:zoom,constituentCount:max(1,device.constituentDevices.count))
+        }
+    }
+    private static func devices(for backend:Backend) -> [AVCaptureDevice] {
+        guard backend != .lidar else {return []}
+        let position:AVCaptureDevice.Position=backend == .frontCamera ? .front : .back
+        let types:[AVCaptureDevice.DeviceType]=[.builtInTripleCamera,.builtInDualWideCamera,.builtInDualCamera,.builtInWideAngleCamera,.builtInUltraWideCamera,.builtInTelephotoCamera,.builtInTrueDepthCamera]
+        return AVCaptureDevice.DiscoverySession(deviceTypes:types,mediaType:.video,position:position).devices
+    }
     public enum Event: Sendable {
         case ready
         case frame(MobileAirCaptureFrame)
@@ -38,6 +56,8 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
     private var closed=false
     private var started=false
     private var terminal=false
+    private var stopped=false
+    public var isStopped:Bool {lock.lock();defer{lock.unlock()};return stopped}
     private var camera:AVCaptureSession?
     private var ar:ARSession?
     private var observers:[NSObjectProtocol]=[]
@@ -50,7 +70,7 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
 
     /// Explicit orientation of the raw image for Vision; never infer depth
     /// orientation from display mirroring or the musical coordinate transform.
-    public func start(backend:Backend,orientation:MobileSensorOrientation) {
+    public func start(backend:Backend,orientation:MobileSensorOrientation,cameraID:String?=nil,zoom:Double=1) {
         lock.lock()
         let allowed = !started && !closed && !terminal
         if allowed { started=true }
@@ -65,6 +85,7 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
             })
             switch backend {
             case .lidar:
+                guard cameraID == nil, zoom == 1 else {fail("LiDAR uses its calibrated native camera; zoom unavailable.");return}
                 guard Self.hasLiDAR else { fail("LiDAR scene depth is not supported on this device.");return }
                 let session=ARSession()
                 session.delegateQueue=queue
@@ -76,8 +97,8 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
                 push(.ready)
             case .frontCamera,.rearCamera:
                 do {
-                    let position:AVCaptureDevice.Position=backend == .frontCamera ? .front : .back
-                    guard let device=AVCaptureDevice.default(.builtInWideAngleCamera,for:.video,position:position) else { fail("Selected camera unavailable.");return }
+                    let choices=Self.devices(for:backend)
+                    guard let device=cameraID.flatMap({id in choices.first {$0.uniqueID==id}}) ?? (cameraID == nil ? choices.first : nil) else {fail("Selected camera unavailable.");return}
                     let input=try AVCaptureDeviceInput(device:device)
                     let session=AVCaptureSession()
                     session.beginConfiguration()
@@ -95,6 +116,11 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
                     }
                     session.commitConfiguration()
                     camera=session
+                    try device.lockForConfiguration()
+                    let validZoom=zoom.isFinite && zoom>=Double(device.minAvailableVideoZoomFactor) && zoom<=Double(device.maxAvailableVideoZoomFactor)
+                    if validZoom {device.videoZoomFactor=CGFloat(zoom)}
+                    device.unlockForConfiguration()
+                    guard validZoom else {fail("Zoom not supported by selected camera format.");return}
                     let center=NotificationCenter.default
                     for name in [AVCaptureSession.runtimeErrorNotification,AVCaptureSession.wasInterruptedNotification] {
                         observers.append(center.addObserver(forName:name,object:session,queue:nil) { [weak self] _ in
@@ -126,6 +152,7 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
         observers.removeAll()
         camera?.stopRunning();camera=nil
         ar?.pause();ar?.delegate=nil;ar=nil
+        lock.lock();stopped=true;lock.unlock()
     }
     private func fail(_ message:String) {
         lock.lock()

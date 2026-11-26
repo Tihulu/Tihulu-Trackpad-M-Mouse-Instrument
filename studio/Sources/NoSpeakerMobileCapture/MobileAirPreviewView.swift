@@ -8,6 +8,10 @@ import NoSpeakerCore
 @MainActor public struct MobileAirPreviewView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var backend:MobileAirSensorSource.Backend = .rearCamera
+    @State private var cameras:[MobileAirSensorSource.CameraChoice]=[]
+    @State private var cameraID:String=""
+    @State private var zoom=1.0
+    @State private var retiring:MobileAirSensorSource?
     @State private var mode:MobileAirMode = .pinchKeys
     @State private var role:MobileAirHandRole = .single
     @State private var sensorOrientation:MobileSensorOrientation = .up
@@ -26,8 +30,15 @@ import NoSpeakerCore
     private let timer=Timer.publish(every:0.05,on:.main,in:.common).autoconnect()
 
     public init() {}
-    private var busy:Bool {pending || source != nil}
+    private var busy:Bool {pending || source != nil || retiring != nil}
+    private var selectedCamera:MobileAirSensorSource.CameraChoice? {cameras.first {$0.id==cameraID}}
+    private func refreshCameras() {
+        cameras=MobileAirSensorSource.cameras(for:backend)
+        cameraID=cameras.first?.id ?? ""
+        zoom=selectedCamera?.zoom.defaultFactor ?? 1
+    }
     private var valid:Bool {
+        (backend == .lidar || selectedCamera?.zoom.contains(zoom) == true) &&
         (!mode.usesDepth || backend == .lidar) &&
         (backend != .lidar || MobileAirSensorSource.hasLiDAR) &&
         (mode != .chords || role != .single) && far-near >= 0.1
@@ -49,6 +60,25 @@ import NoSpeakerCore
                         Text("Front camera").tag(MobileAirSensorSource.Backend.frontCamera)
                         if MobileAirSensorSource.hasLiDAR {Text("Rear camera + LiDAR").tag(MobileAirSensorSource.Backend.lidar)}
                     }
+                    if backend != .lidar {
+                        Picker("Camera / lens",selection:$cameraID) {
+                            ForEach(cameras) {c in Text(c.name).tag(c.id)}
+                        }
+                        if let range=selectedCamera?.zoom {
+                            Text("Lens-relative zoom: \(zoom,format:.number.precision(.fractionLength(2)))×")
+                            if range.maximum>range.minimum {
+                                Slider(value:$zoom,in:range.minimum...range.maximum)
+                                HStack {
+                                    Button("−") {zoom=max(range.minimum,zoom/1.25)}
+                                    Button("+") {zoom=min(range.maximum,zoom*1.25)}
+                                    Button("Reset") {zoom=range.defaultFactor}
+                                }
+                                if !range.switches.isEmpty {
+                                    Text("Lens switch factors: "+range.switches.map {String(format:"%.2f×",$0)}.joined(separator:", ")).font(.caption)
+                                }
+                            }
+                        }
+                    } else {Text("LiDAR: native calibrated field of view · zoom locked").font(.caption)}
                     Picker("Instrument / helper",selection:$mode) {
                         ForEach(MobileAirMode.allCases) {m in Text(m.rawValue).tag(m)}
                     }
@@ -106,6 +136,9 @@ import NoSpeakerCore
                 Text("No image is displayed, saved or transmitted. This panel does not play sound. A signed companion and authenticated MIDI connection are separate acceptance gates.").font(.caption).foregroundStyle(.secondary)
             }.padding().frame(maxWidth:640).frame(maxWidth:.infinity)
         }
+        .onAppear {if !busy {refreshCameras()}}
+        .onChange(of:backend) {_,_ in if !busy {refreshCameras()}}
+        .onChange(of:cameraID) {_,_ in if !busy {zoom=selectedCamera?.zoom.defaultFactor ?? 1}}
         .onReceive(timer) {_ in poll()}
         .onChange(of:scenePhase) {_,phase in if phase != .active {stop("App inactive · stopped")} }
         .onDisappear {stop("View closed")}
@@ -122,15 +155,17 @@ import NoSpeakerCore
                 orientation:musicalOrientation,mirrorX:mirror,near:near,far:far) else {stop("Invalid setup");return}
             let capture=MobileAirSensorSource()
             projection=next;source=capture;pending=false;status="Starting sensors"
-            capture.start(backend:backend,orientation:sensorOrientation)
+            capture.start(backend:backend,orientation:sensorOrientation,cameraID:backend == .lidar ? nil:cameraID,zoom:backend == .lidar ? 1:zoom)
         }
     }
     private func stop(_ message:String) {
         generation=UUID();pending=false
-        source?.stop();source=nil;projection=nil
+        if let source {source.stop();retiring=source}
+        source=nil;projection=nil
         output = .init();sample=nil;depth=nil;status=message
     }
     private func poll() {
+        if retiring?.isStopped == true {retiring=nil}
         guard let source,var p=projection else {return}
         let now=MobileAirSensorSource.now
         for event in source.drain() {
