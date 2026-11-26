@@ -17,6 +17,16 @@ struct PerformanceGroupEditorView: View {
     @State private var pendingImport:PerformanceGroupProfile?
     @State private var pendingImportDraft:PerformanceGroupProfile?
     @State private var confirmImport=false
+    @State private var presetLibrary=PerformanceGroupPresetLibrary()
+    @State private var libraryData:Data?
+    @State private var libraryLoaded=false
+    @State private var libraryReadFailed=false
+    @State private var libraryName=""
+    @State private var librarySelection:UUID?
+    @State private var libraryMessage=""
+    @State private var pendingLibraryDelete:PerformanceGroupPresetLibrary.Entry?
+    @State private var confirmLibraryDelete=false
+    private let libraryKey="TIHULU.performanceGroupPresetLibrary.v1"
     @EnvironmentObject private var studio: StudioController
     @State private var allowLayering = false
     @State private var hapticSelection:Set<UUID> = []
@@ -706,7 +716,117 @@ struct PerformanceGroupEditorView: View {
         allowLayering=false
         hapticSelection=[]
         groupsExpanded=false
-        message="Imported editable group layout. Original port identities retained; save and review devices before Start."
+        message="Loaded editable group layout. Original port identities retained; save and review devices before Start."
+    }
+
+    private func loadPresetLibrary() {
+        guard !libraryLoaded else { return }
+        libraryLoaded=true
+        guard let raw=UserDefaults.standard.object(forKey:libraryKey) else { return }
+        guard let data=raw as? Data,let decoded=try? PerformanceGroupPresetLibrary.read(data) else {
+            libraryReadFailed=true
+            libraryMessage="Custom preset library could not be read. Original data retained; library changes blocked."
+            return
+        }
+        presetLibrary=decoded
+        libraryData=data
+        librarySelection=decoded.entries.first?.id
+    }
+
+    @discardableResult
+    private func storePresetLibrary(_ next:PerformanceGroupPresetLibrary) -> Bool {
+        guard libraryLoaded,!libraryReadFailed,!editingLocked,!studio.patchRunning else { return false }
+        let current=UserDefaults.standard.object(forKey:libraryKey)
+        guard (current==nil && libraryData==nil) || (current is Data && (current as? Data)==libraryData) else {
+            libraryMessage="Preset library changed elsewhere. Reopen this screen before editing."
+            return false
+        }
+        do {
+            let data=try next.archive()
+            UserDefaults.standard.set(data,forKey:libraryKey)
+            presetLibrary=next
+            libraryData=data
+            return true
+        } catch { libraryMessage=error.localizedDescription;return false }
+    }
+
+    private func saveNamedPreset() {
+        guard didLoad,!readFailed,!tuningDraft.isDirty,profile.isValid,!profile.groups.isEmpty else { return }
+        var next=presetLibrary
+        let id=UUID()
+        guard next.add(name:libraryName,profile:profile,id:id) else {
+            libraryMessage="Preset not added. Choose a unique name or free library space; existing presets unchanged."
+            return
+        }
+        guard storePresetLibrary(next) else { return }
+        librarySelection=id
+        libraryName=""
+        libraryMessage="Editable copy saved to My Presets. Active saved layout unchanged."
+    }
+
+    private func recallNamedPreset() {
+        guard libraryLoaded,!libraryReadFailed,!editingLocked,!studio.patchRunning,
+              didLoad,!readFailed,!tuningDraft.isDirty,
+              let entry=presetLibrary.entries.first(where:{$0.id==librarySelection}) else { return }
+        if profile==entry.profile {
+            libraryMessage="This layout is already loaded."
+            return
+        }
+        if profile.groups.isEmpty { applyImportedGroupDraft(entry.profile) }
+        else {
+            pendingImport=entry.profile
+            pendingImportDraft=profile
+            confirmImport=true
+        }
+    }
+
+    private var userPresetPanel:some View {
+        GroupBox("My presets · local layouts") {
+            VStack(alignment:.leading,spacing:6) {
+                Text("Keep multiple personal instruments and jam setups. Factory presets stay unchanged.")
+                    .font(.caption).foregroundStyle(.secondary)
+                TextField("New preset name",text:$libraryName)
+                Button("Save current draft as new preset") { saveNamedPreset() }
+                    .disabled(libraryName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ||
+                              !profile.isValid || profile.groups.isEmpty || tuningDraft.isDirty)
+                Picker("Saved preset",selection:$librarySelection) {
+                    Text("Select a preset").tag(UUID?.none)
+                    ForEach(presetLibrary.entries) { entry in
+                        Text(entry.name).tag(Optional(entry.id))
+                    }
+                }
+                if let entry=presetLibrary.entries.first(where:{$0.id==librarySelection}) {
+                    Text("\(entry.profile.groups.count) groups · \(entry.profile.groups.reduce(0) { $0+$1.patch.routes.count }) mappings")
+                        .font(.caption)
+                }
+                HStack {
+                    Button("Load editable copy") { recallNamedPreset() }
+                        .disabled(librarySelection==nil || tuningDraft.isDirty)
+                    Button("Delete saved copy") {
+                        pendingLibraryDelete=presetLibrary.entries.first(where:{$0.id==librarySelection})
+                        confirmLibraryDelete=pendingLibraryDelete != nil
+                    }.disabled(librarySelection==nil)
+                }
+                Text("\(presetLibrary.entries.count) / \(PerformanceGroupPresetLibrary.maximumEntries) presets · 256 KiB total archive limit")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("Group layouts only. Device assignments and MPE tuning files are separate.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !libraryMessage.isEmpty { Text(libraryMessage).font(.caption) }
+            }.padding(6)
+        }.disabled(!didLoad || readFailed || !libraryLoaded || libraryReadFailed || editingLocked || studio.patchRunning)
+        .confirmationDialog("Delete saved preset copy?",isPresented:$confirmLibraryDelete,titleVisibility:.visible) {
+            Button("Delete",role:.destructive) {
+                defer { pendingLibraryDelete=nil }
+                guard let entry=pendingLibraryDelete,presetLibrary.entries.contains(entry) else { return }
+                var next=presetLibrary
+                guard next.remove(entry.id),storePresetLibrary(next) else { return }
+                if librarySelection==entry.id { librarySelection=next.entries.first?.id }
+                libraryMessage="Saved copy deleted. Current draft and active saved layout unchanged."
+            }
+            Button("Cancel",role:.cancel) { pendingLibraryDelete=nil }
+        } message: {
+            Text(pendingLibraryDelete?.name ?? "Selected preset")
+        }
     }
 
     private var starterPanel:some View {
@@ -892,6 +1012,7 @@ struct PerformanceGroupEditorView: View {
     var body: some View {
         VStack(alignment:.leading,spacing:10) {
             starterPanel
+            userPresetPanel
             quickPlayPanel
             DisclosureGroup("Performance Studio - Instrument Groups (experimental)",isExpanded:$groupsExpanded) {
             VStack(alignment:.leading,spacing:10) {
@@ -942,11 +1063,11 @@ struct PerformanceGroupEditorView: View {
                 liveControls
             }.padding(6)
             }
-        }.onAppear { load() }
+        }.onAppear { load(); loadPresetLibrary() }
         .onChange(of:studio.groupGamepadsRunning) { running in
             if !running { hapticSelection = [] }
         }
-        .confirmationDialog("Import and replace group draft?",isPresented:$confirmImport,titleVisibility:.visible) {
+         .confirmationDialog("Load and replace group draft?",isPresented:$confirmImport,titleVisibility:.visible) {
             Button("Replace draft",role:.destructive) {
                 defer { pendingImport=nil;pendingImportDraft=nil }
                 guard let imported=pendingImport,pendingImportDraft==profile else {
@@ -956,7 +1077,7 @@ struct PerformanceGroupEditorView: View {
             }
             Button("Cancel",role:.cancel) { pendingImport=nil;pendingImportDraft=nil }
         } message: {
-            Text("The imported layout keeps its original group port identities. Your saved profile remains unchanged until Save groups. No device assignment or tuning is imported.")
+            Text("The loaded layout keeps its original group port identities. Your saved profile remains unchanged until Save groups. Device assignments and tuning are not loaded.")
         }
         .sheet(item:$mobileDraft) { draft in
             PerformanceGroupMobileDraftView(draft:draft,apply:applyMobileDraft)
