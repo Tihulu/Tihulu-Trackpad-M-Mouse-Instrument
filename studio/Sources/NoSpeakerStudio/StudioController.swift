@@ -2717,6 +2717,15 @@ final class StudioController: ObservableObject {
             touchBarSustainOn = false
             midi?.releaseTouchBarSustain()
         }
+        // Release methods can discover a failed legacy MIDI write. Do not
+        // replace the old mapping while the service is faulted. Active
+        // unrelated owners may have legitimate debt, so do not require
+        // the entire shared bridge's ledger to be empty here.
+        guard midi?.outgoingFailureStatus == nil,
+              midi?.requiresManualDAWReset != true else {
+            lastError = "Touch Bar MIDI cleanup failed. Resolve MIDI recovery before changing the profile."
+            return
+        }
         touchBarProfile = next
         if let data = try? JSONEncoder().encode(next) {
             UserDefaults.standard.set(data, forKey: "TIHULU.touchBarProfile")
