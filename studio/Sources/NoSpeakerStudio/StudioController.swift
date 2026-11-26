@@ -1610,17 +1610,7 @@ final class StudioController: ObservableObject {
     func revokeBuilderRemote(_ connection: UUID) {
         guard var bridge = patchRemoteBridge, let transport = patchRemoteTransport else { return }
         let result = bridge.revoke(connection,now:ProcessInfo.processInfo.systemUptime,runtime:&patchPhysicalRuntime)
-        patchRemoteBridge = bridge
-        patchRemotePeers = bridge.connectionIDs
-        recordPatchCommands(result.commands)
-        guard patchRunning,patchRemoteTransport === transport else { return }
-        if result.fault {
-            stopInstrumentPatch(reason:"Remote clock fault. Restart explicitly.")
-            return
-        }
-        for action in result.actions {
-            if case .revoke(let id) = action { transport.revoke(id) }
-        }
+        finishBuilderRemoteBatch(result,bridge:bridge,transport:transport)
     }
 
     private func drainBuilderRemote(now: Double) {
@@ -1636,6 +1626,12 @@ final class StudioController: ObservableObject {
         }
         let events = transport.drain()
         let result = bridge.process(events, now: ProcessInfo.processInfo.systemUptime, runtime: &patchPhysicalRuntime)
+        finishBuilderRemoteBatch(result,bridge:bridge,transport:transport)
+    }
+
+    private func finishBuilderRemoteBatch(_ result:RemoteHostBatch,bridge initialBridge:RemoteHostBridge,
+                                          transport:RemoteLoopbackTransport) {
+        var bridge=initialBridge
         patchRemoteBridge = bridge
         recordPatchCommands(result.commands,receipt:result.deliveryReceipt,maximumAge:0.1)
         // MIDI failure or receipt expiry can retire the entire Builder while delivering commands.
@@ -1649,20 +1645,20 @@ final class StudioController: ObservableObject {
         // new input is admitted by these empty ticks. Bound the work even
         // if the clock or transport behaves unexpectedly.
         var actions=result.actions
-        var settled=false
-        for _ in 0..<32 {
+        let drained=BuilderCleanupDrain.run {
             let final=bridge.process([],now:ProcessInfo.processInfo.systemUptime,runtime:&patchPhysicalRuntime)
             patchRemoteBridge=bridge
             actions += final.actions
             recordPatchCommands(final.commands)
-            guard patchRunning,patchRemoteTransport === transport else { return }
+            guard patchRunning,patchRemoteTransport === transport else { return .interrupted }
             if final.fault {
                 stopInstrumentPatch(reason:"Remote final expiry fault. Restart explicitly.")
-                return
+                return .interrupted
             }
-            if final.commands.isEmpty { settled=true;break }
+            return final.commands.isEmpty ? .settled : .again
         }
-        guard settled else {
+        if drained == .interrupted { return }
+        guard drained == .settled else {
             stopInstrumentPatch(reason:"Remote cleanup did not settle. Restart explicitly.")
             return
         }
@@ -1918,9 +1914,17 @@ final class StudioController: ObservableObject {
         guard patchRunning else { return }
         if let token=patchNativeToken { pollBuilderGamepads(token:token) }
         guard patchRunning else { return }
-        let expired = patchPhysicalRuntime.expire(now: ProcessInfo.processInfo.systemUptime)
-        recordPatchCommands(expired)
-        guard patchRunning else { return }
+        let drained=BuilderCleanupDrain.run {
+            let expired=patchPhysicalRuntime.expire(now:ProcessInfo.processInfo.systemUptime)
+            recordPatchCommands(expired)
+            guard patchRunning else { return .interrupted }
+            return expired.isEmpty ? .settled : .again
+        }
+        if drained == .interrupted { return }
+        guard drained == .settled else {
+            stopInstrumentPatch(reason:"Physical cleanup did not settle. Restart explicitly.")
+            return
+        }
         if patchHybridSource == .camera { refreshAirDebugState() }
         let selected = patchPhysicalRuntime.airSelectedSlot
         let sounding = patchPhysicalRuntime.airSoundingSlot
