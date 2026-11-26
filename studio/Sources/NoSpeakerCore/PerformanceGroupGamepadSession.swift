@@ -12,11 +12,23 @@ private protocol LocalGroupOutput: Sendable {
     func hasLease(_ id:UUID) -> Bool
     mutating func frame(lease:UUID,sequence:UInt64,now:Double,values:[SensorSignal:Double],
                         releasing:Set<SensorSignal>,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
+    mutating func admittedFrame(lease:UUID,sequence:UInt64,now:Double,values:[SensorSignal:Double],
+                                releasing:Set<SensorSignal>,admit:()->Bool,
+                                send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
     mutating func disconnect(_ lease:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
     mutating func disconnectBatch(_ leases:Set<UUID>,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
     mutating func stopGroup(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
     mutating func panic(send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
     mutating func retryCleanupReport(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
+}
+private extension LocalGroupOutput {
+    // Dynamic MPE is explicitly local-only today. Do not silently fall
+    // back to its unfenced frame API if a remote path ever reaches it.
+    mutating func admittedFrame(lease:UUID,sequence:UInt64,now:Double,values:[SensorSignal:Double],
+                                releasing:Set<SensorSignal>,admit:()->Bool,
+                                send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        .rejectedReceipt
+    }
 }
 extension PerformanceGroupDelivery: LocalGroupOutput {
     fileprivate var ready: Bool { !retired }
@@ -623,8 +635,32 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         binding.sequence += 1
         bindings[source] = binding
-        reports.append(delivery.frame(lease:lease,sequence:binding.sequence,now:now,
-            values:values,releasing:signals.subtracting(values.keys),send:send))
+        // Refresh the same 100 ms receipt fence before every actual
+        // command and after the batch. A backward/nonfinite clock is a
+        // terminal input fault, not a renewed receipt.
+        var admissionNow = now
+        var validClock = true
+        let report = delivery.admittedFrame(lease:lease,sequence:binding.sequence,now:now,
+            values:values,releasing:signals.subtracting(values.keys),admit:{
+                let sampled = refreshNow?() ?? now
+                guard validClock,sampled.isFinite,sampled >= admissionNow else {
+                    validClock = false
+                    return false
+                }
+                admissionNow = sampled
+                return MonotonicReceiptAdmission.permits(receipt:hostTime,now:sampled,maximumAge:0.1)
+            },send:send)
+        reports.append(report)
+        if report.admissionExpired {
+            if validClock {
+                clock = admissionNow
+                reports += reset(staleSources(now:admissionNow).union([source]),send:send)
+            } else {
+                reports += reset(Set(bindings.keys),send:send)
+            }
+            return .init(status:.lost,reports:reports)
+        }
+        clock = admissionNow
         if !delivery.hasLease(lease) {
             reports += reset([source],send:send)
             return .init(status:.lost,reports:reports)

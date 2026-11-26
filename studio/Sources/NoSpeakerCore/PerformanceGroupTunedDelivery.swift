@@ -59,6 +59,18 @@ public struct PerformanceGroupTunedDelivery: Sendable {
         }
     }
 
+    mutating func admittedFrame(lease:UUID,sequence:UInt64,now:Double,
+                                values:[SensorSignal:Double],releasing:Set<SensorSignal>,
+                                admit:()->Bool,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        guard state == .ready else { return .rejectedReceipt }
+        let frozen = plan
+        return delivery.admittedFrame(lease:lease,sequence:sequence,now:now,values:values,
+                                       releasing:releasing,admit:admit) {
+            guard let translated = frozen.translate($0) else { return false }
+            return send(translated)
+        }
+    }
+
     public mutating func disconnect(_ lease:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
         guard state == .ready else { return .init() }
         let frozen = plan

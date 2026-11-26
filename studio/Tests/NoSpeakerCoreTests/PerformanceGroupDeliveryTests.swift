@@ -127,3 +127,59 @@ private func deliveryGroup(_ source: SensorSource, signal: SensorSignal = .conta
     #expect(commands.count == 1 && commands.first?.value == 0)
     #expect(retry.pendingCleanup.isEmpty)
 }
+
+
+@Test func groupReceiptExpiryStopsOnlyAttemptedWireTargetsAndKeepsIndependentGroup() throws {
+    let chord = PerformanceInstrumentGroup(name:"Chord",patch:.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:.init(.note,number:60)),
+        .init(id:"b",source:.trackpad,signal:.contact,destination:.init(.note,number:64))
+    ]))
+    let other = deliveryGroup(.gamepad1,signal:.padA,note:67)
+    var delivery = try PerformanceGroupDelivery(profile:.init(groups:[chord,other]))
+    let x = try delivery.connect(.trackpad,now:1)
+    let y = try delivery.connect(.gamepad1,now:1)
+    _ = delivery.frame(lease:y,sequence:1,now:1,values:[.padA:1]) { _ in true }
+    var fresh = true
+    var attempted:[PerformanceGroupCommand] = []
+    let report = delivery.admittedFrame(lease:x,sequence:1,now:1,values:[.contact:1],releasing:[],
+                                         admit:{fresh}) {
+        attempted.append($0)
+        if $0.command.value > 0 { fresh = false; return true }
+        return false
+    }
+    #expect(report.admissionExpired)
+    #expect(report.failedGroups == [chord.id] && report.pendingCleanup == [chord.id])
+    #expect(attempted.count == 2 && attempted.allSatisfy { $0.groupID == chord.id })
+    #expect(attempted.first?.command.value == 100 && attempted.last?.command.value == 0)
+    #expect(attempted.first?.command.destination == attempted.last?.command.destination)
+    #expect(!delivery.hasLease(x) && delivery.hasLease(y))
+    attempted = []
+    let retry = delivery.retryCleanup(chord.id) { attempted.append($0); return true }
+    #expect(attempted.count == 1 && attempted.first?.command.value == 0)
+    #expect(retry.pendingCleanup.isEmpty && delivery.hasLease(y))
+}
+
+@Test func groupReceiptExpiryRollsBackSilentJoinWithoutRetiringLiveGroup() throws {
+    let note = SensorDestination(.note,number:60)
+    let group = PerformanceInstrumentGroup(name:"Shared",patch:.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:note),
+        .init(id:"b",source:.magicMouse,signal:.contact,destination:note)
+    ]))
+    var delivery = try PerformanceGroupDelivery(profile:.init(groups:[group]))
+    let x = try delivery.connect(.trackpad,now:1)
+    let y = try delivery.connect(.magicMouse,now:1)
+    _ = delivery.frame(lease:x,sequence:1,now:1,values:[.contact:1]) { _ in true }
+    var checks = 0
+    let rejected = delivery.admittedFrame(lease:y,sequence:1,now:1,values:[.contact:1],releasing:[],
+                                           admit:{ checks += 1; return checks == 1 }) { _ in
+        Issue.record("Silent join must not send")
+        return false
+    }
+    #expect(rejected.admissionExpired && rejected.failedGroups.isEmpty && rejected.pendingCleanup.isEmpty)
+    #expect(delivery.hasLease(x) && delivery.hasLease(y))
+    var commands:[PerformanceGroupCommand] = []
+    _ = delivery.disconnect(x) { commands.append($0); return true }
+    #expect(commands == [.init(groupID:group.id,command:.init(note,value:0))])
+    _ = delivery.disconnect(y) { _ in Issue.record("Unadmitted owner has no debt"); return false }
+    #expect(delivery.faultedGroups.isEmpty)
+}

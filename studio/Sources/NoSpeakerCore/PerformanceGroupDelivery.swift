@@ -8,7 +8,14 @@ public struct PerformanceGroupDelivery: Sendable {
         public fileprivate(set) var capacityRefused = 0
         public fileprivate(set) var failedGroups: Set<UUID> = []
         public fileprivate(set) var pendingCleanup: Set<UUID> = []
+        public fileprivate(set) var admissionExpired = false
         public init() {}
+
+        static var rejectedReceipt: Self {
+            var result = Self()
+            result.admissionExpired = true
+            return result
+        }
 
         // Dynamic pool reports retain capacity refusal separately from
         // transport failure. Accepted counts reconciled logical deliveries.
@@ -66,6 +73,42 @@ public struct PerformanceGroupDelivery: Sendable {
         return deliver(commands,send:send)
     }
 
+    /// Receipt-bound frame for the live remote adapter. The router is
+    /// speculative until the wire batch completes. On expiry, roll back
+    /// silent joins and unattempted groups; retire only groups whose wire
+    /// state may have changed. The caller must batch-disconnect the expired
+    /// source with other departing leases, even when nothing was attempted.
+    mutating func admittedFrame(lease:UUID,sequence:UInt64,now:Double,
+                                values:[SensorSignal:Double],releasing:Set<SensorSignal>,
+                                admit:()->Bool,send:(PerformanceGroupCommand)->Bool) -> Report {
+        guard admit() else {
+            var report = Report.rejectedReceipt
+            report.pendingCleanup = pendingCleanup
+            return report
+        }
+        let previous = router
+        let commands = router.frame(lease:lease,sequence:sequence,now:now,values:values,releasing:releasing)
+        var attempted:Set<UUID> = []
+        var report = deliver(commands,admit:admit,onAttempt:{ attempted.insert($0) },send:send)
+        if report.admissionExpired || !admit() {
+            report.admissionExpired = true
+            router = previous
+            // Preserve real transport failures even though the logical
+            // snapshot was rolled back. Never create debt for skipped sends.
+            for id in attempted.union(report.failedGroups).sorted(by:{ $0.uuidString < $1.uuidString }) {
+                _ = router.stopGroup(id)
+                guard var output = outputs[id], !output.retired else { continue }
+                output.retired = true
+                output.faulted = true
+                outputs[id] = output
+                report.failedGroups.insert(id)
+                clean(id,send:send,report:&report)
+            }
+            report.pendingCleanup = pendingCleanup
+        }
+        return report
+    }
+
     public mutating func disconnect(_ lease: UUID, send: (PerformanceGroupCommand) -> Bool) -> Report {
         let commands = router.disconnect(lease)
         return deliver(commands,send:send)
@@ -87,13 +130,19 @@ public struct PerformanceGroupDelivery: Sendable {
     /// every attempted non-neutral target, including a failed onset. Other
     /// groups in the same frame continue independently.
     private mutating func deliver(_ commands: [PerformanceGroupCommand],
+                                  admit: () -> Bool = { true },
+                                  onAttempt: (UUID) -> Void = { _ in },
                                   send: (PerformanceGroupCommand) -> Bool) -> Report {
         var report = Report()
         for item in commands {
             let id = item.groupID
             guard var output = outputs[id], !output.retired else { continue }
+            // Check before touching the ledger. Cleanup itself remains
+            // unfenced so an expired input cannot suppress a necessary off.
+            guard admit() else { report.admissionExpired = true; break }
             let ok = output.ledger.deliver(item.command) { command in
-                send(.init(groupID:id,command:command))
+                onAttempt(id)
+                return send(.init(groupID:id,command:command))
             }
             outputs[id] = output
             if ok { report.accepted += 1 }

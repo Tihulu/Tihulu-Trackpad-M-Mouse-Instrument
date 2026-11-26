@@ -409,8 +409,12 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
                                    .frame(b,groupRemoteWire("pianoKeys",5,2,",\"mask\":1"),1.05)],
                                   now:1.05,refreshNow:{now},session:&session,send:sink)
         #expect(sent.filter{$0.command.value>0}.map(\.groupID) == (stall ? [phone.id] : [phone.id,tablet.id]))
-        #expect(result.actions == [.acknowledge(a,true),.acknowledge(b,!stall)])
-        #expect(bridge.connectionIDs == (stall ? [a] : [a,b]))
+        #expect(result.actions == [.acknowledge(a,!stall),.acknowledge(b,!stall)])
+        #expect(bridge.connectionIDs == (stall ? [] : [a,b]))
+        if stall {
+            #expect(sent.count == 2 && sent.last?.groupID == phone.id && sent.last?.command.value == 0)
+            #expect(result.reports.contains(where:{ $0.admissionExpired }))
+        }
         #expect(!session.retired)
     }
 }
@@ -445,4 +449,29 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
         #expect(session.boundSources.contains(.phone) == !stall)
         #expect(!session.retired)
     }
+}
+
+
+@Test func remoteGroupReceiptExpiryRejectsRemainingChordAndCleansAttemptedNote() throws {
+    let phone = PerformanceInstrumentGroup(name:"Phone chord",patch:.init(routes:[
+        .init(id:"one",source:.phone,signal:.drumPad1,destination:.init(.note,number:36)),
+        .init(id:"two",source:.phone,signal:.drumPad2,destination:.init(.note,number:38))
+    ]))
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[phone]),allowRemote:true)
+    let token = try session.bind(.phone,now:1)
+    _ = session.receiveRemote(.phone,token:token,bytes:groupRemoteWire("drumPads",4,1,",\"mask\":0"),
+                              hostTime:1.01,now:1.01,send:{_ in true})
+    var now = 1.02
+    var sent:[PerformanceGroupCommand] = []
+    let result = session.receiveRemote(.phone,token:token,bytes:groupRemoteWire("drumPads",4,2,",\"mask\":3"),
+                                       hostTime:1.02,now:now,refreshNow:{now},send:{
+        sent.append($0)
+        if $0.command.value > 0 { now = 1.13 }
+        return true
+    })
+    #expect(result.status == .lost && !session.boundSources.contains(.phone))
+    #expect(result.reports.contains(where:{ $0.admissionExpired }))
+    #expect(sent.count == 2 && sent.first?.command.value == 100 && sent.last?.command.value == 0)
+    #expect(sent.first?.command.destination == sent.last?.command.destination)
+    #expect(session.pendingCleanup.isEmpty && !session.retired)
 }
