@@ -212,7 +212,14 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
             let right=hands.filter { $0.chirality == .right }
             let l=left.count==1 ? observation(left[0],depth:depth) : nil
             let r=right.count==1 ? observation(right[0],depth:depth) : nil
-            let single=hands.count==1 ? observation(hands[0],depth:depth) : nil
+            let single: MobileAirObservation?
+            if hands.count == 1 {
+                switch hands[0].chirality {
+                case .left: single = l
+                case .right: single = r
+                default: single = observation(hands[0], depth: depth)
+                }
+            } else { single = nil }
             guard Self.now-time<0.15 else { push(.frame(.init(time:time)));return }
             push(.frame(.init(single:single,left:l,right:r,time:time)))
         } catch { push(.frame(.init(time:time))) }
@@ -234,7 +241,11 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
         let confidence=fingers.flatMap { [$0.base.confidence,$0.joint.confidence,$0.tip.confidence] }.min() ?? 0
         let palmX=(wrist.x+middle.x)/2,palmY=(wrist.y+middle.y)/2
         let measured=depth.flatMap { palmDepth($0,x:palmX,y:palmY) }
-        return .init(sample:sample,fingers:AirFingerCount.classify(fingers),confidence:confidence,depth:measured)
+        let palm = measured.map {
+            DepthXYZPoint(x: palmX, y: palmY, meters: $0, confidence: min(wrist.confidence, middle.confidence))
+        }
+        return .init(sample:sample, fingers:AirFingerCount.classify(fingers), confidence:confidence,
+                     depth:measured, measuredPalm:palm)
     }
     private func palmDepth(_ depth:ARDepthData,x:Double,y:Double) -> Double? {
         guard let p=orientation.depthPoint(x:x,y:y),let confidence=depth.confidenceMap else {return nil}

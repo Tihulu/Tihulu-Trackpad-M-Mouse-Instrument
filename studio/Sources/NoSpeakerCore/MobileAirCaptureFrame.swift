@@ -6,8 +6,11 @@ public struct MobileAirObservation: Sendable {
     public let fingers: Int?
     public let confidence: Double
     public let depth: Double?
-    public init(sample: AirHandSample?, fingers: Int? = nil, confidence: Double = 0, depth: Double? = nil) {
+    public let measuredPalm: DepthXYZPoint?
+    public init(sample: AirHandSample?, fingers: Int? = nil, confidence: Double = 0, depth: Double? = nil,
+                measuredPalm: DepthXYZPoint? = nil) {
         self.sample = sample; self.fingers = fingers; self.confidence = confidence; self.depth = depth
+        self.measuredPalm = measuredPalm
     }
 }
 
