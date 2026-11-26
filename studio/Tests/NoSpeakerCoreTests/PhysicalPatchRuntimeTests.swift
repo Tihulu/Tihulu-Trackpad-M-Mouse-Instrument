@@ -121,3 +121,44 @@ import Testing
     _=runtime.receiveGamepad(source:.gamepad1,frame:neutral,now:1.4)
     #expect(runtime.receiveGamepad(source:.gamepad1,frame:high,now:1.41).count==1)
 }
+
+
+@Test func physicalOrdinaryReleaseAndExpiredOwnerAreRemovedTogether() throws {
+    for scalar in [false,true] {
+        let target=SensorDestination(.controlChange,number:74)
+        let high:SensorSource=scalar ? .lid : .trackpad
+        let low:SensorSource=scalar ? .touchBar : .magicMouse
+        var runtime=PhysicalPatchRuntime()
+        try runtime.configure(.init(routes:[
+            .init(id:"high",source:high,signal:scalar ? .angle : .x,destination:target,priority:10),
+            .init(id:"low",source:low,signal:.x,destination:target,priority:0)
+        ]))
+        func input(_ source:SensorSource,_ value:Double?,_ time:Double)->[SensorCommand] {
+            if scalar { return runtime.receiveScalar(source:source,value:value,hostTime:time,now:time) }
+            return runtime.receive(source:source,x:value,y:value,size:value,hostTime:time,now:time)
+        }
+        #expect(input(low,0.3,1).count==1)
+        #expect(input(high,0.8,1.2).count==1)
+        #expect(input(high,nil,1.36)==[.init(target,value:0)])
+        #expect(runtime.activeSources.isEmpty)
+    }
+}
+
+@Test func physicalGamepadDisconnectAndExpiredOwnerAreRemovedTogether() throws {
+    let target=SensorDestination(.controlChange,number:74)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"high",source:.gamepad1,signal:.padLT,destination:target,priority:10),
+        .init(id:"low",source:.gamepad2,signal:.padLT,destination:target,priority:0)
+    ]))
+    let neutral=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+    let high=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0.8,0],sticks:[0,0,0,0]))
+    let low=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0.3,0],sticks:[0,0,0,0]))
+    _=runtime.receiveGamepad(source:.gamepad1,frame:neutral,now:1)
+    _=runtime.receiveGamepad(source:.gamepad2,frame:neutral,now:1)
+    _=runtime.receiveGamepad(source:.gamepad2,frame:low,now:1.01)
+    _=runtime.receiveGamepad(source:.gamepad1,frame:high,now:1.2)
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:nil,now:1.37)==[.init(target,value:0)])
+    #expect(runtime.activeSources.isEmpty)
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:high,now:1.38).isEmpty)
+}
