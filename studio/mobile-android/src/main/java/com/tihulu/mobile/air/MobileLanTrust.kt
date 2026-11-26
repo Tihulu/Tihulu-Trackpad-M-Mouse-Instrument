@@ -19,10 +19,13 @@ import javax.net.ssl.X509TrustManager
  * This is not a UI/import flow; network permission remains disabled.
  */
 class MobileLanTrust private constructor(val host:String, internal val manager:X509TrustManager) {
-    internal fun configure(builder:OkHttpClient.Builder) {
+    internal fun socketFactory():javax.net.ssl.SSLSocketFactory {
         val context=SSLContext.getInstance("TLS")
         context.init(null,arrayOf(manager),null)
-        builder.sslSocketFactory(context.socketFactory,manager)
+        return context.socketFactory
+    }
+    internal fun configure(builder:OkHttpClient.Builder) {
+        builder.sslSocketFactory(socketFactory(),manager)
         // Keep OkHttp's default hostname verifier. In particular the
         // server leaf must carry the numeric IP as an IP SAN.
     }
