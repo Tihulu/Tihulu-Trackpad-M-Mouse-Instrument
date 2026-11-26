@@ -47,3 +47,7 @@ Required negative tests: forged/stale/replayed invitation or session, unauthoriz
 - Android BLE: https://developer.android.com/develop/connectivity/bluetooth/ble/ble-overview
 - Android permissions: https://developer.android.com/develop/connectivity/bluetooth/bt-permissions
 - Web Bluetooth availability: https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API
+
+## Native input validation increment
+
+Swift `MobileLANEndpoint` and Kotlin `MobileLanEndpoint` accept only the host's canonical HTTPS page address (RFC1918 IPv4, port 9444, root path); derive exact WSS :9443, origin and subprotocol. Reject loopback, public/DNS addresses, userinfo, query/fragment, noncanonical octets and wrong ports. Invitations are separate exact 64 ASCII hex characters decoded to 32 binary bytes. No QR secret, persistence, discovery, network call, TLS validation or transport is implemented by these types. A caller must authenticate TLS and verify the negotiated subprotocol before binary invitation delivery; actual admission/capability negotiation and hardware acceptance remain open.
