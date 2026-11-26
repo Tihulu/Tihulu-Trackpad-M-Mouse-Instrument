@@ -43,6 +43,25 @@ public enum WorkspaceArchive {
         return doc
     }
 
+    /// Read at most the archive limit plus one sentinel byte. Importers
+    /// must reject oversized files, not silently decode a truncated prefix.
+    /// Ordinary local files only; no network URLs or directory reads.
+    public static func readFile(at url:URL) throws -> Data {
+        guard url.isFileURL,try url.resourceValues(forKeys:[.isRegularFileKey]).isRegularFile == true else {
+            throw CocoaError(.fileReadUnsupportedScheme)
+        }
+        let handle=try FileHandle(forReadingFrom:url)
+        defer { try? handle.close() }
+        var data=Data()
+        while data.count<=maximumBytes {
+            let remaining=min(65536,maximumBytes+1-data.count)
+            guard let chunk=try handle.read(upToCount:remaining),!chunk.isEmpty else { break }
+            data.append(chunk)
+        }
+        guard data.count<=maximumBytes else { throw WorkspaceArchiveError.tooLarge }
+        return data
+    }
+
     private static func validName(_ name: String) -> Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         name.utf8.count <= 256 &&

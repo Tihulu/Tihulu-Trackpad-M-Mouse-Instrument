@@ -94,19 +94,7 @@ struct PerformanceGroupTuningPreviewView: View {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let values = try url.resourceValues(forKeys:[.isRegularFileKey])
-            guard values.isRegularFile == true else { throw CocoaError(.fileReadUnsupportedScheme) }
-            let handle = try FileHandle(forReadingFrom:url)
-            defer { try? handle.close() }
-            let limit = WorkspaceArchive.maximumBytes
-            var data = Data()
-            while data.count <= limit {
-                let remaining = min(65536,limit + 1 - data.count)
-                guard let chunk = try handle.read(upToCount:remaining), !chunk.isEmpty else { break }
-                data.append(chunk)
-            }
-            guard data.count <= limit else { throw WorkspaceArchiveError.tooLarge }
-            let loaded = try PerformanceGroupTuningConfiguration.read(data,matching:profile)
+            let loaded=try PerformanceGroupTuningConfiguration.read(WorkspaceArchive.readFile(at:url),matching:profile)
             configuration = loaded
             draft.load(eligibleGroups.first(where:{ loaded.tuning[$0.id] != nil })?.id,configuration:loaded)
             message = "Tuning file imported and matched to saved groups. No MIDI sent."

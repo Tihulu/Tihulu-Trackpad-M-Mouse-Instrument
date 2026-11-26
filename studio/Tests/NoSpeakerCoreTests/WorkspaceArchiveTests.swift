@@ -40,3 +40,21 @@ private struct Fixture: Codable, Equatable {
         try WorkspaceArchive.decode(Fixture.self, from: foreign)
     }
 }
+
+
+@Test func workspaceFileImportReadsCompleteBoundedFileAndRejectsOversize() throws {
+    let dir=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString,isDirectory:true)
+    try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+    defer { try? FileManager.default.removeItem(at:dir) }
+    let url=dir.appendingPathComponent("layout.json")
+    for count in [0,1,65537,WorkspaceArchive.maximumBytes] {
+        let bytes=Data(repeating:42,count:count)
+        try bytes.write(to:url)
+        #expect(try WorkspaceArchive.readFile(at:url)==bytes)
+    }
+    try Data(repeating:42,count:WorkspaceArchive.maximumBytes+1).write(to:url)
+    #expect(throws:WorkspaceArchiveError.tooLarge) { try WorkspaceArchive.readFile(at:url) }
+    #expect(throws:CocoaError.self) { try WorkspaceArchive.readFile(at:dir) }
+    let remote=try #require(URL(string:"https://example.invalid/layout.json"))
+    #expect(throws:CocoaError.self) { try WorkspaceArchive.readFile(at:remote) }
+}

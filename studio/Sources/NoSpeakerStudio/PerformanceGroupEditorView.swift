@@ -689,10 +689,7 @@ struct PerformanceGroupEditorView: View {
         guard panel.runModal() == .OK,let url=panel.url,!editingLocked,!studio.patchRunning,
               !tuningDraft.isDirty,profile==original else { return }
         do {
-            let handle=try FileHandle(forReadingFrom:url)
-            defer { try? handle.close() }
-            let data=try handle.read(upToCount:WorkspaceArchive.maximumBytes+1) ?? Data()
-            let decoded=try PerformanceGroupProfile.read(data)
+            let decoded=try PerformanceGroupProfile.read(WorkspaceArchive.readFile(at:url))
             if profile.groups.isEmpty { applyImportedGroupDraft(decoded) }
             else {
                 pendingImport=decoded

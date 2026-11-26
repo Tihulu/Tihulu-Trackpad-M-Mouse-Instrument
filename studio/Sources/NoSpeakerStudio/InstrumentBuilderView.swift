@@ -874,10 +874,7 @@ struct InstrumentBuilderView: View {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url, !studio.patchRunning else { return }
         do {
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
-            let data = try handle.read(upToCount: WorkspaceArchive.maximumBytes + 1) ?? Data()
-            replaceDraft(with: try InstrumentPatch.read(data))
+            replaceDraft(with:try InstrumentPatch.read(WorkspaceArchive.readFile(at:url)))
         } catch { message = error.localizedDescription }
     }
 }
