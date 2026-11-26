@@ -66,7 +66,11 @@ class AirPreviewActivity: ComponentActivity() {
     }
     private fun xyzAssigned():Boolean {
         val manifest=lan?.status()?.assignment?:return false
-        return if(xyzSettings.pitchAxis!=null)manifest.keysLane()!=null else manifest.xyzLane(xyzSettings.mask)!=null
+        return when {
+            xyzSettings.hybrid -> manifest.hybridLane(xyzSettings.mask)!=null
+            xyzSettings.pitchAxis!=null -> manifest.keysLane()!=null
+            else -> manifest.xyzLane(xyzSettings.mask)!=null
+        }
     }
     private var installRequested=false
     private val depthModes=listOf(AirMode.BEAM_KEYS,AirMode.BEAM_HELPER)
@@ -223,7 +227,12 @@ class AirPreviewActivity: ComponentActivity() {
                 } else {
                     for(frame in source.drain()) {
                         val axes=tracker.observe(frame.point,frame.at,SystemClock.elapsedRealtimeNanos())
-                        val output=xyzKeys?.output(axes.xyz)?:axes
+                        val pitch=xyzKeys?.output(frame.point?.takeIf {axes.xyz!=null}?.let {volume.axes(it,7)})
+                        val output=when {
+                            pitch==null -> axes
+                            xyzSettings.hybrid -> axes.copy(keys=pitch.keys)
+                            else -> pitch
+                        }
                         if(!submit(output,frame.at,emptyMap(),false))break
                         xyzLastAt=frame.at
                         xyzStage?.update(frame.point.takeIf {axes.xyz!=null},volume,output.keys)
@@ -456,7 +465,12 @@ class AirPreviewActivity: ComponentActivity() {
         if(measuredMode && (measuredCamera()==null || xyzSettings.volume()==null || xyzSettings.mask==0)){
             connectionStatus.text="Select a rear DEPTH16 camera, enabled axes and valid volume";return
         }
-        val selection=if(measuredMode){if(xyzSettings.pitchAxis!=null)MobileLanSession.Selection.Keys else MobileLanSession.Selection.XYZ(xyzSettings.mask)} else if(!wantsTouchPair&&mode?.isHelper==true)MobileLanSession.Selection.Helper(helperPick.selectedItemPosition) else MobileLanSession.Selection.Keys
+        val selection=when {
+            measuredMode && xyzSettings.hybrid -> MobileLanSession.Selection.Hybrid(xyzSettings.mask)
+            measuredMode && xyzSettings.pitchAxis==null -> MobileLanSession.Selection.XYZ(xyzSettings.mask)
+            !measuredMode && !wantsTouchPair && mode?.isHelper==true -> MobileLanSession.Selection.Helper(helperPick.selectedItemPosition)
+            else -> MobileLanSession.Selection.Keys
+        }
         clearInvitation()
         val epoch=++ticket;importing=true;controls();connectionStatus.text="Verifying selected private root"
         importer.execute {
@@ -503,7 +517,7 @@ class AirPreviewActivity: ComponentActivity() {
             xyzTracking=MeasuredXYZTracking(volume,mask)
             observationFence=if(wantsPair)PairedObservationFence(SystemClock.elapsedRealtimeNanos()) else null
             val measured=Camera2XYZSource(applicationContext,camera,xyzRotation,volume)
-            xyzSource=measured;xyzStage=XYZStageView(this,mask,xyzSettings.pitchAxis,::end)
+            xyzSource=measured;xyzStage=XYZStageView(this,mask,xyzSettings.pitchAxis,xyzSettings.hybrid,::end)
             measured.start();controls();return
         }
         if(depthToggle.isChecked){beginDepth();return}

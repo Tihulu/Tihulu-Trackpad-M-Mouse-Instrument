@@ -139,4 +139,14 @@ class MobileLanSessionTest {
             assertThrows(IllegalArgumentException::class.java) { lane.encode(output,1) }
         }
     }
+    @Test fun hybridUsesOneAckAndRequiresBothAssignedFamilies() {
+        val session=MobileLanSession(MobileLanSession.Selection.Hybrid(5))
+        session.begin(true,"tihulu-touch-v1",token,0);session.receive("admitted",ms(1))
+        assertNull(MobileLanCapabilities.parseSingleFamily(host(5,7)))
+        assertTrue(packet(session.receive(host(5,7),ms(15))).contains("\"kind\":\"xyzHybrid\""))
+        session.receive("accepted",ms(20))
+        val active=AirOutput(keys=4,xyz=listOf(0.4,null,0.9))
+        assertTrue(packet(session.offer(active,ms(30),ms(30))).contains("\"keys\":4"))
+        assertTrue(session.offer(active.copy(keys=1),ms(35),ms(35)) is MobileLanSession.Action.Close)
+    }
 }

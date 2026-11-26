@@ -12,6 +12,7 @@ struct PerformanceGroupMobileDraftView: View {
     @State private var family:PerformanceGroupRemoteSurface = .xy
     @State private var xyzScale = MobileExpressionPreset.major
     @State private var xyzRoot = 60
+    @State private var hybridHelperChannel = 1
     @State private var xyzCustom = ""
     @State private var xyzPreset = DepthXYZHelperPreset.expression
     @State private var familyChannel=0
@@ -56,6 +57,18 @@ struct PerformanceGroupMobileDraftView: View {
                             message = added ? "Edit each axis below before applying." : "A target conflicts with another route or the mobile slot is in use."
                         }.disabled(!draft.routes.isEmpty)
                         Text("X uses Pedal 1, Y uses Pedal 2 and Z uses Pedal 3. Choose the same enabled axes on the device. Save the group preset to keep these mappings.").font(.caption)
+                    }
+                    DisclosureGroup("LiDAR / measured XYZ hybrid") {
+                        Text("Uses the instrument key mapping and helper preset selected above. The native device must pair in Hybrid mode.")
+                            .font(.caption)
+                        Text("Keys: " + xyzScale.title + " · Helper: " + xyzPreset.rawValue)
+                        Stepper("Note channel \(familyChannel + 1)", value: $familyChannel, in: 0...15)
+                        Stepper("Helper channel \(hybridHelperChannel + 1)", value: $hybridHelperChannel, in: 0...15)
+                        Button("Add Hybrid to empty mobile slot") {
+                            let added = draft.addXYZHybrid(xyzPreset, helperChannel: hybridHelperChannel,
+                                scale: xyzScale, root: xyzRoot, noteChannel: familyChannel, custom: xyzCustom)
+                            message = added ? "Hybrid assigned. Apply and arm the group before pairing." : "Check capacity, channel conflicts and the selected scale."
+                        }.disabled(!draft.routes.isEmpty)
                     }
                     HStack {
                         Picker("Add control",selection:$signal) {

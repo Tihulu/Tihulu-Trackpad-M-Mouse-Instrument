@@ -7,6 +7,7 @@ public struct DepthXYZCalibrationProfiles: Codable, Equatable, Sendable {
         public let name: String
         public let volume: DepthXYZVolume
         public let axisMask: Int
+        public let hybrid: Bool?
         public let pitchAxis: DepthXYZPitchAxis?
         public var id: String { name.lowercased() }
     }
@@ -19,16 +20,16 @@ public struct DepthXYZCalibrationProfiles: Codable, Equatable, Sendable {
     public enum Failure: Error, Equatable { case invalidName, invalidSettings, duplicate, full }
 
     /// Saving never overwrites an existing calibration.
-    public mutating func save(name: String, volume: DepthXYZVolume, axisMask: Int, pitchAxis: DepthXYZPitchAxis? = nil) throws {
+    public mutating func save(name: String, volume: DepthXYZVolume, axisMask: Int, pitchAxis: DepthXYZPitchAxis? = nil, hybrid: Bool = false) throws {
         let key = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty, key.utf8.count <= 64,
               !key.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
             throw Failure.invalidName
         }
-        guard volume.isValid, (1...7).contains(axisMask) else { throw Failure.invalidSettings }
+        guard volume.isValid, (1...7).contains(axisMask), !hybrid || pitchAxis != nil else { throw Failure.invalidSettings }
         guard !profiles.contains(where: { $0.id == key.lowercased() }) else { throw Failure.duplicate }
         guard profiles.count < Self.capacity else { throw Failure.full }
-        profiles.append(Profile(name: key, volume: volume, axisMask: axisMask, pitchAxis: pitchAxis))
+        profiles.append(Profile(name: key, volume: volume, axisMask: axisMask, hybrid: hybrid ? true : nil, pitchAxis: pitchAxis))
     }
 
     public mutating func remove(id: String) { profiles.removeAll { $0.id == id } }
@@ -40,7 +41,7 @@ public struct DepthXYZCalibrationProfiles: Codable, Equatable, Sendable {
         while !list.isAtEnd {
             guard profiles.count < Self.capacity else { throw Failure.full }
             let profile = try list.decode(Profile.self)
-            try save(name: profile.name, volume: profile.volume, axisMask: profile.axisMask, pitchAxis: profile.pitchAxis)
+            try save(name: profile.name, volume: profile.volume, axisMask: profile.axisMask, pitchAxis: profile.pitchAxis, hybrid: profile.hybrid == true)
         }
     }
 }

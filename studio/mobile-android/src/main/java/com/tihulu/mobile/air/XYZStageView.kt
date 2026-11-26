@@ -15,10 +15,11 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
     private val fields=ArrayList<EditText>()
     private val enabledAxes=ArrayList<CheckBox>()
     private val role=Spinner(context)
-    val pitchAxis:Int? get()=(role.selectedItemPosition-1).takeIf {it in 0..2}
+    val hybrid:Boolean get()=role.selectedItemPosition in 4..6
+    val pitchAxis:Int? get()=role.selectedItemPosition.takeIf {it in 1..6}?.let {(it-1)%3}
     private val name=EditText(context)
     private val message=TextView(context)
-    val mask:Int get()=if(pitchAxis!=null)7 else enabledAxes.foldIndexed(0){i,m,box->if(box.isChecked)m or (1 shl i) else m}
+    val mask:Int get()=if(pitchAxis!=null&&!hybrid)7 else enabledAxes.foldIndexed(0){i,m,box->if(box.isChecked)m or (1 shl i) else m}
     fun volume():XYZVolume? {
         val v=fields.map {it.text.toString().toDoubleOrNull()?:return null}
         return XYZVolume(v[0],v[1],v[2],v[3],v[4],v[5]).takeIf {it.valid}
@@ -28,13 +29,13 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
         orientation=VERTICAL
         addView(TextView(context).apply{text="Move one isolated hand or object in front of the rear depth camera. X increases right, Y up and Z away."})
         role.adapter=ArrayAdapter(context,android.R.layout.simple_spinner_dropdown_item,
-            listOf("XYZ helper","Instrument · X pitch","Instrument · Y pitch","Instrument · Z pitch"))
+            listOf("XYZ helper","Instrument · X pitch","Instrument · Y pitch","Instrument · Z pitch","Hybrid · X pitch","Hybrid · Y pitch","Hybrid · Z pitch"))
         addView(role)
         val axes=LinearLayout(context);addView(axes)
         role.onItemSelectedListener=object:AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent:AdapterView<*>?) {}
             override fun onItemSelected(parent:AdapterView<*>?, view:View?, position:Int, id:Long){
-                axes.visibility=if(position==0)View.VISIBLE else View.GONE
+                axes.visibility=if(position==0||position>=4)View.VISIBLE else View.GONE
             }
         }
         for(axis in listOf("X", "Y", "Z")){
@@ -83,7 +84,7 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
                 val bits=data.getInt(6)
                 require(v.valid && bits in 1..7 && data.getDouble(6)==bits.toDouble())
                 val roleIndex=if(data.length()==8)data.getInt(7) else 0
-                require(roleIndex in 0..3)
+                require(roleIndex in 0..6)
                 role.setSelection(roleIndex)
                 fields.forEachIndexed {i,f->f.setText(values[i].toString())}
                 enabledAxes.forEachIndexed {i,box->box.isChecked=bits and (1 shl i)!=0}
@@ -97,7 +98,7 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
     }
 }
 
-internal class XYZStageView(context:Context, mask:Int, pitchAxis:Int?, private val stop:(String)->Unit) {
+internal class XYZStageView(context:Context, mask:Int, pitchAxis:Int?, hybrid:Boolean, private val stop:(String)->Unit) {
     private val dialog=Dialog(context)
     private val indicator=TextView(context)
     private val depth=ProgressBar(context,null,android.R.attr.progressBarStyleHorizontal)
@@ -111,7 +112,11 @@ internal class XYZStageView(context:Context, mask:Int, pitchAxis:Int?, private v
     }
     init{
         val column=LinearLayout(context).apply {orientation=LinearLayout.VERTICAL;setPadding(16,16,16,16)}
-        column.addView(TextView(context).apply{text=if(pitchAxis!=null)"Instrument · pitch on "+listOf("X","Y","Z")[pitchAxis] else "Measured XYZ · "+(0..2).filter {mask and (1 shl it)!=0}.joinToString {listOf("X → 1","Y → 2","Z → 3")[it]}})
+        column.addView(TextView(context).apply{text=buildString {
+            if(pitchAxis!=null)append("Pitch on "+listOf("X","Y","Z")[pitchAxis])
+            if(hybrid)append(" · ")
+            if(pitchAxis==null || hybrid)append((0..2).filter {mask and (1 shl it)!=0}.joinToString {listOf("X → 1","Y → 2","Z → 3")[it]})
+        }})
         column.addView(indicator)
         area.setBackgroundColor(Color.DKGRAY);column.addView(area,LinearLayout.LayoutParams(-1,0,1f))
         depth.max=100;column.addView(depth)
