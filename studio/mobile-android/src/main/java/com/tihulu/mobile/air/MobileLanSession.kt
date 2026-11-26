@@ -18,7 +18,10 @@ class MobileLanSession(private val selection:Selection) {
     private var capabilitiesSentAt:Long?=null
     private var gate:AirSendGate?=null
     private var lane:AirWireLane?=null
-    private fun close(reason:String):Action.Close {phase=Phase.CLOSED;gate=null;lane=null;pendingAt=null;return Action.Close(reason)}
+    private var manifest: MobileLanCapabilities.Manifest? = null
+    val readyManifest: MobileLanCapabilities.Manifest?
+        get() = if (phase == Phase.READY) manifest else null
+    private fun close(reason:String):Action.Close {phase=Phase.CLOSED;gate=null;lane=null;manifest=null;pendingAt=null;return Action.Close(reason)}
     private fun check(now:Long):Action.Close? {
         if(phase==Phase.CLOSED)return Action.Close("Already closed")
         if(now<0||clock?.let{now<it}==true)return close("Invalid monotonic clock")
@@ -52,6 +55,7 @@ class MobileLanSession(private val selection:Selection) {
                 val manifest=MobileLanCapabilities.parseSingleFamily(text)?:return close("Unsupported manifest")
                 lane=when(val s=selection){Selection.Keys->manifest.keysLane();is Selection.Helper->manifest.helperLane(s.index)}
                 if(lane==null)return close("Unassigned lane")
+                this.manifest = manifest
                 pendingAt=null;phase=Phase.NEUTRAL_DELAY;poll(now)
             }
             Phase.NEUTRAL_ACK,Phase.READY->{

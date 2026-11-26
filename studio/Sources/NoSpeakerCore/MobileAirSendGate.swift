@@ -26,6 +26,7 @@ public struct MobileAirSendGate: Sendable {
     private var sent = MobileAirOutput()
     private var sample: MobileAirOutput?
     private var sampledAt: Int64?
+    private var stringDeadlines: [Int: Int64] = [:]
     private var lastInput: Int64?
     private var releaseDebtAt: Int64?
     private var neutralFence = false
@@ -87,7 +88,28 @@ public struct MobileAirSendGate: Sendable {
         sample=nil;sampledAt=nil
         if sent != .init(),!neutralFence {neutralFence=true;releaseDebtAt=at+Self.freshNS}
     }
-    public mutating func offer(_ output:MobileAirOutput,observedAt:Int64,now:Int64)->Action {
+    private mutating func expireStrings(_ now: Int64) {
+        guard var value = sample, !stringDeadlines.isEmpty else { return }
+        var firstExpiry: Int64?
+        for (key, deadline) in stringDeadlines where deadline <= now {
+            value.keys &= ~(1 << key)
+            stringDeadlines.removeValue(forKey: key)
+            firstExpiry = min(firstExpiry ?? deadline, deadline)
+        }
+        guard let firstExpiry else { return }
+        if value.keys != 0 {
+            sample = value
+        } else {
+            sample = nil
+            if sent.keys != 0 && !neutralFence {
+                neutralFence = true
+                releaseDebtAt = firstExpiry
+            }
+        }
+    }
+
+    public mutating func offer(_ output:MobileAirOutput,observedAt:Int64,now:Int64,
+                               stringDeadlines: [Int: Int64] = [:])->Action {
         if let failure=check(now){return failure}
         guard started else {return close("Not started")}
         guard observedAt>=0,observedAt<=now,now-observedAt<Self.freshNS,
@@ -96,6 +118,7 @@ public struct MobileAirSendGate: Sendable {
         guard (try? lane.encode(output,sequence:1)) != nil else {return close("Invalid logical snapshot")}
         guard admitted else {return .wait}
         if sourceExpired(now),sent != .init(),pendingAt != nil {return close("Source expired while active ACK outstanding")}
+        expireStrings(now)
         expireSample(now)
         if neutralFence || !(neutralConfirmedAt.map {observedAt>$0} ?? false) {return poll(now:now)}
         if output == .init() {
@@ -107,6 +130,10 @@ public struct MobileAirSendGate: Sendable {
            pendingAt != nil || (lastSend.map {now-$0<Self.paceNS} ?? false) {
             return close("Discrete edge cannot be delivered on time")
         }
+        guard stringDeadlines.allSatisfy({ key, deadline in
+            (0..<25).contains(key) && output.keys & (1 << key) != 0 && deadline > observedAt
+        }) else { return close("Invalid string expiry") }
+        self.stringDeadlines = stringDeadlines
         sample=output;sampledAt=observedAt
         return poll(now:now)
     }
@@ -114,6 +141,7 @@ public struct MobileAirSendGate: Sendable {
         if let failure=check(now){return failure}
         guard started,admitted else {return .wait}
         let expiredActive=sourceExpired(now) && sent != .init()
+        expireStrings(now)
         expireSample(now)
         if let failure=check(now){return failure}
         if expiredActive,pendingAt != nil {return close("Source expired while active ACK outstanding")}

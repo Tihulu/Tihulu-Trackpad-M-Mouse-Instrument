@@ -15,9 +15,15 @@ public struct MobileLANSession: Sendable {
     private var capabilitiesSentAt:Int64?
     private var gate:MobileAirSendGate?
     private var lane:MobileAirWireLane?
+    private var manifest: MobileLANCapabilities.Manifest?
+
+    /// A camera can adopt this assignment only after the host has confirmed neutral.
+    public var readyManifest: MobileLANCapabilities.Manifest? {
+        phase == .ready ? manifest : nil
+    }
     public init(selection:Selection){self.selection=selection}
     private mutating func close(_ reason:String)->Action {
-        phase = .closed;gate=nil;lane=nil;pendingAt=nil
+        phase = .closed;gate=nil;lane=nil;manifest=nil;pendingAt=nil
         return .close(reason)
     }
     private mutating func check(_ now:Int64)->Action? {
@@ -61,6 +67,7 @@ public struct MobileLANSession: Sendable {
             case .helper(let index):lane=manifest.helperLane(index:index)
             }
             guard lane != nil else {return close("Unassigned lane")}
+            self.manifest = manifest
             pendingAt=nil;phase = .neutralDelay
             return poll(now:now)
         case .neutralACK,.ready:
@@ -90,13 +97,14 @@ public struct MobileLANSession: Sendable {
         }
         return .wait
     }
-    public mutating func offer(_ output:MobileAirOutput,observedAt:Int64,now:Int64)->Action {
+    public mutating func offer(_ output:MobileAirOutput,observedAt:Int64,now:Int64,
+                               stringDeadlines: [Int: Int64] = [:])->Action {
         if let failure=check(now){return failure}
         // No gesture buffering across negotiation. No pre-ACK observation
         // may become an attack; sender also checks the observation watermark.
         guard phase == .ready else {return poll(now:now)}
         guard var sender=gate else {return close("Missing sender")}
-        let result=sender.offer(output,observedAt:observedAt,now:now);gate=sender
+        let result=sender.offer(output,observedAt:observedAt,now:now,stringDeadlines:stringDeadlines);gate=sender
         return translate(result)
     }
     public mutating func abort()->Action {close("Stopped explicitly")}

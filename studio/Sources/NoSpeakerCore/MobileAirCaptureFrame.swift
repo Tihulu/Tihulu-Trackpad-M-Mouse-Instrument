@@ -16,6 +16,12 @@ public struct MobileAirCaptureFrame: Sendable {
     public let left: MobileAirObservation?
     public let right: MobileAirObservation?
     public let time: Double
+    /// AVFoundation / ARKit host uptime expressed in the sender's nanoseconds.
+    public static func nanoseconds(_ seconds: Double) -> Int64? {
+        guard seconds.isFinite, seconds >= 0 else { return nil }
+        return Int64(exactly: (seconds * 1_000_000_000).rounded(.down))
+    }
+
     public init(single: MobileAirObservation? = nil, left: MobileAirObservation? = nil,
                 right: MobileAirObservation? = nil, time: Double) {
         self.single = single; self.left = left; self.right = right; self.time = time
@@ -42,6 +48,11 @@ public struct MobileAirCaptureProjection: Sendable {
               let engine = MobileAirInstrument(mode:mode,keys:keys,near:near,far:far) else { return nil }
         self.engine = engine; self.role = role; self.orientation = orientation; self.mirrorX = mirrorX
     }
+    /// Deadlines are derived from the original string crossings, including overlapping notes.
+    public var stringDeadlines: [Int: Int64] {
+        engine.ringing.compactMapValues(MobileAirCaptureFrame.nanoseconds)
+    }
+
     public mutating func receive(_ frame: MobileAirCaptureFrame, now: Double) -> MobileAirOutput {
         let observation: MobileAirObservation?
         switch role { case .single: observation = frame.single; case .left: observation = frame.left; case .right: observation = frame.right }

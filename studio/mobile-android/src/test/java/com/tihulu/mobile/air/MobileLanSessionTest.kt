@@ -44,4 +44,17 @@ class MobileLanSessionTest {
         s.offer(AirOutput(keys=1),ms(31),ms(31))
         assertEquals(MobileLanSession.Action.Close("Source expired while active ACK outstanding"),s.receive("accepted",ms(181)))
     }
+
+    @Test fun cameraReceivesOnlyConfirmedSparseAssignment() {
+        val session = MobileLanSession(MobileLanSession.Selection.Keys)
+        assertNull(session.readyManifest)
+        session.begin(true, "tihulu-touch-v1", token, 0)
+        session.receive("admitted", ms(1))
+        session.receive(host(1 shl 19), ms(15))
+        assertNull(session.readyManifest)
+        session.receive("accepted", ms(20))
+        assertEquals(1 shl 19, session.readyManifest?.piano)
+        session.abort()
+        assertNull(session.readyManifest)
+    }
 }

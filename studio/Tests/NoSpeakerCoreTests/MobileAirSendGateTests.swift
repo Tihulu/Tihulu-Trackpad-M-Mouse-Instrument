@@ -61,3 +61,26 @@ private func packet(_ action:MobileAirSendGate.Action) throws -> RemoteTouchFram
     _=h.begin(now:ms(10))
     #expect(h.poll(now:ms(9)) == .close("Invalid monotonic clock"))
 }
+
+@Test func mobileSenderExpiresOverlappingStringsWithoutNewCameraFrames() throws {
+    var gate = try #require(MobileAirSendGate(lane: .keys(authorized: 5), initialSequence: 1))
+    _ = gate.begin(now: 0)
+    _ = gate.acknowledge("accepted", now: ms(15))
+    #expect(try packet(gate.offer(.init(keys: 5), observedAt: ms(30), now: ms(30),
+                                  stringDeadlines: [0: ms(80), 2: ms(125)])).mask == 5)
+    _ = gate.acknowledge("accepted", now: ms(35))
+    #expect(try packet(gate.poll(now: ms(80))).mask == 4)
+    _ = gate.acknowledge("accepted", now: ms(85))
+    #expect(try packet(gate.poll(now: ms(125))).mask == 0)
+    #expect(gate.acknowledge("accepted", now: ms(140)) == .wait)
+}
+
+@Test func mobileSenderCannotRefreshExpiredStringOnDelayedACK() throws {
+    var gate = try #require(MobileAirSendGate(lane: .keys(authorized: 1), initialSequence: 1))
+    _ = gate.begin(now: 0)
+    _ = gate.acknowledge("accepted", now: ms(15))
+    _ = gate.offer(.init(keys: 1), observedAt: ms(30), now: ms(30), stringDeadlines: [0: ms(95)])
+    #expect(try packet(gate.acknowledge("accepted", now: ms(95))).mask == 0)
+    _ = gate.acknowledge("accepted", now: ms(110))
+    #expect(gate.poll(now: ms(200)) == .wait)
+}

@@ -100,3 +100,31 @@ private func host(_ piano:Int=1,_ pedals:Int=0)throws->String {
     #expect(bridge.connectionIDs == [other])
     #expect(hostSession.boundSources == [.tablet])
 }
+
+@Test func mobileCameraAssignmentAppearsAfterNeutralAndClearsOnClose() throws {
+    var session = MobileLANSession(selection: .keys)
+    #expect(session.readyManifest == nil)
+    _ = session.begin(trustedTLS: true, subprotocol: "tihulu-touch-v1", invitation: invitation, now: 0)
+    _ = session.receive(text: "admitted", now: ns(1))
+    _ = session.receive(text: try host(1 << 19), now: ns(15))
+    #expect(session.readyManifest == nil)
+    _ = session.receive(text: "accepted", now: ns(20))
+    let manifest = try #require(session.readyManifest)
+    var projection = try #require(MobileAirCaptureProjection(mode: .depthKeys, keys: manifest.piano))
+    let hand = MobileAirObservation(sample: .debugSample(x: 0.9, y: 0.5, aperture: 0.5), depth: 0.4)
+    for time in [0.05, 0.1] {
+        let sample = projection.receive(.init(single: hand, time: time), now: time)
+        let at = try #require(MobileAirCaptureFrame.nanoseconds(time))
+        let action = session.offer(sample, observedAt: at, now: at)
+        if time == 0.1 { #expect(try packet(action).mask == 1 << 19) }
+    }
+    _ = session.abort()
+    #expect(session.readyManifest == nil)
+}
+
+@Test func mobileCaptureTimestampConversionRejectsInvalidAndKeepsCaptureTime() {
+    #expect(MobileAirCaptureFrame.nanoseconds(12.125) == 12_125_000_000)
+    for value in [Double.nan, .infinity, -.infinity, -1, Double.greatestFiniteMagnitude] {
+        #expect(MobileAirCaptureFrame.nanoseconds(value) == nil)
+    }
+}

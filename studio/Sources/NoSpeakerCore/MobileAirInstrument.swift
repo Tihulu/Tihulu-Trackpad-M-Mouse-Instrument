@@ -41,7 +41,7 @@ public struct MobileAirInstrument: Sendable {
     private var chord = AirChordSelection(slots: chordOffsets)!
     private var pinch = AirPinchGate()
     private var strings = AirStringCrossing(stringCount: 3)!
-    private var ringing: [Int: Double] = [:]
+    private(set) var ringing: [Int: Double] = [:]
     private var heldKey: Int?
     private var beamZone: Int?
     private var lastTime: Double?
