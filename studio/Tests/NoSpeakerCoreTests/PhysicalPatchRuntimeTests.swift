@@ -211,3 +211,23 @@ import Testing
         #expect(runtime.receiveGamepad(source:.gamepad1,frame:held,now:1.41)==[.init(note,value:100)])
     }
 }
+
+
+@Test func physicalGamepadIdleArmExpiresAndOldNeutralCannotRestoreIt() throws {
+    let note=SensorDestination(.note,number:60)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[.init(id:"note",source:.gamepad1,signal:.padA,destination:note)]))
+    let neutral=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+    var buttons=Array(repeating:0.0,count:12);buttons[0]=1
+    let held=try #require(GamepadFrame(buttons:buttons,triggers:[0,0],sticks:[0,0,0,0]))
+    _=runtime.receiveGamepad(source:.gamepad1,frame:neutral,now:1)
+    #expect(runtime.expire(now:1.36).isEmpty)
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:neutral,now:1.37,hostTime:1.35).isEmpty)
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:held,now:1.38).isEmpty)
+    _=runtime.receiveGamepad(source:.gamepad1,frame:neutral,now:1.39)
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:held,now:1.4)==[.init(note,value:100)])
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:nil,now:1.41,hostTime:1.35).isEmpty)
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:held,now:1.42,hostTime:1.0).isEmpty)
+    #expect(runtime.activeSources==[.gamepad1])
+    #expect(runtime.releaseGamepads([.gamepad1],now:1.43)==[.init(note,value:0)])
+}

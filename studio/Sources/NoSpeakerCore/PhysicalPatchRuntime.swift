@@ -278,18 +278,19 @@ public struct PhysicalPatchRuntime: Sendable {
     public mutating func receiveGamepad(source:SensorSource,frame:GamepadFrame?,now:Double,hostTime:Double? = nil) -> [SensorCommand] {
         guard GamepadFrame.sources.contains(source),supported.contains(source) else { return [] }
         let receipt=hostTime ?? now
+        // Pre-loss queued data (including old nil callbacks) cannot
+        // rearm or tear down a newer owner. Check before freshness.
+        if let retiredAt=gamepadRetiredAt[source],receipt.isFinite,receipt<=retiredAt { return [] }
         guard let frame,Self.admitsPhysicalReceipt(receipt,now:now) else {
             return releaseGamepad(source,now:now)
         }
-        // A queued neutral snapshot from before known loss must not
-        // rearm a replacement controller. Only post-loss input can arm.
-        if let retiredAt=gamepadRetiredAt[source],receipt<=retiredAt { return [] }
         if let last = seen[source] {
             if !Self.admitsPhysicalReceipt(last,now:now) {
                 // All already expired owners leave together. Otherwise a
                 // stale controller could briefly restore another stale CC.
                 let commands = expire(now:now)
                 gamepadArmed.remove(source)
+                gamepadRetiredAt[source]=max(gamepadRetiredAt[source] ?? now,now)
                 lastGamepadActive.removeValue(forKey:source)
                 seen[source] = max(last,receipt)
                 return commands
@@ -808,7 +809,9 @@ public struct PhysicalPatchRuntime: Sendable {
         // Remove all expired owners atomically, including camera and remote.
         let stale = Set(sessions.keys.filter {
             ($0 == .camera && dualExpired) || !Self.admitsPhysicalReceipt(seen[$0] ?? 0,now:now)
-        }).union(physical).sorted { $0.rawValue < $1.rawValue }
+        }).union(physical).union(gamepadArmed.filter {
+            !Self.admitsPhysicalReceipt(seen[$0] ?? 0,now:now)
+        }).sorted { $0.rawValue < $1.rawValue }
         var removed: Set<UUID> = []
         for source in stale {
             if GamepadFrame.sources.contains(source) {
