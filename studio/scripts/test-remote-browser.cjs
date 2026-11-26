@@ -1841,3 +1841,22 @@ test("invalid extra camera gain refuses permission",async()=>{
   a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraExtra1.value="1";a.elements.webCameraExtraGain1.value="Infinity";
   await a.elements.webCameraStart.emit("click");assert.equal(requests,0);
 });
+
+test("camera profile v2 persists response preferences but never logical lane assignments",async()=>{
+  const stored=new Map(),a=setup("granted",fullManifest,true,true,false,stored,false,{getUserMedia:async()=>mockCamera().stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraGain.value="0.5";a.elements.webCameraExtraGain1.value="2";a.elements.webCameraExtraInvert1.checked=true;a.elements.webCameraExtraMetric1.value="y";a.elements.webCameraExtra1.value="2";
+  a.elements.webCameraSave.emit("click");
+  const p=JSON.parse(stored.get("tihulu.remote.camera-settings.v1"));assert.equal(p.version,2);assert.deepEqual(p.gains,[.5,2,1]);assert.deepEqual(p.extraInvert,[true,false]);assert.equal("assignments" in p,false);
+  a.elements.webCameraExtra1.value="1";a.elements.webCameraExtraGain1.value="1";a.elements.webCameraLoad.emit("click");
+  assert.equal(a.elements.webCameraExtra1.value,"1");assert.equal(a.elements.webCameraExtraGain1.value,"2");assert.equal(a.elements.webCameraExtraMetric1.value,"y");
+});
+test("v1 camera profile migrates neutral response defaults and rejects corrupt v2",()=>{
+  const old={version:1,calibration:"quiet",facing:"environment",invert:false,light:false,metric:"amount",region:"center",sensitivity:"normal",zoom:null};
+  const stored=new Map([["tihulu.remote.camera-settings.v1",JSON.stringify(old)]]);
+  const a=setup("granted",fullManifest,true,true,false,stored,false,{getUserMedia:async()=>mockCamera().stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraGain.value="2";a.elements.webCameraLoad.emit("click");assert.equal(a.elements.webCameraGain.value,"1");assert.equal(a.elements.webCameraRegion.value,"center");
+  stored.set("tihulu.remote.camera-settings.v1",JSON.stringify({...old,version:2,gains:[1,99,1],extraInvert:[false,false],extraMetric:["x","y"]}));
+  a.elements.webCameraRegion.value="full";a.elements.webCameraLoad.emit("click");assert.equal(a.elements.webCameraRegion.value,"full");
+});
