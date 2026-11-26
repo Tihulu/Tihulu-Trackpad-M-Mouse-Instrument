@@ -21,6 +21,7 @@ public struct PhysicalPatchRuntime: Sendable {
     private var sessions: [SensorSource: UUID] = [:]
     private var seen: [SensorSource: Double] = [:]
     private var gamepadArmed:Set<SensorSource> = []
+    private var gamepadRetiredAt:[SensorSource:Double] = [:]
     private var gamepadMappedSignals: [SensorSource:[SensorSignal]] = [:]
     private var gamepadSmoothedSources: Set<SensorSource> = []
     private var lastGamepadActive: [SensorSource:[SensorSignal:Double]] = [:]
@@ -157,6 +158,7 @@ public struct PhysicalPatchRuntime: Sendable {
         pairing.clear()
         seen = [:]
         gamepadArmed = []
+        gamepadRetiredAt = [:]
         gamepadMappedSignals = [:]
         gamepadSmoothedSources = []
         lastGamepadActive = [:]
@@ -279,6 +281,9 @@ public struct PhysicalPatchRuntime: Sendable {
         guard let frame,Self.admitsPhysicalReceipt(receipt,now:now) else {
             return releaseGamepad(source,now:now)
         }
+        // A queued neutral snapshot from before known loss must not
+        // rearm a replacement controller. Only post-loss input can arm.
+        if let retiredAt=gamepadRetiredAt[source],receipt<=retiredAt { return [] }
         if let last = seen[source] {
             if !Self.admitsPhysicalReceipt(last,now:now) {
                 // All already expired owners leave together. Otherwise a
@@ -324,7 +329,10 @@ public struct PhysicalPatchRuntime: Sendable {
     }
     public mutating func releaseGamepad(_ source:SensorSource) -> [SensorCommand] {
         guard GamepadFrame.sources.contains(source) else { return [] }
-        gamepadArmed.remove(source); seen.removeValue(forKey:source)
+        gamepadArmed.remove(source)
+        if let last=seen.removeValue(forKey:source) {
+            gamepadRetiredAt[source]=max(gamepadRetiredAt[source] ?? last,last)
+        }
         lastGamepadActive.removeValue(forKey:source)
         return disconnect(source)
     }
@@ -805,6 +813,7 @@ public struct PhysicalPatchRuntime: Sendable {
         for source in stale {
             if GamepadFrame.sources.contains(source) {
                 gamepadArmed.remove(source); seen.removeValue(forKey:source)
+                gamepadRetiredAt[source]=max(gamepadRetiredAt[source] ?? now,now)
                 lastGamepadActive.removeValue(forKey:source)
             }
             if let id = sessions.removeValue(forKey:source) { removed.insert(id) }
@@ -859,6 +868,7 @@ public struct PhysicalPatchRuntime: Sendable {
         hybridSource = nil; hybridInputs = []; hybridSession = nil; hybridReceipt = nil
         seen = [:]
         gamepadArmed = []
+        gamepadRetiredAt = [:]
         gamepadMappedSignals = [:]
         gamepadSmoothedSources = []
         lastGamepadActive = [:]

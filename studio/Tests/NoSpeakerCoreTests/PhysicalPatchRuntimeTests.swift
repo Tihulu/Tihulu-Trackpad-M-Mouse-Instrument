@@ -190,3 +190,24 @@ import Testing
     #expect(runtime.receiveGamepad(source:.gamepad1,frame:high,now:1.05).isEmpty)
     #expect(runtime.receiveGamepad(source:.gamepad2,frame:mid,now:1.05).isEmpty)
 }
+
+
+@Test func physicalGamepadQueuedNeutralBeforeLossCannotRearmReplacement() throws {
+    let note=SensorDestination(.note,number:60)
+    for watchdog in [false,true] {
+        var runtime=PhysicalPatchRuntime()
+        try runtime.configure(.init(routes:[.init(id:"note",source:.gamepad1,signal:.padA,destination:note)]))
+        let neutral=try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[0,0],sticks:[0,0,0,0]))
+        var buttons=Array(repeating:0.0,count:12);buttons[0]=1
+        let held=try #require(GamepadFrame(buttons:buttons,triggers:[0,0],sticks:[0,0,0,0]))
+        _=runtime.receiveGamepad(source:.gamepad1,frame:neutral,now:1)
+        #expect(runtime.receiveGamepad(source:.gamepad1,frame:held,now:1.01)==[.init(note,value:100)])
+        let loss=watchdog ? runtime.expire(now:1.37) : runtime.releaseGamepads([.gamepad1],now:1.37)
+        #expect(loss==[.init(note,value:0)])
+        #expect(runtime.receiveGamepad(source:.gamepad1,frame:neutral,now:1.38,hostTime:1.36).isEmpty)
+        #expect(runtime.receiveGamepad(source:.gamepad1,frame:held,now:1.39).isEmpty)
+        #expect(runtime.activeSources.isEmpty)
+        _=runtime.receiveGamepad(source:.gamepad1,frame:neutral,now:1.4)
+        #expect(runtime.receiveGamepad(source:.gamepad1,frame:held,now:1.41)==[.init(note,value:100)])
+    }
+}
