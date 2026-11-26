@@ -17,6 +17,23 @@ public struct CustomSurfaceMixedPlan: Sendable {
     }
     public let layout:CustomSurfacePadLayout
     public let melodicChannel:Int
+    /// All possible destinations, including currently idle pads. An endpoint
+    /// reservation must cover the entire frozen plan, not only active notes.
+    public var destinations:Set<SensorDestination> {
+        var result:Set<SensorDestination>=[]
+        for pad in layout.pads {
+            if let notes=CustomSurfaceStandardNotePlan.noteTargets(pad.assignment,melodicChannel:melodicChannel) {
+                result.formUnion(notes)
+            } else {
+                switch pad.assignment {
+                case .helper(let target):result.insert(target)
+                case .xy(let x,let y):result.insert(x);result.insert(y)
+                default:break
+                }
+            }
+        }
+        return result
+    }
 
     public init(layout:CustomSurfacePadLayout,melodicChannel:Int)throws {
         guard CustomSurfaceStandardNotePlan(layout:layout,melodicChannel:melodicChannel) != nil else{throw Failure.channelConflict}

@@ -47,6 +47,7 @@ struct CustomSurfacePadEditor:View {
     @State private var feedback=""
     @State private var newWidth=1000
     @State private var newHeight=2500
+    @State private var previewChannel=0
     private enum Kind:String,CaseIterable,Identifiable {
         case note="Note",drum="Drum",degree="Tuning degree",chord="Chord",sustain="Sustain",bend="Pitch bend",cc="Custom MIDI CC",xy="Custom XY"
         var id:String{rawValue}
@@ -82,6 +83,11 @@ struct CustomSurfacePadEditor:View {
                     Text("Saved layouts could not be read. Original data is preserved; saving is disabled.").font(.caption).foregroundStyle(.orange)
                 }
                 if let layout=layouts[surface] {
+                    DisclosureGroup("Standard MIDI compatibility check") {
+                        Stepper("Preview melodic channel \(previewChannel+1)",value:$previewChannel,in:0...15)
+                        Text(compatibility(layout)).font(.caption).textSelection(.enabled)
+                        Text("Offline check only. No endpoint reservation, MIDI send or MPE activation.").font(.caption).foregroundStyle(.secondary)
+                    }
                     HStack {
                         Stepper("New pad width \(newWidth)",value:$newWidth,in:100...10000,step:100)
                         if surface != .touchBar {
@@ -203,6 +209,21 @@ struct CustomSurfacePadEditor:View {
                 }
             }
         }
+    }
+    private func compatibility(_ layout:Layout)->String {
+        do {
+            let plan=try CustomSurfaceMixedPlan(layout:layout,melodicChannel:previewChannel)
+            let channels=Set(plan.destinations.map(\.channel)).sorted().map{String($0+1)}.joined(separator:", ")
+            return "Standard MIDI plan valid: \(plan.destinations.count) distinct targets; channels \(channels). Exclusive endpoint required."
+        } catch CustomSurfaceMixedPlan.Failure.channelConflict {
+            return "Channel conflict: melodic notes and GM drums cannot share channel 10 in this plan."
+        } catch CustomSurfaceMixedPlan.Failure.unsupportedPad(let id) {
+            let name=layout.pads.first(where:{$0.id==id})?.label ?? id
+            return "Unsupported in standard MIDI plan: "+name+". A tuned or dedicated switch route is required."
+        } catch CustomSurfaceMixedPlan.Failure.duplicateContinuousTarget(let target) {
+            let name=target.kind == .pitchBend ? "Pitch bend":"CC "+String(target.number)
+            return "Duplicate continuous target: "+name+", channel "+String(target.channel+1)+"."
+        } catch {return "Standard MIDI plan could not be validated."}
     }
     private func axisEditor(_ axis:String,bend:Binding<Bool>,cc:Binding<Int>,channel:Binding<Int>)->some View {
         VStack(alignment:.leading,spacing:4) {

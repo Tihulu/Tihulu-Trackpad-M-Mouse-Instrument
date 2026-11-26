@@ -56,3 +56,17 @@ private func mixedLayout(_ assignments:[CustomSurfacePadLayout.Assignment]) thro
     var projection=CustomSurfaceContactProjection(layout:other)
     #expect(plan.output(for:projection.frame([],sequence:1,observedAt:1,now:1))==nil)
 }
+
+@Test func customSurfaceMixedPlanListsAllIdleAndActiveDestinations() throws {
+    let cc=SensorDestination(.controlChange,channel:4,number:74)
+    let bend=SensorDestination(.pitchBend,channel:5)
+    let pedal=SensorDestination(.sustain,channel:2)
+    let layout=try mixedLayout([.chord([60,64]),.note(60),.drum(36),.helper(pedal),.xy(cc,bend)])
+    let plan=try Mixed(layout:layout,melodicChannel:2)
+    #expect(plan.destinations==Set([.init(.note,channel:2,number:60),.init(.note,channel:2,number:64),
+        .init(.note,channel:9,number:36),pedal,cc,bend]))
+    var projection=CustomSurfaceContactProjection(layout:layout)
+    let neutral=try #require(plan.output(for:projection.frame([],sequence:1,observedAt:1,now:1)))
+    #expect(neutral.notes.desired.isEmpty && neutral.continuous.isEmpty && neutral.sustainChannels.isEmpty)
+    #expect(plan.destinations.count==6)
+}
