@@ -57,8 +57,9 @@ import NoSpeakerCore
         detail.setContentHuggingPriority(.required,for:.vertical)
         armButton.setContentHuggingPriority(.required,for:.vertical)
         releaseButton.setContentHuggingPriority(.required,for:.vertical)
-        NotificationCenter.default.addObserver(self,selector:#selector(retire),name:UIApplication.willResignActiveNotification,object:nil)
+        NotificationCenter.default.addObserver(self,selector:#selector(inactive(_:)),name:UIApplication.willResignActiveNotification,object:nil)
     }
+    @objc private func inactive(_ notification:Notification){retire()}
     @objc private func arm(){piano.arm()}
     @objc func retire(){piano.retire()}
     override func viewWillDisappear(_ animated:Bool){retire();super.viewWillDisappear(animated)}
@@ -80,7 +81,7 @@ import NoSpeakerCore
     }
     required init?(coder:NSCoder){return nil}
     func arm(){
-        guard owner==nil,window != nil,UIApplication.shared.applicationState == .active,
+        guard owner==nil,window?.windowScene?.activationState == .foregroundActive,UIApplication.shared.applicationState == .active,
               bounds.width>0,bounds.height>0 else{return}
         contacts.removeAll()
         owner=MobileTouchOwnership(authorized:authorized)
@@ -103,7 +104,7 @@ import NoSpeakerCore
     }
     private func publish(_ change:MobileTouchOwnership.Change){
         guard var current=owner,bounds.width>0,bounds.height>0,
-              window != nil,UIApplication.shared.applicationState == .active else{retire();return}
+              window?.windowScene?.activationState == .foregroundActive,UIApplication.shared.applicationState == .active else{retire();return}
         var snapshot:[MobileTouchKeys.Contact]=[]
         for (id,touch) in contacts.values {
             let point=touch.location(in:self)

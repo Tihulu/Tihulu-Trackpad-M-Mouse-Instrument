@@ -80,7 +80,7 @@ internal class TouchPianoView(context:Context,
             val left=i*cell;val right=(i+1)*cell
             paint.color=if(mask and (1 shl key)!=0)Color.rgb(72,145,204)
                 else if(owner==null)Color.rgb(184,190,196) else Color.rgb(242,244,246)
-            canvas.drawRect(left+1,1,right-1,height.toFloat()-1,paint)
+            canvas.drawRect(left+1f,1f,right-1f,height.toFloat()-1f,paint)
             paint.color=Color.rgb(34,42,51);paint.textAlign=Paint.Align.CENTER
             paint.textSize=minOf(14*density,cell*.58f)
             canvas.drawText((key+1).toString(),(left+right)/2,height-16*density,paint)
@@ -122,6 +122,10 @@ internal class TouchPianoView(context:Context,
     override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){
         super.onSizeChanged(w,h,oldw,oldh)
         if(oldw>0&&oldh>0&&(w!=oldw||h!=oldh))retire()
+    }
+    override fun onWindowVisibilityChanged(visibility:Int){
+        super.onWindowVisibilityChanged(visibility)
+        if(visibility!=VISIBLE)retire()
     }
     override fun onDetachedFromWindow(){retire();super.onDetachedFromWindow()}
 }
