@@ -66,10 +66,12 @@ public enum PerformanceGroupPartyJamPreset:String,CaseIterable,Identifiable,Send
 public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Sendable {
     case trackpadSolo,mouseSolo,desktopDuo,xboxSolo,xboxDuo,phoneSolo,pocketJam,mobileDuo,cameraLead,touchBarLead,lidLead,mobileQuartet,hybridBand
     case xboxDrums,tabletKeys,mousePedal,xboxHelper,phonePedals
-    case phoneXYKeys,tabletKeysDrums,phoneXYEffects
+    case phoneXYKeys,tabletKeysDrums,phoneXYEffects,phoneAllSurfaces,tabletAllSurfaces
     public var id:String { rawValue }
     public var title:String {
         switch self {
+        case .phoneAllSurfaces: "Phone · four switchable surfaces"
+        case .tabletAllSurfaces: "Tablet · four switchable surfaces"
         case .phoneXYKeys: "Phone · XY + piano"
         case .tabletKeysDrums: "Tablet · piano + drums"
         case .phoneXYEffects: "Phone · XY + pedalboard"
@@ -95,6 +97,7 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
     }
     public var detail:String {
         switch self {
+        case .phoneAllSurfaces,.tabletAllSurfaces: "Switch between XY lead, piano, drum pads and pedalboard on the device. Dedicated drum port; at most two active surfaces."
         case .phoneXYKeys: "Switch on phone between XY lead and piano on the same instrument port."
         case .tabletKeysDrums: "Switch on tablet between piano and drum pads on independent MIDI ports."
         case .phoneXYEffects: "Switch on phone between XY lead and pedalboard with pitch bend, sustain and effects."
@@ -120,8 +123,8 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
     }
     public var requiredSources:[SensorSource] {
         switch self {
-        case .phoneXYKeys,.phoneXYEffects: [.phone]
-        case .tabletKeysDrums: [.tablet]
+        case .phoneXYKeys,.phoneXYEffects,.phoneAllSurfaces: [.phone]
+        case .tabletKeysDrums,.tabletAllSurfaces: [.tablet]
         case .xboxDrums: [.gamepad1]
         case .tabletKeys: [.tablet]
         case .mousePedal: [.trackpad,.magicMouse]
@@ -161,6 +164,16 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
         let drums=group("Phone drums",RemoteDrumPads.routes(source:.phone))
         let groups:[PerformanceInstrumentGroup]
         switch self {
+        case .phoneAllSurfaces,.tabletAllSurfaces:
+            let source:SensorSource = self == .phoneAllSurfaces ? .phone : .tablet
+            let controls:[SensorMapping] = [
+                .init(id:"mobile-bend",source:source,signal:.pedalExpression,destination:.init(.pitchBend),priority:10),
+                .init(id:"mobile-filter",source:source,signal:.pedalWah,destination:.init(.controlChange,number:74),priority:10),
+                .init(id:"mobile-sustain",source:source,signal:.pedalSustain,destination:.init(.sustain)),
+                .init(id:"mobile-switch",source:source,signal:.pedalSwitch1,destination:.init(.controlChange,number:80))
+            ]
+            groups=[group("Mobile lead and keys",surface(source,note:60)+RemotePiano.routes(source:source)+controls),
+                    group("Mobile drums",RemoteDrumPads.routes(source:source))]
         case .phoneXYKeys: groups=[group("Phone XY and keys",surface(.phone,note:60)+RemotePiano.routes(source:.phone))]
         case .tabletKeysDrums: groups=[group("Tablet piano",RemotePiano.routes(source:.tablet)),
                                       group("Tablet drums",RemoteDrumPads.routes(source:.tablet))]

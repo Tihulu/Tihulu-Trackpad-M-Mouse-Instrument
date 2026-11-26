@@ -104,3 +104,22 @@ import Testing
         }
     }
 }
+
+
+@Test func allSurfaceMobilePresetsKeepDrumsOnSeparatePortAndSafeMappedControls() throws {
+    for preset in [PerformanceGroupStarterPreset.phoneAllSurfaces,.tabletAllSurfaces] {
+        let profile=try #require(preset.makeProfile())
+        let source=try #require(preset.requiredSources.first)
+        #expect(profile.groups.count == 2 && profile.layeredInputs.isEmpty)
+        let lead=profile.groups[0].patch.routes
+        let drums=profile.groups[1].patch.routes
+        #expect(drums.count == 8 && drums.allSatisfy { $0.source == source && $0.destination.channel == 9 })
+        #expect(lead.contains { $0.signal == .pedalExpression && $0.destination.kind == .pitchBend })
+        #expect(lead.contains { $0.signal == .pedalSustain && $0.destination.kind == .sustain })
+        #expect(lead.allSatisfy { PerformanceGroupGamepadSession.permitsLiveControl($0) })
+        let session=try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
+        let caps=try #require(session.remoteCapabilities(source))
+        #expect(caps.touch && caps.piano == RemotePiano.maximumMask && caps.drums == 255 && caps.pedals == 29)
+        #expect(!caps.tilt && !caps.rotation && !caps.acceleration && session.boundSources.isEmpty)
+    }
+}
