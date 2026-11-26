@@ -7,7 +7,7 @@ import NoSpeakerCore
     let contact = SurfaceContact(id: 7, surface: .trackpad, state: 3, isDown: true, x: 0.25, y: 0.75, size: 0.1)
     let frame = SurfaceTouchFrame(surface: .trackpad, contacts: [contact], timestamp: 999, frameNumber: 4,
                                   acquisitionNS: 42, validNativeEnvelope: true)
-    let sample = try #require(CustomSurfaceNativeFrame(frame: frame, orientation: .init()))
+    let sample = try #require(CustomSurfaceNativeFrame(frame: frame, orientation: .horizontal))
     #expect(sample.surface == .trackpad)
     #expect(sample.observedAt == 42 && sample.sequence == 4)
     #expect(sample.contacts == [.init(id: 7, x: 0.25, y: 0.25)])
@@ -16,15 +16,29 @@ import NoSpeakerCore
 @Test func customNativeFrameDoesNotTurnMalformedInputIntoNeutral() throws {
     let neutral = SurfaceTouchFrame(surface: .trackpad, contacts: [], timestamp: 0, frameNumber: 1,
                                     acquisitionNS: 2, validNativeEnvelope: true)
-    #expect(CustomSurfaceNativeFrame(frame: neutral, orientation: .init())?.contacts.isEmpty == true)
+    #expect(CustomSurfaceNativeFrame(frame: neutral, orientation: .horizontal)?.contacts.isEmpty == true)
     let malformed = SurfaceTouchFrame(surface: .trackpad, contacts: [], timestamp: 0, frameNumber: 1,
                                       acquisitionNS: 2, validNativeEnvelope: false)
-    #expect(CustomSurfaceNativeFrame(frame: malformed, orientation: .init()) == nil)
+    #expect(CustomSurfaceNativeFrame(frame: malformed, orientation: .horizontal) == nil)
     let synthetic = SurfaceTouchFrame(surface: .trackpad, contacts: [], timestamp: 0, frameNumber: 1)
-    #expect(CustomSurfaceNativeFrame(frame: synthetic, orientation: .init()) == nil)
+    #expect(CustomSurfaceNativeFrame(frame: synthetic, orientation: .horizontal) == nil)
     let invalid = SurfaceContact(id: 7, surface: .trackpad, state: 3, isDown: true, x: .nan, y: 0.5, size: 1)
     let bad = SurfaceTouchFrame(surface: .trackpad, contacts: [invalid], timestamp: 0, frameNumber: 1,
                                 acquisitionNS: 2, validNativeEnvelope: true)
-    #expect(CustomSurfaceNativeFrame(frame: bad, orientation: .init()) == nil)
+    #expect(CustomSurfaceNativeFrame(frame: bad, orientation: .horizontal) == nil)
+}
+#endif
+
+#if os(macOS)
+@Test func customNativeFrameAppliesMouseOrientationAndRejectsCrossSurface() throws {
+    let contact = SurfaceContact(id: 1, surface: .magicMouse, state: 4, isDown: true, x: 0.25, y: 0.75, size: 0.1)
+    let frame = SurfaceTouchFrame(surface: .magicMouse, contacts: [contact], timestamp: 0, frameNumber: 4,
+                                  acquisitionNS: 42, validNativeEnvelope: true)
+    let sample = try #require(CustomSurfaceNativeFrame(frame: frame, orientation: .vertical))
+    #expect(sample.surface == .magicMouse)
+    #expect(sample.contacts == [.init(id: 1, x: 0.75, y: 0.25)])
+    let wrong = SurfaceTouchFrame(surface: .trackpad, contacts: [contact], timestamp: 0, frameNumber: 4,
+                                  acquisitionNS: 42, validNativeEnvelope: true)
+    #expect(CustomSurfaceNativeFrame(frame: wrong, orientation: .horizontal) == nil)
 }
 #endif

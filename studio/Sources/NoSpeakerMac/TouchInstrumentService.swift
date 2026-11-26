@@ -373,6 +373,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var monitoring = false
     private var monitoringToken: UUID?
     private var patchMailbox: PatchSurfaceMailbox?
+    private var customSurfaceInbox: CustomSurfaceNativeInbox?
     private var active = false
     private var performanceHandler: (@Sendable ([TouchPerformanceState],TouchSnapshotStamp) -> Void)?
     private var queuedInbox: OrderedTouchInbox<QueuedTouchSnapshot>?
@@ -480,6 +481,13 @@ public final class TouchInstrumentService: @unchecked Sendable {
     public func setPatchMailbox(_ mailbox: PatchSurfaceMailbox?) {
         lock.lock()
         patchMailbox = mailbox
+        lock.unlock()
+    }
+
+    /// Separate raw subscriber; never replaces the existing Builder mailbox.
+    public func setCustomSurfaceInbox(_ inbox: CustomSurfaceNativeInbox?) {
+        lock.lock()
+        customSurfaceInbox = inbox
         lock.unlock()
     }
 
@@ -619,6 +627,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.lock()
         monitoring = false
         monitoringToken = nil
+        customSurfaceInbox = nil
         performanceHandler = nil
         queuedInbox = nil
         queuedReady = nil
@@ -664,6 +673,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         // Submit under the subscription lock to serialize detachment with
         // the bounded enqueue; no MIDI or actor dispatch in the subscriber.
         patchMailbox?.submit(frame)
+        customSurfaceInbox?.submit(frame)
 
         // Mapping is bounded by the native contact limit and has no I/O.
         // Keep it in the same critical section as the publication so an
