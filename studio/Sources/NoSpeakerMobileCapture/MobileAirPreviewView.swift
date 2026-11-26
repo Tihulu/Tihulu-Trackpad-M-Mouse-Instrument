@@ -16,6 +16,7 @@ import NoSpeakerCore
     @State private var connectionStatus = ""
     @State private var scanning = false
     @State private var touchPreview = false
+    @State private var xyzStage = false
     @State private var liveTouchID:UUID?
     @State private var liveTouchMask:Int?
     @State private var askingPermission = false
@@ -69,6 +70,7 @@ import NoSpeakerCore
         ScrollView {
             VStack(alignment:.leading,spacing:16) {
                 Text("TIHULU · Air stage").font(.largeTitle.bold())
+                Button("LiDAR XYZ") { xyzStage = true }.disabled(configurationLocked)
                 Button("Touch piano · local preview") { touchPreview=true }.disabled(configurationLocked)
                 Picker("Output", selection: $useMac) {
                     Text("Local preview").tag(false)
@@ -183,6 +185,10 @@ import NoSpeakerCore
         .onAppear {if !busy {refreshCameras()}}
         .onChange(of:backend) {_,_ in if !busy {refreshCameras()}}
         .onChange(of:cameraID) {_,_ in if !busy {zoom=selectedCamera?.zoom.defaultFactor ?? 1}}
+        .fullScreenCover(isPresented: $xyzStage) {
+            MobileDepthXYZStage(returnCapture: { capture in if let capture { retiring = capture } },
+                                done: { xyzStage = false })
+        }
         .sheet(isPresented: $touchPreview) {
             NavigationStack {
                 MobileTouchPianoPreview()
