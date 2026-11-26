@@ -209,3 +209,57 @@ private func host(_ piano:Int=1,_ pedals:Int=0)throws->String {
     #expect(bridge.connectionIDs == [other])
     #expect(hostSession.boundSources == [.tablet])
 }
+
+@Test func mobileTouchStationarySustainAcrossActualHostGroupBridge() throws {
+    let phone=PerformanceInstrumentGroup(name:"Touch phone",patch:.init(routes:[.init(id:"held",source:.phone,signal:.pianoKey0,destination:.init(.note,number:60),velocity:93)]))
+    let tablet=PerformanceInstrumentGroup(name:"Other player",patch:.init(routes:[.init(id:"other",source:.tablet,signal:.pianoKey0,destination:.init(.note,number:64))]))
+    var hostSession=try PerformanceGroupGamepadSession(profile:.init(groups:[phone,tablet]),allowRemote:true)
+    var bridge=PerformanceGroupRemoteBridge()
+    let peer=UUID(),other=UUID(),secret=Data(repeating:0xab,count:32),otherSecret=Data(repeating:2,count:32)
+    var sent:[PerformanceGroupCommand]=[]
+    let sink:(PerformanceGroupCommand)->Bool={sent.append($0);return true}
+    _=bridge.process([.ready],now:1,session:&hostSession,send:sink)
+    try bridge.issue(secret:otherSecret,source:.tablet,now:1,session:hostSession)
+    _=bridge.process([.invitation(other,otherSecret,1.01)],now:1.01,session:&hostSession,send:sink)
+    _=bridge.process([.frame(other,Data(#"{"kind":"pianoKeys","version":5,"sequence":1,"mask":0}"#.utf8),1.02)],now:1.02,session:&hostSession,send:sink)
+    _=bridge.process([.frame(other,Data(#"{"kind":"pianoKeys","version":5,"sequence":2,"mask":1}"#.utf8),1.03)],now:1.03,session:&hostSession,send:sink)
+    try bridge.issue(secret:secret,source:.phone,now:1.04,session:hostSession)
+    var client=MobileLANSession(selection:.keys)
+    guard case .binary(let binary)=client.begin(trustedTLS:true,subprotocol:"tihulu-touch-v1",invitation:invitation,now:ns(40)) else{throw RemoteTouchError.invalidFrame}
+    _=bridge.process([.invitation(peer,binary,1.05)],now:1.05,session:&hostSession,send:sink)
+    guard case .text(let cap)=client.receive(text:"admitted",now:ns(50)) else{throw RemoteTouchError.invalidFrame}
+    let capability=bridge.process([.frame(peer,cap,1.06)],now:1.06,session:&hostSession,send:sink)
+    guard case .capabilities(_,let manifest)=capability.actions.first else{throw RemoteTouchError.invalidFrame}
+    guard case .text(let neutral)=client.receive(text:String(decoding:try manifest.encoded(),as:UTF8.self),now:ns(64)) else{throw RemoteTouchError.invalidFrame}
+    _=bridge.process([.frame(peer,neutral,1.065)],now:1.065,session:&hostSession,send:sink)
+    _=client.receive(text:"accepted",now:ns(80))
+    var lease=try #require(MobileTouchLiveLease(authorized:manifest.piano,armedAt:ns(81)))
+    let initial=lease.event(.began,contacts:[.init(id:0,x:0.5)],now:ns(82),ownerActive:true)
+    let down=try #require(initial)
+    guard case .text(let attack)=client.offer(down.output,observedAt:down.ownerAt,now:down.ownerAt) else{throw RemoteTouchError.invalidFrame}
+    sent.removeAll()
+    let attackACK=bridge.process([.frame(peer,attack,1.082)],now:1.082,session:&hostSession,send:sink)
+    #expect(attackACK.actions == [.acknowledge(peer,true)])
+    #expect(sent.count==1 && sent.first?.groupID==phone.id && sent.first?.command.value==93)
+    _=client.receive(text:"accepted",now:ns(87))
+    sent.removeAll()
+    for tick:Int64 in [132,182,232,282,332] {
+        let next=lease.pulse(now:ns(tick),ownerActive:true)
+        let pulse=try #require(next)
+        guard case .text(let refresh)=client.offer(pulse.output,observedAt:pulse.ownerAt,now:pulse.ownerAt) else{throw RemoteTouchError.invalidFrame}
+        let time=1+Double(tick)/1000
+        let ack=bridge.process([.frame(peer,refresh,time)],now:time,session:&hostSession,send:sink)
+        #expect(ack.actions == [.acknowledge(peer,true)])
+        _=client.receive(text:"accepted",now:ns(tick+5))
+    }
+    #expect(sent.isEmpty)
+    let ended=lease.event(.ended,contacts:[],now:ns(350),ownerActive:true)
+    let up=try #require(ended)
+    guard case .text(let release)=client.offer(up.output,observedAt:up.ownerAt,now:up.ownerAt) else{throw RemoteTouchError.invalidFrame}
+    let ack=bridge.process([.frame(peer,release,1.35)],now:1.35,session:&hostSession,send:sink)
+    #expect(ack.actions == [.acknowledge(peer,true)])
+    #expect(sent.count==1 && sent.first?.groupID==phone.id && sent.first?.command.destination.number==60 && sent.first?.command.value==0)
+    _=client.receive(text:"accepted",now:ns(355))
+    #expect(bridge.connectionIDs == [peer,other])
+    #expect(hostSession.boundSources == [.phone,.tablet])
+}
