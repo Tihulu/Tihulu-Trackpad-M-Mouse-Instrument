@@ -127,7 +127,7 @@ a production release. No credentials or CA are bundled.
    ARCore installation can interrupt the session; finish setup before pairing.
 
 Current limitations: address QR via explicit system camera thumbnail (continuous in-app scanning remains pending),
-single-family assignment, no live mode reconfiguration, no signed production
+single-family assignment, explicit pause/neutral ACK/restart within the same family, no signed production
 release, no physical Android/ARCore/Mac/Logic acceptance. JVM loopback TLS tests
 exercise the same upgrade path but do not certify Android TLS provider behavior.
 
@@ -137,3 +137,25 @@ canonical private HTTPS controller address is accepted. The image is not
 saved by TIHULU, no connection opens from the QR, and invitation/root trust
 must still be entered separately. System camera behavior and QR quality
 require physical device validation; manual address entry remains available.
+
+## Touch piano (local native preview)
+
+Open **Touch piano · local preview** from the idle Air stage, with no Mac
+connection or camera capture. Tap **Arm piano**, then play up to ten
+simultaneous direct finger contacts on 13 numbered logical key zones.
+The surface shows a note mask, not audio or MIDI; the numbers are logical
+zones, not guaranteed musical pitches. Two contacts in the same zone
+retain that key until the last contact leaves. Move to another zone to
+change the logical note. Release all, cancellation, malformed pointer
+ownership, focus/background loss, view detachment or layout resize clears
+the mask and requires a fresh explicit Arm. Back returns to the Air stage.
+
+The native preview does not require camera permissions or a hand model,
+does not open a socket, and never reuses a paired camera session. The
+separate touch owner liveness contract is covered by pure state-machine
+and sender integration fixtures: it may sustain a stationary contact only
+while the current foreground view explicitly proves ownership/liveness;
+a 150 ms owner gap retires the lease and the independent transport
+must release/close. It is not yet connected to the live UI or Mac. Real
+touch cancellation, multi-finger ergonomics, accessibility and latency
+remain physical acceptance work. No new host wire family or trust bypass.
