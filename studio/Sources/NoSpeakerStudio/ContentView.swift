@@ -2725,6 +2725,7 @@ private struct TouchBarModeView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }
+                TouchBarSavedProfilesPanel()
                 GroupBox("Touch Bar layout · Customize simultaneous zones") {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Choose the zones in your preferred order. Native piano segments send bounded taps; on-screen piano pads support press and hold. At least one zone is required.")
