@@ -556,7 +556,7 @@ final class StudioController: ObservableObject {
         groupHapticStatus = reason
     }
 
-    private func consumeGroupReports(_ reports: [PerformanceGroupDelivery.Report]) {
+    private func consumeGroupReports(_ reports: [PerformanceGroupDelivery.Report],reason:String? = nil) {
         for report in reports where report.capacityRefused > 0 {
             groupCapacityRefusals += min(report.capacityRefused,Int.max-groupCapacityRefusals)
         }
@@ -574,12 +574,13 @@ final class StudioController: ObservableObject {
             updateGroupHaptics()
         }
         refreshGroupOutputState()
+        if let reason {
+            groupGamepadStatus = PerformanceGroupDelivery.eventNotice(reason:reason,reports:reports,
+                hasPending:!groupCleanupIDs.isEmpty || groupDisposalCount != 0)
+        }
         if groupGamepadsRunning, !groupRegisteredIDs.isEmpty,
            groupRegisteredIDs.isSubset(of:groupStoppedIDs) {
-            stopGroupGamepads()
-            // Retain the reason rather than replacing it with a generic
-            // Stop message when the last live endpoint is retired.
-            if let faultNotice { groupGamepadStatus = faultNotice + " " + groupGamepadStatus }
+            stopGroupGamepads(after:reports,reason:reason)
         }
     }
 
@@ -598,10 +599,13 @@ final class StudioController: ObservableObject {
         }
         if !departing.isEmpty {
             for source in departing.keys { groupGamepadTokens.removeValue(forKey:source) }
-            consumeGroupReports(groupHost.unbindGroupSources(departing))
+            let reports=groupHost.unbindGroupSources(departing)
+            let reason="Controller input lost. Affected slots released; restart to rebind."
+            consumeGroupReports(reports,reason:reason)
             guard groupRunToken == run else { return }
-            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads(); return }
-            groupGamepadStatus = "Controller input lost. Affected slots released; restart to rebind."
+            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil {
+                stopGroupGamepads(after:reports,reason:reason); return
+            }
         }
         for (source,frame,receipt) in snapshots {
             guard groupRunToken == run else { return }
@@ -613,9 +617,10 @@ final class StudioController: ObservableObject {
         guard groupRunToken == run, let token = groupGamepadTokens[source] else { return }
         guard let frame else {
             groupGamepadTokens.removeValue(forKey:source)
-            consumeGroupReports(groupHost.unbindGamepad(source,token:token))
-            groupGamepadStatus = "Controller input lost. Stop and explicitly restart to bind a replacement."
-            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
+            let reports=groupHost.unbindGamepad(source,token:token)
+            let reason="Controller input lost. Stop and explicitly restart to bind a replacement."
+            consumeGroupReports(reports,reason:reason)
+            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads(after:reports,reason:reason) }
             return
         }
         if let result = groupHost.receiveGamepad(source,token:token,frame:frame,
@@ -638,9 +643,9 @@ final class StudioController: ObservableObject {
 
     private func retireGroupSource(_ source:SensorSource,reason:String,run:UUID) {
         guard groupRunToken == run, let token = groupGamepadTokens.removeValue(forKey:source) else { return }
-        consumeGroupReports(groupHost.unbindGamepad(source,token:token))
-        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
-        groupGamepadStatus = reason + (groupCleanupIDs.isEmpty ? "" : " MIDI cleanup pending.")
+        let reports=groupHost.unbindGamepad(source,token:token)
+        consumeGroupReports(reports,reason:reason)
+        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads(after:reports,reason:reason) }
     }
 
     private func stopGroupCamera(reason:String,run:UUID) {
@@ -702,7 +707,8 @@ final class StudioController: ObservableObject {
             if let token = groupGamepadTokens.removeValue(forKey:source) { tokens[source] = token }
         }
         guard !tokens.isEmpty else { return }
-        consumeGroupReports(groupHost.unbindGroupSources(tokens))
+        let reports=groupHost.unbindGroupSources(tokens)
+        consumeGroupReports(reports,reason:reason)
         guard groupRunToken == run else { return }
         if groupGamepadTokens[.trackpad] == nil && groupGamepadTokens[.magicMouse] == nil,
            let mailbox = groupSurfaceMailbox {
@@ -711,8 +717,7 @@ final class StudioController: ObservableObject {
             groupSurfaceMailbox = nil
             refreshSharedSurfaceMonitoring()
         }
-        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
-        groupGamepadStatus = reason + (groupCleanupIDs.isEmpty ? "" : " MIDI cleanup pending.")
+        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads(after:reports,reason:reason) }
     }
 
     private func drainGroupSurfaces(run:UUID) {
@@ -854,6 +859,10 @@ final class StudioController: ObservableObject {
     }
 
     func stopGroupGamepads() {
+        stopGroupGamepads(after:[],reason:nil)
+    }
+
+    private func stopGroupGamepads(after previous:[PerformanceGroupDelivery.Report],reason:String?) {
         // Invalidate callbacks before stopping the existing adapter.
         guard groupGamepadsRunning else { return }
         groupRunToken = nil
@@ -866,7 +875,11 @@ final class StudioController: ObservableObject {
         // Block new actuator frames before potentially slow MIDI cleanup.
         groupHaptics?.invalidateGroupFrames()
         // Release MIDI before potentially slow native monitor teardown.
-        if let report = groupHost.panic() { consumeGroupReports([report]) }
+        var reports=previous
+        if let report = groupHost.panic() {
+            reports.append(report)
+            consumeGroupReports([report])
+        }
         stopGroupHaptics(reason:"Group Trackpad output off")
         detachGroupRemoteTransport(reason:"Mobile listener off")
         builderGamepads.stop()
@@ -887,9 +900,9 @@ final class StudioController: ObservableObject {
             groupSurfaceMailbox = nil
             refreshSharedSurfaceMonitoring()
         }
-        groupGamepadStatus = groupCleanupIDs.isEmpty
-            ? (!groupRetainsTuning ? "Group MIDI stopped. Registered ports retained for restart." : "MPE stopped. Close retained ports before another Start.")
-            : "Group MIDI stopped; cleanup pending. Retry before restarting."
+        let stopped = !groupRetainsTuning ? "Group MIDI stopped. Registered ports retained for restart." : "MPE stopped. Close retained ports before another Start."
+        groupGamepadStatus = PerformanceGroupDelivery.eventNotice(reason:[reason,stopped].compactMap{$0}.joined(separator:" "),
+            reports:reports,hasPending:!groupCleanupIDs.isEmpty || groupDisposalCount != 0)
     }
 
     func stopPerformanceGroup(_ id:UUID) {

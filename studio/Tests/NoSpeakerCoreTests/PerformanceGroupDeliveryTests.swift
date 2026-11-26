@@ -257,3 +257,19 @@ private func deliveryGroup(_ source: SensorSource, signal: SensorSignal = .conta
     let pending = PerformanceGroupDelivery.cleanupNotice([failed],hasPending:true)
     #expect(pending.contains("MIDI send or cleanup failed") && pending.contains("cleanup still pending"))
 }
+
+
+@Test func groupEventNoticePreservesStopReasonAndFaultEvenAfterCleanupSucceeds() throws {
+    let group=deliveryGroup(.trackpad)
+    var state=try PerformanceGroupDelivery(profile:.init(groups:[group]))
+    let lease=try state.connect(.trackpad,now:1)
+    let failed=state.frame(lease:lease,sequence:1,now:1,values:[.contact:1]) { _ in false }
+    let reason="Controller lost. Group stopped."
+    let pending=PerformanceGroupDelivery.eventNotice(reason:reason,reports:[failed],hasPending:true)
+    #expect(pending.contains(reason) && pending.contains("MIDI send or cleanup failed") && pending.contains("cleanup pending"))
+    let cleaned=state.retryCleanup(group.id,send:{_ in true})
+    let cleared=PerformanceGroupDelivery.eventNotice(reason:reason,reports:[failed,cleaned],hasPending:false)
+    #expect(cleared.contains(reason) && cleared.contains("MIDI send or cleanup failed"))
+    #expect(!cleared.contains("cleanup pending"))
+    #expect(PerformanceGroupDelivery.eventNotice(reason:reason,reports:[],hasPending:false)==reason)
+}

@@ -65,6 +65,15 @@ public struct PerformanceGroupDelivery: Sendable {
         return "A group MIDI send or cleanup failed. Affected groups stopped; inspect cleanup status."
     }
 
+    /// Explicit loss or Stop messages cannot hide scoped faults or
+    /// unresolved delivery/disposal debt from that same operation.
+    public static func eventNotice(reason:String,reports:[Report],hasPending:Bool) -> String {
+        var parts=[reason]
+        if let fault=faultNotice(reports) { parts.append(fault) }
+        if hasPending { parts.append("MIDI cleanup pending. Retry before restarting.") }
+        return parts.joined(separator:" ")
+    }
+
     /// A manual retry can also discover faults on other expired sources.
     /// Keep that cause alongside the final, authoritative debt status.
     public static func cleanupNotice(_ reports:[Report],hasPending:Bool) -> String {
