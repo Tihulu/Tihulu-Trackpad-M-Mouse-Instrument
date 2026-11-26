@@ -7,13 +7,13 @@ const source=fs.readFileSync(path.join(__dirname,"../Sources/NoSpeakerMac/Remote
 const script=source.split('private static let script = #"""')[1].split('"""#')[0]
   .replaceAll("__REMOTE_ORIGIN__","https://local.test").replaceAll("__REMOTE_SOCKET__","wss://local.test");
 const fullManifest={kind:"capabilities",version:7,touch:true,tilt:true,acceleration:true,rotation:true,airDrums:true,drums:255,piano:67108863,pedals:63};
-function setup(permission="granted",manifest=fullManifest,experimental=true,autoMapping=true,groupNeutral=false,stored=new Map()){
+function setup(permission="granted",manifest=fullManifest,experimental=true,autoMapping=true,groupNeutral=false,stored=new Map(),offline=false,mediaDevices=null){
   let time=1000, ticker, socket, nextTimer=0;const timers=new Map();
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",attributes:{},children:[],
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["synthCompact","synthChoices","synthChoiceGrid","pianoArp","pianoChord","pianoSynth","arpKeyboardTools","arpClear","arpDirection","arpRate","arpSwing","arpSelected","kitBoard","kitEdit","kitEditor","kitPart","kitAdd","kitRemove","kitX","kitY","kitSize","kitSave","kitReset","kitStatus","pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["webCameraFacing","webCameraDevice","webCameraStart","webCameraStop","webCameraVideo","webCameraZoom","webCameraStatus","synthCompact","synthChoices","synthChoiceGrid","pianoArp","pianoChord","pianoSynth","arpKeyboardTools","arpClear","arpDirection","arpRate","arpSwing","arpSelected","kitBoard","kitEdit","kitEditor","kitPart","kitAdd","kitRemove","kitX","kitY","kitSize","kitSave","kitReset","kitStatus","pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
@@ -23,8 +23,9 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     send(data){if(typeof data==="string"){this.frames.push(JSON.parse(data));this.sentAt=time;(this.sendTimes??=[]).push(time);}}
     close(){this.closed=true;}
   }
-  vm.runInNewContext(script.replaceAll("__GROUP_NEUTRAL__",groupNeutral?"enabled":"disabled"),{document,window,location:{origin:"https://local.test"},WebSocket:WS,performance:{now:()=>time},
+  vm.runInNewContext(script.replaceAll("__GROUP_NEUTRAL__",groupNeutral?"enabled":"disabled"),{document,window,navigator:{mediaDevices},location:{origin:"https://local.test"},WebSocket:WS,performance:{now:()=>time},
     setTimeout:(f,ms)=>{const id=++nextTimer;timers.set(id,{f,at:time+ms});return id;},clearTimeout:id=>timers.delete(id),setInterval:f=>(ticker=f,1),clearInterval(){ticker=null;}});
+  if(offline)return {elements,window,document,getSocket:()=>socket};
   elements.secret.value="aa".repeat(32);elements.connect.emit("click");socket.onopen();socket.onmessage({data:"admitted"});
   const query=socket.frames.shift();
   time+=13;if(manifest!==null)socket.onmessage({data:typeof manifest==="string"?manifest:JSON.stringify(manifest)});
@@ -1503,4 +1504,39 @@ test("armed stick retargets between acknowledged strikes and requires fresh neut
   a.step(40);motion(10);assert.equal(a.socket.frames.at(-1).mask,0);
   motion(0);motion(10);a.step(25);assert.equal(a.socket.frames.at(-1).mask,2);
   assert.equal(e.kitEdit.disabled,true);assert.equal(a.socket.closed,undefined);
+});
+
+function mockCamera(){
+  const events=new Map();let zoom=1;
+  const track={readyState:"live",stops:0,stop(){this.stops++;this.readyState="ended";},addEventListener(n,cb){events.set(n,cb);},getCapabilities(){return {zoom:{min:1,max:4,step:.1}}},getSettings(){return {zoom}},async applyConstraints(c){zoom=c.advanced[0].zoom;},events};
+  return {track,stream:{getTracks:()=>[track],getVideoTracks:()=>[track]}};
+}
+test("unpaired browser local camera uses no microphone and hardware zoom",async()=>{
+  const c=mockCamera();let requested;
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,{async getUserMedia(options){requested=options;return c.stream},async enumerateDevices(){return [{kind:"videoinput",deviceId:"back",label:"Rear lens"},{kind:"audioinput",deviceId:"mic",label:"Microphone"}]}});
+  a.elements.webCameraFacing.value="environment";
+  await a.elements.webCameraStart.emit("click");
+  assert.equal(requested.audio,false);assert.equal(requested.video.facingMode.ideal,"environment");
+  assert.equal(a.elements.webCameraVideo.srcObject,c.stream);assert.equal(a.elements.webCameraZoom.disabled,false);
+  assert.equal(a.elements.webCameraDevice.children.length,2);
+  a.elements.webCameraZoom.value="2.5";await a.elements.webCameraZoom.emit("change");
+  assert.equal(c.track.getSettings().zoom,2.5);assert.equal(a.getSocket(),undefined);
+  a.elements.webCameraStop.emit("click");assert.equal(c.track.stops,1);assert.equal(a.elements.webCameraVideo.srcObject,null);
+});
+test("camera completion after pairing is discarded and cannot send sensor data",async()=>{
+  const c=mockCamera();let resolve;
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:()=>new Promise(r=>resolve=r)});
+  const pending=a.elements.webCameraStart.emit("click");
+  a.elements.secret.value="aa".repeat(32);a.elements.connect.emit("click");
+  resolve(c.stream);await pending;
+  assert.equal(c.track.stops,1);assert.equal(a.elements.webCameraVideo.srcObject,null);
+  assert.equal(a.getSocket().frames.length,0);assert.equal(a.elements.webCameraStart.disabled,true);
+});
+test("camera visibility loss stops active stream and permission denial stays neutral",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:async()=>c.stream});
+  await a.elements.webCameraStart.emit("click");a.document.hidden=true;a.document.emit("visibilitychange");
+  assert.equal(c.track.stops,1);assert.equal(a.elements.webCameraStart.disabled,true);
+  const b=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:async()=>{throw Error("denied")}});
+  await b.elements.webCameraStart.emit("click");assert.match(b.elements.webCameraStatus.textContent,/denied/);assert.equal(b.getSocket(),undefined);
 });

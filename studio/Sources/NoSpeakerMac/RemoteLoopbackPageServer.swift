@@ -95,7 +95,8 @@ public final class RemoteLoopbackPageServer: @unchecked Sendable {
             "HTTP/1.1 200 OK", "Content-Type: " + type, "Content-Length: " + String(body.count),
             "Connection: close", "Cache-Control: no-store", "Referrer-Policy: no-referrer",
             "X-Content-Type-Options: nosniff", "X-Frame-Options: DENY",
-            "Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src wss://\(endpoint.socketAuthority); frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            "Permissions-Policy: camera=(self), microphone=(), geolocation=()",
+            "Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src wss://\(endpoint.socketAuthority); media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
         ].joined(separator: "\r\n") + "\r\n\r\n"
         var response = Data(headers.utf8)
         response.append(body)
@@ -190,11 +191,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #customGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5}
 #layoutDragList button[data-target=true]{border-color:#e5a33b;background:#4c3820}
 </style></head>
-<body><h1>TIHULU Remote</h1><p>Local MIDI performance controller · Experimental</p>
+<body><h1>TIHULU Remote</h1><p>Local MIDI performance controller · No app installation required · Experimental</p>
 <div id="remoteBar"><nav aria-label="Controller views"><button id="navPlay" aria-pressed="false" disabled>Play</button><button id="navSetup" aria-pressed="false" disabled>Setup</button><button id="navConnection" aria-pressed="true">Connection</button></nav><button id="releaseAll" disabled>Release my controls</button><button id="disconnect" disabled>Disconnect / release</button><p id="navStatus" role="status"></p><p id="playWorkloadStatus" role="status"></p><p id="status" role="status" aria-live="polite">Not connected.</p><small id="ackLatency">Mac ACK round trip: no sample.</small></div>
 <section id="connectionView"><label for="secret">One-time invitation (64 hexadecimal characters)</label>
 <input id="secret" type="password" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
-<button id="connect">Connect</button><p>Use the matching trusted TLS certificate and a new invitation for each connection. ACK round trip includes Mac processing; it is not audio or MIDI latency.</p></section>
+<button id="connect">Connect</button><p>Use the matching trusted TLS certificate and a new invitation for each connection. ACK round trip includes Mac processing; it is not audio or MIDI latency.</p><details><summary>Browser camera check (optional)</summary><p>Local camera preview only. No hand recognition, depth or MIDI output in this check. Stop before pairing. Nothing is recorded or sent to the Mac.</p><label for="webCameraFacing">Camera direction</label><select id="webCameraFacing"><option value="environment">Rear</option><option value="user">Front</option></select><label for="webCameraDevice">Available camera</label><select id="webCameraDevice"><option value="">Default for direction</option></select><button id="webCameraStart" type="button">Start camera check</button><button id="webCameraStop" type="button" disabled>Stop camera</button><video id="webCameraVideo" muted playsinline autoplay hidden style="width:100%;max-width:480px;border-radius:12px"></video><label for="webCameraZoom">Device zoom</label><input id="webCameraZoom" type="range" disabled><p id="webCameraStatus" role="status">Camera off.</p><small>Camera access requires a trusted HTTPS connection. Lens and zoom availability are browser/device dependent. Native LiDAR/ToF APIs are not available in this preview.</small></details></section>
 <div id="setupView" hidden>
 <section id="mappingSection" hidden><h2>Mapped MIDI destinations</h2><p id="mappingStatus" role="status"></p><pre id="mappingDetails" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></section>
 <section id="workloadSection" hidden aria-labelledby="workloadTitle"><h2 id="workloadTitle">Performance combinations</h2>
@@ -296,6 +297,73 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const get = id => document.getElementById(id);
   const pad=get("pad"), dot=get("dot"), secret=get("secret"), connect=get("connect"), disconnect=get("disconnect"), status=get("status");
   let ws=null, admitted=false, pending=false, sequence=0, pointer=null, position=null, timer=null, deadline=null, lastSend=0;
+  const cameraFacing=get("webCameraFacing"),cameraDevice=get("webCameraDevice"),cameraStart=get("webCameraStart"),cameraStop=get("webCameraStop"),cameraVideo=get("webCameraVideo"),cameraZoom=get("webCameraZoom"),cameraStatus=get("webCameraStatus");
+  let cameraStream=null,cameraEpoch=0,cameraPending=false,cameraZoomPending=false,cameraDevices=[],cameraZoomRange=null;
+  const cameraMedia=()=>window.isSecureContext===true&&typeof navigator!=="undefined"&&navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==="function"?navigator.mediaDevices:null;
+  function syncCamera(){
+    cameraStart.disabled=!!ws||!cameraMedia()||cameraPending||!!cameraStream||document.hidden;
+    cameraStop.disabled=!cameraPending&&!cameraStream;
+    cameraFacing.disabled=!!ws||cameraPending||!!cameraStream;
+    cameraDevice.disabled=cameraFacing.disabled||cameraDevices.length===0;
+    cameraZoom.disabled=!!ws||!cameraStream||!cameraZoomRange||cameraZoomPending;
+  }
+  function disposeCamera(stream){if(stream)for(const track of stream.getTracks()){try{track.stop();}catch{}}}
+  function stopCamera(message="Camera off."){
+    cameraEpoch++;cameraPending=false;cameraZoomPending=false;cameraZoomRange=null;
+    const previous=cameraStream;cameraStream=null;
+    cameraVideo.srcObject=null;cameraVideo.hidden=true;disposeCamera(previous);
+    cameraStatus.textContent=message;syncCamera();
+  }
+  function showCameraChoices(devices){
+    cameraDevices=devices.filter(d=>d.kind==="videoinput"&&typeof d.deviceId==="string"&&d.deviceId.length>0).slice(0,32);
+    cameraDevice.replaceChildren();
+    const defaultOption=document.createElement("option");defaultOption.value="";defaultOption.textContent="Default for direction";cameraDevice.appendChild(defaultOption);
+    cameraDevices.forEach((d,i)=>{const o=document.createElement("option");o.value=d.deviceId;o.textContent=(typeof d.label==="string"&&d.label?d.label:"Camera "+(i+1)).slice(0,120);cameraDevice.appendChild(o);});
+    cameraDevice.value="";
+  }
+  cameraFacing.addEventListener("change",()=>{cameraDevice.value="";});
+  cameraStart.addEventListener("click",async()=>{
+    const media=cameraMedia();
+    if(!media||ws||cameraPending||cameraStream||document.hidden)return;
+    const facing=cameraFacing.value||"environment",id=cameraDevice.value;
+    if(!["user","environment"].includes(facing)||id&&!cameraDevices.some(d=>d.deviceId===id))return;
+    const epoch=++cameraEpoch;cameraPending=true;cameraStatus.textContent="Requesting local camera…";syncCamera();
+    let stream=null;
+    try{
+      stream=await media.getUserMedia({audio:false,video:{...(id?{deviceId:{exact:id}}:{facingMode:{ideal:facing}}),width:{ideal:640},height:{ideal:480}}});
+      if(epoch!==cameraEpoch||ws||document.hidden){disposeCamera(stream);return;}
+      const tracks=stream.getVideoTracks();
+      if(tracks.length!==1||stream.getTracks().length!==1||tracks[0].readyState==="ended")throw Error("Invalid camera stream");
+      const track=tracks[0];cameraStream=stream;cameraVideo.srcObject=stream;cameraVideo.hidden=false;
+      track.addEventListener("ended",()=>{if(epoch===cameraEpoch)stopCamera("Camera ended. Start explicitly again.");});
+      const zoom=typeof track.getCapabilities==="function"?track.getCapabilities().zoom:null;
+      if(zoom&&Number.isFinite(zoom.min)&&Number.isFinite(zoom.max)&&zoom.min>0&&zoom.max>zoom.min){
+        cameraZoomRange={min:zoom.min,max:zoom.max,step:Number.isFinite(zoom.step)&&zoom.step>0?zoom.step:0.1};
+        cameraZoom.min=String(zoom.min);cameraZoom.max=String(zoom.max);cameraZoom.step=String(cameraZoomRange.step);
+        const current=typeof track.getSettings==="function"?track.getSettings().zoom:null;
+        cameraZoom.value=String(Number.isFinite(current)?Math.max(zoom.min,Math.min(zoom.max,current)):Math.max(zoom.min,Math.min(zoom.max,1)));
+      }
+      cameraPending=false;cameraStatus.textContent="Camera active locally. Stop before pairing.";syncCamera();
+      if(typeof media.enumerateDevices==="function"){
+        try{const devices=await media.enumerateDevices();if(epoch===cameraEpoch&&cameraStream===stream){showCameraChoices(devices);syncCamera();}}catch{}
+      }
+    }catch{disposeCamera(stream);if(epoch===cameraEpoch)stopCamera("Camera denied or unavailable. Check browser permission and HTTPS.");}
+  });
+  cameraStop.addEventListener("click",()=>stopCamera());
+  cameraZoom.addEventListener("change",async()=>{
+    if(!cameraStream||!cameraZoomRange||cameraZoomPending||ws)return;
+    const value=Number(cameraZoom.value),range=cameraZoomRange,epoch=cameraEpoch,track=cameraStream.getVideoTracks()[0];
+    if(!Number.isFinite(value)||value<range.min||value>range.max||typeof track.applyConstraints!=="function")return;
+    cameraZoomPending=true;syncCamera();
+    try{
+      await track.applyConstraints({advanced:[{zoom:value}]});
+      if(epoch!==cameraEpoch)return;
+      const actual=track.getSettings?.().zoom;
+      if(Number.isFinite(actual)&&actual>=range.min&&actual<=range.max){cameraZoom.value=String(actual);cameraStatus.textContent="Camera active locally · "+actual.toFixed(2)+"×";}
+      else {cameraZoomRange=null;cameraStatus.textContent="Camera active locally · zoom could not be verified.";}
+    }catch{if(epoch===cameraEpoch){cameraZoomRange=null;cameraStatus.textContent="Camera active locally · zoom unavailable.";}}
+    finally{if(epoch===cameraEpoch){cameraZoomPending=false;syncCamera();}}
+  });
   const motionStart=get("motionStart"), motionStop=get("motionStop"), meter=get("tiltMeter"), motionStatus=get("motionStatus");
   let mode="idle", sample=null, neutral=null, sampleAt=0, sentAt=-1, permissionEpoch=0, waitingSince=0, pendingKind=null;
   let lastTouchSend=-Infinity,lastTiltSend=-Infinity;
@@ -1584,7 +1652,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     s.epoch++;s.mode="releasing";s.sample=null;s.status.textContent="Releasing…";syncInertialListener();syncControls();tick();
   }
   function syncControls(){
-    pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncCustom();syncWorkload();syncNavigation();syncPlayMode();syncLatency();syncLayout();
+    syncCamera();pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncCustom();syncWorkload();syncNavigation();syncPlayMode();syncLatency();syncLayout();
     releaseAll.disabled=!admitted||!caps||releasingAll;
     const asking=releasingAll||mode==="requesting"||streams.some(s=>s.mode==="requesting");
     if(releasingAll){drumEnable.disabled=true;pianoEnable.disabled=true;pedalEnable.disabled=true;}
@@ -1723,13 +1791,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   connect.addEventListener("click",()=>{
     if(ws)return;
+    stopCamera("Camera off · pairing.");
     const value=secret.value.trim();secret.value="";
     if(!/^[0-9a-fA-F]{64}$/.test(value)){status.textContent="Enter a valid invitation.";return;}
     const key=new Uint8Array(32);for(let i=0;i<32;i++)key[i]=parseInt(value.slice(i*2,i*2+2),16);
     if(location.origin!=="__REMOTE_ORIGIN__"){key.fill(0);close("Wrong origin. Open the local HTTPS page from the Mac app.");return;}
     let socket;
     try{socket=new WebSocket("__REMOTE_SOCKET__","tihulu-touch-v1");}catch{key.fill(0);close("Connection unavailable.");return;}
-    ws=socket;connect.disabled=true;disconnect.disabled=false;status.textContent="Connecting…";wait(5000);
+    ws=socket;syncCamera();connect.disabled=true;disconnect.disabled=false;status.textContent="Connecting…";wait(5000);
     socket.onopen=()=>{if(ws!==socket){key.fill(0);return;}try{socket.send(key);}catch{close("Pairing failed.");}finally{key.fill(0);}};
     socket.onmessage=e=>{
       if(ws!==socket)return;
@@ -1966,9 +2035,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   window.addEventListener("orientationchange",rotated);
   if(window.screen&&window.screen.orientation&&typeof window.screen.orientation.addEventListener==="function")window.screen.orientation.addEventListener("change",rotated);
   disconnect.addEventListener("click",()=>close("Disconnected. Host releases owned controls."));
-  window.addEventListener("blur",()=>{if(ws)close("Window lost focus. Reconnect explicitly.");});
-  window.addEventListener("pagehide",()=>{if(ws)close("Page hidden.");});
-  document.addEventListener("visibilitychange",()=>{if(document.hidden&&ws)close("Page hidden. Reconnect explicitly.");});
+  window.addEventListener("blur",()=>{if(cameraStream)stopCamera("Camera stopped: window lost focus.");if(ws)close("Window lost focus. Reconnect explicitly.");});
+  window.addEventListener("pagehide",()=>{stopCamera("Page hidden.");if(ws)close("Page hidden.");});
+  document.addEventListener("visibilitychange",()=>{if(document.hidden){stopCamera("Page hidden.");if(ws)close("Page hidden. Reconnect explicitly.");}else syncCamera();});
   applyLayout();syncControls();
 })();
 """#
