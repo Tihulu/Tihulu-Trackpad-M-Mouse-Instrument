@@ -92,11 +92,16 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
             lastInput?.let {observedAt<=it}==true)return close("Stale or replayed observation")
         lastInput=observedAt
         try {lane.encode(output,1)}catch(_:IllegalArgumentException){return close("Invalid logical snapshot")}
-        if(!admitted||neutralFence||neutralConfirmedAt?.let {observedAt<=it}!=false)return Action.Wait
+        if(!admitted)return Action.Wait
+        // A fresh arrival cannot erase a source gap that already expired.
+        if(sampledAt?.let {now-it>=FRESH_NS}==true&&sent!=AirOutput()&&pendingAt!=null)
+            return close("Source expired while active ACK outstanding")
+        expireSample(now)
+        if(neutralFence||neutralConfirmedAt?.let {observedAt<=it}!=false)return poll(now)
         if(output==AirOutput()) {
             val hadActive=sent!=AirOutput()
             sample=null;sampledAt=null
-            if(hadActive) {neutralFence=true;releaseDebtAt=now}
+            if(hadActive) {neutralFence=true;releaseDebtAt=observedAt}
             return poll(now)
         }
         val previous=sample
@@ -106,17 +111,20 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
         sample=output;sampledAt=observedAt
         return poll(now)
     }
+    private fun expireSample(now:Long) {
+        val at=sampledAt ?: return
+        if(now-at>=FRESH_NS) {
+            sample=null;sampledAt=null
+            if(sent!=AirOutput()&&!neutralFence){neutralFence=true;releaseDebtAt=at+FRESH_NS}
+        }
+    }
     fun poll(now:Long):Action {
         check(now)?.let {return it}
         if(!started||!admitted)return Action.Wait
-        val fresh=sampledAt?.let {now-it<FRESH_NS}==true
-        if(!fresh&&sample!=null) {
-            sample=null;sampledAt=null
-            if(sent!=AirOutput()&&!neutralFence){neutralFence=true;releaseDebtAt=now}
-        }
-        // At the source deadline, do not wait another ACK window with active debt.
-        if(neutralFence&&pendingAt!=null&&sent!=AirOutput()&&lastInput?.let {now-it>=FRESH_NS}==true)
-            return close("Source expired while active ACK outstanding")
+        val expiredActive=sampledAt?.let {now-it>=FRESH_NS}==true&&sent!=AirOutput()
+        expireSample(now)
+        check(now)?.let {return it}
+        if(expiredActive&&pendingAt!=null)return close("Source expired while active ACK outstanding")
         if(pendingAt!=null)return Action.Wait
         val elapsed=lastSend?.let {now-it}?:Long.MAX_VALUE
         if(elapsed<PACE_NS)return Action.Wait

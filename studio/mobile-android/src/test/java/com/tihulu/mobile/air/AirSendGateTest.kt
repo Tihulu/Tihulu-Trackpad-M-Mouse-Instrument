@@ -69,4 +69,24 @@ class AirSendGateTest {
         assertEquals(AirSendGate.Action.Wait,g.offer(AirOutput(keys=1),ms(179),ms(179)))
         assertTrue(g.poll(ms(180)) is AirSendGate.Action.Close)
     }
+
+    @Test fun freshArrivalCannotBridgeExpiredSourceGap() {
+        val g=AirSendGate(AirWireLane.Keys(1),0)
+        g.begin(0);g.acknowledge("accepted",ms(20));g.offer(AirOutput(keys=1),ms(21),ms(21))
+        g.acknowledge("accepted",ms(40))
+        assertTrue(send(g.offer(AirOutput(keys=1),ms(180),ms(180))).contains("\"mask\":0"))
+        g.acknowledge("accepted",ms(190))
+        assertTrue(send(g.offer(AirOutput(keys=1),ms(195),ms(195))).contains("\"mask\":1"))
+    }
+    @Test fun expiredSourcePendingAckCannotBeRefreshedByArrival() {
+        val g=AirSendGate(AirWireLane.Keys(1),0)
+        g.begin(0);g.acknowledge("accepted",ms(20));g.offer(AirOutput(keys=1),ms(21),ms(21))
+        assertTrue(g.offer(AirOutput(keys=1),ms(180),ms(180)) is AirSendGate.Action.Close)
+    }
+    @Test fun delayedNeutralUsesObservationDeadline() {
+        val g=AirSendGate(AirWireLane.Keys(1),0)
+        g.begin(0);g.acknowledge("accepted",ms(20));g.offer(AirOutput(keys=1),ms(21),ms(21))
+        g.offer(AirOutput(),ms(30),ms(100))
+        assertTrue(g.poll(ms(180)) is AirSendGate.Action.Close)
+    }
 }
