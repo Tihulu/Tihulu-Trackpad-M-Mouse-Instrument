@@ -3562,7 +3562,7 @@ final class StudioController: ObservableObject {
                 clickSnapshotRevision = sample.clickObservation?.stamp.revision
                 clickSnapshotReceivedAt = sample.clickObservation?.receivedAt
             }
-            guard handleSharedSurfaceStates(sample,admitTouch:mappedCurrent) else {
+            guard handleSharedSurfaceStates(sample,admitTouch:mappedCurrent,startedAt:startedAt) else {
                 touchDispatchMetrics.reject()
                 if touchRunning || midiHelperRunning {
                     handleTouchInputBacklog()
@@ -3604,7 +3604,7 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func handleSharedSurfaceStates(_ sample:QueuedTouchSnapshot,admitTouch:Bool) -> Bool {
+    private func handleSharedSurfaceStates(_ sample:QueuedTouchSnapshot,admitTouch:Bool,startedAt:Double) -> Bool {
         let instrumentStates = admitTouch && (instrumentPreviewRequested || touchRunning) ? sample.states.filter {
             currentTouchConfiguration.surfaceSelection.accepts($0.surface)
         } : nil
@@ -3617,13 +3617,14 @@ final class StudioController: ObservableObject {
         let pedalAdmitted = helperPedalPublicationFence.permits(sample.stamp,selectedSource:selectedSource)
         let effectsAdmitted = helperEffectsPublicationFence.permits(sample.stamp,selectedSource:selectedSource)
         var pedal:MIDIHelperSustainSnapshot?
-        return TouchPublicationAdmission.dispatch(queuedAt:sample.queuedAt,
-            now:{ ProcessInfo.processInfo.systemUptime },
+        var fence=PhysicalReceiptSendFence(receipt:sample.queuedAt,maximumAge:TouchPublicationAdmission.maximumAge,initialNow:startedAt)
+        let admit:()->Bool = { fence.permits(now:ProcessInfo.processInfo.systemUptime) }
+        return TouchPublicationAdmission.dispatch(permits:admit,
             prepare:{
                 pedal = applyPhysicalPedalFrame(touchStates:instrumentStates,
                     helperStates:pedalAdmitted ? helperStates : nil,freshFrame:true)
             },touch:{
-                if let instrumentStates { handleTouchStates(instrumentStates,pedal:pedal) }
+                if let instrumentStates { handleTouchStates(instrumentStates,pedal:pedal,admitOnset:admit) }
             },helper:{
                 if let helperStates {
                     handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:effectsAdmitted)
@@ -3848,7 +3849,7 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func handleTouchStates(_ states: [TouchPerformanceState],pedal:MIDIHelperSustainSnapshot?) {
+    private func handleTouchStates(_ states: [TouchPerformanceState],pedal:MIDIHelperSustainSnapshot?,admitOnset:()->Bool) {
         liveTouchStates = states
         // Pedals were already evaluated and settled by the shared frame.
         if touchRunning {
@@ -3860,7 +3861,8 @@ final class StudioController: ObservableObject {
                     baseChannel: touchMIDIChannel,
                     multiTouchEnabled: touchMultiTouchEnabled,
                     separateChannels: touchSeparateChannels,
-                    sustainNewVoices: pedal?.isActive == true
+                    sustainNewVoices: pedal?.isActive == true,
+                    admitOnset:admitOnset
                 )
             }
         }

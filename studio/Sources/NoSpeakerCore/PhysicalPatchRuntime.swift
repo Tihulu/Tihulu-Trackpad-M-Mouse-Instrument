@@ -207,7 +207,7 @@ public struct PhysicalPatchRuntime: Sendable {
     }
     private mutating func expireHybrid(now:Double) -> [SensorCommand] {
         guard let last = hybridReceipt else { return [] }
-        guard now.isFinite,now >= last,now-last < Self.timeout else { return releaseHybridSource() }
+        guard Self.admitsPhysicalReceipt(last,now:now) else { return releaseHybridSource() }
         return []
     }
 
@@ -254,7 +254,7 @@ public struct PhysicalPatchRuntime: Sendable {
     public mutating func receiveGamepad(source:SensorSource,frame:GamepadFrame?,now:Double) -> [SensorCommand] {
         guard GamepadFrame.sources.contains(source),supported.contains(source) else { return [] }
         guard let frame,now.isFinite,now >= 0 else { return releaseGamepad(source) }
-        if let last = seen[source],now < last || now-last >= Self.timeout {
+        if let last = seen[source],!Self.admitsPhysicalReceipt(last,now:now) {
             return releaseGamepad(source)
         }
         seen[source] = now
@@ -301,7 +301,7 @@ public struct PhysicalPatchRuntime: Sendable {
                                        hostTime: Double, now: Double) -> [SensorCommand] {
         guard source == .lid || source == .touchBar, supported.contains(source),
               hostTime.isFinite, now.isFinite, hostTime >= 0, hostTime <= now,
-              now - hostTime < Self.timeout, hostTime >= (seen[source] ?? 0) else { return [] }
+              Self.admitsPhysicalReceipt(hostTime,now:now), hostTime >= (seen[source] ?? 0) else { return [] }
         seen[source] = hostTime
         guard let value, value.isFinite, (0...1).contains(value) else { return disconnect(source) }
         if sessions[source] == nil { sessions[source] = try? router.connect(source, now: hostTime) }
@@ -316,7 +316,7 @@ public struct PhysicalPatchRuntime: Sendable {
     public mutating func receiveHand(_ hand: AirHandSample?, hostTime: Double, now: Double) -> [SensorCommand] {
         let source = SensorSource.camera
         guard !airDualEnabled, !cameraHandsEnabled, supported.contains(source), hostTime.isFinite, now.isFinite,
-              hostTime >= 0, hostTime <= now, now - hostTime < Self.timeout,
+              hostTime >= 0, hostTime <= now, Self.admitsPhysicalReceipt(hostTime,now:now),
               hostTime >= (seen[source] ?? 0) else { return [] }
         seen[source] = hostTime
         guard let hand else { return disconnect(source) }
@@ -721,7 +721,7 @@ public struct PhysicalPatchRuntime: Sendable {
         if dualExpired { airDual.reset(); airActiveSlot = nil; airStrum?.reset(); cameraHands.reset() }
         // Remove all expired owners atomically, including camera and remote.
         let stale = sessions.keys.filter {
-            ($0 == .camera && dualExpired) || now - (seen[$0] ?? 0) >= Self.timeout
+            ($0 == .camera && dualExpired) || !Self.admitsPhysicalReceipt(seen[$0] ?? 0,now:now)
         }.sorted { $0.rawValue < $1.rawValue }
         var removed: Set<UUID> = []
         for source in stale {
@@ -733,7 +733,7 @@ public struct PhysicalPatchRuntime: Sendable {
         }
         let expiredPeers = remotePeers.filter { $0.value.expired(now:now) }.map(\.key)
         for id in expiredPeers { removed.formUnion(removeRemoteSessions(id)) }
-        if let id = hybridSession,let last = hybridReceipt, now < last || now-last >= Self.timeout {
+        if let id = hybridSession,let last = hybridReceipt, !Self.admitsPhysicalReceipt(last,now:now) {
             removed.insert(id); hybridSession = nil; hybridReceipt = nil
         }
         var commands = router.disconnect(sessions:removed)

@@ -29,6 +29,21 @@ public struct LegacyNoteOwners<Owner: Hashable> {
         return commands
     }
 
+    /// Release an old gate even if its replacement is too late. Check the
+    /// receipt again after the synchronous release before acquiring ownership
+    /// of a new gate (including a silent join of an already held note).
+    /// False means no new ownership was admitted, not a transport error.
+    public mutating func pressAdmitted(_ owner:Owner,channel:Int,note:Int,velocity:Int,
+                                       permits:()->Bool,send:(SensorCommand)->Void)->Bool {
+        guard (0...15).contains(channel),(0...127).contains(note),(1...127).contains(velocity) else { return false }
+        let target=SensorDestination(.note,channel:channel,number:note)
+        if owners[owner] == target { return permits() }
+        for command in release(owner) { send(command) }
+        guard permits() else { return false }
+        for command in press(owner,channel:channel,note:note,velocity:velocity) { send(command) }
+        return true
+    }
+
     public mutating func releaseAll() -> [SensorCommand] {
         let targets = active.sorted { $0.channel == $1.channel ? $0.number < $1.number : $0.channel < $1.channel }
         owners.removeAll()

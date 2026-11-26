@@ -369,7 +369,8 @@ public final class MIDIHapticService: @unchecked Sendable {
         baseChannel: Int = 0,
         multiTouchEnabled: Bool = true,
         separateChannels: DAWSurfaceChannels? = nil,
-        sustainNewVoices: Bool = false
+        sustainNewVoices: Bool = false,
+        admitOnset: () -> Bool = { true }
     ) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
@@ -443,8 +444,9 @@ public final class MIDIHapticService: @unchecked Sendable {
             }
         }
         desired.removeAll { configuration.instrument(for:$0.surface) == .chords }
-        sendOwnedNotes(physicalChordGates.reconcile(chordTargets,velocity:chordVelocities,
-            ledger:&noteOwners,owner:{ .physicalChord($0,$1) }))
+        guard physicalChordGates.reconcileAdmitted(chordTargets,velocity:chordVelocities,
+            ledger:&noteOwners,owner:{ .physicalChord($0,$1) },permits:admitOnset,
+            send:{ self.sendOwnedNotes([$0]) }) else { return }
         let desiredKeys = Set(desired.map { TouchKey(surface: $0.surface, id: $0.contactID) })
         let releasedKeys = outgoingTouches.keys.filter { !desiredKeys.contains($0) }
         for key in releasedKeys {
@@ -456,6 +458,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         var framePressure: [Int:Int] = [:]
         var processed: Set<TouchKey> = []
         for state in desired {
+            guard admitOnset() else { return }
             let key = TouchKey(surface: state.surface, id: state.contactID)
             let drums = configuration.instrument(for: state.surface) == .drums
             guard processed.insert(key).inserted else { continue }
@@ -509,6 +512,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             // admitted pedal before expression and Note On, not afterwards.
             // Do not mark unused members sustained before allocation.
             if isMPE && sustainNewVoices && outgoingTouches[key] == nil {
+                guard admitOnset() else { return }
                 extendTouchSustain(to:channel)
             }
 
@@ -555,12 +559,14 @@ public final class MIDIHapticService: @unchecked Sendable {
                     if existing.note != anchor || !existing.fretless {
                         sendContinuousUpdates(continuousOwners.set(.touch,target:target,value:value))
                         sendOwnedNotes(noteOwners.release(.touch(key)))
-                        sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity))))
+                        guard noteOwners.pressAdmitted(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity)),
+                            permits:admitOnset,send:{ self.sendOwnedNotes([$0]) }) else { return }
                         outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true, mpe: midiMode == .mpe)
                     }
                 } else {
                     sendContinuousUpdates(continuousOwners.set(.touch,target:target,value:value))
-                    sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity))))
+                    guard noteOwners.pressAdmitted(.touch(key),channel:channel,note:anchor,velocity:max(1,min(127,state.velocity)),
+                            permits:admitOnset,send:{ self.sendOwnedNotes([$0]) }) else { return }
                     outgoingTouches[key] = .init(note: anchor, channel: channel, fretless: true, mpe: midiMode == .mpe)
                 }
 
@@ -572,16 +578,19 @@ public final class MIDIHapticService: @unchecked Sendable {
                 if let existing = outgoingTouches[key] {
                     if existing.note != note || existing.fretless {
                         sendOwnedNotes(noteOwners.release(.touch(key)))
-                        sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:note,velocity:max(1,min(127,state.velocity))))
+                        guard noteOwners.pressAdmitted(.touch(key),channel:channel,note:note,velocity:max(1,min(127,state.velocity)),
+                            permits:admitOnset,send:{ self.sendOwnedNotes([$0]) }) else { return }
                         outgoingTouches[key] = .init(note: note, channel: channel, fretless: false, mpe: midiMode == .mpe && !drums)
                     }
                 } else {
-                    sendOwnedNotes(noteOwners.press(.touch(key),channel:channel,note:note,velocity:max(1,min(127,state.velocity))))
+                    guard noteOwners.pressAdmitted(.touch(key),channel:channel,note:note,velocity:max(1,min(127,state.velocity)),
+                            permits:admitOnset,send:{ self.sendOwnedNotes([$0]) }) else { return }
                     outgoingTouches[key] = .init(note: note, channel: channel, fretless: false, mpe: midiMode == .mpe && !drums)
                 }
             }
 
         }
+        guard admitOnset() else { return }
         // Retired MPE channels keep their final controller values until pedal off.
         for (target,value) in continuousOwners.values(for:.touch) where mpeChannels.reserved.contains(target.channel) {
             frameControls[target] = frameControls[target] ?? value

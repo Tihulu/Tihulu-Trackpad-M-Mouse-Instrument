@@ -410,7 +410,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         clock = now
         var reports = reset(staleSources(now:now),send:send)
         guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
-        guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now, now-hostTime < Self.timeout,
+        guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now, PhysicalPatchRuntime.admitsPhysicalReceipt(hostTime,now:now),
               binding.lastSurfaceReceipt.map({ hostTime >= $0 }) ?? true else {
             reports += reset([source],send:send)
             return .init(status:.lost,reports:reports)
@@ -469,7 +469,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         clock = now
         var reports = reset(staleSources(now:now),send:send)
         guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
-        guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now, now-hostTime < Self.timeout,
+        guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now, PhysicalPatchRuntime.admitsPhysicalReceipt(hostTime,now:now),
               binding.lastSurfaceReceipt.map({ hostTime > $0 }) ?? true else {
             reports += reset([source],send:send)
             return .init(status:.lost,reports:reports)
@@ -668,8 +668,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
 
     private func staleSources(now: Double) -> Set<SensorSource> {
         Set(bindings.compactMap { source,binding in
-            if let last = binding.lastSeen, now-last >= Self.timeout { return source }
-            if binding.remoteActive.values.contains(where:{ now-$0 >= Self.timeout }) { return source }
+            if let last = binding.lastSeen, !PhysicalPatchRuntime.admitsPhysicalReceipt(last,now:now) { return source }
+            if binding.remoteActive.values.contains(where:{ !PhysicalPatchRuntime.admitsPhysicalReceipt($0,now:now) }) { return source }
             if let last = binding.remoteLastReceipt, now-last >= 2 { return source }
             return nil
         })
