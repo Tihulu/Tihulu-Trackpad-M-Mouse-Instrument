@@ -201,8 +201,7 @@ public final class NativeMIDIPlayback {
             }
             guard let deadline=player.nextDeadline else { break }
             let current=Self.now()
-            if deadline>current {
-                let wakeTarget=current+min(deadline-current,20_000_000)
+            if let wakeTarget=Self.nextWakeTarget(deadline:deadline,current:current) {
                 guard wakeTarget>=uptimeAnchor,
                       let offset=Int64(exactly:wakeTarget-uptimeAnchor) else {
                     player.abort { gate.send($0) }
@@ -218,9 +217,11 @@ public final class NativeMIDIPlayback {
                     player.stop { gate.send($0) }
                     break
                 }
-            } else {
-                await Task.yield()
             }
+            // If an event became due during synchronous work, advance
+            // immediately rather than yield the executor once more.
+            // The next advance either consumes a due edge or terminates;
+            // a future deadline still suspends for at most the poll cap.
         }
         // A final check covers the last send and cancellation while sleeping.
         if !gate.validate() {
@@ -263,7 +264,12 @@ public final class NativeMIDIPlayback {
             throw Failure.cleanupPending
         }
         try closePlayback()
-        return .init(playback:final,completed:final.state=="finished" && !final.cancelled,
+        // Cancellation may arrive after the async playback return but
+        // before the compound operation disposes its endpoint. Finish
+        // owned cleanup, yet never report the compound task as completed.
+        wasCancelled = wasCancelled || final.cancelled || Task.isCancelled
+        let closed = report(cancelled:wasCancelled)
+        return .init(playback:closed,completed:closed.state=="finished" && !closed.cancelled,
                      sourceDisposed:endpoint==0,recoveryRequired:lifecycle.recoveryRequired)
     }
 
@@ -335,6 +341,13 @@ public final class NativeMIDIPlayback {
               maximumObservedLatenessNS:player.maximumObservedLatenessNS,
               maximumIdentityCheckNS:maximumIdentityCheckNS,maximumNativeSendNS:maximumNativeSendNS,
               maximumWakeLatenessNS:maximumWakeLatenessNS)
+    }
+
+    // Nil means a due deadline, not permission to sleep or yield.
+    // Subtract before adding so the target cannot overflow UInt64.
+    nonisolated static func nextWakeTarget(deadline:UInt64,current:UInt64) -> UInt64? {
+        guard deadline>current else { return nil }
+        return current+min(deadline-current,20_000_000)
     }
 
     private nonisolated static func now() -> UInt64 {

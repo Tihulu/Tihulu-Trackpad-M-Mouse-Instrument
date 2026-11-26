@@ -422,4 +422,33 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     #expect(visited && result.sourceDisposed && !result.completed)
     #expect(result.playback.cleanupConfirmed && !player.lifecycle.running && !player.lifecycle.sourceOpen)
 }
+
+@Test func nativePlaybackWakeTargetNeverDelaysDueWorkOrExceedsPollCap() {
+    #expect(NativeMIDIPlayback.nextWakeTarget(deadline:100,current:100) == nil)
+    #expect(NativeMIDIPlayback.nextWakeTarget(deadline:99,current:100) == nil)
+    #expect(NativeMIDIPlayback.nextWakeTarget(deadline:101,current:100) == 101)
+    #expect(NativeMIDIPlayback.nextWakeTarget(deadline:100_000_000,current:1_000) == 20_001_000)
+    #expect(NativeMIDIPlayback.nextWakeTarget(deadline:UInt64.max,current:UInt64.max-10) == UInt64.max)
+}
+
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackCompoundCancellationBeforeDisposalDoesNotReportCompletion() async throws {
+    let player=try NativeMIDIPlayback(clip:nativePlaybackClip())
+    try player.open()
+    defer { _=try? player.close() }
+    let task=Task { @MainActor in
+        try await player.runAndClose(beforeClose:{
+            #expect(player.lifecycle.state=="finished" && player.lifecycle.sourceOpen)
+            withUnsafeCurrentTask { current in current?.cancel() }
+        })
+    }
+    let result=try await task.value
+    #expect(result.playback.state=="finished" && result.playback.cancelled)
+    #expect(!result.completed && result.sourceDisposed && result.playback.cleanupConfirmed)
+    #expect(!result.recoveryRequired && !player.lifecycle.running && !player.lifecycle.sourceOpen)
+    #expect(throws:NativeMIDIMonitor.Failure.self) {
+        _=try NativeMIDIMonitor.resolve(name:player.sourceName)
+    }
+}
 #endif
