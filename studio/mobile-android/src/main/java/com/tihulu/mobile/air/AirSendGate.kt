@@ -35,12 +35,13 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
     private var sent=AirOutput()
     private var sample:AirOutput?=null
     private var sampledAt:Long?=null
+    private var stringDeadlines:Map<Int,Long> = emptyMap()
     private var lastInput:Long?=null
     private var releaseDebtAt:Long?=null
     private var neutralFence=false
     private var neutralConfirmedAt:Long?=null
     private fun close(reason:String):Action.Close {
-        closed=true;admitted=false;pendingAt=null;sample=null;releaseDebtAt=null
+        closed=true;admitted=false;pendingAt=null;sample=null;stringDeadlines=emptyMap();releaseDebtAt=null
         return Action.Close(reason)
     }
     private fun check(now:Long):Action.Close? {
@@ -74,11 +75,12 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
         if(!started||pendingAt==null||response!="accepted")return close("Unexpected ACK")
         if(sampledAt?.let {now-it>=FRESH_NS}==true&&sent!=AirOutput()&&!pendingNeutral)
             return close("Source expired while active ACK outstanding")
+        if(expireStrings(now)&&!pendingNeutral)return close("String expired while active ACK outstanding")
         pendingAt=null
         if(pendingNeutral) {
             admitted=true;neutralFence=false;releaseDebtAt=null;neutralConfirmedAt=now
             // Do not reuse a gesture observed before release ACK.
-            sample=null;sampledAt=null
+            sample=null;sampledAt=null;stringDeadlines=emptyMap()
         }
         pendingNeutral=false
         return poll(now)
@@ -87,22 +89,30 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
      * No attack queue: changed non-neutral note masks during ACK wait fail
      * closed rather than replaying old attacks. Continuous levels coalesce.
      * Neutral has priority and blocks new attacks until its ACK. */
-    fun offer(output:AirOutput,observedAt:Long,now:Long):Action {
+    fun offer(output:AirOutput,observedAt:Long,now:Long,deadlines:Map<Int,Long> = emptyMap()):Action {
         check(now)?.let {return it}
         if(!started)return close("Not started")
         if(observedAt<0||observedAt>now||now-observedAt>=FRESH_NS||
             lastInput?.let {observedAt<=it}==true)return close("Stale or replayed observation")
         lastInput=observedAt
         try {lane.encode(output,1)}catch(_:IllegalArgumentException){return close("Invalid logical snapshot")}
+        if(deadlines.isNotEmpty() && (output.level!=null || deadlines.keys.any {it !in 0..24} ||
+            deadlines.keys.fold(0){mask,key->mask or (1 shl key)}!=output.keys ||
+            deadlines.values.any {it<=observedAt||it-observedAt>120_000_000L}))return close("Invalid string expiry")
         if(!admitted)return Action.Wait
         // A fresh arrival cannot erase a source gap that already expired.
         if(sampledAt?.let {now-it>=FRESH_NS}==true&&sent!=AirOutput()&&pendingAt!=null)
             return close("Source expired while active ACK outstanding")
+        if(expireStrings(now)) {
+            if(pendingAt!=null)return close("String expired while active ACK outstanding")
+            // Do not replace an expired transmitted pulse with a new attack before releasing it.
+            return poll(now)
+        }
         expireSample(now)
         if(neutralFence||neutralConfirmedAt?.let {observedAt<=it}!=false)return poll(now)
         if(output==AirOutput()) {
             val hadActive=sent!=AirOutput()
-            sample=null;sampledAt=null
+            sample=null;sampledAt=null;stringDeadlines=emptyMap()
             if(hadActive) {neutralFence=true;releaseDebtAt=observedAt}
             return poll(now)
         }
@@ -110,13 +120,27 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
         if(previous!=null&&previous.keys!=output.keys&&previous.keys!=0&&output.keys!=0&&
             (pendingAt!=null||lastSend?.let {now-it<PACE_NS}==true))
             return close("Discrete edge cannot be delivered on time")
-        sample=output;sampledAt=observedAt
+        sample=output;sampledAt=observedAt;stringDeadlines=deadlines.toMap()
         return poll(now)
+    }
+    /** Expire pulses independently of the sensor UI and ACK callbacks. */
+    private fun expireStrings(now:Long):Boolean {
+        val value=sample ?: return false
+        val expired=stringDeadlines.filterValues {it<=now}
+        if(expired.isEmpty())return false
+        val mask=expired.keys.fold(0){m,key->m or (1 shl key)}
+        stringDeadlines=stringDeadlines.filterKeys {it !in expired}
+        val remaining=value.keys and mask.inv()
+        sample=if(remaining==0)null else AirOutput(keys=remaining)
+        if(remaining==0&&sent.keys!=0&&!neutralFence){
+            neutralFence=true;releaseDebtAt=expired.values.minOrNull()
+        }
+        return (sent.keys and mask)!=0
     }
     private fun expireSample(now:Long) {
         val at=sampledAt ?: return
         if(now-at>=FRESH_NS) {
-            sample=null;sampledAt=null
+            sample=null;sampledAt=null;stringDeadlines=emptyMap()
             if(sent!=AirOutput()&&!neutralFence){neutralFence=true;releaseDebtAt=at+FRESH_NS}
         }
     }
@@ -124,6 +148,7 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
         check(now)?.let {return it}
         if(!started||!admitted)return Action.Wait
         val expiredActive=sampledAt?.let {now-it>=FRESH_NS}==true&&sent!=AirOutput()
+        if(expireStrings(now)&&pendingAt!=null)return close("String expired while active ACK outstanding")
         expireSample(now)
         check(now)?.let {return it}
         if(expiredActive&&pendingAt!=null)return close("Source expired while active ACK outstanding")

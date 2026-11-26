@@ -59,6 +59,8 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
     private var beamZone:Int?=null
     private val ringing=mutableMapOf<Int,Long>()
     private val stringSides=IntArray(3)
+    /** Immutable snapshot of the independently expiring string pulses. */
+    val stringDeadlines: Map<Int,Long> get() = ringing.toMap()
     private fun ringingOutput()=AirOutput(keys=ringing.keys.fold(0){m,k->m or (1 shl k)})
     private fun reset() {
         tracked=0;prior=null;armed=false;pinched=false;latched=false;held=null

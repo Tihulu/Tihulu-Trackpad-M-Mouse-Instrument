@@ -81,10 +81,10 @@ class MobileLanSession(private val selection:Selection) {
         if(phase==Phase.NEUTRAL_ACK||phase==Phase.READY)return translate(gate?.poll(now)?:return close("Missing sender"))
         return Action.Wait
     }
-    fun offer(output:AirOutput,observedAt:Long,now:Long):Action {
+    fun offer(output:AirOutput,observedAt:Long,now:Long,stringDeadlines:Map<Int,Long> = emptyMap()):Action {
         check(now)?.let{return it}
         if(phase!=Phase.READY)return poll(now)
-        return translate(gate?.offer(output,observedAt,now)?:return close("Missing sender"))
+        return translate(gate?.offer(output,observedAt,now,stringDeadlines)?:return close("Missing sender"))
     }
     fun abort():Action=close("Stopped explicitly")
 }

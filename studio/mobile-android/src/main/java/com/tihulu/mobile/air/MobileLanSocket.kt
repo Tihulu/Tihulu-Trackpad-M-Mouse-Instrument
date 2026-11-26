@@ -35,8 +35,8 @@ class MobileLanSocket(private val endpoint:MobileLanEndpoint, selection:MobileLa
     private var opened=false
     private var terminal=false
     private var message="Not connected"
-    data class Status(val phase:MobileLanSession.Phase,val message:String)
-    fun status():Status=synchronized(lock){Status(policy.phase,message)}
+    data class Status(val phase:MobileLanSession.Phase,val message:String,val assignment:MobileLanCapabilities.Manifest?)
+    fun status():Status=synchronized(lock){Status(policy.phase,message,policy.readyManifest)}
     companion object {
         fun nowNs():Long=SystemClock.elapsedRealtimeNanos()
         internal fun request(endpoint:MobileLanEndpoint):Request=Request.Builder()
@@ -56,8 +56,8 @@ class MobileLanSocket(private val endpoint:MobileLanEndpoint, selection:MobileLa
     }
     /** observedAt must use nowNs()'s elapsed-realtime clock; never wall time.
      * Calls during negotiation cannot buffer gestures. */
-    fun offer(output:AirOutput,observedAt:Long)=synchronized(lock){
-        if(!terminal&&opened)dispatch(policy.offer(output,observedAt,nowNs()))
+    fun offer(output:AirOutput,observedAt:Long,stringDeadlines:Map<Int,Long> = emptyMap())=synchronized(lock){
+        if(!terminal&&opened)dispatch(policy.offer(output,observedAt,nowNs(),stringDeadlines))
     }
     fun stop()=synchronized(lock){finish("Stopped explicitly")}
     private fun watchdog(){

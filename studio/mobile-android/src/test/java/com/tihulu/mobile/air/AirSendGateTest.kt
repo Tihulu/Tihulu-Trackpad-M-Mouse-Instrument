@@ -89,4 +89,39 @@ class AirSendGateTest {
         g.offer(AirOutput(),ms(30),ms(100))
         assertTrue(g.poll(ms(180)) is AirSendGate.Action.Close)
     }
+
+    @Test fun stringExpiresBeforeSourceWithoutNewFrames() {
+        val g=AirSendGate(AirWireLane.Keys(3),0)
+        g.begin(0);g.acknowledge("accepted",ms(20))
+        g.offer(AirOutput(keys=3),ms(21),ms(21),mapOf(0 to ms(100),1 to ms(141)))
+        g.acknowledge("accepted",ms(30))
+        assertTrue(send(g.poll(ms(100))).contains("\"mask\":2"))
+        g.acknowledge("accepted",ms(110))
+        assertTrue(send(g.poll(ms(141))).contains("\"mask\":0"))
+    }
+    @Test fun stringExpiryDuringPendingAckClosesEvenWithFreshSource() {
+        val g=AirSendGate(AirWireLane.Keys(1),0)
+        g.begin(0);g.acknowledge("accepted",ms(20))
+        g.offer(AirOutput(keys=1),ms(21),ms(21),mapOf(0 to ms(100)))
+        assertTrue(g.acknowledge("accepted",ms(100)) is AirSendGate.Action.Close)
+    }
+    @Test fun expiredUnsentStringCannotBePlayed() {
+        val g=AirSendGate(AirWireLane.Keys(1),0)
+        g.begin(0);g.acknowledge("accepted",ms(20))
+        assertEquals(AirSendGate.Action.Wait,g.offer(AirOutput(keys=1),ms(21),ms(100),mapOf(0 to ms(100))))
+    }
+    @Test fun invalidPartialOrExtendedStringDeadlineRejected() {
+        for(d in listOf(mapOf(0 to ms(100)),mapOf(0 to ms(142),1 to ms(100)),mapOf(0 to ms(100),25 to ms(100)))) {
+            val g=AirSendGate(AirWireLane.Keys(3),0)
+            g.begin(0);g.acknowledge("accepted",ms(20))
+            assertTrue(g.offer(AirOutput(keys=3),ms(21),ms(21),d) is AirSendGate.Action.Close)
+        }
+    }
+    @Test fun newObservationCannotMaskExpiredTransmittedString() {
+        val g=AirSendGate(AirWireLane.Keys(1),0)
+        g.begin(0);g.acknowledge("accepted",ms(20))
+        g.offer(AirOutput(keys=1),ms(21),ms(21),mapOf(0 to ms(100)))
+        g.acknowledge("accepted",ms(30))
+        assertTrue(send(g.offer(AirOutput(keys=1),ms(100),ms(100),mapOf(0 to ms(220)))).contains("\"mask\":0"))
+    }
 }

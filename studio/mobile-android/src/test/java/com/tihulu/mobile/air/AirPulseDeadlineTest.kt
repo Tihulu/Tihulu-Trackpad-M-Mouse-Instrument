@@ -10,7 +10,9 @@ class AirPulseDeadlineTest {
         p.receive(frame(.1,50_000_000),50_000_000)
         assertEquals(1,p.receive(frame(.4,100_000_000),100_000_000).keys)
         assertEquals(3,p.receive(frame(.65,160_000_000),160_000_000).keys)
+        assertEquals(mapOf(0 to 220_000_000L,1 to 280_000_000L),p.stringDeadlines)
         assertEquals(2,p.expire(230_000_000)?.keys)
+        assertEquals(mapOf(1 to 280_000_000L),p.stringDeadlines)
         assertEquals(0,p.expire(290_000_000)?.keys)
     }
     @Test fun hysteresisAndNoDelayedAttack() {
