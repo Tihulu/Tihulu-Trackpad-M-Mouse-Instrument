@@ -1207,6 +1207,7 @@ final class StudioController: ObservableObject {
     @Published var captureStatus = "Cursor free · capture is OFF by default"
     @Published var touchBarProfile = StudioController.readTouchBarProfile()
     @Published var touchBarSustainOn = false
+    @Published private(set) var touchBarSlideSustain = SustainSlideLock()
     @Published var simulatedHingeAngle = 90.0
     @Published var liveHingeEnabled = false
     @Published var hingeSensorStatus = "Hardware sensor OFF · manual simulator available"
@@ -2720,6 +2721,7 @@ final class StudioController: ObservableObject {
 
     func releaseTouchBarNotes() {
         touchBarGestureEpoch.invalidate()
+        touchBarSlideSustain.reset()
         nativePianoTokens.removeAll()
         releaseOptionalTouchBarNotes()
         for command in midiTouchBarNotes.reset(channel:touchBarProfile.channel) {
@@ -2794,6 +2796,21 @@ final class StudioController: ObservableObject {
             midi?.sendTouchBarControl(.init(.controlChange,channel:channel,number:4),value:Int((safe*127).rounded()))
         case .keys, .chords, .sustain:
             break
+        }
+    }
+
+    func touchBarSlideEvent(_ event:SustainSlideLock.Event,owner:SustainSlideLock.Owner,revision:UInt64) {
+        guard touchBarProfile.sustainMode == .slideLock,
+              touchBarGestureEpoch.accepts(revision) else{return}
+        if case .begin=event {
+            guard !groupGamepadsRunning,
+                  !touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed else{return}
+        }
+        if let next=touchBarSlideSustain.apply(event,owner:owner) {
+            touchBarSustainPressed(next)
+            if touchBarSustainOn != next {
+                touchBarSlideSustain.reset()
+            }
         }
     }
 
@@ -2917,6 +2934,7 @@ final class StudioController: ObservableObject {
         if touchBarGestureEpoch.invalidateOptionalOutput(
             sendsHaptics: touchBarProfile.effectiveOutput.sendsHaptics, armed: touchBarOutputArmed
         ) {
+            touchBarSlideSustain.reset()
             nativePianoTokens.removeAll()
         }
         let channel = touchBarProfile.channel

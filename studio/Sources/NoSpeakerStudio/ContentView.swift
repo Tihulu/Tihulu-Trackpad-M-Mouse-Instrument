@@ -2806,7 +2806,9 @@ private struct TouchBarModeView: View {
                             case .sustain:
                                 HStack {
                                     Text("Sustain").frame(width: 115, alignment: .leading)
-                                    if studio.touchBarProfile.sustainMode == .hold {
+                                    if studio.touchBarProfile.sustainMode == .slideLock {
+                                        TouchBarSlideSustainPad()
+                                    } else if studio.touchBarProfile.sustainMode == .hold {
                                         TouchBarHoldSustainPad()
                                     } else {
                                         Button(studio.touchBarSustainOn ? "Sustain ON" : "Sustain OFF") {
@@ -2875,6 +2877,70 @@ private struct TouchBarModeView: View {
                 Text("Safety: Hinge sensor is explicitly opt-in and uses a read-only, undocumented HID report on compatible MacBooks. An unavailable sensor never starts monitoring. The app does not move the display, modify sleep settings, or send any telemetry.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(28)
+        }
+    }
+}
+
+private struct TouchBarSlideSustainPad:View {
+    @EnvironmentObject private var studio:StudioController
+    @State private var revision:UInt64?
+    @State private var lockTarget=false
+    @GestureState private var tracking=false
+    private var locked:Bool {studio.touchBarSlideSustain.phase(.screen) == .locked}
+    var body:some View {
+        GeometryReader { geo in
+            HStack(spacing:0) {
+                Text(locked ? "Sustain locked" : studio.touchBarSustainOn ? "Sustain active" : "Sustain")
+                    .frame(maxWidth:.infinity)
+                Image(systemName:locked ? "lock.fill":"lock.open")
+                    .frame(width:44)
+                    .background(lockTarget || locked ? Color.accentColor.opacity(0.45):Color.secondary.opacity(0.15))
+            }
+            .frame(height:36)
+            .background(studio.touchBarSustainOn ? Color.accentColor.opacity(0.30):Color.secondary.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius:6))
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance:0)
+                .updating($tracking){_,state,_ in state=true}
+                .onChanged{value in
+                    if revision == nil {
+                        revision=studio.touchBarGestureEpoch.revision
+                        if let revision {studio.touchBarSlideEvent(.begin,owner:.screen,revision:revision)}
+                    }
+                    lockTarget=value.startLocation.x < geo.size.width-44 &&
+                        value.translation.width >= 24 && value.location.x >= geo.size.width-44 &&
+                        value.location.x <= geo.size.width && (0...36).contains(value.location.y)
+                }
+                .onEnded{value in
+                    if let revision {
+                        let latch=value.startLocation.x < geo.size.width-44 && value.translation.width>=24 &&
+                            value.location.x>=geo.size.width-44 && value.location.x<=geo.size.width &&
+                            (0...36).contains(value.location.y)
+                        studio.touchBarSlideEvent(.end(lock:latch),owner:.screen,revision:revision)
+                    }
+                    revision=nil;lockTarget=false
+                })
+        }.frame(width:220,height:36)
+        .accessibilityLabel("Sustain")
+        .accessibilityValue(locked ? "Locked":studio.touchBarSustainOn ? "Active":"Released")
+        .accessibilityHint("Hold to sustain; slide right into the lock and lift to latch. Press again to unlock.")
+        .accessibilityAction(named:Text("Release sustain")){
+            studio.touchBarSlideEvent(.cancel,owner:.screen,revision:studio.touchBarGestureEpoch.revision)
+            revision=nil;lockTarget=false
+        }
+        .onChange(of:tracking){active in
+            if !active,let revision {
+                studio.touchBarSlideEvent(.cancel,owner:.screen,revision:revision)
+                self.revision=nil;lockTarget=false
+            }
+        }
+        .onDisappear {
+            studio.touchBarSlideEvent(.cancel,owner:.screen,revision:studio.touchBarGestureEpoch.revision)
+            revision=nil;lockTarget=false
+        }
+        .onReceive(NotificationCenter.default.publisher(for:NSApplication.willResignActiveNotification)){_ in
+            studio.touchBarSlideEvent(.cancel,owner:.screen,revision:studio.touchBarGestureEpoch.revision)
+            revision=nil;lockTarget=false
         }
     }
 }

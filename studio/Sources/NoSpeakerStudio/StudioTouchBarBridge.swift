@@ -124,7 +124,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         case .sustain:
             let item = NSCustomTouchBarItem(identifier: identifier)
             item.customizationLabel = "Sustain"
-            if profile.sustainMode == .hold {
+            if profile.sustainMode != .toggle {
                 let button = HoldSustainButton(title: "Sustain Hold", target: nil, action: nil)
                 var gesture: UInt64?
                 button.onPress = { [weak self] pressed in
@@ -133,10 +133,14 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
                         controller.recordNativeTouchBarInput()
                         guard gesture == nil else { return }
                         gesture = controller.touchBarGestureEpoch.revision
-                        controller.touchBarSustainPressed(true)
+                        if profile.sustainMode == .slideLock,let gesture {
+                            controller.touchBarSlideEvent(.begin,owner:.native,revision:gesture)
+                        } else {controller.touchBarSustainPressed(true)}
                     } else if let captured = gesture {
                         gesture = nil
-                        if controller.touchBarGestureEpoch.accepts(captured) { controller.touchBarSustainPressed(false) }
+                        if profile.sustainMode == .slideLock {
+                            controller.touchBarSlideEvent(.end(lock:false),owner:.native,revision:captured)
+                        } else if controller.touchBarGestureEpoch.accepts(captured) { controller.touchBarSustainPressed(false) }
                     }
                 }
                 item.view = button

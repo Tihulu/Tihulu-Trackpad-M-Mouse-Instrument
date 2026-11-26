@@ -26,6 +26,7 @@ public enum TouchBarZone: String, CaseIterable, Codable, Identifiable, Sendable 
 public enum TouchBarSustainMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case hold = "Hold"
     case toggle = "Toggle"
+    case slideLock = "Hold / Slide to Lock"
     public var id: String { rawValue }
 }
 
@@ -54,7 +55,7 @@ public struct TouchBarProfile: Codable, Equatable, Sendable {
 
     public init(
         zones: [TouchBarZone] = [.keys, .pitchBend, .vibrato, .sustain],
-        sustainMode: TouchBarSustainMode = .hold,
+        sustainMode: TouchBarSustainMode = .slideLock,
         channel: Int = 0,
         baseNote: Int = 60,
         noteVelocity: Int = 100,
