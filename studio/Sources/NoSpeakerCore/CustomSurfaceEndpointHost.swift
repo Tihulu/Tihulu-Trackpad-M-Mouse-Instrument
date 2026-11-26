@@ -37,18 +37,22 @@ public final class CustomSurfaceEndpointHost {
         public let id: UUID
         public let name: String
         public let phase: Phase
+        public let surface: CustomSurfacePadLayout.Surface
         public let outstanding: Set<SensorDestination>
         public let retirement: CustomSurfaceExclusiveDelivery.Retirement?
     }
     private final class Entry {
         let id: UUID
         let endpoint: Endpoint
+        let surface: CustomSurfacePadLayout.Surface
         var lease: CustomSurfaceEndpointReservations.Lease?
         var phase: Phase = .live
         var report: CustomSurfaceExclusiveDelivery.Report?
-        init(id: UUID, endpoint: Endpoint) { self.id = id; self.endpoint = endpoint }
+        init(id: UUID, endpoint: Endpoint, surface: CustomSurfacePadLayout.Surface) {
+            self.id = id; self.endpoint = endpoint; self.surface = surface
+        }
         var status: Status {
-            .init(id: id, name: endpoint.name, phase: phase,
+            .init(id: id, name: endpoint.name, phase: phase, surface: surface,
                   outstanding: report?.outstanding ?? [], retirement: report?.retirement)
         }
         func validate(_ backend: Backend) -> Bool {
@@ -83,7 +87,7 @@ public final class CustomSurfaceEndpointHost {
         let duplicate = entries.values.contains {
             $0.endpoint.handle == endpoint.handle || $0.endpoint.uniqueID == endpoint.uniqueID
         }
-        let entry = Entry(id: id, endpoint: endpoint)
+        let entry = Entry(id: id, endpoint: endpoint, surface: plan.layout.surface)
         entries[id] = entry
         guard created.succeeded, endpoint.uniqueID != 0, endpoint.name == name, !duplicate,
               entry.validate(backend) else {
@@ -102,9 +106,14 @@ public final class CustomSurfaceEndpointHost {
         if entry.lease == nil, entry.phase != .identityLost { entry.phase = .retired }
         return entry.status
     }
-    public func frame(_ id: UUID, contacts: [CustomSurfaceContactProjection.Contact],
+    /// Wrong-source frames are rejected without renewing the watchdog or
+    /// releasing another device's notes. A source adapter must not re-stamp
+    /// combined cached contacts or invent empty physical snapshots.
+    public func frame(_ id: UUID, surface: CustomSurfacePadLayout.Surface,
+                      contacts: [CustomSurfaceContactProjection.Contact],
                       sequence: UInt64, observedAt: Int64) -> Status? {
-        guard let entry = entries[id], entry.phase == .live, let lease = entry.lease,
+        guard let entry = entries[id], entry.surface == surface else { return nil }
+        guard entry.phase == .live, let lease = entry.lease,
               let report = registry.frame(lease, contacts: contacts, sequence: sequence, observedAt: observedAt)
         else { return entries[id]?.status }
         entry.record(report)

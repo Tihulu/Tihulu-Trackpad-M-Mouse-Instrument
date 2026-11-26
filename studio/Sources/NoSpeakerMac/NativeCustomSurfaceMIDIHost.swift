@@ -23,7 +23,7 @@ public final class NativeCustomSurfaceMIDIHost {
             dispose: { Self.dispose($0) }
         ))
     }
-    public static func monotonicNow() -> Int64 {
+    public nonisolated static func monotonicNow() -> Int64 {
         Int64(clamping: DispatchTime.now().uptimeNanoseconds)
     }
     public var statuses: [Status] { host.statuses }
@@ -35,9 +35,10 @@ public final class NativeCustomSurfaceMIDIHost {
         reconcileWatchdog()
         return status
     }
-    public func frame(_ id: UUID, contacts: [CustomSurfaceContactProjection.Contact],
+    public func frame(_ id: UUID, surface: CustomSurfacePadLayout.Surface,
+                      contacts: [CustomSurfaceContactProjection.Contact],
                       sequence: UInt64, observedAt: Int64) -> Status? {
-        let status = host.frame(id, contacts: contacts, sequence: sequence, observedAt: observedAt)
+        let status = host.frame(id, surface: surface, contacts: contacts, sequence: sequence, observedAt: observedAt)
         reconcileWatchdog()
         return status
     }
