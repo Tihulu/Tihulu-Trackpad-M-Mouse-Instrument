@@ -38,11 +38,17 @@ struct CustomSurfacePadEditor:View {
     @State private var chordNotes="60, 64, 67"
     @State private var cc=71
     @State private var channel=0
+    @State private var xyXCC=1
+    @State private var xyYCC=11
+    @State private var xyXChannel=0
+    @State private var xyYChannel=0
+    @State private var xyXBend=false
+    @State private var xyYBend=false
     @State private var feedback=""
     @State private var newWidth=1000
     @State private var newHeight=2500
     private enum Kind:String,CaseIterable,Identifiable {
-        case note="Note",drum="Drum",degree="Tuning degree",chord="Chord",sustain="Sustain",bend="Pitch bend",cc="Custom MIDI CC",xy="XY (CC1 / CC11)"
+        case note="Note",drum="Drum",degree="Tuning degree",chord="Chord",sustain="Sustain",bend="Pitch bend",cc="Custom MIDI CC",xy="Custom XY"
         var id:String{rawValue}
     }
     var body:some View {
@@ -139,8 +145,16 @@ struct CustomSurfacePadEditor:View {
                             } else if kind == .cc {
                                 Stepper("MIDI CC \(cc)",value:$cc,in:0...127)
                             }
-                            if kind == .cc || kind == .sustain || kind == .bend || kind == .xy {
+                            if kind == .cc || kind == .sustain || kind == .bend {
                                 Stepper("MIDI channel \(channel+1)",value:$channel,in:0...15)
+                            }
+                            if kind == .xy {
+                                axisEditor("X",bend:$xyXBend,cc:$xyXCC,channel:$xyXChannel)
+                                axisEditor("Y",bend:$xyYBend,cc:$xyYCC,channel:$xyYChannel)
+                                Text("X increases right; Y increases upward. Targets must differ.").font(.caption)
+                            }
+                            if assignment == nil {
+                                Text("Invalid or conflicting axis/assignment values.").font(.caption).foregroundStyle(.orange)
                             }
                         }
                         HStack {
@@ -190,6 +204,16 @@ struct CustomSurfacePadEditor:View {
             }
         }
     }
+    private func axisEditor(_ axis:String,bend:Binding<Bool>,cc:Binding<Int>,channel:Binding<Int>)->some View {
+        VStack(alignment:.leading,spacing:4) {
+            Text(axis+" axis").font(.caption).bold()
+            Toggle("Pitch bend instead of CC",isOn:bend)
+            if !bend.wrappedValue {
+                Stepper("CC \(cc.wrappedValue)",value:cc,in:0...119)
+            }
+            Stepper("MIDI channel \(channel.wrappedValue+1)",value:channel,in:0...15)
+        }
+    }
     private var assignment:Layout.Assignment? {
         let result:Layout.Assignment
         switch kind {
@@ -204,7 +228,10 @@ struct CustomSurfacePadEditor:View {
         case .sustain:result = .helper(.init(.sustain,channel:channel))
         case .bend:result = .helper(.init(.pitchBend,channel:channel))
         case .cc:result = .helper(.init(.controlChange,channel:channel,number:cc))
-        case .xy:result = .xy(.init(.controlChange,channel:channel,number:1),.init(.controlChange,channel:channel,number:11))
+        case .xy:
+            let x=xyXBend ? SensorDestination(.pitchBend,channel:xyXChannel):SensorDestination(.controlChange,channel:xyXChannel,number:xyXCC)
+            let y=xyYBend ? SensorDestination(.pitchBend,channel:xyYChannel):SensorDestination(.controlChange,channel:xyYChannel,number:xyYCC)
+            result = .xy(x,y)
         }
         return result.isValid ? result:nil
     }
@@ -213,6 +240,7 @@ struct CustomSurfacePadEditor:View {
         changeAssignment=false
         guard let pad else{return}
         channel=0
+        xyXCC=1;xyYCC=11;xyXChannel=0;xyYChannel=0;xyXBend=false;xyYBend=false
         label=pad.label;x=pad.x;y=pad.y;width=pad.width;height=pad.height
         switch pad.assignment {
         case .note(let n):kind = .note;note=n
@@ -223,7 +251,11 @@ struct CustomSurfacePadEditor:View {
             if target.kind == .sustain {kind = .sustain}
             else if target.kind == .controlChange {kind = .cc;cc=target.number}
             else {kind = .bend}
-        case .xy(let x,_):kind = .xy;channel=x.channel
+        case .xy(let x,let y):
+            kind = .xy;xyXChannel=x.channel;xyYChannel=y.channel
+            xyXBend=x.kind == .pitchBend;xyYBend=y.kind == .pitchBend
+            if !xyXBend {xyXCC=x.number}
+            if !xyYBend {xyYCC=y.number}
         case .chord(let notes):kind = .chord;chordNotes=notes.map(String.init).joined(separator:", ")
         }
     }
