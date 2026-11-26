@@ -105,3 +105,24 @@ private func hand(_ x: Double = 0.5, open: Bool = true) -> AirHandSample? {
         #expect(p.x == x && p.y == y)
     }
 }
+
+
+@Test func mobileStringsExpireIndependentlyAtPulseDeadlineAndNeverReplayLateCrossing() throws {
+    var p = try #require(MobileAirInstrument(mode:.strings,keys:7))
+    _ = p.frame(hand:hand(0.1),at:0,now:0)
+    _ = p.frame(hand:hand(0.1),at:0.05,now:0.05)
+    #expect(p.frame(hand:hand(0.9),at:0.1,now:0.1).keys == 7)
+    #expect(p.expire(now:0.21) == nil)
+    #expect(p.expire(now:0.221) == MobileAirOutput())
+    #expect(p.frame(hand:hand(0.1),at:0.23,now:0.36).keys == 0)
+}
+
+@Test func mobileStringsPartialExpiryKeepsOnlyUnexpiredKeys() throws {
+    var p = try #require(MobileAirInstrument(mode:.strings,keys:7))
+    _ = p.frame(hand:hand(0.1),at:0,now:0)
+    _ = p.frame(hand:hand(0.1),at:0.05,now:0.05)
+    #expect(p.frame(hand:hand(0.4),at:0.1,now:0.1).keys == 1)
+    #expect(p.frame(hand:hand(0.65),at:0.16,now:0.16).keys == 3)
+    #expect(p.expire(now:0.23)?.keys == 2)
+    #expect(p.expire(now:0.29)?.keys == 0)
+}

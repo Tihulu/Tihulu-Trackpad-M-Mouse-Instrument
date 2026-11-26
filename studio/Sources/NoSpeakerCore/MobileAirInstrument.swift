@@ -81,6 +81,11 @@ public struct MobileAirInstrument: Sendable {
         guard now.isFinite, now >= lastTime, now-lastTime < 0.15 else {
             loseTracking(); return .init()
         }
+        if mode == .strings {
+            let before = ringing.count
+            ringing = ringing.filter { now < $0.value }
+            if before != ringing.count { return .init(keys: ringing.keys.reduce(0) { $0 | (1 << $1) }) }
+        }
         return nil
     }
 
@@ -141,8 +146,8 @@ public struct MobileAirInstrument: Sendable {
             let notes = Self.chordOffsets[slot-1].reduce(0) { $0 | (1 << $1) }
             return .init(keys: notes & mask == notes ? notes : 0)
         case .strings:
-            ringing = ringing.filter { time < $0.value }
-            for hit in strings.observe(position: sample.x, time: time) {
+            ringing = ringing.filter { now < $0.value }
+            for hit in strings.observe(position: sample.x, time: time) where now < time + 0.12 {
                 ringing[keys[hit.string]] = time + 0.12
             }
             return .init(keys: ringing.keys.reduce(0) { $0 | (1 << $1) })

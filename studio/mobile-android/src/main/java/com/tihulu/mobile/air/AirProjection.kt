@@ -41,6 +41,7 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
         require(authorized in 0 until (1 shl 25) && (helper||keyList.isNotEmpty()))
         require(mode!=AirMode.CHORDS||role!=HandRole.SINGLE)
         require(mode!=AirMode.STRINGS||keyList.size>=3)
+        require(mode!=AirMode.CHORDS||shapes.any { shape->shape.all {it in keyList} })
         require(near.isFinite()&&far.isFinite()&&near>=.1&&far<=3&&far-near>=.1)
     }
     private var last:Long?=null
@@ -56,13 +57,16 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
     private var pendingAt=0L
     private var beamZone:Int?=null
     private val ringing=mutableMapOf<Int,Long>()
+    private val stringSides=IntArray(3)
+    private fun ringingOutput()=AirOutput(keys=ringing.keys.fold(0){m,k->m or (1 shl k)})
     private fun reset() {
         tracked=0;prior=null;armed=false;pinched=false;latched=false;held=null
-        chordArmed=false;chord=null;pendingChord=null;beamZone=null;ringing.clear()
+        chordArmed=false;chord=null;pendingChord=null;beamZone=null;ringing.clear();stringSides.fill(0)
     }
     fun expire(now:Long):AirOutput? {
         val t=last ?: return AirOutput()
         if (now<t||now-t>=150_000_000L) {reset();return AirOutput()}
+        if(mode==AirMode.STRINGS && ringing.entries.removeAll {now>=it.value}) return ringingOutput()
         return null
     }
     private fun hand(frame:Frame,role:HandRole):Observation? {
@@ -119,7 +123,7 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
             AirMode.VERTICAL -> AirOutput(level=h.y)
             AirMode.APERTURE -> AirOutput(level=h.aperture)
             AirMode.SPEED -> AirOutput(level=if(previous==null||old==null)0.0 else
-                (hypot(h.x-previous.x,h.y-previous.y)/((t-old)/1e9)/5).coerceIn(0.0,1.0))
+                (hypot(h.x-previous.x,h.y-previous.y)/maxOf(.001,(t-old)/1e9)/5).coerceIn(0.0,1.0))
             AirMode.PINCH_HELPER -> AirOutput(level=if(pinched)1.0 else 0.0)
             AirMode.TOGGLE_HELPER -> AirOutput(level=if(latched)1.0 else 0.0)
             AirMode.PINCH_KEYS -> {
@@ -133,13 +137,16 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
                 AirOutput(keys=if((mask and authorized)==mask)mask else 0)
             }
             AirMode.STRINGS -> {
-                ringing.entries.removeAll {t>=it.value}
-                if(previous!=null) for(i in 0..2) {
-                    val boundary=(i+1)/4.0
-                    if((previous.x<boundary&&h.x>=boundary)||(previous.x>boundary&&h.x<=boundary))
+                ringing.entries.removeAll {now>=it.value}
+                for(i in 0..2) {
+                    val center=(i+1)/4.0
+                    val side=if(h.x<center-.025)-1 else if(h.x>center+.025)1 else 0
+                    if(side==0) continue
+                    if(stringSides[i]!=0&&stringSides[i]!=side&&previous!=null&&now-t<120_000_000L)
                         ringing[keyList[i]]=t+120_000_000L
+                    stringSides[i]=side
                 }
-                AirOutput(keys=ringing.keys.fold(0){m,k->m or (1 shl k)})
+                ringingOutput()
             }
             AirMode.BEAM_HELPER -> AirOutput(level=((far-measured!!)/(far-near)).coerceIn(0.0,1.0))
             AirMode.BEAM_KEYS -> {
