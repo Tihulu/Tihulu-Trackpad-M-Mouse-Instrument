@@ -6,6 +6,7 @@ import Vision
 import CoreVideo
 import ImageIO
 import QuartzCore
+@preconcurrency import UIKit
 import NoSpeakerCore
 
 /// Experimental native sensor source. Single-use instance, serial capture
@@ -42,6 +43,7 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
     private var observers:[NSObjectProtocol]=[]
     private let request=VNDetectHumanHandPoseRequest()
     private var lastInference = -Double.infinity
+    private var arTrackingLost = false
     private var orientation:MobileSensorOrientation = .up
 
     public override init() { super.init(); request.maximumHandCount=2 }
@@ -58,6 +60,9 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
             guard !isClosed else { return }
             self.orientation=orientation
             guard Self.authorization == .authorized else { fail("Camera permission required."); return }
+            observers.append(NotificationCenter.default.addObserver(forName:UIApplication.willResignActiveNotification,object:nil,queue:nil) { [weak self] _ in
+                self?.queue.async { [weak self] in self?.fail("App inactive; restart explicitly.") }
+            })
             switch backend {
             case .lidar:
                 guard Self.hasLiDAR else { fail("LiDAR scene depth is not supported on this device.");return }
@@ -97,7 +102,8 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
                         })
                     }
                     session.startRunning()
-                    guard !isClosed,session.isRunning else { tearDown();return }
+                    guard !isClosed else { tearDown();return }
+                    guard session.isRunning else { fail("Camera failed to start.");return }
                     push(.ready)
                 } catch { fail("Camera configuration failed.") }
             }
@@ -125,14 +131,15 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
         lock.lock()
         if !closed && !terminal { terminal=true;events=[.fault(message)] }
         lock.unlock()
-        tearDown()
+        // Allow capture/delegate callbacks to return before stopping a session.
+        queue.async { [self] in tearDown() }
     }
     private func push(_ event:Event) {
         lock.lock()
         guard !closed && !terminal else { lock.unlock();return }
         if events.count>=16 {
             terminal=true;events=[.fault("Sensor backlog; restart explicitly.")];lock.unlock()
-            tearDown();return
+            queue.async { [self] in tearDown() };return
         }
         events.append(event);lock.unlock()
     }
@@ -146,11 +153,16 @@ public final class MobileAirSensorSource: NSObject, @unchecked Sendable,
         infer(image:image,depth:nil,time:CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds)
     }
     public func session(_ session:ARSession,didUpdate frame:ARFrame) {
-        guard session === ar else { return }
-        // Reject limited world tracking; never substitute RGB-inferred depth.
+        guard session === ar,!isClosed else { return }
+        // Publish the first loss edge immediately; subsequent empty frames
+        // remain bounded. A later normal frame must reacquire both gates.
         if case .normal=frame.camera.trackingState {
+            arTrackingLost=false
             infer(image:frame.capturedImage,depth:frame.sceneDepth,time:frame.timestamp)
         } else {
+            let now=Self.now
+            guard !arTrackingLost || now-lastInference>=1.0/15 else {return}
+            arTrackingLost=true;lastInference=now
             push(.frame(.init(time:frame.timestamp)))
         }
     }

@@ -48,3 +48,14 @@ occlusion/reflective surfaces/low confidence, physical note release, no old
 event after rearm, measured p50/p95/p99 gesture-to-MIDI/audio latency.
 Native QR/TLS transport, actual mobile app packaging and physical tests remain
 HOLD. Do not claim the browser has access to ARKit scene depth.
+
+## Diagnostic stage view
+
+MobileAirPreviewView is a reusable SwiftUI view for a future iOS/iPadOS app.
+It offers explicit start/stop, sensor and hand role, image and control
+orientation (including 180°), mirror, near/far settings, derived XY, measured
+depth, logical note and helper meters. Configuration is locked while capture
+is active. The timer independently releases preview output on stale frames;
+scene inactivity, disappearance and permission failure stop capture.
+The full logical keyboard mask is used solely for offline diagnostics, never
+as authorization for a connected host. This is not an installable app.
