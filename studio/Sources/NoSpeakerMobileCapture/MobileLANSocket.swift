@@ -79,6 +79,7 @@ public final class MobileLANSocket: NSObject, URLSessionWebSocketDelegate, @unch
     }
     public func pauseForModeChange(){queue.sync {
         guard !terminal,opened else {return}
+        message="Waiting for neutral ACK"
         dispatch(policy.pauseForModeChange(now:Self.nowNS))
     }}
     public func stop(){queue.sync {finish("Stopped explicitly")}}

@@ -55,7 +55,11 @@ internal class BoundedLanDriver(selection:MobileLanSession.Selection,
         if(closed)return
         try {
             when(action) {
-                MobileLanSession.Action.Wait -> if(phase==MobileLanSession.Phase.READY)message="Ready · assigned lane"
+                MobileLanSession.Action.Wait -> when(phase) {
+                    MobileLanSession.Phase.READY -> message="Ready · assigned lane"
+                    MobileLanSession.Phase.RECONFIGURING -> message="Waiting for neutral ACK"
+                    else -> Unit
+                }
                 is MobileLanSession.Action.Close -> stop(action.reason)
                 is MobileLanSession.Action.Binary -> {
                     try {enqueue(encoder.invitation(action.bytes),now)}
@@ -99,7 +103,10 @@ internal class BoundedLanDriver(selection:MobileLanSession.Selection,
             dispatch(policy.offer(output,observedAt,now,deadlines),now)
     }
     fun pauseForModeChange(now:Long) {
-        if(check(now)&&upgraded)dispatch(policy.pauseForModeChange(now),now)
+        if(check(now)&&upgraded){
+            message="Waiting for neutral ACK"
+            dispatch(policy.pauseForModeChange(now),now)
+        }
     }
     fun take(now:Long):LanWriteSlot.Lease? {
         if(!check(now))return null

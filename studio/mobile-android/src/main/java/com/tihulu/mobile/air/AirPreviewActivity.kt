@@ -255,7 +255,7 @@ class AirPreviewActivity: ComponentActivity() {
             "$facing · camera ${c.id} · ${c.focalLengths.joinToString()} mm"+if(c.physicalIds.size>1)" · multi-lens" else ""
         })
         flip=button("Switch front / rear") {
-            if(!locked) {
+            if(canEditInstrument&&!depthToggle.isChecked) {
                 val current=choices.getOrNull(cameraPick.selectedItemPosition)?.facing
                 val target=if(current==CameraCharacteristics.LENS_FACING_FRONT)CameraCharacteristics.LENS_FACING_BACK else CameraCharacteristics.LENS_FACING_FRONT
                 val i=choices.indexOfFirst {it.facing==target}
@@ -283,7 +283,7 @@ class AirPreviewActivity: ComponentActivity() {
         cameraPick.onItemSelectedListener=object:AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent:AdapterView<*>?) {range=null;controls()}
             override fun onItemSelected(parent:AdapterView<*>?,view:View?,position:Int,id:Long) {
-                if(!locked) {
+                if(canEditInstrument&&!depthToggle.isChecked) {
                     range=choices.getOrNull(position)?.zoom
                     setZoom(range?.reset ?: 1f)
                     val c=choices.getOrNull(position)
@@ -295,7 +295,7 @@ class AirPreviewActivity: ComponentActivity() {
         zoomBar.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar:SeekBar?,progress:Int,fromUser:Boolean) {
                 val r=range ?: return
-                if(fromUser&&!locked){zoom=r.min+(r.max-r.min)*progress/1000f;showZoom()}
+                if(fromUser&&canEditInstrument&&!depthToggle.isChecked){zoom=r.min+(r.max-r.min)*progress/1000f;showZoom()}
             }
             override fun onStartTrackingTouch(bar:SeekBar?) {}
             override fun onStopTrackingTouch(bar:SeekBar?) {}
@@ -319,7 +319,7 @@ class AirPreviewActivity: ComponentActivity() {
     }
     private fun showZoom(){zoomLabel.text="Lens-relative zoom: %.2f×".format(zoom)}
     private fun setZoom(value:Float) {
-        if(locked)return
+        if(!canEditInstrument||depthToggle.isChecked)return
         val r=range ?: return
         zoom=value.coerceIn(r.min,r.max)
         zoomBar.progress=if(r.max==r.min)0 else ((zoom-r.min)/(r.max-r.min)*1000).toInt()
@@ -329,10 +329,10 @@ class AirPreviewActivity: ComponentActivity() {
         val b=locked;val r=range
         val depth=depthToggle.isChecked
         for(v in listOf(modePick,rolePick,orientationPick,mirror,depthToggle))v.isEnabled=canEditInstrument
-        cameraPick.isEnabled=!b&&!depth
+        cameraPick.isEnabled=canEditInstrument&&!depth
         depthRange.isEnabled=canEditInstrument&&depth;imageRotation.isEnabled=canEditInstrument&&depth
-        flip.isEnabled=!b&&!depth&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_FRONT}&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_BACK}
-        for(v in listOf(zoomBar,minus,plus,reset))v.isEnabled=!b&&!depth&&r!=null&&r.max>r.min
+        flip.isEnabled=canEditInstrument&&!depth&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_FRONT}&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_BACK}
+        for(v in listOf(zoomBar,minus,plus,reset))v.isEnabled=canEditInstrument&&!depth&&r!=null&&r.max>r.min
         modelButton.isEnabled=!b
         paired.isEnabled=!b&&pairedAllowed
         for(v in listOf(address,invitation,fingerprint,qrButton,rootButton,helperPick))v.isEnabled=!b&&wantsPair
@@ -471,6 +471,9 @@ class AirPreviewActivity: ComponentActivity() {
         // Old callbacks are invalidated before the explicit neutral fence.
         // No new sensor is opened until release ACK and worker retirement.
         retireCapture()
+        // READY may be restored before the next UI poll; force refresh
+        // even when the intermediate RECONFIGURING phase was not sampled.
+        lastPhase=null
         client.pauseForModeChange()
         status.text="Waiting for neutral ACK; then select a compatible mode and press Start."
         controls()
