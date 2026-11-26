@@ -45,6 +45,7 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
         require(near.isFinite()&&far.isFinite()&&near>=.1&&far<=3&&far-near>=.1)
     }
     private var last:Long?=null
+    private var lastAcquisition:Long?=null
     private var tracked=0
     private var prior:Hand?=null
     private var armed=false
@@ -90,7 +91,10 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
     }
     fun receive(frame:Frame,now:Long,depth:AlignedDepth?=null):AirOutput {
         val t=frame.timeNs;val old=last
-        if(t<0||now<t||now-t>=150_000_000L||(old!=null&&t<=old)) {reset();return AirOutput()}
+        val acquisition=frame.acquisitionNs;val previousAcquisition=lastAcquisition
+        if(t<0||now<t||now-t>=150_000_000L||(old!=null&&t<=old)||acquisition<0||
+            (previousAcquisition!=null&&acquisition<=previousAcquisition)) {reset();return AirOutput()}
+        lastAcquisition=acquisition
         if(old!=null&&t-old>=150_000_000L) reset()
         last=t
         val observation=hand(frame,role) ?: run {reset();return AirOutput()}
