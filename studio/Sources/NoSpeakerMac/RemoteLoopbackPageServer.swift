@@ -298,10 +298,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const pad=get("pad"), dot=get("dot"), secret=get("secret"), connect=get("connect"), disconnect=get("disconnect"), status=get("status");
   let ws=null, admitted=false, pending=false, sequence=0, pointer=null, position=null, timer=null, deadline=null, lastSend=0;
   const cameraFacing=get("webCameraFacing"),cameraDevice=get("webCameraDevice"),cameraStart=get("webCameraStart"),cameraStop=get("webCameraStop"),cameraVideo=get("webCameraVideo"),cameraZoom=get("webCameraZoom"),cameraStatus=get("webCameraStatus");
-  let cameraStream=null,cameraEpoch=0,cameraPending=false,cameraZoomPending=false,cameraDevices=[],cameraZoomRange=null;
+  let cameraStream=null,cameraEpoch=0,cameraPending=false,cameraInFlight=false,cameraZoomPending=false,cameraDevices=[],cameraZoomRange=null;
   const cameraMedia=()=>window.isSecureContext===true&&typeof navigator!=="undefined"&&navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==="function"?navigator.mediaDevices:null;
   function syncCamera(){
-    cameraStart.disabled=!!ws||!cameraMedia()||cameraPending||!!cameraStream||document.hidden;
+    cameraStart.disabled=!!ws||!cameraMedia()||cameraInFlight||!!cameraStream||document.hidden;
     cameraStop.disabled=!cameraPending&&!cameraStream;
     cameraFacing.disabled=!!ws||cameraPending||!!cameraStream;
     cameraDevice.disabled=cameraFacing.disabled||cameraDevices.length===0;
@@ -324,10 +324,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   cameraFacing.addEventListener("change",()=>{cameraDevice.value="";});
   cameraStart.addEventListener("click",async()=>{
     const media=cameraMedia();
-    if(!media||ws||cameraPending||cameraStream||document.hidden)return;
+    if(!media||ws||cameraInFlight||cameraStream||document.hidden)return;
     const facing=cameraFacing.value||"environment",id=cameraDevice.value;
     if(!["user","environment"].includes(facing)||id&&!cameraDevices.some(d=>d.deviceId===id))return;
-    const epoch=++cameraEpoch;cameraPending=true;cameraStatus.textContent="Requesting local camera…";syncCamera();
+    const epoch=++cameraEpoch;cameraPending=true;cameraInFlight=true;cameraStatus.textContent="Requesting local camera…";syncCamera();
     let stream=null;
     try{
       stream=await media.getUserMedia({audio:false,video:{...(id?{deviceId:{exact:id}}:{facingMode:{ideal:facing}}),width:{ideal:640},height:{ideal:480}}});
@@ -347,7 +347,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if(typeof media.enumerateDevices==="function"){
         try{const devices=await media.enumerateDevices();if(epoch===cameraEpoch&&cameraStream===stream){showCameraChoices(devices);syncCamera();}}catch{}
       }
-    }catch{disposeCamera(stream);if(epoch===cameraEpoch)stopCamera("Camera denied or unavailable. Check browser permission and HTTPS.");}
+    }catch{if(epoch===cameraEpoch&&cameraStream===stream)stopCamera("Camera denied or unavailable. Check browser permission and HTTPS.");else{disposeCamera(stream);if(epoch===cameraEpoch)stopCamera("Camera denied or unavailable. Check browser permission and HTTPS.");}}
+    finally{cameraInFlight=false;syncCamera();}
   });
   cameraStop.addEventListener("click",()=>stopCamera());
   cameraZoom.addEventListener("change",async()=>{

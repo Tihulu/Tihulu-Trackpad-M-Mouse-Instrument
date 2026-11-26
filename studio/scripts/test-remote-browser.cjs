@@ -1540,3 +1540,22 @@ test("camera visibility loss stops active stream and permission denial stays neu
   const b=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:async()=>{throw Error("denied")}});
   await b.elements.webCameraStart.emit("click");assert.match(b.elements.webCameraStatus.textContent,/denied/);assert.equal(b.getSocket(),undefined);
 });
+
+test("cancelled camera request cannot overlap a second permission request",async()=>{
+  const c=mockCamera();let resolve,count=0;
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:()=>{count++;return new Promise(r=>resolve=r)}});
+  const pending=a.elements.webCameraStart.emit("click");
+  a.elements.webCameraStop.emit("click");await a.elements.webCameraStart.emit("click");
+  assert.equal(count,1);assert.equal(a.elements.webCameraStart.disabled,true);
+  resolve(c.stream);await pending;
+  assert.equal(c.track.stops,1);assert.equal(a.elements.webCameraStart.disabled,false);
+});
+test("unsupported zoom and invalid selected camera never create bogus controls",async()=>{
+  const c=mockCamera();c.track.getCapabilities=()=>({zoom:{min:4,max:1}});
+  let count=0;
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:async()=>{count++;return c.stream}});
+  a.elements.webCameraDevice.value="unlisted";await a.elements.webCameraStart.emit("click");assert.equal(count,0);
+  a.elements.webCameraDevice.value="";await a.elements.webCameraStart.emit("click");
+  assert.equal(a.elements.webCameraZoom.disabled,true);assert.equal(count,1);
+  a.window.emit("pagehide");assert.equal(c.track.stops,1);
+});

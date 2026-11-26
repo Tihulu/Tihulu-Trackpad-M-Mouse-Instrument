@@ -113,7 +113,7 @@ struct PerformanceGroupRemotePanel: View {
     }
 
     var body: some View {
-        GroupBox("Mobile group controllers — experimental TLS") {
+        GroupBox("Mobile group controllers — web / private TLS") {
             VStack(alignment:.leading,spacing:7) {
                 Text("Assign up to four surface families per phone/tablet slot; switch modes in Play. At most two may be active together with explicit experimental consent in the browser. MIDI addresses stay hidden. Custom labels are optional per invitation. Trusted TLS identity required.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -161,6 +161,10 @@ struct PerformanceGroupRemotePanel: View {
                     Text(studio.groupRemoteStatus).font(.caption)
                     if studio.groupRemoteReady,let endpoint = studio.groupRemoteEndpoint {
                         Text(endpoint.pageURL).font(.caption).textSelection(.enabled)
+                        Button("Copy web address (no secret)") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(endpoint.pageURL,forType:.string)
+                        }
                         Button("Open controller page") {
                             if let url = URL(string:endpoint.pageURL) { NSWorkspace.shared.open(url) }
                         }
@@ -168,7 +172,7 @@ struct PerformanceGroupRemotePanel: View {
                             Image(nsImage:qr).interpolation(.none).resizable()
                                 .frame(width:144,height:144)
                                 .accessibilityLabel("Controller page address QR code")
-                            Text("Scan the address, then enter the separate one-time secret. QR contains no invitation.")
+                            Text("No app required: scan or type this HTTPS address in the phone/tablet browser, then enter the separate one-time secret. QR and copied address contain no invitation.")
                                 .font(.caption)
                         }
                         Picker("Remote slot",selection:$source) {
