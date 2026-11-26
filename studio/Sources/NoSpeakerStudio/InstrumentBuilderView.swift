@@ -63,7 +63,9 @@ struct InstrumentBuilderView: View {
                 Text("Create sensor-to-MIDI rules. Save your instrument, test it with simulated controls, or deliberately enable live MIDI. Native Trackpad and compatible external touch-surface input is optional and experimental.")
                     .foregroundStyle(.secondary)
                 quickStartPanel { proxy.scrollTo("builder-test", anchor: .top) }
-                PerformanceGroupEditorView(currentPatch:draft).disabled(studio.patchRunning)
+                PerformanceGroupEditorView(currentPatch:draft,editInBuilder:{ patch in
+                    replaceDraft(with:patch)
+                }).disabled(studio.patchRunning)
                 GroupBox("Instrument") {
                     VStack(alignment: .leading, spacing: 8) {
                         TextField("Instrument name", text: $draft.name)

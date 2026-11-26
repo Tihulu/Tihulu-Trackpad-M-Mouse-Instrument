@@ -7,6 +7,12 @@ import NoSpeakerMac
 /// Configuration editor only. No endpoints are created and no MIDI is sent.
 struct PerformanceGroupEditorView: View {
     let currentPatch: InstrumentPatch
+    let editInBuilder:(InstrumentPatch)->Void
+    @State private var starter:PerformanceGroupStarterPreset = .trackpadSolo
+    @State private var groupsExpanded=false
+    @State private var confirmStarterReplacement=false
+    @State private var pendingStarter:PerformanceGroupStarterPreset?
+    @State private var pendingStarterDraft:PerformanceGroupProfile?
     @EnvironmentObject private var studio: StudioController
     @State private var allowLayering = false
     @State private var hapticSelection:Set<UUID> = []
@@ -133,6 +139,12 @@ struct PerformanceGroupEditorView: View {
                 groupActions(group)
                 remoteRetargetMenu(group)
                 mobileEditMenu(group)
+                Button("Edit a copy in Builder") { editInBuilder(group.patch) }
+                    .disabled(!group.patch.isValid || group.patch.routes.isEmpty ||
+                              group.patch.routes.contains(where:{ $0.source.isGroupOnlyRemote }))
+                if group.patch.routes.contains(where:{ $0.source.isGroupOnlyRemote }) {
+                    Text("Use Edit mobile mappings for additional mobile slots.").font(.caption).foregroundStyle(.secondary)
+                }
                 Button("Replace draft mappings from Builder") { replaceMappings(group.id) }
                     .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
             }
@@ -614,8 +626,107 @@ struct PerformanceGroupEditorView: View {
         }
     }
 
+    private func loadStarter(_ preset:PerformanceGroupStarterPreset,append:Bool) {
+        guard didLoad,!readFailed,!editingLocked,!studio.patchRunning else { return }
+        let next=append ? preset.appending(to:profile) : preset.makeProfile()
+        guard let next else {
+            message="Preset unavailable or conflicts with existing inputs/capacity. Existing draft retained."
+            return
+        }
+        profile=next
+        allowLayering=false
+        hapticSelection=[]
+        groupsExpanded=true
+        message=preset.title + " loaded as editable draft. Save groups, select devices and Start explicitly."
+    }
+
+    private func sourceLabel(_ source:SensorSource) -> String {
+        switch source {
+        case .trackpad: "Trackpad"
+        case .magicMouse: "Magic Mouse"
+        case .phone: "Phone"
+        case .tablet: "Tablet"
+        case .phone2: "Phone 2"
+        case .tablet2: "Tablet 2"
+        case .camera: "Camera"
+        case .touchBar: "Touch Bar"
+        case .lid: "Lid sensor"
+        default: GamepadFrame.slotLabel(source)
+        }
+    }
+
+    private var starterPanel:some View {
+        GroupBox("Ready to play · Instrument Groups") {
+            VStack(alignment:.leading,spacing:8) {
+                Picker("Choose a setup",selection:$starter) {
+                    Section("One device / desktop") {
+                        ForEach([PerformanceGroupStarterPreset.trackpadSolo,.mouseSolo,.desktopDuo,.xboxSolo,.phoneSolo]) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                    Section("Party Jam") {
+                        ForEach([PerformanceGroupStarterPreset.xboxDuo,.pocketJam,.mobileDuo,.mobileQuartet,.hybridBand]) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                    Section("Optional hardware") {
+                        ForEach([PerformanceGroupStarterPreset.cameraLead,.touchBarLead,.lidLead]) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                }
+                Text(starter.detail).font(.callout)
+                Text("Needs: " + starter.requiredSources.map(sourceLabel).joined(separator:", "))
+                    .font(.caption).foregroundStyle(.secondary)
+                if starter.isOptionalHardware {
+                    Text("Requires compatible hardware and any necessary permission; availability is checked at Start.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                if starter.requiresMobile {
+                    Text(StudioController.groupRemoteStartEnabled
+                         ? "Mobile pairing and explicit network consent are required before playing."
+                         : "Mobile live Start is disabled in this build; preset can still be edited offline.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button(profile.groups.isEmpty ? "Load preset" : "Replace draft with preset") {
+                        if profile.groups.isEmpty { loadStarter(starter,append:false) }
+                        else {
+                            pendingStarter=starter
+                            pendingStarterDraft=profile
+                            confirmStarterReplacement=true
+                        }
+                    }.buttonStyle(.borderedProminent)
+                    if !profile.groups.isEmpty {
+                        Button("Add preset to draft") { loadStarter(starter,append:true) }
+                    }
+                    Button("Manual / custom setup") { groupsExpanded=true }
+                }
+                Text("Choose → Load → Save groups → select devices → Start. Templates are editable copies. No automatic MIDI, haptic output, camera or network activation.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !message.isEmpty && !groupsExpanded {
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                }
+            }.padding(6)
+        }.disabled(!didLoad || readFailed || editingLocked || studio.patchRunning)
+        .confirmationDialog("Replace current group draft?",isPresented:$confirmStarterReplacement,titleVisibility:.visible) {
+            Button("Replace draft",role:.destructive) {
+                defer { pendingStarter=nil;pendingStarterDraft=nil }
+                guard let preset=pendingStarter,pendingStarterDraft==profile else {
+                    message="Draft changed. Choose a preset again.";return
+                }
+                loadStarter(preset,append:false)
+            }
+            Button("Cancel",role:.cancel) { pendingStarter=nil;pendingStarterDraft=nil }
+        } message: {
+            Text("This replaces the current unsaved group layout, not your saved profile. Revert remains available until you save.")
+        }
+    }
+
     var body: some View {
-        DisclosureGroup("Performance Studio - Instrument Groups (experimental)") {
+        VStack(alignment:.leading,spacing:10) {
+            starterPanel
+            DisclosureGroup("Performance Studio - Instrument Groups (experimental)",isExpanded:$groupsExpanded) {
             VStack(alignment:.leading,spacing:10) {
                 Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox, Trackpad, Magic Mouse, Touch Bar ribbon, lid and single-hand camera Helper profiles. Mobile groups and MPE require their separate experimental build gates.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -624,16 +735,7 @@ struct PerformanceGroupEditorView: View {
                     Button("Add from Builder draft") { add(patch:currentPatch) }
                         .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
                 }.disabled(editingLocked || !didLoad || readFailed || !profile.isValid || profile.groups.count >= PerformanceGroupProfile.maximumGroups)
-                Menu("Party Jam starter groups") {
-                    ForEach(PerformanceGroupPartyJamPreset.allCases) { preset in
-                        Button(preset.title) {
-                            message = preset.install(in:&profile)
-                                ? preset.detail + " Review and save the draft before Start."
-                                : "Starter layout refused; existing draft retained."
-                        }
-                    }
-                }.disabled(editingLocked || !didLoad || readFailed || !profile.groups.isEmpty)
-                Text("Starter groups populate an empty draft only. No devices connect until explicit Start.")
+                Text("Edit group names and mobile mappings directly, or edit a copy in Builder and replace the selected group's mappings. Existing port identities are preserved when editing.")
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(profile.groups) { group in groupCard(group) }
                 if !profile.layeredInputs.isEmpty {
@@ -672,6 +774,7 @@ struct PerformanceGroupEditorView: View {
                 }
                 liveControls
             }.padding(6)
+            }
         }.onAppear { load() }
         .onChange(of:studio.groupGamepadsRunning) { running in
             if !running { hapticSelection = [] }
