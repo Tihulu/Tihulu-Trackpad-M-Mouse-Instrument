@@ -268,7 +268,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <small id="pianoManualHint">Hold multiple keys or the pedal. Lift to release. Octave changes are available only after all piano messages are acknowledged. Scale guide does not alter MIDI routing.</small>
 <div id="phraseSection" hidden><h3 id="phraseTitle">Chord pads</h3>
 <div id="chordGrid"><button id="chord0" type="button" disabled></button><button id="chord1" type="button" disabled></button><button id="chord2" type="button" disabled></button><button id="chord3" type="button" disabled></button></div>
-<div id="phraseTransport" hidden><label for="phraseTempo">Tempo</label><select id="phraseTempo"><option value="60">60 BPM</option><option value="90">90 BPM</option><option value="120" selected>120 BPM</option><option value="150">150 BPM</option></select><label id="arpLabel" for="arpChoice">Arpeggio chord</label><select id="arpChoice"></select><div id="arpKeyboardTools" hidden><button id="arpClear" type="button">Clear selected notes</button><label for="arpDirection">Direction</label><select id="arpDirection"><option value="up">Up</option><option value="down">Down</option><option value="bounce">Up / down</option></select><label for="arpRate">Rate</label><select id="arpRate"><option value="8">1/8</option><option value="4">1/4</option><option value="16">1/16</option><option value="12">1/8 triplet</option></select><p id="arpSelected" role="status"></p></div><div id="sequenceSteps"><label for="phraseStep0">Step 1</label><select id="phraseStep0"></select><label for="phraseStep1">Step 2</label><select id="phraseStep1"></select><label for="phraseStep2">Step 3</label><select id="phraseStep2"></select><label for="phraseStep3">Step 4</label><select id="phraseStep3"></select><label for="phraseStep4">Step 5</label><select id="phraseStep4"></select><label for="phraseStep5">Step 6</label><select id="phraseStep5"></select><label for="phraseStep6">Step 7</label><select id="phraseStep6"></select><label for="phraseStep7">Step 8</label><select id="phraseStep7"></select></div><button id="phraseStart" type="button" disabled>Start loop</button><button id="phraseStop" type="button" disabled>Stop loop</button></div>
+<div id="phraseTransport" hidden><label for="phraseTempo">Tempo</label><select id="phraseTempo"><option value="60">60 BPM</option><option value="90">90 BPM</option><option value="120" selected>120 BPM</option><option value="150">150 BPM</option></select><label id="arpLabel" for="arpChoice">Arpeggio chord</label><select id="arpChoice"></select><div id="arpKeyboardTools" hidden><button id="arpClear" type="button">Clear selected notes</button><label for="arpDirection">Direction</label><select id="arpDirection"><option value="up">Up</option><option value="down">Down</option><option value="bounce">Up / down</option></select><label for="arpRate">Rate</label><select id="arpRate"><option value="8">1/8</option><option value="4">1/4</option><option value="16">1/16</option><option value="12">1/8 triplet</option></select><label for="arpSwing">Swing</label><select id="arpSwing"><option value="50">Straight (50%)</option><option value="55">55%</option><option value="60">60%</option></select><p id="arpSelected" role="status"></p></div><div id="sequenceSteps"><label for="phraseStep0">Step 1</label><select id="phraseStep0"></select><label for="phraseStep1">Step 2</label><select id="phraseStep1"></select><label for="phraseStep2">Step 3</label><select id="phraseStep2"></select><label for="phraseStep3">Step 4</label><select id="phraseStep3"></select><label for="phraseStep4">Step 5</label><select id="phraseStep4"></select><label for="phraseStep5">Step 6</label><select id="phraseStep5"></select><label for="phraseStep6">Step 7</label><select id="phraseStep6"></select><label for="phraseStep7">Step 8</label><select id="phraseStep7"></select></div><button id="phraseStart" type="button" disabled>Start loop</button><button id="phraseStop" type="button" disabled>Stop loop</button></div>
 <p id="phraseStatus" role="status">Off.</p><small>Only mapped logical keys are used. Actual pitch depends on Mac mapping. Browser clock, no DAW synchronization; delayed playback stops instead of replaying old notes.</small></div></section>
 <section id="pedalSection" hidden aria-labelledby="pedal-title"><h2 id="pedal-title">Pedalboard</h2>
 <p>Only pedals mapped for this paired device are available. These are MIDI controls, not audio effects. Labels identify logical controls; actual destinations depend on the Mac mapping.</p>
@@ -822,7 +822,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(!releasingAll||pending||workloadMask()!==0)return false;
     cancelGlobalTimer();releasingAll=false;
     if(pendingPlayMode!==null){
-      if(modeAvailable(pendingPlayMode)){playMode=pendingPlayMode;synthOpen=false;synthEpoch++;arpSelected.clear();}
+      if(modeAvailable(pendingPlayMode)){playMode=pendingPlayMode;synthOpen=false;dialDrags.clear();arpSelected.clear();}
       pendingPlayMode=null;
     }
     drumStatus.textContent=pianoStatus.textContent=pedalStatus.textContent="Off.";
@@ -1282,11 +1282,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const chordOwners=new Map();
   let phraseMask=0,phraseRun=null,phraseOptionsKey="",synthOpen=false;
   const arpSelected=new Set(),arpContacts=new Set();
-  let synthCompact=false,synthHidden=new Set(),synthEpoch=0;
+  let synthCompact=false,synthHidden=new Set();
+  const dialDrags=new Map();
   const synthChoiceButtons=Array.from({length:6},(_,i)=>{const b=document.createElement("button");b.type="button";get("synthChoiceGrid").appendChild(b);b.addEventListener("click",()=>{if(!synthOpen||!admitted||releasingAll||pedalEnabled||pedalBusy()||!has("pedals",i))return;if(synthHidden.has(i))synthHidden.delete(i);else synthHidden.add(i);syncControls();});return b;});
   const synthVisible=i=>!synthOpen||!synthHidden.has(i);
   function choosePianoTool(id){if(currentView!=="play"||!admitted||releasingAll||!modeAvailable(id))return;get("playMode").value=id;choosePlayMode();}
-  function toggleSynth(){if(currentView!=="play"||!admitted||releasingAll||!["piano","arp","chord","seq"].includes(playMode)||!caps?.pedals)return;synthEpoch++;if(synthOpen){synthOpen=false;pedalEnabled=false;releasePedals();}else{synthOpen=true;syncControls();}}
+  function toggleSynth(){if(currentView!=="play"||!admitted||releasingAll||!["piano","arp","chord","seq"].includes(playMode)||!caps?.pedals)return;dialDrags.clear();if(synthOpen){synthOpen=false;pedalEnabled=false;releasePedals();}else{synthOpen=true;syncControls();}}
   const specialPiano=()=>phraseModes.includes(playMode);
   const chordAvailable=i=>chordShapes[i]?.every(k=>has("piano",k));
   const chordMask=i=>chordShapes[i].reduce((m,k)=>m|(1<<k),0);
@@ -1322,7 +1323,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("phraseTransport").hidden=playMode==="chord";
     get("arpChoice").hidden=get("arpLabel").hidden=playMode!=="arp";
     get("sequenceSteps").hidden=playMode!=="seq";
-    get("arpKeyboardTools").hidden=playMode!=="arp";get("arpClear").disabled=playing;get("arpDirection").disabled=playing;get("arpRate").disabled=playing;
+    get("arpKeyboardTools").hidden=playMode!=="arp";get("arpClear").disabled=playing;get("arpDirection").disabled=playing;get("arpRate").disabled=playing;get("arpSwing").disabled=playing;
     get("arpSelected").textContent=arpSelected.size?"Selected keys: "+[...arpSelected].sort((a,b)=>a-b).map(k=>labelFor(17+k)).join(", "):"Tap keys to select a custom arpeggio, or use the chord menu.";
     for(let i=0;i<4;i++){
       const b=get("chord"+i);b.textContent=chordLabel(i);b.disabled=playMode!=="chord"||!pianoEnabled||!admitted||releasingAll||!chordAvailable(i);
@@ -1349,7 +1350,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const direction=get("arpDirection").value,rate=get("arpRate").value||"8";
     if(playMode==="arp"){if(!["","up","down","bounce"].includes(direction)||!["4","8","12","16"].includes(rate))return;if(direction==="down")pattern.reverse();if(direction==="bounce"&&pattern.length>2)pattern=pattern.concat(pattern.slice(1,-1).reverse());}
     if(!pattern.length||!pattern.some(i=>i>=0)||!pattern.every(i=>Number.isInteger(i)&&(i===-1||(i<25&&has("piano",i)))))return;
-    phraseRun={pattern,index:0,on:false,next:performance.now(),period:240000/(bpm*(playMode==="arp"?Number(rate):8))};
+    const swing=playMode==="arp"?Number(get("arpSwing").value||"50"):50;
+    if(![50,55,60].includes(swing))return;
+    phraseRun={pattern,index:0,on:false,longStep:true,swing,next:performance.now(),period:240000/(bpm*(playMode==="arp"?Number(rate):8))};
     get("phraseStatus").textContent="Playing · local browser clock.";syncControls();tick();
   }
   function advancePhrase(now){
@@ -1357,11 +1360,16 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(now-run.next>=150){close("Sequencer delayed. Reconnect explicitly.");return false;}
     if(pending||pianoQueue.length||pianoEmergency)return true;
     if(!pianoEnabled||releasingAll||!admitted||!["arp","seq"].includes(playMode)){releasePiano();return false;}
+    // Alternate by elapsed steps, including across an odd-length pattern wrap.
+    const halfStep=run.period*(run.longStep?run.swing:100-run.swing)/100;
+    const scheduled=run.next+halfStep;
+    // Absorb timer jitter without bunching edges after a delayed acknowledgment.
+    run.next=scheduled-now>=25?scheduled:now+halfStep;
     if(!run.on){
       const i=run.pattern[run.index];phraseMask=i<0?0:1<<i;
-      run.on=true;run.next=now+run.period*0.5;
+      run.on=true;
     }else{
-      phraseMask=0;run.on=false;run.index=(run.index+1)%run.pattern.length;run.next=now+run.period*0.5;
+      phraseMask=0;run.on=false;run.index=(run.index+1)%run.pattern.length;run.longStep=!run.longStep;
     }
     pianoChanged(false);return Boolean(admitted);
   }
@@ -1398,7 +1406,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pianoPedal.hidden=!has("piano",25);pianoPedal.disabled=!admitted||!pianoEnabled||!has("piano",25)||pianoEmergency;
     pianoPedal.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<25))));syncPhrase();
   }
-  function resetPiano(){resetPhrase();arpSelected.clear();synthOpen=false;synthEpoch++;synthHidden.clear();strips=false;pianoEnabled=false;pianoOctave=0;pianoOwners.clear();pianoQueue=[];pianoDesired=0;pianoSent=0;lastPianoSend=-Infinity;pianoEmergency=false;pianoStatus.textContent="Off.";syncPiano();}
+  function resetPiano(){resetPhrase();arpSelected.clear();synthOpen=false;dialDrags.clear();synthHidden.clear();strips=false;pianoEnabled=false;pianoOctave=0;pianoOwners.clear();pianoQueue=[];pianoDesired=0;pianoSent=0;lastPianoSend=-Infinity;pianoEmergency=false;pianoStatus.textContent="Off.";syncPiano();}
   function pianoChanged(runTick=true){
     let mask=phraseMask;for(const index of pianoOwners.values())mask|=1<<index;
     for(const index of chordOwners.values())mask|=chordMask(index);
@@ -1482,6 +1490,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function pedalSet(i,active){
     const next=active?pedalMask|(1<<i):pedalMask&~(1<<i);
     if(next===pedalMask)return;
+    if(!active)dialDrags.delete(i);
     pedalMask=next;
     if(pedalQueue.length>=8){close("Pedal input backlog. Reconnect explicitly.");return;}
     pedalQueue.push({snapshot:pedalSnapshot(),at:performance.now()});pedalDirty=false;syncPedals();tick();
@@ -1507,7 +1516,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pedalPositions[i]=Math.round(n);pedalDirty=true;syncPedals();tick();
   }
   function releasePedals(){
-    synthEpoch++;pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;syncControls();tick();
+    dialDrags.clear();pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;syncControls();tick();
   }
   function sendPedals(snapshot){send("pedalboard",snapshot);}
   function inertialState(kind,prefix,limit,scale){return {kind,start:get(prefix+"Start"),stop:get(prefix+"Stop"),meter:get(prefix+"Meter"),status:get(prefix+"Status"),limit,scale,mode:"idle",epoch:0,sample:null,at:0,sent:-1,last:-Infinity,waiting:0};}
@@ -1877,10 +1886,24 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     b.addEventListener("blur",()=>pedalHoldUp(i,"k"+i));
   });
   pedalSliders.forEach((b,i)=>b.addEventListener("input",()=>pedalMove(i)));
-  pedalOutputs.forEach((b,i)=>{let drag=null;
-    b.addEventListener("pointerdown",e=>{if(!synthOpen||!pedalAdmitted(i)||!(pedalMask&(1<<i))||e.button!==0||!Number.isFinite(e.clientY))return;e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{return;}drag={id:e.pointerId,y:e.clientY,value:pedalPositions[i],epoch:synthEpoch};});
-    b.addEventListener("pointermove",e=>{if(!drag||drag.id!==e.pointerId||drag.epoch!==synthEpoch||!synthOpen||!pedalAdmitted(i)||!(pedalMask&(1<<i))||!Number.isFinite(e.clientY))return;pedalSliders[i].value=String(Math.round(Math.max(0,Math.min(100,drag.value+(drag.y-e.clientY)))));pedalMove(i);});
-    for(const event of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(event,e=>{if(drag?.id===e.pointerId)drag=null;});
+  pedalOutputs.forEach((dial,i)=>{
+    dial.addEventListener("pointerdown",e=>{
+      if(dialDrags.has(i)||!synthOpen||!pedalAdmitted(i)||!(pedalMask&(1<<i))||
+         e.button!==0||!Number.isFinite(e.clientY))return;
+      e.preventDefault();
+      try{dial.setPointerCapture(e.pointerId);}catch{return;}
+      dialDrags.set(i,{id:e.pointerId,y:e.clientY,value:pedalPositions[i]});
+    });
+    dial.addEventListener("pointermove",e=>{
+      const drag=dialDrags.get(i);
+      if(!drag||drag.id!==e.pointerId||!synthOpen||!pedalAdmitted(i)||
+         !(pedalMask&(1<<i))||!Number.isFinite(e.clientY))return;
+      pedalSliders[i].value=String(Math.round(Math.max(0,Math.min(100,drag.value+drag.y-e.clientY))));
+      pedalMove(i);
+    });
+    for(const event of ["pointerup","pointercancel","lostpointercapture"])dial.addEventListener(event,e=>{
+      if(dialDrags.get(i)?.id===e.pointerId)dialDrags.delete(i);
+    });
   });
   workloadMode.addEventListener("click",()=>{
     if(currentView!=="setup"||releasingAll||!admitted||!caps||workloadMask()!==0||pending)return;
@@ -1908,9 +1931,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("layoutReset").addEventListener("click",resetLayout);
   for(const v of viewNames)get(navId(v)).addEventListener("click",()=>chooseView(v));
   get("playMode").addEventListener("change",choosePlayMode);
-  get("airStickPad").addEventListener("change",()=>{const i=Number(get("airStickPad").value);if(kitIdle()&&within(i,0,7)&&has("drums",i))stickPad=i;get("airStickPad").value=String(stickPad);syncKit();});
+  get("airStickPad").addEventListener("change",()=>{const i=Number(get("airStickPad").value);if(kitIdle()&&get("airStickPad").value===String(i)&&within(i,0,7)&&has("drums",i))stickPad=i;get("airStickPad").value=String(stickPad);syncKit();});
   get("kitEdit").addEventListener("click",()=>{if(kitIdle()){kitEditing=!kitEditing;kitDrag=null;syncStick();}});
-  get("kitPart").addEventListener("change",()=>{const i=Number(get("kitPart").value);if(kitIdle()&&kitEditing&&Number.isInteger(i)&&has("drums",i))kitPart=i;syncStick();});
+  get("kitPart").addEventListener("change",()=>{const i=Number(get("kitPart").value);if(kitIdle()&&kitEditing&&get("kitPart").value===String(i)&&within(i,0,7)&&has("drums",i))kitPart=i;syncStick();});
   for(const [id,action] of [["kitAdd","add"],["kitRemove","remove"],["kitSave","save"],["kitReset","reset"]])get(id).addEventListener("click",()=>editKit(action));
   get("kitSize").addEventListener("input",()=>editKit("size"));
   get("kitX").addEventListener("input",()=>editKit("x"));get("kitY").addEventListener("input",()=>editKit("y"));

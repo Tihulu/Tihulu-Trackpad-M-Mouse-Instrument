@@ -13,7 +13,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["synthCompact","synthChoices","synthChoiceGrid","pianoArp","pianoChord","pianoSynth","arpKeyboardTools","arpClear","arpDirection","arpRate","arpSelected","kitBoard","kitEdit","kitEditor","kitPart","kitAdd","kitRemove","kitX","kitY","kitSize","kitSave","kitReset","kitStatus","pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["synthCompact","synthChoices","synthChoiceGrid","pianoArp","pianoChord","pianoSynth","arpKeyboardTools","arpClear","arpDirection","arpRate","arpSwing","arpSelected","kitBoard","kitEdit","kitEditor","kitPart","kitAdd","kitRemove","kitX","kitY","kitSize","kitSave","kitReset","kitStatus","pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
@@ -1443,4 +1443,46 @@ test("sixteenth and triplet arpeggios release each note before the next mapped n
     e.phraseStop.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);
     assert.equal(a.socket.closed,undefined);
   }
+});
+
+test("kit editor rejects pad numbers that wrap a JavaScript bit mask",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:3},false),e=a.elements;
+  e.playMode.value="stick";e.playMode.emit("change");e.kitEdit.emit("click");
+  e.kitPart.value="1";e.kitPart.emit("change");
+  for(const invalid of ["33","-31","","1.5"]){
+    e.kitPart.value=invalid;e.kitPart.emit("change");assert.equal(e.kitPart.value,"1");
+  }
+  assert.equal(a.socket.frames.length,0);
+});
+
+test("synth dial keeps its first contact and discards it when that control is released",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1,pedals:1},false),e=a.elements;
+  e.playMode.value="piano";e.playMode.emit("change");e.pianoSynth.emit("click");e.pedalEnable.emit("click");
+  const toggle=()=>{e.pedalToggle0.emit("click");a.step(25);a.ack();};
+  const finger=(id,y)=>({pointerId:id,clientY:y,button:0,preventDefault(){}});
+  toggle();
+  const dial=e.pedalValue0, initial=Number(e.pedalLevel0.value);
+  const delta=initial<=80?10:-10;
+  dial.emit("pointerdown",finger(1,50));dial.emit("pointerdown",finger(2,50));
+  dial.emit("pointermove",finger(2,50-delta));assert.equal(Number(e.pedalLevel0.value),initial);
+  dial.emit("pointermove",finger(1,50-delta));assert.equal(Number(e.pedalLevel0.value),initial+delta);
+  toggle();toggle();
+  dial.emit("pointermove",finger(1,50-2*delta));assert.equal(Number(e.pedalLevel0.value),initial+delta);
+  dial.emit("pointerdown",finger(3,50));dial.emit("pointermove",finger(3,50-delta));
+  assert.equal(Number(e.pedalLevel0.value),initial+2*delta);
+});
+
+test("swing alternates across a one-note arp and absorbs ordinary timer jitter",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false), e=a.elements;
+  e.pianoArp.emit("click");e.pianoEnable.emit("click");
+  e.piano0.emit("keydown",{key:"Enter",preventDefault(){}});e.piano0.emit("keyup",{key:"Enter",preventDefault(){}});
+  e.phraseTempo.value="150";e.arpRate.value="16";e.arpSwing.value="99";
+  e.phraseStart.emit("click");assert.equal(a.socket.frames.length,0);
+  e.arpSwing.value="60";e.phraseStart.emit("click");assert.equal(a.socket.frames.at(-1).mask,1);
+  assert.equal(e.arpSwing.disabled,true);
+  for(const [elapsed,mask] of [[65,0],[55,1],[40,0],[40,1]]){
+    a.ack(13);a.step(elapsed-13);assert.equal(a.socket.frames.at(-1).mask,mask);
+  }
+  assert.deepEqual(a.socket.sendTimes.slice(-5).map((time,i,times)=>time-times[0]),[0,65,120,160,200]);
+  a.ack(13);e.phraseStop.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);
 });
