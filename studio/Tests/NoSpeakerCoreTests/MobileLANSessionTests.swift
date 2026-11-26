@@ -233,6 +233,9 @@ private func host(_ piano:Int=1,_ pedals:Int=0)throws->String {
     guard case .text(let neutral)=client.receive(text:String(decoding:try manifest.encoded(),as:UTF8.self),now:ns(64)) else{throw RemoteTouchError.invalidFrame}
     _=bridge.process([.frame(peer,neutral,1.065)],now:1.065,session:&hostSession,send:sink)
     _=client.receive(text:"accepted",now:ns(80))
+    var tabletSequence=3
+    let firstRefresh=Data("{\"kind\":\"pianoKeys\",\"version\":5,\"sequence\":3,\"mask\":1}".utf8)
+    _=bridge.process([.frame(other,firstRefresh,1.075)],now:1.075,session:&hostSession,send:sink)
     var lease=try #require(MobileTouchLiveLease(authorized:manifest.piano,armedAt:ns(81)))
     let initial=lease.event(.began,contacts:[.init(id:0,x:0.5)],now:ns(82),ownerActive:true)
     let down=try #require(initial)
@@ -248,6 +251,10 @@ private func host(_ piano:Int=1,_ pedals:Int=0)throws->String {
         let pulse=try #require(next)
         guard case .text(let refresh)=client.offer(pulse.output,observedAt:pulse.ownerAt,now:pulse.ownerAt) else{throw RemoteTouchError.invalidFrame}
         let time=1+Double(tick)/1000
+        tabletSequence+=1
+        let otherRefresh=Data("{\"kind\":\"pianoKeys\",\"version\":5,\"sequence\":\(tabletSequence),\"mask\":1}".utf8)
+        let otherACK=bridge.process([.frame(other,otherRefresh,time)],now:time,session:&hostSession,send:sink)
+        #expect(otherACK.actions == [.acknowledge(other,true)])
         let ack=bridge.process([.frame(peer,refresh,time)],now:time,session:&hostSession,send:sink)
         #expect(ack.actions == [.acknowledge(peer,true)])
         _=client.receive(text:"accepted",now:ns(tick+5))
