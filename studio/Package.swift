@@ -3,9 +3,10 @@ import PackageDescription
 
 let package = Package(
     name: "NoSpeakerStudio",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v13), .iOS(.v17)],
     products: [
         .library(name: "NoSpeakerCore", targets: ["NoSpeakerCore"]),
+        .library(name: "NoSpeakerMobileCapture", targets: ["NoSpeakerMobileCapture"]),
         .library(name: "NoSpeakerMac", targets: ["NoSpeakerMac"]),
         .executable(name: "tihulu-mac-instrument-engine", targets: ["TihuluEngineCLI"]),
         .executable(name: "tihulu-mac-instrument-native", targets: ["TihuluNativeCLI"]),
@@ -13,6 +14,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "NoSpeakerCore"),
+        .target(name: "NoSpeakerMobileCapture", dependencies: ["NoSpeakerCore"]),
         .executableTarget(name: "TihuluEngineCLI", dependencies: ["NoSpeakerCore"]),
         .target(name: "NoSpeakerProcessSignals"),
         .executableTarget(name: "TihuluNativeCLI", dependencies: [

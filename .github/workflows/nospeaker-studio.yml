@@ -256,3 +256,27 @@ jobs:
             studio/dist/PREVIEW-SHA256SUMS
             studio/dist/PREVIEW-PROVENANCE.txt
           if-no-files-found: error
+
+
+  ios-sensor-compile:
+    name: iOS mobile sensor compile (experimental)
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qa/music-')
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: studio
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          xcodebuild -version
+      - name: Compile isolated iOS sensor library
+        run: |
+          set -euo pipefail
+          xcodebuild -scheme NoSpeakerMobileCapture -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/tihulu-mobile-air" CODE_SIGNING_ALLOWED=NO build
