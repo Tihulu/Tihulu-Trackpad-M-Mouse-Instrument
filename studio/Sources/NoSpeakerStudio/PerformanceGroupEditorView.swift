@@ -767,9 +767,6 @@ struct PerformanceGroupEditorView: View {
                 }
                 Text("Choose → Load → Save groups → select devices → Start. Templates are editable copies. No automatic MIDI, haptic output, camera or network activation.")
                     .font(.caption).foregroundStyle(.secondary)
-                if !message.isEmpty && !groupsExpanded {
-                    Text(message).font(.caption).foregroundStyle(.secondary)
-                }
             }.padding(6)
         }.disabled(!didLoad || readFailed || editingLocked || studio.patchRunning)
         .confirmationDialog("Replace current group draft?",isPresented:$confirmStarterReplacement,titleVisibility:.visible) {
@@ -812,6 +809,19 @@ struct PerformanceGroupEditorView: View {
         GroupBox("Play / setup") {
             VStack(alignment:.leading,spacing:6) {
                 Text(studio.groupGamepadStatus).font(.caption)
+                if !profile.groups.isEmpty {
+                    Text(profile == saved ? "Saved layout" : "Unsaved layout")
+                        .font(.caption.weight(.semibold))
+                    ForEach(profile.groups) { group in
+                        VStack(alignment:.leading,spacing:2) {
+                            Text(group.name).font(.callout)
+                            Text(Set(group.patch.routes.map(\.source)).sorted { $0.rawValue < $1.rawValue }
+                                .map(sourceLabel).joined(separator:", "))
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(group.plannedPortName).font(.caption2).textSelection(.enabled)
+                        }
+                    }
+                }
                 if !draftControllerSources.isEmpty && !studio.groupGamepadsRunning {
                     HStack {
                         Button("Refresh controllers") { studio.refreshBuilderGamepads() }
@@ -822,9 +832,19 @@ struct PerformanceGroupEditorView: View {
                             }
                             message="Controller selected. Review or change the assignment before Start."
                         }.disabled(quickAssignment == nil)
-                    }.disabled(studio.patchRunning || editingLocked)
+                    }.disabled(studio.patchRunning || !studio.groupCleanupIDs.isEmpty || studio.groupDisposalCount != 0)
+                    ForEach(GamepadFrame.orderedSources.filter { draftControllerSources.contains($0) },id:\.self) { source in
+                        Picker(GamepadFrame.slotLabel(source),selection:Binding<UUID?>(
+                            get:{studio.gamepadChoice(for:source)},
+                            set:{studio.setGamepadChoice($0,for:source)})) {
+                            Text("Select controller").tag(UUID?.none)
+                            ForEach(studio.gamepadChoices) { choice in
+                                Text(choice.name).tag(Optional(choice.id))
+                            }
+                        }.disabled(studio.patchRunning || studio.groupGamepadsRunning)
+                    }
                     if !draftControllersReady {
-                        Text("Select distinct controllers in Manual / custom setup. No ambiguous assignment is made.")
+                        Text("Select a different connected controller for each required role. No ambiguous assignment is made.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -844,6 +864,21 @@ struct PerformanceGroupEditorView: View {
                     Button("Stop / Release All") { studio.stopGroupGamepads() }
                         .disabled(!studio.groupGamepadsRunning)
                     Button("Device setup / advanced") { groupsExpanded=true }
+                }
+                if !studio.groupRegisteredIDs.isEmpty || !studio.groupCleanupIDs.isEmpty || studio.groupDisposalCount != 0 {
+                    HStack {
+                        Button("Close ports") { studio.closeGroupPorts() }
+                            .disabled(studio.groupGamepadsRunning || studio.groupRegisteredIDs.isEmpty)
+                        Button("Retry cleanup") { studio.retryGroupCleanup() }
+                            .disabled(studio.groupGamepadsRunning ||
+                                      (studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0))
+                    }
+                    Text("\(studio.groupRegisteredIDs.count) retained/registered ports · \(studio.groupCleanupIDs.count) pending MIDI cleanups · \(studio.groupDisposalCount) pending disposals")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if tuningDraft.isDirty || tuningPreview != nil || !hapticSelection.isEmpty {
+                    Text("Advanced tuning or Trackpad output selected. Review in Device setup / advanced before Start.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 if profile.groups.contains(where:{ $0.patch.routes.contains(where:{ $0.source.isGroupRemote }) }) {
                     Button("Mobile pairing and Start") { groupsExpanded=true }
