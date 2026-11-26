@@ -299,3 +299,20 @@ private func host(_ piano:Int=1,_ pedals:Int=0)throws->String {
         try MobileAirWireLane.helper(index: 0, authorized: 7).encode(.init(xyz:[1,1,1]),sequence:1)
     }
 }
+
+@Test func xyzHybridNegotiatesAtomicNeutralAndClosesIfANoteEdgeCannotBeDelivered() throws {
+    var session = MobileLANSession(selection:.hybrid(mask:5))
+    _ = session.begin(trustedTLS:true,subprotocol:"tihulu-touch-v1",invitation:invitation,now:0)
+    _ = session.receive(text:"admitted",now:ns(1))
+    let mixed = try host(5,7)
+    #expect(MobileLANCapabilities.parseSingleFamily(Data(mixed.utf8)) == nil)
+    let neutral = try packet(session.receive(text:mixed,now:ns(15)))
+    #expect(neutral.kind == .xyzHybrid && neutral.keys == 0 && neutral.mask == 0)
+    let one = MobileAirOutput(keys:1,xyz:[0.1,nil,0.8])
+    #expect(session.offer(one,observedAt:ns(16),now:ns(16)) == .wait)
+    _ = session.receive(text:"accepted",now:ns(20))
+    let active = try packet(session.offer(one,observedAt:ns(30),now:ns(30)))
+    #expect(active.kind == .xyzHybrid && active.keys == 1 && active.mask == 5)
+    let next = MobileAirOutput(keys:4,xyz:[0.2,nil,0.9])
+    #expect(session.offer(next,observedAt:ns(32),now:ns(32)) == .close("Discrete edge cannot be delivered on time"))
+}

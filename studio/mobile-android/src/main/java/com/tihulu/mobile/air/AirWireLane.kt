@@ -28,10 +28,11 @@ sealed class AirWireLane {
             return packet(sequence,6,"pedalboard","\"mask\":$mask,\"levels\":[${levels.joinToString(",")}]")
         }
     }
-    class XYZ(private val mask: Int, authorized: Int): AirWireLane() {
+    class XYZ(private val mask: Int, authorized: Int, private val piano: Int? = null): AirWireLane() {
         init { require(mask in 1..7 && authorized in 1..63 && (mask and authorized) == mask) }
+        init { require(piano==null || piano in 1 until (1 shl 25)) }
         override fun encode(output: AirOutput, sequence: Long): ByteArray {
-            require(output.keys == 0 && output.level == null)
+            require(output.level == null)
             val levels = MutableList(6) { "0" }
             var active = 0
             output.xyz?.let { axes ->
@@ -45,7 +46,14 @@ sealed class AirWireLane {
                 }
                 require(active == mask)
             }
-            return packet(sequence, 6, "pedalboard", """"mask":$active,"levels":[${levels.joinToString(",")}]""")
+            val fields=""""mask":$active,"levels":[${levels.joinToString(",")}]"""
+            if(piano==null){
+                require(output.keys==0)
+                return packet(sequence,6,"pedalboard",fields)
+            }
+            require(output.keys>=0 && output.keys and piano==output.keys && Integer.bitCount(output.keys)<=1 &&
+                (output.keys==0)==(active==0))
+            return packet(sequence,9,"xyzHybrid",fields+""","keys":${output.keys}""")
         }
     }
 }

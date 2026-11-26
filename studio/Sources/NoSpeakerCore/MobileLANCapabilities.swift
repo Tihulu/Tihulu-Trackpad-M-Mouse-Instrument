@@ -7,6 +7,10 @@ public enum MobileLANCapabilities {
     public struct Manifest: Equatable, Sendable {
         public let piano: Int
         public let pedals: Int
+        public func hybridLane(mask: Int) -> MobileAirWireLane? {
+            guard piano > 0, (1...7).contains(pedals), (1...7).contains(mask), mask & pedals == mask else { return nil }
+            return .xyzHybrid(mask: mask, pedals: pedals, piano: piano)
+        }
         public func xyzLane(mask: Int) -> MobileAirWireLane? {
             guard piano == 0, (1...7).contains(mask), mask & pedals == mask else { return nil }
             return .xyz(mask: mask, authorized: pedals)
@@ -22,7 +26,8 @@ public enum MobileLANCapabilities {
     }
     /// Host v7 JSON is a flat fixed manifest. Require integer token grammar
     /// and exact booleans; reject duplicates, aliases and unknown fields.
-    public static func parseSingleFamily(_ data:Data) -> Manifest? {
+    public static func parseSingleFamily(_ data:Data) -> Manifest? { parse(data, hybrid: false) }
+    static func parse(_ data: Data, hybrid: Bool) -> Manifest? {
         guard data.count<=RemoteTouchFrame.maximumBytes,
               let input=String(data:data,encoding:.utf8),
               input.utf8.allSatisfy({$0<128}),
@@ -50,8 +55,10 @@ public enum MobileLANCapabilities {
                   let v=Int(s),String(v)==s,(0...max).contains(v) else {return nil}
             return v
         }
-        guard let piano=integer("piano",(1<<25)-1),let pedals=integer("pedals",63),
-              (piano>0 && pedals==0)||(piano==0 && pedals&7 != 0) else {return nil}
+        guard let piano=integer("piano",(1<<25)-1),let pedals=integer("pedals",63) else {return nil}
+        if hybrid {
+            guard piano > 0, (1...7).contains(pedals) else { return nil }
+        } else if !((piano>0 && pedals==0)||(piano==0 && pedals&7 != 0)) { return nil }
         return Manifest(piano:piano,pedals:pedals)
     }
 }

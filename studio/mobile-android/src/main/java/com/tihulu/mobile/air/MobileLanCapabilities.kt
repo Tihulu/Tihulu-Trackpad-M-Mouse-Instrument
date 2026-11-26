@@ -4,12 +4,15 @@ package com.tihulu.mobile.air
  * not authentication or admission. Host must authorize every frame. */
 object MobileLanCapabilities {
     class Manifest internal constructor(val piano:Int,val pedals:Int) {
+        fun hybridLane(mask:Int):AirWireLane.XYZ? =
+            if(piano>0 && pedals in 1..7 && mask in 1..7 && (mask and pedals)==mask) AirWireLane.XYZ(mask,pedals,piano) else null
         fun xyzLane(mask: Int): AirWireLane.XYZ? =
             if (piano == 0 && mask in 1..7 && (mask and pedals) == mask) AirWireLane.XYZ(mask, pedals) else null
         fun keysLane():AirWireLane.Keys?=if(piano>0&&pedals==0)AirWireLane.Keys(piano) else null
         fun helperLane(index:Int):AirWireLane.Helper?=if(piano==0&&index in 0..2&&(pedals and (1 shl index))!=0)AirWireLane.Helper(index,pedals) else null
     }
-    fun parseSingleFamily(input:String):Manifest? {
+    fun parseSingleFamily(input:String):Manifest? = parse(input,false)
+    internal fun parse(input:String,hybrid:Boolean):Manifest? {
         if(input.length>256||input.any {it.code>=128})return null
         val text=input.trim(' ','\t','\r','\n')
         if(!text.startsWith("{")||!text.endsWith("}"))return null
@@ -32,7 +35,9 @@ object MobileLanCapabilities {
             return v.takeIf {it.toString()==s&&it in 0..max}
         }
         val piano=integer("piano",(1 shl 25)-1)?:return null;val pedals=integer("pedals",63)?:return null
-        if(!(piano>0&&pedals==0||piano==0&&(pedals and 7)!=0))return null
+        if(hybrid){
+            if(piano==0 || pedals !in 1..7)return null
+        }else if(!(piano>0&&pedals==0||piano==0&&(pedals and 7)!=0))return null
         return Manifest(piano,pedals)
     }
 }

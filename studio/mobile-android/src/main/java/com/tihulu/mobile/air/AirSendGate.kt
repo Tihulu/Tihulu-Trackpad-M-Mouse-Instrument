@@ -104,7 +104,7 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
             lastInput?.let {observedAt<=it}==true)return close("Stale or replayed observation")
         lastInput=observedAt
         try {lane.encode(output,1)}catch(_:IllegalArgumentException){return close("Invalid logical snapshot")}
-        if(deadlines.isNotEmpty() && (output.level!=null || deadlines.keys.any {it !in 0..24} ||
+        if(deadlines.isNotEmpty() && (output.xyz!=null || output.level!=null || deadlines.keys.any {it !in 0..24} ||
             deadlines.keys.fold(0){mask,key->mask or (1 shl key)}!=output.keys ||
             deadlines.values.any {it<=observedAt||it-observedAt>120_000_000L}))return close("Invalid string expiry")
         if(!admitted)return Action.Wait

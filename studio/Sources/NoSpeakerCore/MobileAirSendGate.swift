@@ -131,7 +131,7 @@ public struct MobileAirSendGate: Sendable {
         lastInput=observedAt
         guard (try? lane.encode(output,sequence:1)) != nil else {return close("Invalid logical snapshot")}
         if !stringDeadlines.isEmpty {
-            guard output.level == nil,
+            guard output.level == nil, output.xyz == nil,
                   stringDeadlines.allSatisfy({ key, deadline in
                       (0..<25).contains(key) && deadline > observedAt && deadline-observedAt <= 120_000_000
                   }),
