@@ -59,3 +59,121 @@ public enum PerformanceGroupPartyJamPreset:String,CaseIterable,Identifiable,Send
         return true
     }
 }
+
+
+/// Ready-to-play configurations are templates, not persisted identities.
+/// Every copy receives fresh group ports; runtime consent stays explicit.
+public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Sendable {
+    case trackpadSolo,mouseSolo,desktopDuo,xboxSolo,xboxDuo,phoneSolo,pocketJam,mobileDuo,cameraLead,touchBarLead,lidLead,mobileQuartet,hybridBand
+    public var id:String { rawValue }
+    public var title:String {
+        switch self {
+        case .trackpadSolo: "Trackpad lead"
+        case .mouseSolo: "Magic Mouse lead"
+        case .desktopDuo: "Desktop duo"
+        case .xboxSolo: "Xbox lead"
+        case .xboxDuo: "Xbox band"
+        case .phoneSolo: "Phone piano"
+        case .pocketJam: "Pocket jam"
+        case .mobileDuo: "Mobile duo"
+        case .cameraLead: "Camera expression"
+        case .touchBarLead: "Touch Bar expression"
+        case .lidLead: "Lid expression"
+        case .mobileQuartet: "Mobile quartet"
+        case .hybridBand: "Full hybrid band"
+        }
+    }
+    public var detail:String {
+        switch self {
+        case .trackpadSolo: "Touch = held note; X = pitch bend, Y = filter."
+        case .mouseSolo: "Mouse touch = held note; X = bend, Y = filter."
+        case .desktopDuo: "Trackpad lead and Magic Mouse bass on independent ports."
+        case .xboxSolo: "ABXY notes, sticks for bend/filter, RT sustain."
+        case .xboxDuo: "Controller 1 lead; controller 2 drums."
+        case .phoneSolo: "Phone piano keys and sustain."
+        case .pocketJam: "Trackpad bass and phone drum pads."
+        case .mobileDuo: "Phone drums and tablet piano."
+        case .cameraLead: "Trackpad lead; one hand controls filter and modulation."
+        case .touchBarLead: "Trackpad lead; compatible Touch Bar ribbon controls modulation."
+        case .lidLead: "Trackpad lead; compatible lid angle controls filter."
+        case .mobileQuartet: PerformanceGroupPartyJamPreset.mobileQuartet.detail
+        case .hybridBand: PerformanceGroupPartyJamPreset.hybridBand.detail
+        }
+    }
+    public var requiredSources:[SensorSource] {
+        switch self {
+        case .trackpadSolo: [.trackpad]
+        case .mouseSolo: [.magicMouse]
+        case .desktopDuo: [.trackpad,.magicMouse]
+        case .xboxSolo: [.gamepad1]
+        case .xboxDuo: [.gamepad1,.gamepad2]
+        case .phoneSolo: [.phone]
+        case .pocketJam: [.trackpad,.phone]
+        case .mobileDuo: [.phone,.tablet]
+        case .cameraLead: [.trackpad,.camera]
+        case .touchBarLead: [.trackpad,.touchBar]
+        case .lidLead: [.trackpad,.lid]
+        case .mobileQuartet: [.phone,.tablet,.phone2,.tablet2]
+        case .hybridBand: [.phone,.tablet,.phone2,.tablet2,.gamepad1,.gamepad2,.trackpad,.magicMouse]
+        }
+    }
+    public var requiresMobile:Bool { requiredSources.contains(where: { $0.isGroupRemote }) }
+    public var isOptionalHardware:Bool { [.cameraLead,.touchBarLead,.lidLead].contains(self) }
+    public func makeProfile() -> PerformanceGroupProfile? {
+        if self == .mobileQuartet { return PerformanceGroupPartyJamPreset.mobileQuartet.makeProfile() }
+        if self == .hybridBand { return PerformanceGroupPartyJamPreset.hybridBand.makeProfile() }
+        func group(_ name:String,_ routes:[SensorMapping]) -> PerformanceInstrumentGroup {
+            .init(name:name,patch:.init(name:name,routes:routes))
+        }
+        func surface(_ source:SensorSource,note:Int) -> [SensorMapping] {
+            [
+                .init(id:"contact",source:source,signal:.contact,destination:.init(.note,number:note)),
+                .init(id:"bend",source:source,signal:.x,destination:.init(.pitchBend)),
+                .init(id:"filter",source:source,signal:.y,destination:.init(.controlChange,number:74))
+            ]
+        }
+        let lead=surface(.trackpad,note:60)
+        let drums=group("Phone drums",RemoteDrumPads.routes(source:.phone))
+        let groups:[PerformanceInstrumentGroup]
+        switch self {
+        case .trackpadSolo: groups=[group("Trackpad lead",lead)]
+        case .mouseSolo: groups=[group("Mouse lead",surface(.magicMouse,note:60))]
+        case .desktopDuo: groups=[group("Trackpad lead",lead),group("Mouse bass",surface(.magicMouse,note:36))]
+        case .xboxSolo: groups=[group("Xbox lead",GamepadFrame.Role.lead.routes(source:.gamepad1,channel:0))]
+        case .xboxDuo: groups=[group("Xbox lead",GamepadFrame.Role.lead.routes(source:.gamepad1,channel:0)),
+                               group("Xbox drums",GamepadFrame.Role.drums.routes(source:.gamepad2,channel:9))]
+        case .phoneSolo: groups=[group("Phone piano",RemotePiano.routes(source:.phone))]
+        case .pocketJam: groups=[group("Trackpad bass",surface(.trackpad,note:36)),drums]
+        case .mobileDuo: groups=[drums,group("Tablet keys",RemotePiano.routes(source:.tablet))]
+        case .cameraLead: groups=[group("Camera lead",lead+[
+            .init(id:"camera-filter",source:.camera,signal:.x,destination:.init(.controlChange,number:74),priority:10),
+            .init(id:"camera-mod",source:.camera,signal:.y,destination:.init(.controlChange,number:1))
+        ])]
+        case .touchBarLead: groups=[group("Ribbon lead",lead+[
+            .init(id:"ribbon",source:.touchBar,signal:.x,destination:.init(.controlChange,number:1))
+        ])]
+        case .lidLead: groups=[group("Lid lead",lead+[
+            .init(id:"lid",source:.lid,signal:.angle,destination:.init(.controlChange,number:74),priority:10)
+        ])]
+        case .mobileQuartet,.hybridBand: return nil
+        }
+        let profile=PerformanceGroupProfile(groups:groups)
+        guard profile.isValid,profile.layeredInputs.isEmpty,
+              PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true,allowScalars:true,allowCamera:true,allowRemote:requiresMobile),
+              (try? PerformanceGroupEndpointPlan(profile:profile)) != nil else { return nil }
+        return profile
+    }
+
+    /// Append only if the combination is valid and introduces no new
+    /// shared input layering. Existing draft identities are preserved.
+    public func appending(to draft:PerformanceGroupProfile) -> PerformanceGroupProfile? {
+        guard draft.isValid,let template=makeProfile() else { return nil }
+        let next=PerformanceGroupProfile(groups:draft.groups+template.groups)
+        let previousInputs=Set(draft.groups.flatMap { $0.patch.routes.map { PatchSimulation.Input(source:$0.source,signal:$0.signal) } })
+        let newInputs=Set(template.groups.flatMap { $0.patch.routes.map { PatchSimulation.Input(source:$0.source,signal:$0.signal) } })
+        guard previousInputs.isDisjoint(with:newInputs),next.isValid,
+              PerformanceGroupGamepadSession.supports(next,allowSurfaces:true,allowScalars:true,allowCamera:true,allowRemote:true),
+              (try? PerformanceGroupEndpointPlan(profile:next)) != nil else { return nil }
+        return next
+    }
+}

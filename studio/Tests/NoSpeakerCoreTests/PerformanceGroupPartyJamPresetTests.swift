@@ -34,3 +34,31 @@ import Testing
     let rejected = PerformanceGroupPartyJamPreset.hybridBand.install(in:&draft)
     #expect(!rejected && draft == previous)
 }
+
+
+@Test func groupStarterCatalogHasExactRequirementsAndEditableIndependentCopies() throws {
+    for preset in PerformanceGroupStarterPreset.allCases {
+        var profile=try #require(preset.makeProfile())
+        let copy=try #require(preset.makeProfile())
+        #expect(Set(profile.groups.flatMap { $0.patch.routes.map(\.source) }) == Set(preset.requiredSources))
+        #expect(profile.isValid && profile.layeredInputs.isEmpty)
+        #expect(Set(profile.groups.map(\.id)).isDisjoint(with:Set(copy.groups.map(\.id))))
+        #expect(PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true,allowScalars:true,allowCamera:true,allowRemote:preset.requiresMobile))
+        #expect(try PerformanceGroupProfile.read(profile.archive()) == profile)
+        profile.groups[0].name="My instrument"
+        #expect(profile.isValid && copy.groups[0].name != "My instrument")
+        #expect(try PerformanceGroupProfile.read(profile.archive()) == profile)
+        let session=try PerformanceGroupGamepadSession(profile:profile,allowSurfaces:true,allowScalars:true,allowCamera:true,allowRemote:preset.requiresMobile)
+        #expect(session.boundSources.isEmpty)
+    }
+}
+
+@Test func groupStarterAppendProtectsExistingMappingsAndCapacity() throws {
+    let a=try #require(PerformanceGroupStarterPreset.trackpadSolo.makeProfile())
+    let b=try #require(PerformanceGroupStarterPreset.xboxSolo.appending(to:a))
+    #expect(b.groups.count==2 && b.groups.first==a.groups.first)
+    #expect(PerformanceGroupStarterPreset.trackpadSolo.appending(to:b)==nil)
+    #expect(PerformanceGroupStarterPreset.hybridBand.appending(to:b)==nil)
+    let full=PerformanceGroupProfile(groups:(0..<PerformanceGroupProfile.maximumGroups).map { .init(name:"Empty "+String($0)) })
+    #expect(PerformanceGroupStarterPreset.phoneSolo.appending(to:full)==nil)
+}
