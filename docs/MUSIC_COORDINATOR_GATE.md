@@ -107,3 +107,8 @@ Rejecting malformed/stale input or failed frame admission can itself perform blo
 ## Group remote metadata budget and queued disclosure
 
 The original ten-second metadata negotiation budget is now checked at refreshed event admission, after synchronous session processing and on final/empty batch reconciliation. A delayed first performance snapshot cannot mark an expired incomplete negotiation complete. Final metadata expiry is drained in bounded rounds; queued capabilities/mapping/label actions are removed for connections retired before batch publication. Per-frame ACK semantics otherwise unchanged. Two regressions exercise a fresh wire receipt crossing the original metadata budget (including an empty tick), and same-batch rejection after an already queued capability response. No deadline changes and no additional remote permissions.
+
+
+## Group frame high-water and terminal delivery status
+
+Preserve the maximum trusted monotonic sample across frame admission failure even when a later sample regresses. No other source can rearm below that mark. A physical source whose last Group lease was retired now returns lost (like remote), rather than delivered; partially live layered leases retain their scoped report semantics. Add one regression for a two-note frame with forward/backward samples and subsequent neutral rearm on an independent source, and strengthen the existing terminal transport-failure regression. No endpoint or timing policy change.

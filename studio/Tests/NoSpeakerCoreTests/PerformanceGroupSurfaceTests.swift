@@ -185,3 +185,37 @@ private func surfaceGamepad(pressed:Bool = false) throws -> GamepadFrame {
                                        send:{_ in Issue.record("Stale lift rearmed");return false})
     #expect(blocked.status == .waitingForNeutral)
 }
+
+
+@Test func groupFrameClockRegressionRetainsHighWaterAcrossNeutralRearm() throws {
+    let chord=PerformanceInstrumentGroup(name:"Chord",patch:.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:.init(.note,number:60)),
+        .init(id:"b",source:.trackpad,signal:.contact,destination:.init(.note,number:64))
+    ]))
+    let other=PerformanceInstrumentGroup(name:"Mouse",patch:.init(routes:[
+        .init(id:"c",source:.magicMouse,signal:.contact,destination:.init(.note,number:67))
+    ]))
+    var state=try PerformanceGroupGamepadSession(profile:.init(groups:[chord,other]),allowSurfaces:true)
+    let x=try state.bind(.trackpad,now:1),y=try state.bind(.magicMouse,now:1)
+    _=state.receiveSurface(.trackpad,token:x,x:nil,y:nil,size:nil,hostTime:1,now:1,send:{_ in true})
+    _=state.receiveSurface(.magicMouse,token:y,x:nil,y:nil,size:nil,hostTime:1,now:1,send:{_ in true})
+    var sample=1.1
+    var sent:[PerformanceGroupCommand]=[]
+    var attacks=0
+    let result=state.receiveSurface(.trackpad,token:x,x:0.5,y:0.5,size:0.5,hostTime:1.1,now:1.1,
+                                     refreshNow:{sample},send:{
+        sent.append($0)
+        if $0.command.value>0 {
+            attacks += 1
+            sample = attacks==1 ? 1.2 : 1.15
+        }
+        return true
+    })
+    #expect(result.status == .lost && result.reports.contains(where:{ $0.admissionExpired }))
+    #expect(attacks==2 && sent.count==4 && state.activeSessions==0)
+    #expect(sent.filter { $0.command.value==0 }.count==2)
+    let early=state.receiveSurface(.magicMouse,token:y,x:nil,y:nil,size:nil,hostTime:1.16,now:1.16,send:{_ in true})
+    #expect(early.status == .lost && state.sourceStates[.magicMouse] == .waitingForNeutral)
+    let recovered=state.receiveSurface(.magicMouse,token:y,x:nil,y:nil,size:nil,hostTime:1.21,now:1.21,send:{_ in true})
+    #expect(recovered.status == .ready && state.sourceStates[.magicMouse] == .armed)
+}

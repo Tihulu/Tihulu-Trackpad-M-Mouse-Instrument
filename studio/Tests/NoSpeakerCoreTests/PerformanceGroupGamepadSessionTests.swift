@@ -107,6 +107,7 @@ private func gamepadGroup(_ source: SensorSource) -> PerformanceInstrumentGroup 
     _ = engine.receive(.gamepad2,token:y,frame:neutral,now:0,send:{ _ in true })
     _ = engine.receive(.gamepad2,token:y,frame:held,now:0.01,send:{ _ in true })
     let failure = engine.receive(.gamepad1,token:x,frame:held,now:0.01,send:{ _ in false })
+    #expect(failure.status == .lost && engine.sourceStates[.gamepad1] == .waitingForNeutral)
     #expect(failure.reports.last?.failedGroups == [a.id])
     #expect(engine.pendingCleanup == [a.id] && engine.activeSessions == 1)
     var output: [PerformanceGroupCommand] = []

@@ -712,23 +712,23 @@ public struct PerformanceGroupGamepadSession: Sendable {
                     Self.staleSources(in:receiptBindings,now:sampled).isEmpty
             },send:send)
         reports.append(report)
+        // Preserve the highest trusted observation even if a subsequent
+        // sample regressed. A neutral input cannot rearm below that mark.
+        clock = admissionNow
         if report.admissionExpired {
             if validClock {
-                clock = admissionNow
                 reports += retireSources(staleSources(now:admissionNow).union([source]),refreshNow:refreshNow,send:send)
             } else {
                 reports += reset(Set(bindings.keys),refreshNow:refreshNow,send:send)
             }
             return .init(status:.lost,reports:reports)
         }
-        clock = admissionNow
-        if !delivery.hasLease(lease) {
-            if remoteModes[source] != nil {
-                reports += retireSources([source],refreshNow:refreshNow,send:send)
-                return .init(status:.lost,reports:reports)
-            }
-            bindings[source]?.reset()
-            if source == .camera { cameraTracking.reset() }
+        // Both physical and remote sources lose admission when their
+        // last Group lease is retired. Partial layering still has a live
+        // lease and its scoped failures remain in the delivery report.
+        guard delivery.hasLease(lease) else {
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
+            return .init(status:.lost,reports:reports)
         }
         return .init(status:.delivered,reports:reports)
     }
