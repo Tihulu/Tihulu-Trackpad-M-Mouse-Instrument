@@ -89,3 +89,46 @@ import Testing
     let single = PerformanceGroupProfile(groups:[a])
     #expect(single.layeredInputs.isEmpty)
 }
+
+
+@Test func namedGroupPresetLibraryKeepsIndependentCopiesAndPortIdentities() throws {
+    let original=try #require(PerformanceGroupStarterPreset.desktopDuo.makeProfile())
+    var edited=original
+    var library=PerformanceGroupPresetLibrary()
+    let id=UUID()
+    #expect(library.add(name:"  Evening jam  ",profile:original,id:id))
+    edited.groups[0].name="Custom lead"
+    #expect(library.add(name:"Second version",profile:edited))
+    #expect(library.entries.first?.name=="Evening jam")
+    #expect(library.entries.first?.profile==original)
+    #expect(library.entries.last?.profile==edited)
+    #expect(library.entries.first?.profile.groups.map(\.plannedPortName)==edited.groups.map(\.plannedPortName))
+    let restored=try PerformanceGroupPresetLibrary.read(library.archive())
+    #expect(restored==library)
+    let before=library
+    #expect(!library.add(name:"evening JAM",profile:edited))
+    #expect(!library.add(name:"Other",profile:edited,id:id))
+    #expect(!library.add(name:" ",profile:edited))
+    #expect(!library.add(name:"Empty",profile:.init()))
+    #expect(library==before)
+    #expect(library.remove(id))
+    #expect(!library.remove(id))
+    #expect(library.entries.count==1 && library.entries.first?.profile==edited)
+}
+
+@Test func namedGroupPresetLibraryBoundsCapacityWithoutEviction() throws {
+    var library=PerformanceGroupPresetLibrary()
+    let profile=try #require(PerformanceGroupStarterPreset.trackpadSolo.makeProfile())
+    for i in 0..<PerformanceGroupPresetLibrary.maximumEntries {
+        #expect(library.add(name:"Layout "+String(i),profile:profile))
+    }
+    let before=library
+    #expect(!library.add(name:"Overflow",profile:profile))
+    #expect(library==before)
+    #expect(try PerformanceGroupPresetLibrary.read(library.archive())==library)
+    let raw=try WorkspaceArchive.encode(name:"Invalid",payload:["entries":[
+        PerformanceGroupPresetLibrary.Entry(name:"Duplicate",profile:profile),
+        PerformanceGroupPresetLibrary.Entry(name:"duplicate",profile:profile)
+    ]])
+    #expect(throws:WorkspaceArchiveError.invalidPayload) { try PerformanceGroupPresetLibrary.read(raw) }
+}

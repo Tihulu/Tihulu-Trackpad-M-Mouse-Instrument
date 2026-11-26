@@ -102,3 +102,57 @@ public struct PerformanceGroupProfile: Codable, Equatable, Sendable {
         return doc.payload
     }
 }
+
+
+/// Local, named copies of editable group layouts. Independent of the active
+/// profile, physical devices, tuning consent and runtime state.
+public struct PerformanceGroupPresetLibrary:Codable,Equatable,Sendable {
+    public static let maximumEntries=16
+    public struct Entry:Codable,Equatable,Identifiable,Sendable {
+        public let id:UUID
+        public let name:String
+        public let profile:PerformanceGroupProfile
+        public init(id:UUID=UUID(),name:String,profile:PerformanceGroupProfile) {
+            self.id=id;self.name=name;self.profile=profile
+        }
+        fileprivate var isValid:Bool {
+            name == name.trimmingCharacters(in:.whitespacesAndNewlines) &&
+            !name.isEmpty && name.utf8.count<=128 &&
+            !name.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } &&
+            profile.isValid && !profile.groups.isEmpty
+        }
+    }
+    public private(set) var entries:[Entry]=[]
+    public init() {}
+    public var isValid:Bool {
+        entries.count<=Self.maximumEntries &&
+        Set(entries.map(\.id)).count==entries.count &&
+        Set(entries.map { $0.name.lowercased() }).count==entries.count &&
+        entries.allSatisfy(\.isValid)
+    }
+    public func archive() throws -> Data {
+        guard isValid else { throw WorkspaceArchiveError.invalidPayload }
+        return try WorkspaceArchive.encode(name:"Group preset library",payload:self)
+    }
+    public static func read(_ data:Data) throws -> Self {
+        let decoded=try WorkspaceArchive.decode(Self.self,from:data).payload
+        guard decoded.isValid else { throw WorkspaceArchiveError.invalidPayload }
+        return decoded
+    }
+    /// Never overwrite a same-name entry. Validate both count and encoded
+    /// size before committing so every successful addition is persistable.
+    @discardableResult
+    public mutating func add(name:String,profile:PerformanceGroupProfile,id:UUID=UUID()) -> Bool {
+        var next=self
+        next.entries.append(.init(id:id,name:name.trimmingCharacters(in:.whitespacesAndNewlines),profile:profile))
+        guard (try? next.archive()) != nil else { return false }
+        self=next
+        return true
+    }
+    @discardableResult
+    public mutating func remove(_ id:UUID) -> Bool {
+        guard isValid,entries.contains(where:{ $0.id==id }) else { return false }
+        entries.removeAll { $0.id==id }
+        return true
+    }
+}
