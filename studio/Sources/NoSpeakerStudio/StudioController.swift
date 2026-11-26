@@ -1637,8 +1637,6 @@ final class StudioController: ObservableObject {
         let events = transport.drain()
         let result = bridge.process(events, now: ProcessInfo.processInfo.systemUptime, runtime: &patchPhysicalRuntime)
         patchRemoteBridge = bridge
-        if patchRemoteReady != bridge.ready { patchRemoteReady = bridge.ready }
-        if patchRemotePeers != bridge.connectionIDs { patchRemotePeers = bridge.connectionIDs }
         recordPatchCommands(result.commands,receipt:result.deliveryReceipt,maximumAge:0.1)
         // MIDI failure or receipt expiry can retire the entire Builder while delivering commands.
         guard patchRunning, patchRemoteTransport === transport else { return }
@@ -1646,7 +1644,31 @@ final class StudioController: ObservableObject {
             stopInstrumentPatch(reason:"Remote transport fault. Restart explicitly.")
             return
         }
-        for action in result.actions {
+        // Synchronous cleanup/output can cross another owner's deadline.
+        // Reconcile before publishing acknowledgements or metadata. No
+        // new input is admitted by these empty ticks. Bound the work even
+        // if the clock or transport behaves unexpectedly.
+        var actions=result.actions
+        var settled=false
+        for _ in 0..<32 {
+            let final=bridge.process([],now:ProcessInfo.processInfo.systemUptime,runtime:&patchPhysicalRuntime)
+            patchRemoteBridge=bridge
+            actions += final.actions
+            recordPatchCommands(final.commands)
+            guard patchRunning,patchRemoteTransport === transport else { return }
+            if final.fault {
+                stopInstrumentPatch(reason:"Remote final expiry fault. Restart explicitly.")
+                return
+            }
+            if final.commands.isEmpty { settled=true;break }
+        }
+        guard settled else {
+            stopInstrumentPatch(reason:"Remote cleanup did not settle. Restart explicitly.")
+            return
+        }
+        if patchRemoteReady != bridge.ready { patchRemoteReady = bridge.ready }
+        if patchRemotePeers != bridge.connectionIDs { patchRemotePeers = bridge.connectionIDs }
+        for action in bridge.actionsAfterDelivery(actions) {
             switch action {
             case .acknowledge(let id, let accepted): transport.acknowledge(id, accepted: accepted)
             case .capabilities(let id, let capabilities): transport.acknowledge(id, accepted: true, capabilities: capabilities)
@@ -2106,7 +2128,7 @@ final class StudioController: ObservableObject {
         let commands = patchSimulation.disconnect(source)
         patchInputs = patchSimulation.inputs
         recordPatchCommands(commands)
-        if !patchSimulation.running { stopInstrumentPatch() }
+        if patchRunning && !patchSimulation.running { stopInstrumentPatch() }
     }
 
     private func recordPatchCommands(_ commands: [SensorCommand],receipt:Double? = nil,

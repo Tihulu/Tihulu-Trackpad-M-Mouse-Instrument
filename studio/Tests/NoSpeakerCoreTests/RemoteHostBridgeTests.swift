@@ -216,3 +216,40 @@ private func bridgeRuntime() throws -> PhysicalPatchRuntime {
     #expect(result.actions==[.revoke(a),.revoke(b)])
     #expect(bridge.connectionIDs.isEmpty && runtime.remotePeerIDs.isEmpty)
 }
+
+
+@Test func builderRemoteDeferredActionsDoNotAcknowledgeExpiredPeerAfterDelivery() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    let batch=bridge.process([.frame(id,bridgeTouch,1.01)],now:1.01,runtime:&runtime)
+    #expect(batch.commands==[.init(bridgeNote,value:100)])
+    #expect(bridge.actionsAfterDelivery(batch.actions)==[.acknowledge(id,true)])
+    let expired=bridge.process([],now:1.37,runtime:&runtime)
+    #expect(expired.commands==[.init(bridgeNote,value:0)])
+    #expect(bridge.actionsAfterDelivery(batch.actions+expired.actions)==[.revoke(id)])
+    #expect(bridge.connectionIDs.isEmpty)
+}
+
+@Test func builderRemoteDeferredMetadataIsFilteredOnlyForRetiredPeers() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let a=UUID(),b=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(a,bridgeSecret,1)],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1.1,runtime:&runtime)
+    _=bridge.process([.invitation(b,bridgeSecret,1.1)],now:1.1,runtime:&runtime)
+    let capabilities=Data("{\"version\":7,\"sequence\":1,\"kind\":\"capabilities\"}".utf8)
+    let batch=bridge.process([.frame(a,capabilities,1.2),.frame(b,capabilities,1.2)],now:1.2,runtime:&runtime)
+    #expect(batch.actions.count==2)
+    let revoked=bridge.revoke(a,now:1.21,runtime:&runtime)
+    let retained=bridge.actionsAfterDelivery(batch.actions+revoked.actions)
+    #expect(retained.count==2)
+    if case .some(.capabilities(let id,_))=retained.first { #expect(id==b) }
+    else { Issue.record("Surviving peer metadata was lost") }
+    #expect(retained.last == .revoke(a))
+}

@@ -199,6 +199,18 @@ public struct RemoteHostBridge: Sendable {
         return result
     }
 
+    /// Deferred acknowledgements/metadata must still refer to a live peer
+    /// after synchronous host MIDI delivery and final expiry reconciliation.
+    public func actionsAfterDelivery(_ actions:[RemoteHostAction]) -> [RemoteHostAction] {
+        actions.filter { action in
+            switch action {
+            case .acknowledge(let id,true),.capabilities(let id,_),.mapping(let id,_),.mappingLabels(let id,_):
+                return bindings[id] != nil
+            default: return true
+            }
+        }
+    }
+
     private func fresh(_ receipt: Double, now: Double) -> Bool {
         MonotonicReceiptAdmission.permits(receipt:receipt,now:now,maximumAge:0.1)
     }
