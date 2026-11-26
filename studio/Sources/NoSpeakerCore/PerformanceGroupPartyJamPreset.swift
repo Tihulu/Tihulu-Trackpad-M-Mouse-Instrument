@@ -66,9 +66,13 @@ public enum PerformanceGroupPartyJamPreset:String,CaseIterable,Identifiable,Send
 public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Sendable {
     case trackpadSolo,mouseSolo,desktopDuo,xboxSolo,xboxDuo,phoneSolo,pocketJam,mobileDuo,cameraLead,touchBarLead,lidLead,mobileQuartet,hybridBand
     case xboxDrums,tabletKeys,mousePedal,xboxHelper,phonePedals
+    case phoneXYKeys,tabletKeysDrums,phoneXYEffects
     public var id:String { rawValue }
     public var title:String {
         switch self {
+        case .phoneXYKeys: "Phone · XY + piano"
+        case .tabletKeysDrums: "Tablet · piano + drums"
+        case .phoneXYEffects: "Phone · XY + pedalboard"
         case .xboxDrums: "Xbox drum kit"
         case .tabletKeys: "Tablet keys"
         case .mousePedal: "Trackpad + Mouse pedal"
@@ -91,6 +95,9 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
     }
     public var detail:String {
         switch self {
+        case .phoneXYKeys: "Switch on phone between XY lead and piano on the same instrument port."
+        case .tabletKeysDrums: "Switch on tablet between piano and drum pads on independent MIDI ports."
+        case .phoneXYEffects: "Switch on phone between XY lead and pedalboard with pitch bend, sustain and effects."
         case .xboxDrums: "Eight buttons mapped to GM drums on MIDI channel 10."
         case .tabletKeys: "25 piano keys and sustain on a tablet."
         case .mousePedal: "Trackpad lead; hold Mouse contact for sustain on the same MIDI port."
@@ -113,6 +120,8 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
     }
     public var requiredSources:[SensorSource] {
         switch self {
+        case .phoneXYKeys,.phoneXYEffects: [.phone]
+        case .tabletKeysDrums: [.tablet]
         case .xboxDrums: [.gamepad1]
         case .tabletKeys: [.tablet]
         case .mousePedal: [.trackpad,.magicMouse]
@@ -152,6 +161,15 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
         let drums=group("Phone drums",RemoteDrumPads.routes(source:.phone))
         let groups:[PerformanceInstrumentGroup]
         switch self {
+        case .phoneXYKeys: groups=[group("Phone XY and keys",surface(.phone,note:60)+RemotePiano.routes(source:.phone))]
+        case .tabletKeysDrums: groups=[group("Tablet piano",RemotePiano.routes(source:.tablet)),
+                                      group("Tablet drums",RemoteDrumPads.routes(source:.tablet))]
+        case .phoneXYEffects: groups=[group("Phone XY and effects",surface(.phone,note:60)+[
+            .init(id:"pedal-bend",source:.phone,signal:.pedalExpression,destination:.init(.pitchBend),priority:10),
+            .init(id:"pedal-filter",source:.phone,signal:.pedalWah,destination:.init(.controlChange,number:74),priority:10),
+            .init(id:"pedal-sustain",source:.phone,signal:.pedalSustain,destination:.init(.sustain)),
+            .init(id:"pedal-switch",source:.phone,signal:.pedalSwitch1,destination:.init(.controlChange,number:80))
+        ])]
         case .xboxDrums: groups=[group("Xbox drums",GamepadFrame.Role.drums.routes(source:.gamepad1,channel:9))]
         case .tabletKeys: groups=[group("Tablet keys",RemotePiano.routes(source:.tablet))]
         case .mousePedal: groups=[group("Trackpad lead and pedal",lead+[

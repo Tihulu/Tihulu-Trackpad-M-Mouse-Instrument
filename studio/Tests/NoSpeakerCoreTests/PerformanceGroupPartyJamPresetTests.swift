@@ -87,3 +87,20 @@ import Testing
         #expect(release.map(\.command)==[.init(sustain.destination,value:0)])
     }
 }
+
+
+@Test func switchableMobilePresetsAdvertiseOnlyTheirAssignedFamilies() throws {
+    for preset in [PerformanceGroupStarterPreset.phoneXYKeys,.tabletKeysDrums,.phoneXYEffects] {
+        let profile=try #require(preset.makeProfile())
+        let source=try #require(preset.requiredSources.first)
+        let session=try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
+        let caps=try #require(session.remoteCapabilities(source))
+        #expect(!caps.tilt && !caps.rotation && !caps.acceleration)
+        switch preset {
+        case .phoneXYKeys: #expect(caps.touch && caps.piano==RemotePiano.maximumMask && caps.drums==0 && caps.pedals==0)
+        case .tabletKeysDrums: #expect(!caps.touch && caps.piano==RemotePiano.maximumMask && caps.drums==255 && caps.pedals==0)
+        case .phoneXYEffects: #expect(caps.touch && caps.piano==0 && caps.drums==0 && caps.pedals==29)
+        default: break
+        }
+    }
+}

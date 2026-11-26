@@ -884,6 +884,11 @@ struct PerformanceGroupEditorView: View {
                             Text(p.title).tag(p)
                         }
                     }
+                    Section("Switch modes on mobile") {
+                        ForEach([PerformanceGroupStarterPreset.phoneXYKeys,.tabletKeysDrums,.phoneXYEffects]) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
                     Section("Instrument + Helper") {
                         ForEach([PerformanceGroupStarterPreset.mousePedal,.xboxHelper,.phonePedals]) { p in
                             Text(p.title).tag(p)
