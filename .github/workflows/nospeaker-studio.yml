@@ -280,3 +280,29 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild -scheme NoSpeakerMobileCapture -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/tihulu-mobile-air" CODE_SIGNING_ALLOWED=NO build
+
+
+  android-sensor-compile:
+    name: Android mobile sensor compile and unit tests (experimental)
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qa/music-')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Android SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Compile library and run local tests
+        working-directory: studio/mobile-android
+        run: gradle --no-daemon assembleDebug testDebugUnitTest

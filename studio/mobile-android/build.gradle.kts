@@ -1,0 +1,21 @@
+plugins {
+    id("com.android.library") version "8.7.3"
+    id("org.jetbrains.kotlin.android") version "2.0.21"
+}
+android {
+    namespace = "com.tihulu.mobile.air"
+    compileSdk = 35
+    defaultConfig { minSdk = 26 }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = "17" }
+}
+dependencies {
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("com.google.mediapipe:tasks-vision:0.10.26")
+    testImplementation("junit:junit:4.13.2")
+}
