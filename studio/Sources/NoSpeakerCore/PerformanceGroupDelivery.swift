@@ -8,15 +8,36 @@ public struct PerformanceGroupDelivery: Sendable {
         public fileprivate(set) var capacityRefused = 0
         public fileprivate(set) var failedGroups: Set<UUID> = []
         public fileprivate(set) var pendingCleanup: Set<UUID> = []
+        public fileprivate(set) var admissionExpired = false
         public init() {}
+
+        static var rejectedReceipt: Self {
+            var result = Self()
+            result.admissionExpired = true
+            return result
+        }
 
         // Dynamic pool reports retain capacity refusal separately from
         // transport failure. Accepted counts reconciled logical deliveries.
         init(dynamic:DynamicMPEGroupDelivery.Report) {
             accepted = dynamic.delivered
+            admissionExpired = dynamic.admissionExpired
             capacityRefused = dynamic.capacityRefused
             failedGroups = dynamic.failedGroups
             pendingCleanup = dynamic.pendingCleanup
+        }
+
+        // Preserve all scoped failures while reporting the final debt inventory.
+        func appending(_ reports:[Self],pending:Set<UUID>) -> Self {
+            var result = self
+            for report in reports {
+                result.accepted += report.accepted
+                result.capacityRefused += report.capacityRefused
+                result.failedGroups.formUnion(report.failedGroups)
+                result.admissionExpired = result.admissionExpired || report.admissionExpired
+            }
+            result.pendingCleanup = pending
+            return result
         }
 
         // Merge setup-selector debt without exposing mutable report fields.
@@ -26,6 +47,40 @@ public struct PerformanceGroupDelivery: Sendable {
             if let failedGroup { result.failedGroups.insert(failedGroup) }
             return result
         }
+    }
+
+    /// A receipt expiry can retire a Group even if all wire sends succeeded.
+    /// This presentation summary must not assert a failed CoreMIDI call
+    /// when only admission failed, or conceal retained cleanup debt.
+    public static func faultNotice(_ reports:[Report]) -> String? {
+        let expired=reports.contains { $0.admissionExpired }
+        let failed=reports.contains { !$0.failedGroups.isEmpty }
+        guard expired || failed else { return nil }
+        if expired && failed {
+            return "Group input expired or MIDI delivery failed. Affected groups stopped; inspect cleanup status."
+        }
+        if expired {
+            return "Group input expired. Affected source released; use a fresh neutral input or reconnect as required."
+        }
+        return "A group MIDI send or cleanup failed. Affected groups stopped; inspect cleanup status."
+    }
+
+    /// Explicit loss or Stop messages cannot hide scoped faults or
+    /// unresolved delivery/disposal debt from that same operation.
+    public static func eventNotice(reason:String,reports:[Report],hasPending:Bool) -> String {
+        var parts=[reason]
+        if let fault=faultNotice(reports) { parts.append(fault) }
+        if hasPending { parts.append("MIDI cleanup pending. Retry before restarting.") }
+        return parts.joined(separator:" ")
+    }
+
+    /// A manual retry can also discover faults on other expired sources.
+    /// Keep that cause alongside the final, authoritative debt status.
+    public static func cleanupNotice(_ reports:[Report],hasPending:Bool) -> String {
+        let status = hasPending
+            ? "Group cleanup still pending. Check CoreMIDI and retry."
+            : "No pending group cleanup."
+        return faultNotice(reports).map { $0 + " " + status } ?? status
     }
 
     private struct Output: Sendable {
@@ -66,6 +121,42 @@ public struct PerformanceGroupDelivery: Sendable {
         return deliver(commands,send:send)
     }
 
+    /// Receipt-bound frame for the live input adapters. The router is
+    /// speculative until the wire batch completes. On expiry, roll back
+    /// silent joins and unattempted groups; retire only groups whose wire
+    /// state may have changed. The caller must batch-disconnect the expired
+    /// source with other departing leases, even when nothing was attempted.
+    mutating func admittedFrame(lease:UUID,sequence:UInt64,now:Double,
+                                values:[SensorSignal:Double],releasing:Set<SensorSignal>,
+                                admit:()->Bool,send:(PerformanceGroupCommand)->Bool) -> Report {
+        guard admit() else {
+            var report = Report.rejectedReceipt
+            report.pendingCleanup = pendingCleanup
+            return report
+        }
+        let previous = router
+        let commands = router.frame(lease:lease,sequence:sequence,now:now,values:values,releasing:releasing)
+        var attempted:Set<UUID> = []
+        var report = deliver(commands,admit:admit,onAttempt:{ attempted.insert($0) },send:send)
+        if report.admissionExpired || !admit() {
+            report.admissionExpired = true
+            router = previous
+            // Preserve real transport failures even though the logical
+            // snapshot was rolled back. Never create debt for skipped sends.
+            for id in attempted.union(report.failedGroups).sorted(by:{ $0.uuidString < $1.uuidString }) {
+                _ = router.stopGroup(id)
+                guard var output = outputs[id], !output.retired else { continue }
+                output.retired = true
+                output.faulted = true
+                outputs[id] = output
+                report.failedGroups.insert(id)
+                clean(id,send:send,report:&report)
+            }
+            report.pendingCleanup = pendingCleanup
+        }
+        return report
+    }
+
     public mutating func disconnect(_ lease: UUID, send: (PerformanceGroupCommand) -> Bool) -> Report {
         let commands = router.disconnect(lease)
         return deliver(commands,send:send)
@@ -74,8 +165,16 @@ public struct PerformanceGroupDelivery: Sendable {
     public func hasLease(_ id: UUID) -> Bool { router.hasLease(id) }
 
     public mutating func disconnectBatch(_ leases: Set<UUID>, send: (PerformanceGroupCommand) -> Bool) -> Report {
+        disconnectBatch(leases,admitRestoration:nil,send:send)
+    }
+
+    /// A departing owner may restore another owner's non-neutral CC or
+    /// bend. Those are live output, not cleanup. Check before and after
+    /// such a restoration; never fence actual neutral/off commands.
+    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:((PerformanceGroupCommand)->Bool)?,
+                                  send:(PerformanceGroupCommand)->Bool) -> Report {
         let commands = router.disconnectBatch(leases)
-        return deliver(commands,send:send)
+        return deliver(commands,admitRestoration:admitRestoration,send:send)
     }
 
     public mutating func expire(now: Double, timeout: Double, send: (PerformanceGroupCommand) -> Bool) -> Report {
@@ -87,29 +186,52 @@ public struct PerformanceGroupDelivery: Sendable {
     /// every attempted non-neutral target, including a failed onset. Other
     /// groups in the same frame continue independently.
     private mutating func deliver(_ commands: [PerformanceGroupCommand],
+                                  admit: () -> Bool = { true },
+                                  onAttempt: (UUID) -> Void = { _ in },
+                                  admitRestoration:((PerformanceGroupCommand)->Bool)? = nil,
                                   send: (PerformanceGroupCommand) -> Bool) -> Report {
         var report = Report()
         for item in commands {
             let id = item.groupID
             guard var output = outputs[id], !output.retired else { continue }
+            // Check before touching the ledger. Cleanup itself remains
+            // unfenced so an expired input cannot suppress a necessary off.
+            guard admit() else { report.admissionExpired = true; break }
+            let restoring = !output.ledger.isRelease(item.command)
+            if restoring,let admitRestoration,!admitRestoration(item) {
+                report.admissionExpired = true
+                retire(id,send:send,report:&report)
+                continue
+            }
             let ok = output.ledger.deliver(item.command) { command in
-                send(.init(groupID:id,command:command))
+                onAttempt(id)
+                return send(.init(groupID:id,command:command))
             }
             outputs[id] = output
-            if ok { report.accepted += 1 }
-            else {
-                report.failedGroups.insert(id)
-                // Router releases are logical only. The ledger is authoritative
-                // for wire cleanup and avoids sending unattempted targets.
-                _ = router.stopGroup(id)
-                output.retired = true
-                output.faulted = true
-                outputs[id] = output
-                clean(id,send:send,report:&report)
+            if ok {
+                report.accepted += 1
+                if restoring,let admitRestoration,!admitRestoration(item) {
+                    report.admissionExpired = true
+                    retire(id,send:send,report:&report)
+                }
+            } else {
+                retire(id,send:send,report:&report)
             }
         }
         report.pendingCleanup = pendingCleanup
         return report
+    }
+
+    private mutating func retire(_ id:UUID,send:(PerformanceGroupCommand)->Bool,report:inout Report) {
+        guard var output = outputs[id],!output.retired else { return }
+        report.failedGroups.insert(id)
+        // Router releases are logical only. The actual wire ledger owns
+        // cleanup, including failed sends, not speculative restorations.
+        _ = router.stopGroup(id)
+        output.retired = true
+        output.faulted = true
+        outputs[id] = output
+        clean(id,send:send,report:&report)
     }
 
     /// A normal stop also uses delivery history, not the router's logical

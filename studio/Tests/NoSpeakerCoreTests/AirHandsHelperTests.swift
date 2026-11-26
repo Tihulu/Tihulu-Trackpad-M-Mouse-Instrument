@@ -2,6 +2,20 @@ import XCTest
 @testable import NoSpeakerCore
 
 final class AirHandsHelperTests: XCTestCase {
+    func testDelayedFreshHelperFrameCannotRenewExpiredPedal() throws {
+        var live=PhysicalPatchRuntime()
+        let route=try XCTUnwrap(AirHandsHelper.route(hand:.left,axis:.pinch,effect:.sustain))
+        try live.configure(.init(routes:[route]))
+        let open=AirHandSample.debugSample(x:0.5,y:0.5,aperture:0.8)
+        let closed=AirHandSample.debugSample(x:0.5,y:0.5,aperture:0.1)
+        _=live.receiveHelperHands(left:open,right:nil,hostTime:0,now:0)
+        _=live.receiveHelperHands(left:open,right:nil,hostTime:0.07,now:0.07)
+        XCTAssertEqual(live.receiveHelperHands(left:closed,right:nil,hostTime:0.14,now:0.14),[.init(.init(.sustain),value:127)])
+        XCTAssertEqual(live.receiveHelperHands(left:closed,right:nil,hostTime:0.3,now:0.4),[.init(.init(.sustain),value:0)])
+        XCTAssertFalse(live.activeSources.contains(.camera))
+        XCTAssertTrue(live.receiveHelperHands(left:closed,right:nil,hostTime:0.41,now:0.41).isEmpty)
+    }
+
     func testIndependentHandLossAndLiveDebugParity() throws {
         let l = AirHandsHelper.route(hand:.left,axis:.x,effect:.pitchBend)!
         let r = AirHandsHelper.route(hand:.right,axis:.y,effect:.expression)!

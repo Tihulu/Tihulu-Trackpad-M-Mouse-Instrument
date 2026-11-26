@@ -131,3 +131,58 @@ private func groupRoute(_ id: String, _ source: SensorSource, _ signal: SensorSi
     let stopped = router.panic()
     #expect(stopped.isEmpty && router.sessionCount == 0)
 }
+
+
+@Test func groupSnapshotSustainEdgesFollowSameOrderingAsBuilder() throws {
+    let note=SensorDestination(.note,number:60)
+    let pedal=SensorDestination(.sustain)
+    let group=PerformanceInstrumentGroup(name:"Lead",patch:.init(routes:[
+        groupRoute("note",.gamepad1,.padA,note),
+        groupRoute("pedal",.gamepad1,.padRT,pedal)
+    ]))
+    var router=try PerformanceGroupRouter(profile:.init(groups:[group]))
+    let lease=try router.connect(.gamepad1,now:1)
+    let attack=router.frame(lease:lease,sequence:1,now:1,values:[.padA:1])
+    #expect(attack.map(\.command)==[.init(note,value:100)])
+    let engage=router.frame(lease:lease,sequence:2,now:1.1,values:[.padRT:1],releasing:[.padA])
+    #expect(engage.map(\.command)==[.init(pedal,value:127),.init(note,value:0)])
+    let release=router.frame(lease:lease,sequence:3,now:1.2,values:[.padA:1],releasing:[.padRT])
+    #expect(release.map(\.command)==[.init(note,value:100),.init(pedal,value:0)])
+    let stop=router.panic()
+    #expect(stop.map(\.command)==[.init(note,value:0)])
+}
+
+
+@Test func offlineGroupPreviewExercisesEveryFactoryPresetAndBalancesNoteGates() throws {
+    for preset in PerformanceGroupStarterPreset.allCases {
+        let profile=try #require(preset.makeProfile())
+        let preview=try PerformanceGroupOfflinePreview(profile:profile)
+        #expect(preview.sourceCount==preset.requiredSources.count)
+        #expect(!preview.rows.isEmpty && preview.cleanupCount>0)
+        #expect(preview.rows.suffix(preview.cleanupCount).allSatisfy { $0.source==nil })
+        var active=Set<String>()
+        for row in preview.rows where row.command.command.destination.kind == .note {
+            let command=row.command.command
+            let key=row.command.groupID.uuidString+"-"+String(command.destination.channel)+"-"+String(command.destination.number)
+            if command.value>0 { active.insert(key) }
+            else { active.remove(key) }
+        }
+        #expect(active.isEmpty)
+        #expect(preview.rows.allSatisfy { row in profile.groups.contains(where:{$0.id==row.command.groupID}) })
+    }
+}
+
+@Test func offlineGroupPreviewRejectsUnapprovedLayeringAndInvalidProfiles() throws {
+    var profile=try #require(PerformanceGroupStarterPreset.trackpadSolo.makeProfile())
+    let copied=profile.duplicate(profile.groups[0].id)
+    #expect(copied)
+    #expect(throws:PerformanceGroupRouterError.layeringConsentRequired) {
+        try PerformanceGroupOfflinePreview(profile:profile)
+    }
+    let preview=try PerformanceGroupOfflinePreview(profile:profile,allowLayering:true)
+    #expect(preview.sourceCount==1)
+    #expect(Set(preview.rows.map(\.command.groupID))==Set(profile.groups.map(\.id)))
+    #expect(throws:PerformanceGroupRouterError.invalidProfile) {
+        try PerformanceGroupOfflinePreview(profile:.init())
+    }
+}

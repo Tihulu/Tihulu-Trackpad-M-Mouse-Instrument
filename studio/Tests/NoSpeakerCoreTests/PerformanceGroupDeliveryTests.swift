@@ -127,3 +127,149 @@ private func deliveryGroup(_ source: SensorSource, signal: SensorSignal = .conta
     #expect(commands.count == 1 && commands.first?.value == 0)
     #expect(retry.pendingCleanup.isEmpty)
 }
+
+
+@Test func groupReceiptExpiryStopsOnlyAttemptedWireTargetsAndKeepsIndependentGroup() throws {
+    let chord = PerformanceInstrumentGroup(name:"Chord",patch:.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:.init(.note,number:60)),
+        .init(id:"b",source:.trackpad,signal:.contact,destination:.init(.note,number:64))
+    ]))
+    let other = deliveryGroup(.gamepad1,signal:.padA,note:67)
+    var delivery = try PerformanceGroupDelivery(profile:.init(groups:[chord,other]))
+    let x = try delivery.connect(.trackpad,now:1)
+    let y = try delivery.connect(.gamepad1,now:1)
+    _ = delivery.frame(lease:y,sequence:1,now:1,values:[.padA:1]) { _ in true }
+    var fresh = true
+    var attempted:[PerformanceGroupCommand] = []
+    let report = delivery.admittedFrame(lease:x,sequence:1,now:1,values:[.contact:1],releasing:[],
+                                         admit:{fresh}) {
+        attempted.append($0)
+        if $0.command.value > 0 { fresh = false; return true }
+        return false
+    }
+    #expect(report.admissionExpired)
+    #expect(report.failedGroups == [chord.id] && report.pendingCleanup == [chord.id])
+    #expect(attempted.count == 2 && attempted.allSatisfy { $0.groupID == chord.id })
+    #expect(attempted.first?.command.value == 100 && attempted.last?.command.value == 0)
+    #expect(attempted.first?.command.destination == attempted.last?.command.destination)
+    #expect(!delivery.hasLease(x) && delivery.hasLease(y))
+    attempted = []
+    let retry = delivery.retryCleanup(chord.id) { attempted.append($0); return true }
+    #expect(attempted.count == 1 && attempted.first?.command.value == 0)
+    #expect(retry.pendingCleanup.isEmpty && delivery.hasLease(y))
+}
+
+@Test func groupReceiptExpiryRollsBackSilentJoinWithoutRetiringLiveGroup() throws {
+    let note = SensorDestination(.note,number:60)
+    let group = PerformanceInstrumentGroup(name:"Shared",patch:.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:note),
+        .init(id:"b",source:.magicMouse,signal:.contact,destination:note)
+    ]))
+    var delivery = try PerformanceGroupDelivery(profile:.init(groups:[group]))
+    let x = try delivery.connect(.trackpad,now:1)
+    let y = try delivery.connect(.magicMouse,now:1)
+    _ = delivery.frame(lease:x,sequence:1,now:1,values:[.contact:1]) { _ in true }
+    var checks = 0
+    let rejected = delivery.admittedFrame(lease:y,sequence:1,now:1,values:[.contact:1],releasing:[],
+                                           admit:{ checks += 1; return checks == 1 }) { _ in
+        Issue.record("Silent join must not send")
+        return false
+    }
+    #expect(rejected.admissionExpired && rejected.failedGroups.isEmpty && rejected.pendingCleanup.isEmpty)
+    #expect(delivery.hasLease(x) && delivery.hasLease(y))
+    var commands:[PerformanceGroupCommand] = []
+    _ = delivery.disconnect(x) { commands.append($0); return true }
+    #expect(commands == [.init(groupID:group.id,command:.init(note,value:0))])
+    _ = delivery.disconnect(y) { _ in Issue.record("Unadmitted owner has no debt"); return false }
+    #expect(delivery.faultedGroups.isEmpty)
+}
+
+
+@Test func groupDisconnectFencesRestorationButNotCustomNeutralOrNoteOff() throws {
+    let cc = SensorDestination(.controlChange,number:74)
+    let note = SensorDestination(.note,number:60)
+    let shared = PerformanceInstrumentGroup(name:"Shared",patch:.init(routes:[
+        .init(id:"low",source:.lid,signal:.angle,destination:cc,priority:0,response:.init(release:0.25)),
+        .init(id:"high",source:.touchBar,signal:.x,destination:cc,priority:10,response:.init(release:0.25))
+    ]))
+    let independent = PerformanceInstrumentGroup(name:"Other",patch:.init(routes:[
+        .init(id:"note",source:.touchBar,signal:.x,destination:note)
+    ]))
+    for stallAfterRestoration in [false,true] {
+        var state = try PerformanceGroupDelivery(profile:.init(groups:[shared,independent]),allowLayering:true)
+        let low = try state.connect(.lid,now:1)
+        let high = try state.connect(.touchBar,now:1)
+        _ = state.frame(lease:low,sequence:1,now:1,values:[.angle:0.4]) { _ in true }
+        _ = state.frame(lease:high,sequence:1,now:1,values:[.x:0.8]) { _ in true }
+        var fresh = stallAfterRestoration
+        var wire:[PerformanceGroupCommand] = []
+        let report = state.disconnectBatch([high],admitRestoration:{_ in fresh}) {
+            wire.append($0)
+            if $0.groupID == shared.id && $0.command.value == 51 { fresh = false }
+            return true
+        }
+        #expect(report.admissionExpired && report.failedGroups == [shared.id])
+        #expect(wire.filter { $0.groupID == shared.id }.map(\.command.value) == (stallAfterRestoration ? [51,32] : [32]))
+        #expect(wire.contains(.init(groupID:independent.id,command:.init(note,value:0))))
+        #expect(report.pendingCleanup.isEmpty && !state.hasLease(low) && !state.hasLease(high))
+        #expect(state.faultedGroups == [shared.id])
+    }
+}
+
+@Test func groupDisconnectAlwaysAttemptsConfiguredNeutralEvenWhenRestoreNotAdmitted() throws {
+    let cc = SensorDestination(.controlChange,number:74)
+    let group = PerformanceInstrumentGroup(name:"Custom release",patch:.init(routes:[
+        .init(id:"cc",source:.lid,signal:.angle,destination:cc,response:.init(release:0.25))
+    ]))
+    var state = try PerformanceGroupDelivery(profile:.init(groups:[group]))
+    let lease = try state.connect(.lid,now:1)
+    _ = state.frame(lease:lease,sequence:1,now:1,values:[.angle:0.8]) { _ in true }
+    var wire:[PerformanceGroupCommand] = []
+    let report = state.disconnectBatch([lease],admitRestoration:{_ in false}) { wire.append($0); return true }
+    #expect(!report.admissionExpired && report.failedGroups.isEmpty && report.pendingCleanup.isEmpty)
+    #expect(wire == [.init(groupID:group.id,command:.init(cc,value:32))])
+}
+
+
+@Test func groupFaultNoticeSeparatesAdmissionFromTransportAndMixedRetirement() throws {
+    let group=deliveryGroup(.trackpad)
+    var output=try PerformanceGroupDelivery(profile:.init(groups:[group]))
+    let lease=try output.connect(.trackpad,now:1)
+    let silent=output.admittedFrame(lease:lease,sequence:1,now:1,values:[.contact:1],releasing:[],admit:{false},send:{_ in Issue.record("Expired wire attempt");return false})
+    #expect(PerformanceGroupDelivery.faultNotice([])==nil)
+    #expect(PerformanceGroupDelivery.faultNotice([silent])?.contains("input expired")==true)
+    #expect(PerformanceGroupDelivery.faultNotice([silent])?.contains("MIDI delivery failed")==false)
+    let failed=output.frame(lease:lease,sequence:1,now:1,values:[.contact:1]){_ in false}
+    #expect(PerformanceGroupDelivery.faultNotice([failed])?.contains("MIDI send or cleanup failed")==true)
+    #expect(PerformanceGroupDelivery.faultNotice([silent,failed])?.contains("expired or MIDI delivery failed")==true)
+}
+
+
+@Test func groupManualCleanupNoticeRetainsNewFaultWithFinalDebtStatus() throws {
+    let group = deliveryGroup(.trackpad)
+    var output = try PerformanceGroupDelivery(profile:.init(groups:[group]))
+    let lease = try output.connect(.trackpad,now:1)
+    let failed = output.frame(lease:lease,sequence:1,now:1,values:[.contact:1]) { _ in false }
+    let recovered = output.retryCleanup(group.id,send:{_ in true})
+    #expect(PerformanceGroupDelivery.cleanupNotice([],hasPending:false) == "No pending group cleanup.")
+    let notice = PerformanceGroupDelivery.cleanupNotice([failed,recovered],hasPending:false)
+    #expect(notice.contains("MIDI send or cleanup failed") && notice.contains("No pending group cleanup."))
+    let pending = PerformanceGroupDelivery.cleanupNotice([failed],hasPending:true)
+    #expect(pending.contains("MIDI send or cleanup failed") && pending.contains("cleanup still pending"))
+}
+
+
+@Test func groupEventNoticePreservesStopReasonAndFaultEvenAfterCleanupSucceeds() throws {
+    let group=deliveryGroup(.trackpad)
+    var state=try PerformanceGroupDelivery(profile:.init(groups:[group]))
+    let lease=try state.connect(.trackpad,now:1)
+    let failed=state.frame(lease:lease,sequence:1,now:1,values:[.contact:1]) { _ in false }
+    let reason="Controller lost. Group stopped."
+    let pending=PerformanceGroupDelivery.eventNotice(reason:reason,reports:[failed],hasPending:true)
+    #expect(pending.contains(reason) && pending.contains("MIDI send or cleanup failed") && pending.contains("cleanup pending"))
+    let cleaned=state.retryCleanup(group.id,send:{_ in true})
+    let cleared=PerformanceGroupDelivery.eventNotice(reason:reason,reports:[failed,cleaned],hasPending:false)
+    #expect(cleared.contains(reason) && cleared.contains("MIDI send or cleanup failed"))
+    #expect(!cleared.contains("cleanup pending"))
+    #expect(PerformanceGroupDelivery.eventNotice(reason:reason,reports:[],hasPending:false)==reason)
+}

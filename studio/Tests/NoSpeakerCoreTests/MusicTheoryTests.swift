@@ -48,3 +48,20 @@ import Testing
     #expect(safe.durationMS == 120)
     #expect(safe.level == 1)
 }
+
+@Test func scientificPitchRoundTripsEveryMIDIKey() throws {
+    for midi in 0...127 {
+        let label = try MusicTheory.noteName(midi:midi)
+        #expect(try MusicTheory.midiNumber(note:label) == midi)
+    }
+    #expect(try MusicTheory.midiNumber(note:"C-1") == 0)
+    #expect(try MusicTheory.midiNumber(note:"D♭-1") == 1)
+    #expect(try MusicTheory.midiNumber(note:"F♯9") == 126)
+}
+@Test func scientificPitchRejectsMalformedAndOverflowingOctaves() {
+    for note in ["C--1","C1-2","C","C#","C\(Int.max)","C\(Int.min)","C999999999999999999999999999"] {
+        #expect(throws: MusicTheoryError.self) { try MusicTheory.midiNumber(note:note) }
+    }
+    #expect(throws: MusicTheoryError.midiOutOfRange(132)) { try MusicTheory.midiNumber(note:"C10") }
+    #expect(throws: MusicTheoryError.midiOutOfRange(-12)) { try MusicTheory.midiNumber(note:"C-2") }
+}

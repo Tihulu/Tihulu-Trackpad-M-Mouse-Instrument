@@ -88,3 +88,57 @@ import Testing
     #expect(runtime.releaseHybridSource().isEmpty)
     #expect(runtime.stop() == [.init(.init(.note,number:60),value:0)])
 }
+
+
+@Test func hybridDepartureAndExpiredPhysicalOwnerReconcileTogether() throws {
+    for explicit in [false,true] {
+        let cc=SensorDestination(.controlChange,number:74)
+        var runtime=PhysicalPatchRuntime()
+        try runtime.configure(.init(routes:[
+            .init(id:"native",source:.trackpad,signal:.x,destination:cc,priority:0),
+            .init(id:"synthetic",source:.external,signal:.x,destination:cc,priority:10)
+        ]),synthetic:.external)
+        let input=PatchSimulation.Input(source:.external,signal:.x)
+        _=runtime.receive(source:.trackpad,x:0.3,y:0.5,size:0.5,hostTime:1,now:1)
+        _=runtime.sendHybrid(input,value:0.8,now:explicit ? 1.2 : 1.01)
+        let commands=explicit ? runtime.releaseHybridSource(now:1.37) : runtime.refreshHybrid(now:1.37)
+        #expect(commands==[.init(cc,value:0)])
+        #expect(runtime.activeSources.isEmpty && runtime.activeRouterSessionCount==0)
+        #expect(runtime.refreshHybrid(now:1.38).isEmpty)
+    }
+}
+
+@Test func hybridExplicitDepartureRetainsFreshPhysicalWinner() throws {
+    let cc=SensorDestination(.controlChange,number:74)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"native",source:.trackpad,signal:.x,destination:cc,priority:0),
+        .init(id:"synthetic",source:.external,signal:.x,destination:cc,priority:10)
+    ]),synthetic:.external)
+    _=runtime.receive(source:.trackpad,x:0.3,y:0.5,size:0.5,hostTime:1,now:1)
+    _=runtime.sendHybrid(.init(source:.external,signal:.x),value:0.8,now:1.01)
+    #expect(runtime.releaseHybridSource(now:1.1)==[.init(cc,value:38)])
+    #expect(runtime.activeSources==[.trackpad])
+}
+
+
+@Test func hybridAxisReleaseBatchesExpiredOwnersAndRetainsSiblingAxis() throws {
+    for hybridHigher in [false,true] {
+        let cc=SensorDestination(.controlChange,number:74)
+        let bend=SensorDestination(.pitchBend)
+        var runtime=PhysicalPatchRuntime()
+        try runtime.configure(.init(routes:[
+            .init(id:"native",source:.trackpad,signal:.x,destination:cc,priority:hybridHigher ? 0 : 10),
+            .init(id:"synthetic",source:.external,signal:.x,destination:cc,priority:hybridHigher ? 10 : 0),
+            .init(id:"sibling",source:.external,signal:.y,destination:bend)
+        ]),synthetic:.external)
+        let x=PatchSimulation.Input(source:.external,signal:.x)
+        let y=PatchSimulation.Input(source:.external,signal:.y)
+        _=runtime.receive(source:.trackpad,x:0.3,y:0.5,size:0.5,hostTime:1,now:1)
+        _=runtime.sendHybrid(x,value:0.8,now:1.2)
+        _=runtime.sendHybrid(y,value:1,now:1.21)
+        #expect(runtime.releaseHybrid(x,now:1.36)==[.init(cc,value:0)])
+        #expect(runtime.activeSources.isEmpty && runtime.activeRouterSessionCount==1)
+        #expect(runtime.releaseHybrid(y,now:1.37)==[.init(bend,value:8192)])
+    }
+}

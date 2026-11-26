@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove"/>
+    <uses-feature android:name="android.hardware.camera.ar" android:required="false"/>
+    <application android:label="TIHULU Air Preview" android:allowBackup="false" android:usesCleartextTraffic="false">
+        <meta-data android:name="com.google.ar.core" android:value="optional"/>
+        <activity android:name="com.tihulu.mobile.air.AirPreviewActivity" android:exported="true" tools:replace="android:exported">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

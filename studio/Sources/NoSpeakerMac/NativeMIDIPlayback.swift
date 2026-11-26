@@ -32,6 +32,14 @@ public final class NativeMIDIPlayback {
         public let maximumObservedLatenessNS:UInt64
         public let maximumIdentityCheckNS:UInt64
         public let maximumNativeSendNS:UInt64
+        /// Host scheduling telemetry, not physical MIDI latency.
+        public let maximumWakeLatenessNS:UInt64
+        /// Timer dispatch and actor-resume are separate scheduling costs.
+        public let maximumTimerLatenessNS:UInt64
+        public let maximumActorResumeDelayNS:UInt64
+        public let maximumSoundingWakeLatenessNS:UInt64
+        public let maximumAwaitingEventWakeLatenessNS:UInt64
+        public let maximumTrailingRestWakeLatenessNS:UInt64
     }
 
     /// The successful close report is distinct from receiver confirmation.
@@ -54,7 +62,7 @@ public final class NativeMIDIPlayback {
 
     /// Local ledger state, not proof that the remote receiver is silent.
     public var lifecycle:Lifecycle {
-        .init(state:player.state.rawValue,sourceOpen:endpoint != 0,running:running,
+        .init(state:player.state.rawValue,sourceOpen:endpoint != 0,running:running || closingSession,
               identityRetired:identityRetired,disposalFailed:disposalFailed,outstandingNotes:player.outstanding.count,
               recoveryRequired:identityRetired || disposalFailed || (player.state != .playing && !player.outstanding.isEmpty))
     }
@@ -74,9 +82,18 @@ public final class NativeMIDIPlayback {
     private var player:BoundedMIDIPlayback
     private var opened=false
     private var running=false
+    // A compound operation owns the endpoint until disposal or failure,
+    // including the actor-resumption boundary after the async run.
+    private var closingSession=false
     private var stopRequested=false
     private var maximumIdentityCheckNS:UInt64=0
     private var maximumNativeSendNS:UInt64=0
+    private var maximumWakeLatenessNS:UInt64=0
+    private var maximumTimerLatenessNS:UInt64=0
+    private var maximumActorResumeDelayNS:UInt64=0
+    private var maximumSoundingWakeLatenessNS:UInt64=0
+    private var maximumAwaitingEventWakeLatenessNS:UInt64=0
+    private var maximumTrailingRestWakeLatenessNS:UInt64=0
 
     public init(clip:MIDIClip) throws {
         player=try BoundedMIDIPlayback(clip:clip)
@@ -140,6 +157,11 @@ public final class NativeMIDIPlayback {
     public func requestStop() { if player.state == .ready || player.state == .playing { stopRequested=true } }
 
     public func run() async throws -> Report {
+        guard !closingSession else { throw Failure.invalidLifecycle }
+        return try await runPlayback()
+    }
+
+    private func runPlayback() async throws -> Report {
         guard opened,endpoint != 0,!running,player.state == .ready,!identityRetired else {
             throw Failure.invalidLifecycle
         }
@@ -164,6 +186,9 @@ public final class NativeMIDIPlayback {
             recordGate(gate)
             return report(cancelled:true)
         }
+        // Use the same absolute DispatchTime uptime for the core and
+        // the timer. A strict timer requests zero leeway on a dedicated
+        // queue; OS scheduling can still delay delivery or actor resumption.
         _=try player.begin(now:Self.now())
         while player.state == .playing {
             // Check the bound source even during initial/trailing rests.
@@ -183,15 +208,36 @@ public final class NativeMIDIPlayback {
             }
             guard let deadline=player.nextDeadline else { break }
             let current=Self.now()
-            if deadline>current {
-                do { try await Task.sleep(nanoseconds:min(deadline-current,20_000_000)) }
-                catch {
+            if let wakeTarget=Self.nextWakeTarget(deadline:deadline,current:current) {
+                let phase=player.waitPhase
+                do {
+                    let fired=try await NativeMIDIPlaybackWake.wait(until:wakeTarget)
+                    let woke=Self.now()
+                    if fired>=wakeTarget {
+                        maximumTimerLatenessNS=max(maximumTimerLatenessNS,fired-wakeTarget)
+                    }
+                    if woke>=fired {
+                        maximumActorResumeDelayNS=max(maximumActorResumeDelayNS,woke-fired)
+                    }
+                    if woke>=wakeTarget {
+                        let late=woke-wakeTarget
+                        maximumWakeLatenessNS=max(maximumWakeLatenessNS,late)
+                        switch phase {
+                        case .some(.sounding): maximumSoundingWakeLatenessNS=max(maximumSoundingWakeLatenessNS,late)
+                        case .some(.awaitingEvent): maximumAwaitingEventWakeLatenessNS=max(maximumAwaitingEventWakeLatenessNS,late)
+                        case .some(.trailingRest): maximumTrailingRestWakeLatenessNS=max(maximumTrailingRestWakeLatenessNS,late)
+                        case .none: break
+                        }
+                    }
+                } catch {
                     player.stop { gate.send($0) }
                     break
                 }
-            } else {
-                await Task.yield()
             }
+            // If an event became due during synchronous work, advance
+            // immediately rather than yield the executor once more.
+            // The next advance either consumes a due edge or terminates;
+            // a future deadline still suspends for at most the poll cap.
         }
         // A final check covers the last send and cancellation while sleeping.
         if !gate.validate() {
@@ -208,30 +254,48 @@ public final class NativeMIDIPlayback {
     /// The caller retains this instance if any stage requires recovery.
     /// Never automatically opens a device or treats a fault as success.
     public func runAndClose() async throws -> ClosedSessionReport {
-        guard opened,endpoint != 0,!running,player.state == .ready else {
+        try await runAndClose(beforeClose:{})
+    }
+
+    // Internal fixture seam verifies the exclusive finalization boundary.
+    func runAndClose(beforeClose:()->Void) async throws -> ClosedSessionReport {
+        guard opened,endpoint != 0,!running,!closingSession,player.state == .ready else {
             throw Failure.invalidLifecycle
         }
+        closingSession=true
+        defer { closingSession=false }
         let initial:Report
         do {
-            initial=try await run()
+            initial=try await runPlayback()
         } catch {
             let primary=error
-            do { try close() }
+            do { try closePlayback() }
             catch { throw Failure.sessionFailure(primary.localizedDescription,error.localizedDescription) }
             throw primary
         }
-        let final=initial.outstandingNotes>0 ? try retryCleanup() : initial
+        beforeClose()
+        let final=initial.outstandingNotes>0 ? try retryPlaybackCleanup() : initial
         guard final.cleanupConfirmed else {
             if identityRetired { throw Failure.sourceIdentityLost }
             throw Failure.cleanupPending
         }
-        try close()
-        return .init(playback:final,completed:final.state=="finished" && !final.cancelled,
+        try closePlayback()
+        // Cancellation may arrive after the async playback return but
+        // before the compound operation disposes its endpoint. Finish
+        // owned cleanup, yet never report the compound task as completed.
+        wasCancelled = wasCancelled || final.cancelled || Task.isCancelled
+        let closed = report(cancelled:wasCancelled)
+        return .init(playback:closed,completed:closed.state=="finished" && !closed.cancelled,
                      sourceDisposed:endpoint==0,recoveryRequired:lifecycle.recoveryRequired)
     }
 
     /// Retry only outstanding note-offs on the exact original endpoint.
     public func retryCleanup() throws -> Report {
+        guard !closingSession else { throw Failure.invalidLifecycle }
+        return try retryPlaybackCleanup()
+    }
+
+    private func retryPlaybackCleanup() throws -> Report {
         guard opened,endpoint != 0,!running,player.state != .ready,
               player.state != .playing else { throw Failure.invalidLifecycle }
         let gate=IdentityGate(source:endpoint,id:sourceID,name:sourceName,retired:identityRetired)
@@ -259,6 +323,11 @@ public final class NativeMIDIPlayback {
 
     /// Never silently discard note debt or a failed endpoint disposal.
     public func close() throws {
+        guard !closingSession else { throw Failure.invalidLifecycle }
+        try closePlayback()
+    }
+
+    private func closePlayback() throws {
         guard opened,endpoint != 0,!running else { throw Failure.invalidLifecycle }
         guard player.outstanding.isEmpty else { throw Failure.cleanupPending }
         let source=endpoint
@@ -286,7 +355,20 @@ public final class NativeMIDIPlayback {
               outstandingNotes:player.outstanding.count,receiverConfirmed:false,
               faultReason:identityRetired ? "sourceIdentityLost" : player.fault?.rawValue,
               maximumObservedLatenessNS:player.maximumObservedLatenessNS,
-              maximumIdentityCheckNS:maximumIdentityCheckNS,maximumNativeSendNS:maximumNativeSendNS)
+              maximumIdentityCheckNS:maximumIdentityCheckNS,maximumNativeSendNS:maximumNativeSendNS,
+              maximumWakeLatenessNS:maximumWakeLatenessNS,
+              maximumTimerLatenessNS:maximumTimerLatenessNS,
+              maximumActorResumeDelayNS:maximumActorResumeDelayNS,
+              maximumSoundingWakeLatenessNS:maximumSoundingWakeLatenessNS,
+              maximumAwaitingEventWakeLatenessNS:maximumAwaitingEventWakeLatenessNS,
+              maximumTrailingRestWakeLatenessNS:maximumTrailingRestWakeLatenessNS)
+    }
+
+    // Nil means a due deadline, not permission to sleep or yield.
+    // Subtract before adding so the target cannot overflow UInt64.
+    nonisolated static func nextWakeTarget(deadline:UInt64,current:UInt64) -> UInt64? {
+        guard deadline>current else { return nil }
+        return current+min(deadline-current,20_000_000)
     }
 
     private nonisolated static func now() -> UInt64 {

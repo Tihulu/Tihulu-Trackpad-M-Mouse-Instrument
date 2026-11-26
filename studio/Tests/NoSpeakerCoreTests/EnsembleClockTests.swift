@@ -27,3 +27,35 @@ import Testing
     #expect(EnsembleClock(bpm:120,beatsPerBar:4,now:.infinity) == nil)
     #expect(EnsembleClock.Message.clock.rawValue == 0xF8)
 }
+
+
+@Test func builderStopSequenceAttemptsBothCleanupsBeforeTeardownEvenOnFailure() {
+    for notesOK in [false,true] {
+        for clockOK in [false,true] {
+            var steps:[String]=[]
+            let result=BuilderStopSequence.run(invalidate:{steps.append("fence")},
+                notes:{steps.append("notes");return notesOK},
+                clock:{steps.append("clock");return clockOK},
+                teardown:{steps.append("teardown")})
+            #expect(steps==["fence","notes","clock","teardown"])
+            #expect(result.complete==(notesOK && clockOK))
+            let notice=result.notice(reason:"Input expired.")
+            #expect(notice.contains("Input expired."))
+            #expect(notice.contains("note or selector release failed") == !notesOK)
+            #expect(notice.contains("Clock Stop failed") == !clockOK)
+        }
+    }
+}
+
+@Test func builderRestartCleanupRetriesIndependentDebtWithoutShortCircuit() {
+    var calls:[String]=[]
+    let result=BuilderStopSequence.release(notes:{calls.append("notes");return false},
+                                          clock:{calls.append("clock");return true})
+    #expect(calls==["notes","clock"] && !result.complete)
+    #expect(result.clockReleased && !result.notesReleased)
+    calls=[]
+    let next=BuilderStopSequence.release(notes:{calls.append("notes");return true},
+                                        clock:{calls.append("clock");return false})
+    #expect(calls==["notes","clock"] && !next.complete)
+    #expect(next.notice(reason:"Start refused.").contains("Clock Stop failed"))
+}

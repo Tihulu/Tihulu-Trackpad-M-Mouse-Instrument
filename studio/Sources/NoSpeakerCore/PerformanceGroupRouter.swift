@@ -93,12 +93,9 @@ public struct PerformanceGroupRouter: Sendable {
                 return .init(session:member,signal:signal,value:value,
                              sequence:base+UInt64(index),timestamp:now)
             }
-            let raw = group.router.ingestFrame(session:member,releasing:releasing,events:events,now:now)
-            // Release old notes first, establish pedal/bend/CC state, then
-            // start new notes. Never depend on alphabetical destination keys.
-            let commands = raw.filter { $0.destination.kind == .note && $0.value == 0 } +
-                raw.filter { $0.destination.kind != .note } +
-                raw.filter { $0.destination.kind == .note && $0.value > 0 }
+            // Share Builder's snapshot ordering: engage sustain before
+            // note-off and release sustain after note edges.
+            let commands = group.router.ingestFrame(session:member,releasing:releasing,events:events,now:now,controlsBeforeAttack:true)
             group.router.heartbeat(member,now:now)
             groups[groupID] = group
             result += commands.map { .init(groupID:groupID,command:$0) }
@@ -159,5 +156,42 @@ public struct PerformanceGroupRouter: Sendable {
 
     private func ordered<S: Sequence>(_ ids: S) -> [UUID] where S.Element == UUID {
         ids.sorted { $0.uuidString < $1.uuidString }
+    }
+}
+
+
+/// A finite synthetic exercise of the logical group router. No device,
+/// network, MIDI port or haptic output is opened. The sample is not a
+/// hardware admission test and does not emulate a tuned MPE receiver.
+public struct PerformanceGroupOfflinePreview:Sendable {
+    public struct Row:Equatable,Sendable {
+        public let source:SensorSource?
+        public let command:PerformanceGroupCommand
+    }
+    public let rows:[Row]
+    public let sourceCount:Int
+    public let cleanupCount:Int
+
+    public init(profile:PerformanceGroupProfile,allowLayering:Bool=false) throws {
+        var router=try PerformanceGroupRouter(profile:profile,allowLayering:allowLayering)
+        let routes=profile.groups.flatMap { $0.patch.routes }
+        let signals=Dictionary(grouping:routes,by:{$0.source})
+            .mapValues { Set($0.map(\.signal)) }
+        let sources=signals.keys.sorted { $0.rawValue < $1.rawValue }
+        var result:[Row]=[]
+        // Synthetic normalized values, not a claim about device capabilities.
+        // A single source snapshot exercises shared ownership across groups.
+        for (index,source) in sources.enumerated() {
+            let now=Double(index+1)*0.01
+            let lease=try router.connect(source,now:now)
+            let values=Dictionary(uniqueKeysWithValues:(signals[source] ?? []).map { ($0,0.75) })
+            let commands=router.frame(lease:lease,sequence:1,now:now,values:values)
+            result += commands.map { .init(source:source,command:$0) }
+        }
+        let cleanup=router.panic()
+        result += cleanup.map { .init(source:nil,command:$0) }
+        rows=result
+        sourceCount=sources.count
+        cleanupCount=cleanup.count
     }
 }

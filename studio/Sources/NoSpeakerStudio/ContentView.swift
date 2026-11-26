@@ -2725,16 +2725,33 @@ private struct TouchBarModeView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }
+                TouchBarSavedProfilesPanel()
                 GroupBox("Touch Bar layout · Customize simultaneous zones") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Choose the zones to display in your preferred order. Native Touch Bar controls appear on supported MacBook Pro models; the on-screen strip works everywhere.")
+                        Text("Choose the zones in your preferred order. Native piano segments send bounded taps; on-screen piano pads support press and hold. At least one built-in or custom synth control is required.")
                             .font(.callout).foregroundStyle(.secondary)
-                        ForEach(TouchBarZone.allCases) { zone in
+                        Text("Layout presets").font(.caption.bold())
+                        ViewThatFits(in:.horizontal) {
+                            HStack {
+                                ForEach(TouchBarLayoutPreset.allCases) { preset in
+                                    Button(preset.rawValue) {setProfile{$0.zones=preset.zones}}
+                                        .disabled(studio.touchBarProfile.zones==preset.zones)
+                                }
+                            }
+                            Menu("Choose layout preset") {
+                                ForEach(TouchBarLayoutPreset.allCases) { preset in
+                                    Button(preset.rawValue) {setProfile{$0.zones=preset.zones}}
+                                }
+                            }
+                        }
+                        Text("Enabled zones in left-to-right order, followed by available zones. Native macOS customization may override the displayed default order.").font(.caption).foregroundStyle(.secondary)
+                        ForEach(studio.touchBarProfile.zones + TouchBarZone.allCases.filter{!studio.touchBarProfile.zones.contains($0)}) { zone in
                             HStack {
                                 Toggle(zone.rawValue, isOn: Binding(
                                     get: { studio.touchBarProfile.zones.contains(zone) },
                                     set: { enabled in
                                         setProfile { profile in
+                                            if !enabled && profile.zones.count == 1 && profile.zones.contains(zone) && profile.effectiveSynthBank.controls.isEmpty {return}
                                             profile.zones.removeAll { $0 == zone }
                                             if enabled { profile.zones.append(zone) }
                                         }
@@ -2742,20 +2759,20 @@ private struct TouchBarModeView: View {
                                 ))
                                 Spacer()
                                 if studio.touchBarProfile.zones.contains(zone) {
-                                    Button("↑") {
-                                        setProfile { profile in
-                                            guard let index = profile.zones.firstIndex(of: zone),
-                                                  index > 0 else { return }
-                                            profile.zones.swapAt(index, index - 1)
-                                        }
-                                    }.help("Move zone left")
-                                    Button("↓") {
-                                        setProfile { profile in
-                                            guard let index = profile.zones.firstIndex(of: zone),
-                                                  index < profile.zones.count - 1 else { return }
-                                            profile.zones.swapAt(index, index + 1)
-                                        }
-                                    }.help("Move zone right")
+                                    Button {setProfile { profile in
+                                        guard let index=profile.zones.firstIndex(of:zone),index>0 else{return}
+                                        profile.zones.swapAt(index,index-1)
+                                    }} label:{Image(systemName:"arrow.left")}
+                                    .disabled(studio.touchBarProfile.zones.first==zone)
+                                    .accessibilityLabel("Move \(zone.rawValue) left")
+                                    .help("Move zone left")
+                                    Button {setProfile { profile in
+                                        guard let index=profile.zones.firstIndex(of:zone),index<profile.zones.count-1 else{return}
+                                        profile.zones.swapAt(index,index+1)
+                                    }} label:{Image(systemName:"arrow.right")}
+                                    .disabled(studio.touchBarProfile.zones.last==zone)
+                                    .accessibilityLabel("Move \(zone.rawValue) right")
+                                    .help("Move zone right")
                                 }
                             }
                         }
@@ -2783,21 +2800,29 @@ private struct TouchBarModeView: View {
                                     ), in: 0...115)
                             Spacer()
                         }
+                        if studio.touchBarProfile.zones.contains(.keys) {
+                            Stepper("Visible piano keys \(studio.touchBarProfile.effectiveKeyCount)",
+                                value:Binding(get:{studio.touchBarProfile.effectiveKeyCount},
+                                              set:{value in setProfile{$0.visibleKeyCount=value}}),in:2...13)
+                            Text("Fewer keys leave more space for helpers. Physical Touch Bar space depends on the Mac and enabled zones.").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Stepper("Piano note velocity \(studio.touchBarProfile.noteVelocity)",
+                            value:Binding(get:{studio.touchBarProfile.noteVelocity},
+                                          set:{value in setProfile{$0.noteVelocity=value}}),in:1...127)
                     }.padding(8)
                 }
 
+                TouchBarSynthPanel()
+                if !studio.touchBarProfile.zones.isEmpty {
                 GroupBox("Live performance strip · On-screen Touch Bar") {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(studio.touchBarProfile.zones) { zone in
                             switch zone {
                             case .keys:
                                 HStack(spacing: 4) {
-                                    Text("Piano").frame(width: 115, alignment: .leading)
-                                    ForEach(0..<8, id: \.self) { index in
-                                        TouchBarNotePad(
-                                            note: studio.touchBarProfile.baseNote + index,
-                                            label: ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G"][index]
-                                        )
+                                    Text("Piano · hold").frame(width: 115, alignment: .leading)
+                                    ForEach(studio.touchBarProfile.pianoKeys) { key in
+                                        TouchBarNotePad(note:key.note,label:key.label)
                                     }
                                 }
                             case .chords:
@@ -2805,7 +2830,9 @@ private struct TouchBarModeView: View {
                             case .sustain:
                                 HStack {
                                     Text("Sustain").frame(width: 115, alignment: .leading)
-                                    if studio.touchBarProfile.sustainMode == .hold {
+                                    if studio.touchBarProfile.sustainMode == .slideLock {
+                                        TouchBarSlideSustainPad()
+                                    } else if studio.touchBarProfile.sustainMode == .hold {
                                         TouchBarHoldSustainPad()
                                     } else {
                                         Button(studio.touchBarSustainOn ? "Sustain ON" : "Sustain OFF") {
@@ -2822,6 +2849,7 @@ private struct TouchBarModeView: View {
                     }.padding(8)
                 }
 
+                }
                 GroupBox("Screen hinge as an instrument · Calibration simulator") {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Map screen opening to wah (CC4), filter, expression, vibrato or pitch bend. Live hardware detection is experimental, manual-only and may be unsupported on Touch Bar MacBooks; use the simulator if no compatible sensor is available.")
@@ -2874,6 +2902,70 @@ private struct TouchBarModeView: View {
                 Text("Safety: Hinge sensor is explicitly opt-in and uses a read-only, undocumented HID report on compatible MacBooks. An unavailable sensor never starts monitoring. The app does not move the display, modify sleep settings, or send any telemetry.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(28)
+        }
+    }
+}
+
+private struct TouchBarSlideSustainPad:View {
+    @EnvironmentObject private var studio:StudioController
+    @State private var revision:UInt64?
+    @State private var lockTarget=false
+    @GestureState private var tracking=false
+    private var locked:Bool {studio.touchBarSlideSustain.phase(.screen) == .locked}
+    var body:some View {
+        GeometryReader { geo in
+            HStack(spacing:0) {
+                Text("Sustain")
+                    .frame(maxWidth:.infinity)
+                Image(systemName:locked ? "lock.fill":"lock.open")
+                    .frame(width:36)
+                    .background(lockTarget || locked ? Color.accentColor.opacity(0.45):Color.secondary.opacity(0.15))
+            }
+            .frame(height:34)
+            .background(studio.touchBarSustainOn ? Color.accentColor.opacity(0.30):Color.secondary.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius:6))
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance:0)
+                .updating($tracking){_,state,_ in state=true}
+                .onChanged{value in
+                    if revision == nil {
+                        revision=studio.touchBarGestureEpoch.revision
+                        if let revision {studio.touchBarSlideEvent(.begin,owner:.screen,revision:revision)}
+                    }
+                    lockTarget=value.startLocation.x < geo.size.width-36 &&
+                        value.translation.width >= 24 && value.location.x >= geo.size.width-36 &&
+                        value.location.x <= geo.size.width && (0...34).contains(value.location.y)
+                }
+                .onEnded{value in
+                    if let revision {
+                        let latch=value.startLocation.x < geo.size.width-36 && value.translation.width>=24 &&
+                            value.location.x>=geo.size.width-36 && value.location.x<=geo.size.width &&
+                            (0...34).contains(value.location.y)
+                        studio.touchBarSlideEvent(.end(lock:latch),owner:.screen,revision:revision)
+                    }
+                    revision=nil;lockTarget=false
+                })
+        }.frame(width:146,height:34)
+        .accessibilityLabel("Sustain")
+        .accessibilityValue(locked ? "Locked":studio.touchBarSustainOn ? "Active":"Released")
+        .accessibilityHint("Hold to sustain; slide right into the lock and lift to latch. Press again to unlock.")
+        .accessibilityAction(named:Text("Release sustain")){
+            studio.touchBarSlideEvent(.cancel,owner:.screen,revision:studio.touchBarGestureEpoch.revision)
+            revision=nil;lockTarget=false
+        }
+        .onChange(of:tracking){active in
+            if !active,let revision {
+                studio.touchBarSlideEvent(.cancel,owner:.screen,revision:revision)
+                self.revision=nil;lockTarget=false
+            }
+        }
+        .onDisappear {
+            studio.touchBarSlideEvent(.cancel,owner:.screen,revision:studio.touchBarGestureEpoch.revision)
+            revision=nil;lockTarget=false
+        }
+        .onReceive(NotificationCenter.default.publisher(for:NSApplication.willResignActiveNotification)){_ in
+            studio.touchBarSlideEvent(.cancel,owner:.screen,revision:studio.touchBarGestureEpoch.revision)
+            revision=nil;lockTarget=false
         }
     }
 }

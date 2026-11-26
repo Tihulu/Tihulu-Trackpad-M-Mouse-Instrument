@@ -26,6 +26,7 @@ public enum TouchBarZone: String, CaseIterable, Codable, Identifiable, Sendable 
 public enum TouchBarSustainMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case hold = "Hold"
     case toggle = "Toggle"
+    case slideLock = "Hold / Slide to Lock"
     public var id: String { rawValue }
 }
 
@@ -39,6 +40,25 @@ public enum TiltMIDITarget: String, CaseIterable, Codable, Identifiable, Sendabl
     public var id: String { rawValue }
 }
 
+/// Layout-only shortcuts. They never change MIDI destination, output,
+/// sustain behavior, velocity or tilt calibration.
+public enum TouchBarLayoutPreset:String,CaseIterable,Identifiable,Sendable {
+    case piano="Piano"
+    case helper="Helper"
+    case chords="Chords"
+    case ribbon="Fretless"
+    case hybrid="Hybrid"
+    public var id:String{rawValue}
+    public var zones:[TouchBarZone] {
+        switch self {
+        case .piano:return [.keys,.sustain]
+        case .helper:return [.sustain,.pitchBend,.vibrato,.expression]
+        case .chords:return [.chords,.sustain]
+        case .ribbon:return [.fretless,.expression,.sustain]
+        case .hybrid:return [.keys,.pitchBend,.vibrato,.sustain]
+        }
+    }
+}
 public struct TouchBarProfile: Codable, Equatable, Sendable {
     public var zones: [TouchBarZone]
     public var sustainMode: TouchBarSustainMode
@@ -46,15 +66,21 @@ public struct TouchBarProfile: Codable, Equatable, Sendable {
     public var channel: Int
     public var baseNote: Int
     public var noteVelocity: Int
+    /// Optional for backward compatibility with saved eight-key profiles.
+    public var visibleKeyCount: Int?
+    public var effectiveKeyCount:Int {min(13,max(2,visibleKeyCount ?? 8))}
     public var tiltTarget: TiltMIDITarget
     public var tiltMinDegrees: Double
     public var tiltMaxDegrees: Double
+    /// Optional so existing profiles decode unchanged.
+    public var synthBank: TouchBarSynthBank?
+    public var effectiveSynthBank: TouchBarSynthBank {synthBank ?? .init()}
     public var musicalOutput: MusicalOutput?
     public var effectiveOutput: MusicalOutput { musicalOutput ?? .midi }
 
     public init(
         zones: [TouchBarZone] = [.keys, .pitchBend, .vibrato, .sustain],
-        sustainMode: TouchBarSustainMode = .hold,
+        sustainMode: TouchBarSustainMode = .slideLock,
         channel: Int = 0,
         baseNote: Int = 60,
         noteVelocity: Int = 100,
@@ -76,13 +102,29 @@ public struct TouchBarProfile: Codable, Equatable, Sendable {
         var copy = self
         var unique = Set<TouchBarZone>()
         copy.zones = zones.filter { unique.insert($0).inserted }
-        if copy.zones.isEmpty { copy.zones = [.keys] }
+        if copy.zones.isEmpty && copy.effectiveSynthBank.controls.isEmpty { copy.zones = [.keys] }
         copy.channel = max(0, min(15, channel))
         copy.baseNote = max(0, min(115, baseNote))
         copy.noteVelocity = max(1, min(127, noteVelocity))
+        if visibleKeyCount != nil {copy.visibleKeyCount=effectiveKeyCount}
         copy.tiltMinDegrees = tiltMinDegrees.isFinite ? min(170,max(5,tiltMinDegrees)) : 90
         copy.tiltMaxDegrees = min(175,max(copy.tiltMinDegrees+5,tiltMaxDegrees.isFinite ? tiltMaxDegrees : 120))
         return copy
+    }
+
+    /// Shared note identity for native tap segments and on-screen hold pads.
+    public struct PianoKey: Equatable, Sendable, Identifiable {
+        public let note:Int
+        public let label:String
+        public var id:Int { note }
+    }
+    public var pianoKeys:[PianoKey] {
+        let base=normalized().baseNote
+        return (0..<effectiveKeyCount).compactMap { index in
+            let note=base+index
+            guard let label=try? MusicTheory.noteName(midi:note) else{return nil}
+            return PianoKey(note:note,label:label.replacingOccurrences(of:"#",with:"♯"))
+        }
     }
 
     /// Neutral values follow the same convention as the MIDI release ledger.

@@ -124,3 +124,98 @@ private func surfaceGamepad(pressed:Bool = false) throws -> GamepadFrame {
     _ = session.receiveSurface(.trackpad,token:token,x:0.5,y:0.5,size:0.5,hostTime:1.04,now:1.04,send:sink)
     #expect(sent.count == 1 && sent.first?.command.value == 100)
 }
+
+
+@Test func groupPhysicalChordExpiryStopsSecondNoteAndRetainsIndependentEndpoint() throws {
+    let chord = PerformanceInstrumentGroup(name:"Chord",patch:.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:.init(.note,number:60)),
+        .init(id:"b",source:.trackpad,signal:.contact,destination:.init(.note,number:64))
+    ]))
+    let other = PerformanceInstrumentGroup(name:"Other",patch:.init(routes:[
+        .init(id:"n",source:.gamepad1,signal:.padA,destination:.init(.note,number:67))
+    ]))
+    var state = try PerformanceGroupGamepadSession(profile:.init(groups:[chord,other]),allowSurfaces:true)
+    let touch = try state.bind(.trackpad,now:1)
+    let pad = try state.bind(.gamepad1,now:1)
+    _ = state.receiveSurface(.trackpad,token:touch,x:nil,y:nil,size:nil,hostTime:1,now:1,send:{_ in true})
+    _ = state.receive(.gamepad1,token:pad,frame:try surfaceGamepad(),now:1,send:{_ in true})
+    _ = state.receive(.gamepad1,token:pad,frame:try surfaceGamepad(pressed:true),now:1.3,send:{_ in true})
+    var now = 1.31
+    var sent:[PerformanceGroupCommand] = []
+    let result = state.receiveSurface(.trackpad,token:touch,x:0.5,y:0.5,size:0.5,hostTime:1.01,now:now,
+                                      refreshNow:{now},send:{
+        sent.append($0)
+        if $0.command.value > 0 { now = 1.37 }
+        return true
+    })
+    #expect(result.status == .lost && result.reports.contains(where:{ $0.admissionExpired }))
+    #expect(sent.count == 2 && sent.allSatisfy { $0.groupID == chord.id })
+    #expect(sent.first?.command.destination == sent.last?.command.destination)
+    #expect(sent.last?.command.value == 0 && state.sourceStates[.gamepad1] == .leased)
+    #expect(state.sourceStates[.trackpad] == .waitingForNeutral)
+}
+
+@Test func groupPolledGamepadSnapshotCannotRenewAfterEarlierCleanup() throws {
+    let group = PerformanceInstrumentGroup(name:"Pad",patch:.init(routes:[
+        .init(id:"a",source:.gamepad1,signal:.padA,destination:.init(.note,number:60))
+    ]))
+    var state = try PerformanceGroupGamepadSession(profile:.init(groups:[group]))
+    let pad = try state.bind(.gamepad1,now:1)
+    let neutral = try surfaceGamepad()
+    let held = try surfaceGamepad(pressed:true)
+    _ = state.receive(.gamepad1,token:pad,frame:neutral,now:1,send:{_ in true})
+    var sent:[PerformanceGroupCommand] = []
+    let late = state.receive(.gamepad1,token:pad,frame:held,now:1.36,hostTime:1.01,send:{sent.append($0);return true})
+    #expect(late.status == .lost && sent.isEmpty)
+    let staleNeutral = state.receive(.gamepad1,token:pad,frame:neutral,now:1.37,hostTime:1.01,send:{sent.append($0);return true})
+    #expect(staleNeutral.status == .lost && state.sourceStates[.gamepad1] == .waitingForNeutral)
+}
+
+@Test func groupSurfaceLiftThatStallsCannotRearm() throws {
+    var state = try PerformanceGroupGamepadSession(profile:surfaceProfile(),allowSurfaces:true)
+    let token = try state.bind(.trackpad,now:1)
+    _ = state.receiveSurface(.trackpad,token:token,x:nil,y:nil,size:nil,hostTime:1,now:1,send:{_ in true})
+    _ = state.receiveSurface(.trackpad,token:token,x:0.5,y:0.5,size:0.5,hostTime:1.01,now:1.01,send:{_ in true})
+    var now = 1.02
+    let lift = state.receiveSurface(.trackpad,token:token,x:nil,y:nil,size:nil,hostTime:1.02,now:now,
+                                    refreshNow:{now},send:{_ in now=1.38;return true})
+    #expect(lift.status == .lost && state.sourceStates[.trackpad] == .waitingForNeutral)
+    #expect(state.activeSessions == 0 && state.pendingCleanup.isEmpty)
+    let blocked = state.receiveSurface(.trackpad,token:token,x:0.5,y:0.5,size:0.5,hostTime:1.39,now:1.39,
+                                       send:{_ in Issue.record("Stale lift rearmed");return false})
+    #expect(blocked.status == .waitingForNeutral)
+}
+
+
+@Test func groupFrameClockRegressionRetainsHighWaterAcrossNeutralRearm() throws {
+    let chord=PerformanceInstrumentGroup(name:"Chord",patch:.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:.init(.note,number:60)),
+        .init(id:"b",source:.trackpad,signal:.contact,destination:.init(.note,number:64))
+    ]))
+    let other=PerformanceInstrumentGroup(name:"Mouse",patch:.init(routes:[
+        .init(id:"c",source:.magicMouse,signal:.contact,destination:.init(.note,number:67))
+    ]))
+    var state=try PerformanceGroupGamepadSession(profile:.init(groups:[chord,other]),allowSurfaces:true)
+    let x=try state.bind(.trackpad,now:1),y=try state.bind(.magicMouse,now:1)
+    _=state.receiveSurface(.trackpad,token:x,x:nil,y:nil,size:nil,hostTime:1,now:1,send:{_ in true})
+    _=state.receiveSurface(.magicMouse,token:y,x:nil,y:nil,size:nil,hostTime:1,now:1,send:{_ in true})
+    var sample=1.1
+    var sent:[PerformanceGroupCommand]=[]
+    var attacks=0
+    let result=state.receiveSurface(.trackpad,token:x,x:0.5,y:0.5,size:0.5,hostTime:1.1,now:1.1,
+                                     refreshNow:{sample},send:{
+        sent.append($0)
+        if $0.command.value>0 {
+            attacks += 1
+            sample = attacks==1 ? 1.2 : 1.15
+        }
+        return true
+    })
+    #expect(result.status == .lost && result.reports.contains(where:{ $0.admissionExpired }))
+    #expect(attacks==2 && sent.count==4 && state.activeSessions==0)
+    #expect(sent.filter { $0.command.value==0 }.count==2)
+    let early=state.receiveSurface(.magicMouse,token:y,x:nil,y:nil,size:nil,hostTime:1.16,now:1.16,send:{_ in true})
+    #expect(early.status == .lost && state.sourceStates[.magicMouse] == .waitingForNeutral)
+    let recovered=state.receiveSurface(.magicMouse,token:y,x:nil,y:nil,size:nil,hostTime:1.21,now:1.21,send:{_ in true})
+    #expect(recovered.status == .ready && state.sourceStates[.magicMouse] == .armed)
+}

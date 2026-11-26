@@ -52,3 +52,44 @@ public struct PerformanceGroupActivationPlan: Sendable {
         self.allowRemote = allowRemote
     }
 }
+
+
+/// Offline quick setup diagnostics. No device probing, permission request,
+/// port creation or output. Actual Start still performs runtime admission.
+public struct PerformanceGroupQuickReadiness:Sendable {
+    public enum Blocker:Equatable,Sendable {
+        case invalidProfile,emptyProfile,unsupportedMappings,portIdentityConflict
+        case layeringNeedsConsent,mobileSetupRequired,mobileDisabled
+        case controllerMissing(SensorSource),controllerDuplicate(SensorSource)
+    }
+    public let blockers:[Blocker]
+    public var readyForLocalStart:Bool { blockers.isEmpty }
+
+    public init(profile:PerformanceGroupProfile,selected:[SensorSource:UUID],
+                available:Set<UUID>,allowLayering:Bool=false,mobileEnabled:Bool=false) {
+        var issues:[Blocker]=[]
+        let routes=profile.groups.flatMap { $0.patch.routes }
+        if !profile.isValid { issues.append(.invalidProfile) }
+        else if routes.isEmpty { issues.append(.emptyProfile) }
+        else {
+            if !PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true,
+                                                         allowScalars:true,allowCamera:true,allowRemote:true) {
+                issues.append(.unsupportedMappings)
+            }
+            if (try? PerformanceGroupEndpointPlan(profile:profile)) == nil { issues.append(.portIdentityConflict) }
+            if !allowLayering && !profile.layeredInputs.isEmpty { issues.append(.layeringNeedsConsent) }
+        }
+        if routes.contains(where:{$0.source.isGroupRemote}) {
+            issues.append(mobileEnabled ? .mobileSetupRequired : .mobileDisabled)
+        }
+        let required=Set(routes.map(\.source)).intersection(GamepadFrame.sources)
+        var used=Set<UUID>()
+        for source in GamepadFrame.orderedSources where required.contains(source) {
+            guard let id=selected[source],available.contains(id) else {
+                issues.append(.controllerMissing(source));continue
+            }
+            if !used.insert(id).inserted { issues.append(.controllerDuplicate(source)) }
+        }
+        blockers=issues
+    }
+}

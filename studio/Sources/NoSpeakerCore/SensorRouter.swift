@@ -39,6 +39,7 @@ public struct SensorCalibration: Codable, Equatable, Sendable {
     public var maximum: Double
     public var inverted: Bool
     public var deadZone: Double
+    public var sensitivity: Double?
     public var exponent: Double
 
     public init(minimum: Double = 0, maximum: Double = 1, inverted: Bool = false,
@@ -54,12 +55,13 @@ public struct SensorCalibration: Codable, Equatable, Sendable {
         minimum.isFinite && maximum.isFinite && (0...1).contains(minimum) &&
         (0...1).contains(maximum) && maximum - minimum >= 0.01 &&
         deadZone.isFinite && (0...0.45).contains(deadZone) &&
-        exponent.isFinite && (0.25...4).contains(exponent)
+        (sensitivity.map { (0.25...4).contains($0) } ?? true) && exponent.isFinite && (0.25...4).contains(exponent)
     }
 
     public func apply(_ input: Double) -> Double? {
         guard isValid, input.isFinite, (0...1).contains(input) else { return nil }
         var value = min(1, max(0, (input - minimum) / (maximum - minimum)))
+        if let sensitivity { value = min(1, max(0, 0.5 + (value - 0.5) * sensitivity)) }
         if inverted { value = 1 - value }
         // Endpoint dead zone preserves the center of bipolar controls.
         value = min(1, max(0, (value - deadZone) / (1 - 2 * deadZone)))
@@ -117,6 +119,7 @@ public struct SensorMapping: Codable, Equatable, Identifiable, Sendable {
     public var velocity: Int
     public var response: ContinuousResponse?
     public var pedalMode: GamepadPedalMode?
+    public var measuredXYZHelper: Bool?
 
     public init(id: String, source: SensorSource, signal: SensorSignal,
                 destination: SensorDestination, calibration: SensorCalibration = .init(),
@@ -321,7 +324,8 @@ public struct SensorRouter: Sendable {
 
     /// One camera frame reconciles after all releases and fresh values, so a
     /// pedal transferred between hands does not generate an intermediate off.
-    mutating func ingestFrame(session id:UUID,releasing signals:Set<SensorSignal>,events:[SensorEvent],now:Double) -> [SensorCommand] {
+    mutating func ingestFrame(session id:UUID,releasing signals:Set<SensorSignal>,events:[SensorEvent],now:Double,
+                              preserveToggles:Bool = true,controlsBeforeAttack:Bool = false) -> [SensorCommand] {
         guard let session = sessions[id], now.isFinite, now >= session.lastSeen,
               events.allSatisfy({ $0.session == id && $0.timestamp == now && $0.value.isFinite && (0...1).contains($0.value) }) else { return [] }
         var prior = session.sequence
@@ -334,11 +338,20 @@ public struct SensorRouter: Sendable {
             for mapping in mappingsByInput[.init(source:session.source,signal:signal)] ?? [] {
                 let owner = Owner(session:id,mapping:mapping.id)
                 pedalPressed.remove(owner)
-                if mapping.pedalMode != .toggle { removeContribution(owner) }
+                if !preserveToggles || mapping.pedalMode != .toggle { removeContribution(owner) }
             }
         }
         for event in events { _ = accept(event,now:now) }
-        return reconcile()
+        let commands=reconcile()
+        guard controlsBeforeAttack else { return commands }
+        // Pedal engagement must precede note edges, even a lift on the
+        // same frame. Pedal release follows note edges. Other controls
+        // (including pitch) precede attacks. Preserve order within phases.
+        return commands.filter { $0.destination.kind != .note &&
+            !($0.destination.kind == .sustain && $0.value == 0) } +
+            commands.filter { $0.destination.kind == .note && $0.value == 0 } +
+            commands.filter { $0.destination.kind == .note && $0.value > 0 } +
+            commands.filter { $0.destination.kind == .sustain && $0.value == 0 }
     }
 
     /// Release an on-screen control without disconnecting its sibling axes.
@@ -349,15 +362,19 @@ public struct SensorRouter: Sendable {
     }
 
     public mutating func releaseSignals(session id: UUID, signals: Set<SensorSignal>) -> [SensorCommand] {
-        guard let session = sessions[id] else { return [] }
+        removeSignals(session:id,signals:signals)
+        return reconcile()
+    }
+
+    private mutating func removeSignals(session id:UUID,signals:Set<SensorSignal>) {
+        guard let session=sessions[id] else { return }
         for signal in signals {
             for mapping in mappingsByInput[.init(source:session.source,signal:signal)] ?? [] {
-                let owner = Owner(session:id,mapping:mapping.id)
+                let owner=Owner(session:id,mapping:mapping.id)
                 pedalPressed.remove(owner)
                 removeContribution(owner)
             }
         }
-        return reconcile()
     }
 
     /// Closing one device releases only its ownership. Other devices may
@@ -369,8 +386,17 @@ public struct SensorRouter: Sendable {
     /// A departing group is removed before reconciliation. Never restore a
     /// lower-priority owner that is itself part of the same departing group.
     public mutating func disconnect(sessions ids: Set<UUID>) -> [SensorCommand] {
-        let removed = ids.intersection(sessions.keys)
-        guard !removed.isEmpty else { return [] }
+        disconnect(sessions:ids,releasing:[:])
+    }
+
+    // Signal releases and whole-session departures are one reconciliation.
+    // In particular do not restore a surviving session's departing axis.
+    mutating func disconnect(sessions ids:Set<UUID>,releasing signals:[UUID:Set<SensorSignal>]) -> [SensorCommand] {
+        let removed=ids.intersection(sessions.keys)
+        for (id,axes) in signals where !removed.contains(id) {
+            removeSignals(session:id,signals:axes)
+        }
+        guard !removed.isEmpty else { return reconcile() }
         for id in removed { sessions.removeValue(forKey:id) }
         pedalPressed = pedalPressed.filter { !removed.contains($0.session) }
         let departing = contributions.keys.filter { removed.contains($0.session) }

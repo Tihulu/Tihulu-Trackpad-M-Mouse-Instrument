@@ -21,6 +21,7 @@ public struct PhysicalPatchRuntime: Sendable {
     private var sessions: [SensorSource: UUID] = [:]
     private var seen: [SensorSource: Double] = [:]
     private var gamepadArmed:Set<SensorSource> = []
+    private var gamepadRetiredAt:[SensorSource:Double] = [:]
     private var gamepadMappedSignals: [SensorSource:[SensorSignal]] = [:]
     private var gamepadSmoothedSources: Set<SensorSource> = []
     private var lastGamepadActive: [SensorSource:[SensorSignal:Double]] = [:]
@@ -157,6 +158,7 @@ public struct PhysicalPatchRuntime: Sendable {
         pairing.clear()
         seen = [:]
         gamepadArmed = []
+        gamepadRetiredAt = [:]
         gamepadMappedSignals = [:]
         gamepadSmoothedSources = []
         lastGamepadActive = [:]
@@ -177,7 +179,7 @@ public struct PhysicalPatchRuntime: Sendable {
     public mutating func sendHybrid(_ input:PatchSimulation.Input,value:Double,now:Double) -> [SensorCommand] {
         guard input.source == hybridSource,hybridInputs.contains(input),now.isFinite,now >= 0,
               value.isFinite,(0...1).contains(value) else { return [] }
-        if let last = hybridReceipt, now < last { return releaseHybridSource() }
+        if let last = hybridReceipt, now < last { return releaseHybridSource(now:now) }
         var commands = expireHybrid(now:now)
         if hybridSession == nil { hybridSession = try? router.connect(input.source,now:now) }
         guard let id = hybridSession else { return commands }
@@ -190,12 +192,26 @@ public struct PhysicalPatchRuntime: Sendable {
         guard hybridInputs.contains(input),let id = hybridSession else { return [] }
         return router.releaseSignal(session:id,signal:input.signal)
     }
+    public mutating func releaseHybrid(_ input:PatchSimulation.Input,now:Double) -> [SensorCommand] {
+        guard hybridInputs.contains(input),let id=hybridSession else { return [] }
+        guard now.isFinite,now>=0 else { return releaseHybridSource() }
+        return expire(now:now,removingRemote:[],releasingSignals:[id:[input.signal]])
+    }
+
     public mutating func releaseHybridSource() -> [SensorCommand] {
         if hybridSource == .camera { return releaseCamera() }
         guard let id = hybridSession else { return [] }
         hybridSession = nil; hybridReceipt = nil
         return router.disconnect(id)
     }
+    /// Explicit UI loss and known expiry share one router reconciliation.
+    public mutating func releaseHybridSource(now:Double) -> [SensorCommand] {
+        guard now.isFinite,now>=0 else { return releaseHybridSource() }
+        if hybridSource == .camera { return releaseCamera(now:now) }
+        guard hybridSession != nil else { return [] }
+        return expire(now:now,removingRemote:[],removingHybrid:true)
+    }
+
     /// Heartbeats only renew existing ownership; never recreate notes.
     public mutating func refreshHybrid(now:Double) -> [SensorCommand] {
         let commands = expireHybrid(now:now)
@@ -207,7 +223,7 @@ public struct PhysicalPatchRuntime: Sendable {
     }
     private mutating func expireHybrid(now:Double) -> [SensorCommand] {
         guard let last = hybridReceipt else { return [] }
-        guard Self.admitsPhysicalReceipt(last,now:now) else { return releaseHybridSource() }
+        guard Self.admitsPhysicalReceipt(last,now:now) else { return releaseHybridSource(now:now) }
         return []
     }
 
@@ -218,6 +234,19 @@ public struct PhysicalPatchRuntime: Sendable {
         MonotonicReceiptAdmission.permits(receipt:hostTime,now:now,maximumAge:Self.timeout)
     }
 
+    // A fresh sample cannot silently renew an already expired session
+    // before the watchdog has run. Retire all known expired owners together,
+    // and consume this sample as loss, not as a new attack. The next fresh
+    // sample follows the existing per-adapter acquisition policy.
+    private mutating func expireBeforePhysicalRenewal(_ source:SensorSource,receipt:Double,now:Double) -> [SensorCommand]? {
+        guard sessions[source] != nil,
+              let last = seen[source],!Self.admitsPhysicalReceipt(last,now:now) else { return nil }
+        let commands = expire(now:now)
+        // Retain the rejected sample as a receipt high-water mark.
+        seen[source] = max(last,receipt)
+        return commands
+    }
+
     /// hostTime is local receipt time, not the undocumented driver timestamp.
     /// An empty frame or invalid sample releases the entire physical source.
     public mutating func receive(source: SensorSource, x: Double?, y: Double?, size: Double?,
@@ -225,21 +254,20 @@ public struct PhysicalPatchRuntime: Sendable {
         guard (source == .trackpad || source == .magicMouse), supported.contains(source),
               Self.admitsPhysicalReceipt(hostTime,now:now),
               hostTime >= (seen[source] ?? 0) else { return [] }
+        if let expired = expireBeforePhysicalRenewal(source,receipt:hostTime,now:now) { return expired }
         seen[source] = hostTime
         guard let x, let y, let size, [x,y,size].allSatisfy({ $0.isFinite && (0...1).contains($0) })
-        else { return disconnect(source) }
+        else { return expire(now:now,removingRemote:[],removingPhysical:[source]) }
         if sessions[source] == nil {
             sessions[source] = try? router.connect(source, now: hostTime)
         }
         guard let session = sessions[source] else { return [] }
-        var result: [SensorCommand] = []
-        // Position/control updates precede contact-gated Note On.
-        for (signal, value): (SensorSignal, Double) in [(.x,x),(.y,y),(.contactSize,size),(.contact,1)] {
+        var events:[SensorEvent] = []
+        for (signal,value):(SensorSignal,Double) in [(.x,x),(.y,y),(.contactSize,size),(.contact,1)] {
             sequence &+= 1
-            result += router.ingest(.init(session: session, signal: signal, value: value,
-                                          sequence: sequence, timestamp: hostTime), now: hostTime)
+            events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:hostTime))
         }
-        return result
+        return router.ingestFrame(session:session,releasing:[],events:events,now:hostTime,controlsBeforeAttack:true)
     }
 
     /// Lid degrees are normalized over the documented valid sensor range.
@@ -251,23 +279,41 @@ public struct PhysicalPatchRuntime: Sendable {
 
     /// The adapter supplies a full snapshot of a previously bound controller.
     /// Neutral frame required before first play or after loss/stall.
-    public mutating func receiveGamepad(source:SensorSource,frame:GamepadFrame?,now:Double) -> [SensorCommand] {
+    public mutating func receiveGamepad(source:SensorSource,frame:GamepadFrame?,now:Double,hostTime:Double? = nil) -> [SensorCommand] {
         guard GamepadFrame.sources.contains(source),supported.contains(source) else { return [] }
-        guard let frame,now.isFinite,now >= 0 else { return releaseGamepad(source) }
-        if let last = seen[source],!Self.admitsPhysicalReceipt(last,now:now) {
-            return releaseGamepad(source)
+        let receipt=hostTime ?? now
+        // Pre-loss queued data (including old nil callbacks) cannot
+        // rearm or tear down a newer owner. Check before freshness.
+        if isRetiredGamepadReceipt(source,receipt:receipt) { return [] }
+        guard let frame,Self.admitsPhysicalReceipt(receipt,now:now) else {
+            return releaseGamepad(source,now:now)
         }
-        seen[source] = now
+        if let last = seen[source] {
+            if !Self.admitsPhysicalReceipt(last,now:now) {
+                // All already expired owners leave together. Otherwise a
+                // stale controller could briefly restore another stale CC.
+                let commands = expire(now:now)
+                gamepadArmed.remove(source)
+                gamepadRetiredAt[source]=max(gamepadRetiredAt[source] ?? now,now)
+                lastGamepadActive.removeValue(forKey:source)
+                seen[source] = max(last,receipt)
+                return commands
+            }
+            if receipt < last { return releaseGamepad(source,now:now) }
+        }
+        seen[source] = receipt
         if !gamepadArmed.contains(source) {
             if frame.active.isEmpty { gamepadArmed.insert(source) }
             return []
         }
         if sessions[source] == nil {
             guard !frame.active.isEmpty else { return [] }
-            sessions[source] = try? router.connect(source,now:now)
+            sessions[source] = try? router.connect(source,now:receipt)
         }
         guard let session = sessions[source] else { return [] }
-        router.heartbeat(session,now:now)
+        // Use the original capture receipt for smoothing and router time.
+        // Processing time remains authoritative for admission and expiry.
+        router.heartbeat(session,now:receipt)
         // Duplicate callback/poll snapshots must still renew the lease.
         // Smoothing is time-based and must continue receiving held samples.
         if !gamepadSmoothedSources.contains(source), lastGamepadActive[source] == frame.active {
@@ -283,16 +329,40 @@ public struct PhysicalPatchRuntime: Sendable {
                 continue
             }
             sequence &+= 1
-            events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:now))
+            events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:receipt))
         }
         gamepadSnapshotMetrics.record(skipped:false,events:events.count)
-        return router.ingestFrame(session:session,releasing:releasing,events:events,now:now)
+        return router.ingestFrame(session:session,releasing:releasing,events:events,now:receipt,controlsBeforeAttack:true)
     }
+    /// Host preflight uses the same retirement fence before rejecting
+    /// an expired callback. Old-generation input is ignored, not a fault
+    /// of the newly armed performance.
+    public func isRetiredGamepadReceipt(_ source:SensorSource,receipt:Double) -> Bool {
+        guard let retiredAt=gamepadRetiredAt[source],receipt.isFinite else { return false }
+        return receipt<=retiredAt
+    }
+
     public mutating func releaseGamepad(_ source:SensorSource) -> [SensorCommand] {
         guard GamepadFrame.sources.contains(source) else { return [] }
-        gamepadArmed.remove(source); seen.removeValue(forKey:source)
+        gamepadArmed.remove(source)
+        if let last=seen.removeValue(forKey:source) {
+            gamepadRetiredAt[source]=max(gamepadRetiredAt[source] ?? last,last)
+        }
         lastGamepadActive.removeValue(forKey:source)
         return disconnect(source)
+    }
+
+    private mutating func releaseGamepad(_ source:SensorSource,now:Double) -> [SensorCommand] {
+        guard now.isFinite,now>=0 else { return releaseGamepad(source) }
+        return releaseGamepads([source],now:now)
+    }
+
+    /// The native poller knows all missing slots before any wire send.
+    /// Reconcile them together instead of restoring another missing slot.
+    public mutating func releaseGamepads(_ sources:Set<SensorSource>,now:Double) -> [SensorCommand] {
+        let departing = sources.intersection(GamepadFrame.sources).intersection(supported)
+        guard !departing.isEmpty,now.isFinite,now>=0 else { return [] }
+        return expire(now:now,removingRemote:[],removingPhysical:departing)
     }
 
     /// Scalar adapters share the same router and ownership as touch surfaces.
@@ -302,8 +372,11 @@ public struct PhysicalPatchRuntime: Sendable {
         guard source == .lid || source == .touchBar, supported.contains(source),
               hostTime.isFinite, now.isFinite, hostTime >= 0, hostTime <= now,
               Self.admitsPhysicalReceipt(hostTime,now:now), hostTime >= (seen[source] ?? 0) else { return [] }
+        if let expired = expireBeforePhysicalRenewal(source,receipt:hostTime,now:now) { return expired }
         seen[source] = hostTime
-        guard let value, value.isFinite, (0...1).contains(value) else { return disconnect(source) }
+        guard let value, value.isFinite, (0...1).contains(value) else {
+            return expire(now:now,removingRemote:[],removingPhysical:[source])
+        }
         if sessions[source] == nil { sessions[source] = try? router.connect(source, now: hostTime) }
         guard let session = sessions[source] else { return [] }
         sequence &+= 1
@@ -318,31 +391,31 @@ public struct PhysicalPatchRuntime: Sendable {
         guard !airDualEnabled, !cameraHandsEnabled, supported.contains(source), hostTime.isFinite, now.isFinite,
               hostTime >= 0, hostTime <= now, Self.admitsPhysicalReceipt(hostTime,now:now),
               hostTime >= (seen[source] ?? 0) else { return [] }
+        if let expired = expireBeforePhysicalRenewal(source,receipt:hostTime,now:now) { return expired }
         seen[source] = hostTime
-        guard let hand else { return disconnect(source) }
+        guard let hand else { return expire(now:now,removingRemote:[],removingPhysical:[source]) }
         if sessions[source] == nil { sessions[source] = try? router.connect(source, now: hostTime) }
         guard let session = sessions[source] else { return [] }
-        var result: [SensorCommand] = []
-        for (signal, value): (SensorSignal, Double) in [(.x,hand.x),(.y,hand.y),(.gesture,hand.aperture),(.contact,1)] {
+        var events:[SensorEvent] = []
+        for (signal,value):(SensorSignal,Double) in [(.x,hand.x),(.y,hand.y),(.gesture,hand.aperture),(.contact,1)] {
             sequence &+= 1
-            result += router.ingest(.init(session: session, signal: signal, value: value,
-                                          sequence: sequence, timestamp: hostTime), now: hostTime)
+            events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:hostTime))
         }
-        return result
+        return router.ingestFrame(session:session,releasing:[],events:events,now:hostTime,controlsBeforeAttack:true)
     }
 
     public mutating func receiveHelperHands(left:AirHandSample?,right:AirHandSample?,
                                             hostTime:Double,now:Double,synthetic:Bool = false) -> [SensorCommand] {
         guard synthetic == (hybridSource == .camera), cameraHandsEnabled, !airDualEnabled else { return [] }
-        guard hostTime.isFinite, now.isFinite, hostTime >= 0, now >= hostTime,
-              now-hostTime < 0.25, hostTime > (seen[.camera] ?? -1) else { return releaseCamera() }
-        if let last = seen[.camera], hostTime-last >= 0.25 {
-            let release = releaseCamera()
+        guard MonotonicReceiptAdmission.permits(receipt:hostTime,now:now,maximumAge:0.25),
+              hostTime > (seen[.camera] ?? -1) else { return releaseCamera(now:now) }
+        if let last = seen[.camera], !MonotonicReceiptAdmission.permits(receipt:last,now:now,maximumAge:0.25) {
+            let release = releaseCamera(now:now)
             seen[.camera] = hostTime
             return release
         }
         seen[.camera] = hostTime
-        if left == nil && right == nil { return releaseCamera() }
+        if left == nil && right == nil { return releaseCamera(now:now) }
         if sessions[.camera] == nil { sessions[.camera] = try? router.connect(.camera,now:hostTime) }
         guard let session = sessions[.camera] else { cameraHands.reset(); return [] }
         return cameraHands.receive(left:left,right:right,time:hostTime,now:now,
@@ -356,17 +429,17 @@ public struct PhysicalPatchRuntime: Sendable {
                                               right:AirHandSample?,swapRoles:Bool,
                                               hostTime:Double,now:Double,synthetic:Bool = false) -> [SensorCommand] {
         guard synthetic == (hybridSource == .camera), airDualEnabled, cameraHandsEnabled else { return [] }
-        guard hostTime.isFinite,now.isFinite,hostTime >= 0,now >= hostTime,now-hostTime < 0.25,
-              seen[.camera].map({ hostTime > $0 }) ?? true else { return releaseCamera() }
-        if let last = seen[.camera], hostTime-last >= 0.25 {
-            let commands = releaseCamera()
+        guard MonotonicReceiptAdmission.permits(receipt:hostTime,now:now,maximumAge:0.25),
+              seen[.camera].map({ hostTime > $0 }) ?? true else { return releaseCamera(now:now) }
+        if let last = seen[.camera], !MonotonicReceiptAdmission.permits(receipt:last,now:now,maximumAge:0.25) {
+            let commands = releaseCamera(now:now)
             seen[.camera] = hostTime
             return commands
         }
         seen[.camera] = hostTime
-        guard left != nil || right != nil else { return releaseCamera() }
+        guard left != nil || right != nil else { return releaseCamera(now:now) }
         if sessions[.camera] == nil { sessions[.camera] = try? router.connect(.camera,now:hostTime) }
-        guard let session = sessions[.camera] else { return releaseCamera() }
+        guard let session = sessions[.camera] else { return releaseCamera(now:now) }
         let helper = swapRoles ? left : right
         let chord = swapRoles ? right : left
         let slot = airDual.receive(count:chord == nil ? nil : count,confidence:confidence,
@@ -394,9 +467,14 @@ public struct PhysicalPatchRuntime: Sendable {
                                          helper: AirHandSample?, hostTime: Double,
                                          now: Double,synthetic:Bool = false) -> [SensorCommand] {
         guard synthetic == (hybridSource == .camera), airDualEnabled, !cameraHandsEnabled else { return [] }
-        guard hostTime.isFinite, now.isFinite, hostTime >= 0, hostTime <= now,
-              now - hostTime < 0.25, hostTime > (seen[.camera] ?? -1)
-        else { return releaseCamera() }
+        guard MonotonicReceiptAdmission.permits(receipt:hostTime,now:now,maximumAge:0.25),
+              hostTime > (seen[.camera] ?? -1)
+        else { return releaseCamera(now:now) }
+        if let last = seen[.camera], !MonotonicReceiptAdmission.permits(receipt:last,now:now,maximumAge:0.25) {
+            let commands = releaseCamera(now:now)
+            seen[.camera] = hostTime
+            return commands
+        }
         let slot = airDual.receive(count: count, confidence: confidence, helper: helper,
                                    time: hostTime, now: now)
         // Selected hands may drive continuous controls without sounding a chord.
@@ -404,7 +482,7 @@ public struct PhysicalPatchRuntime: Sendable {
             seen[.camera] = hostTime
             airActiveSlot = nil
             airStrum?.reset()
-            return disconnect(.camera)
+            return expire(now:now,removingRemote:[],removingPhysical:[.camera])
         }
         seen[.camera] = hostTime
         if sessions[.camera] == nil { sessions[.camera] = try? router.connect(.camera, now: hostTime) }
@@ -427,7 +505,12 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     public mutating func admitRemote(secret: Data, now: Double) throws -> UUID {
-        guard remoteEnabled else { throw RemoteTouchError.unavailable }
+        try admitRemote(secret:secret,receipt:now,now:now)
+    }
+
+    mutating func admitRemote(secret:Data,receipt:Double,now:Double) throws -> UUID {
+        guard remoteEnabled,MonotonicReceiptAdmission.permits(receipt:receipt,now:now,maximumAge:0.1)
+        else { throw RemoteTouchError.unavailable }
         // A valid one-time invitation is consumed even when capacity is full.
         // A wrong secret does not consume a still-valid invitation.
         let invitation = try pairing.consumeWithConsent(secret:secret,now:now)
@@ -440,7 +523,7 @@ public struct PhysicalPatchRuntime: Sendable {
         guard cost > 0 else { throw RemoteTouchError.unavailable }
         guard reservedRemoteSessions + cost <= remoteSessionLimit else { throw RemoteTouchError.capacity }
         let id = UUID()
-        remotePeers[id] = RemoteTouchPeer(source: source, now: now, mappingDetails: invitation.mappingDetails, mappingLabels: invitation.mappingLabels)
+        remotePeers[id] = RemoteTouchPeer(source: source, now: receipt, mappingDetails: invitation.mappingDetails, mappingLabels: invitation.mappingLabels)
         return id
     }
 
@@ -472,16 +555,25 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     public mutating func receiveRemote(_ id: UUID, bytes: Data, now: Double) -> RemoteTouchResult {
+        receiveRemote(id,bytes:bytes,receipt:now,now:now)
+    }
+
+    // Check expiry at the processing instant, but never renew stream
+    // ownership or rate windows using a newer timestamp than receipt.
+    mutating func receiveRemote(_ id:UUID,bytes:Data,receipt:Double,now processingTime:Double) -> RemoteTouchResult {
         guard var peer = remotePeers[id], remoteEnabled else { return .close([]) }
+        guard MonotonicReceiptAdmission.permits(receipt:receipt,now:processingTime,maximumAge:0.1),
+              !peer.expired(now:processingTime) else { return .close(revokeRemote(id,now:processingTime)) }
+        let now = receipt
         guard let frame = try? RemoteTouchFrame.read(bytes), peer.accept(frame, now: now)
-        else { return .close(revokeRemote(id)) }
+        else { return .close(revokeRemote(id,now:processingTime)) }
         // Legacy clients may omit v8 entirely. Once metadata begins, only the
         // next mapping page is accepted until that snapshot is complete.
         if peer.mappingStarted != nil && !peer.mappingComplete && frame.kind != .mapping {
-            return .close(revokeRemote(id))
+            return .close(revokeRemote(id,now:processingTime))
         }
         if peer.labelStarted && !peer.labelComplete && frame.kind != .mappingLabels {
-            return .close(revokeRemote(id))
+            return .close(revokeRemote(id,now:processingTime))
         }
         if frame.kind != .heartbeat && frame.kind != .capabilities && frame.kind != .mapping && frame.kind != .mappingLabels {
             peer.performanceStarted = true
@@ -496,7 +588,7 @@ public struct PhysicalPatchRuntime: Sendable {
                   let index = frame.page, index == peer.mappingNext,
                   peer.mappingLast.map({ now-$0 >= 0.05-1e-9 }) ?? true,
                   let page = try? remoteMappingPage(id,page:index,sequence:frame.sequence),
-                  (try? page.encoded()) != nil else { return .close(revokeRemote(id)) }
+                  (try? page.encoded()) != nil else { return .close(revokeRemote(id,now:processingTime)) }
             if peer.mappingStarted == nil { peer.mappingStarted = now }
             peer.mappingLast = now
             peer.mappingNext += 1
@@ -509,7 +601,7 @@ public struct PhysicalPatchRuntime: Sendable {
                   let index = frame.page, index == peer.labelNext,
                   let last = peer.mappingLast, now-last >= 0.05-1e-9,
                   let page = try? remoteMappingLabelPage(id,page:index,sequence:frame.sequence),
-                  (try? page.encoded()) != nil else { return .close(revokeRemote(id)) }
+                  (try? page.encoded()) != nil else { return .close(revokeRemote(id,now:processingTime)) }
             peer.labelStarted = true
             peer.mappingLast = now
             peer.labelNext += 1
@@ -517,31 +609,30 @@ public struct PhysicalPatchRuntime: Sendable {
             remotePeers[id] = peer
             return .accepted([])
         case .release:
-            let commands = peer.routerSession.map { router.disconnect($0) } ?? []
+            let departing = peer.routerSession
             peer.routerSession = nil
             peer.lastTouch = nil
             remotePeers[id] = peer
-            return .accepted(commands)
+            return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([departing].compactMap { $0 })))
         case .touch:
-            guard touchSources.contains(peer.source) else { return .close(revokeRemote(id)) }
+            guard touchSources.contains(peer.source) else { return .close(revokeRemote(id,now:processingTime)) }
             if peer.routerSession == nil { peer.routerSession = try? router.connect(peer.source, now: now) }
             guard let session = peer.routerSession, let x = frame.x, let y = frame.y
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             peer.lastTouch = now
             remotePeers[id] = peer
-            var commands: [SensorCommand] = []
-            for (signal, value): (SensorSignal, Double) in [(.x,x),(.y,y),(.contact,1)] {
+            var events:[SensorEvent] = []
+            for (signal,value):(SensorSignal,Double) in [(.x,x),(.y,y),(.contact,1)] {
                 sequence &+= 1
-                commands += router.ingest(.init(session: session, signal: signal, value: value,
-                                                sequence: sequence, timestamp: now), now: now)
+                events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:now))
             }
-            return .accepted(commands)
+            return .accepted(router.ingestFrame(session:session,releasing:[],events:events,now:now,controlsBeforeAttack:true))
         case .orientationArm:
             guard motionSources.contains(peer.source),
                   peer.tilt == nil, let angles = frame.angles,
                   let calibration = RemoteTiltCalibration(neutral: angles),
                   peer.motionFreshness.arm(receipt: now, now: now)
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             peer.tilt = calibration
             peer.lastOrientation = now
             remotePeers[id] = peer
@@ -549,63 +640,71 @@ public struct PhysicalPatchRuntime: Sendable {
         case .orientation:
             guard let tilt = peer.tilt, let angles = frame.angles,
                   peer.motionFreshness.accept(receipt: now, now: now)
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             if peer.motionSession == nil { peer.motionSession = try? router.connect(peer.source, now: now) }
-            guard let session = peer.motionSession else { return .close(revokeRemote(id)) }
+            guard let session = peer.motionSession else { return .close(revokeRemote(id,now:processingTime)) }
             peer.lastOrientation = now
             remotePeers[id] = peer
             let values = tilt.normalize(angles)
-            var commands: [SensorCommand] = []
-            for (signal, value): (SensorSignal, Double) in [(.tiltYaw, values.yaw), (.tiltPitch, values.pitch), (.tiltRoll, values.roll)] {
+            // All three axes describe the same instant, not three separate
+            // musical states. Reconcile only their final ownership.
+            var events:[SensorEvent] = []
+            for (signal,value):(SensorSignal,Double) in [(.tiltYaw,values.yaw),(.tiltPitch,values.pitch),(.tiltRoll,values.roll)] {
                 sequence &+= 1
-                commands += router.ingest(.init(session: session, signal: signal, value: value,
-                                                sequence: sequence, timestamp: now), now: now)
+                events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:now))
             }
-            return .accepted(commands)
+            return .accepted(router.ingestFrame(session:session,releasing:[],events:events,now:now))
         case .motionRelease:
-            guard peer.tilt != nil else { return .close(revokeRemote(id)) }
-            let commands = peer.motionSession.map { router.disconnect($0) } ?? []
+            guard peer.tilt != nil else { return .close(revokeRemote(id,now:processingTime)) }
+            let departing = peer.motionSession
             peer.motionSession = nil
             peer.tilt = nil
             peer.lastOrientation = nil
             peer.motionFreshness.disarm()
             remotePeers[id] = peer
-            return .accepted(commands)
+            return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([departing].compactMap { $0 })))
+        case .xyzHybrid:
+            return .close(revokeRemote(id,now:processingTime))
         case .pedalboard:
             guard let mask = frame.mask, let levels = frame.levels,
                   let allowed = pedalMasks[peer.source], mask & ~allowed == 0
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             if mask == 0 {
-                let commands = peer.pedalSession.map { router.disconnect($0) } ?? []
+                let departing = peer.pedalSession
                 peer.pedalSession = nil; peer.pedalMask = 0; peer.lastPedalReceipt = nil
                 remotePeers[id] = peer
-                return .accepted(commands)
+                return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([departing].compactMap { $0 })))
             }
             if peer.pedalSession == nil { peer.pedalSession = try? router.connect(peer.source, now: now) }
-            guard let session = peer.pedalSession else { return .close(revokeRemote(id)) }
-            var commands: [SensorCommand] = []
-            for (index, signal) in RemotePedalboard.signals.enumerated() where mask & (1 << index) != 0 {
-                sequence &+= 1
-                commands += router.ingest(.init(session: session, signal: signal, value: levels[index],
-                                                sequence: sequence, timestamp: now), now: now)
+            guard let session = peer.pedalSession else { return .close(revokeRemote(id,now:processingTime)) }
+            // A pedalboard snapshot is one logical state. Updating a
+            // departing winner after a new owner must not emit transient
+            // intermediate CC or a false shared-switch edge.
+            var events:[SensorEvent] = []
+            var releasing:Set<SensorSignal> = []
+            for (index,signal) in RemotePedalboard.signals.enumerated() {
+                if mask & (1 << index) != 0 {
+                    sequence &+= 1
+                    events.append(.init(session:session,signal:signal,value:levels[index],sequence:sequence,timestamp:now))
+                } else if peer.pedalMask & (1 << index) != 0 {
+                    releasing.insert(signal)
+                }
             }
-            for (index, signal) in RemotePedalboard.signals.enumerated() where mask & (1 << index) == 0 && peer.pedalMask & (1 << index) != 0 {
-                commands += router.releaseSignal(session: session, signal: signal)
-            }
+            let commands=router.ingestFrame(session:session,releasing:releasing,events:events,now:now,preserveToggles:false)
             peer.pedalMask = mask; peer.lastPedalReceipt = now
             remotePeers[id] = peer
             return .accepted(commands)
         case .pianoKeys:
             guard let mask = frame.mask, let allowed = pianoMasks[peer.source], mask & ~allowed == 0
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             if mask == 0 {
-                let commands = peer.pianoSession.map { router.disconnect($0) } ?? []
+                let departing = peer.pianoSession
                 peer.pianoSession = nil; peer.pianoMask = 0; peer.lastPianoReceipt = nil
                 remotePeers[id] = peer
-                return .accepted(commands)
+                return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([departing].compactMap { $0 })))
             }
             if peer.pianoSession == nil { peer.pianoSession = try? router.connect(peer.source, now: now) }
-            guard let session = peer.pianoSession else { return .close(revokeRemote(id)) }
+            guard let session = peer.pianoSession else { return .close(revokeRemote(id,now:processingTime)) }
             var commands: [SensorCommand] = []
             // Engage sustain before new notes; release it after old notes.
             // Add owners before removing old ones, preserving shared notes.
@@ -623,15 +722,15 @@ public struct PhysicalPatchRuntime: Sendable {
             return .accepted(commands)
         case .drumPads:
             guard let mask = frame.mask, let allowed = drumMasks[peer.source], mask & ~allowed == 0
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             if mask == 0 {
-                let commands = peer.drumSession.map { router.disconnect($0) } ?? []
+                let departing = peer.drumSession
                 peer.drumSession = nil; peer.drumMask = 0; peer.lastDrumReceipt = nil
                 remotePeers[id] = peer
-                return .accepted(commands)
+                return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([departing].compactMap { $0 })))
             }
             if peer.drumSession == nil { peer.drumSession = try? router.connect(peer.source, now: now) }
-            guard let session = peer.drumSession else { return .close(revokeRemote(id)) }
+            guard let session = peer.drumSession else { return .close(revokeRemote(id,now:processingTime)) }
             var commands: [SensorCommand] = []
             // Add new owners before removing old ones. A shared destination
             // stays held when transferred between pads in one snapshot.
@@ -649,7 +748,7 @@ public struct PhysicalPatchRuntime: Sendable {
         case .accelerationArm, .rotationArm:
             let signal: SensorSignal = frame.kind == .accelerationArm ? .accelerationMagnitude : .rotationMagnitude
             guard inertialSignals[peer.source]?.contains(signal) == true, peer.inertial[signal] == nil
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             var stream = RemoteInertialStream(lastReceipt: now, session: nil)
             if signal == .accelerationMagnitude, let settings = strikeSettings[peer.source] {
                 stream.strikeDetector = AirStrikeDetector(settings: settings)
@@ -660,9 +759,9 @@ public struct PhysicalPatchRuntime: Sendable {
         case .acceleration, .rotation:
             let signal: SensorSignal = frame.kind == .acceleration ? .accelerationMagnitude : .rotationMagnitude
             guard var stream = peer.inertial[signal], now > stream.lastReceipt, let value = frame.inertialValue
-            else { return .close(revokeRemote(id)) }
+            else { return .close(revokeRemote(id,now:processingTime)) }
             if stream.session == nil { stream.session = try? router.connect(peer.source, now: now) }
-            guard let session = stream.session else { return .close(revokeRemote(id)) }
+            guard let session = stream.session else { return .close(revokeRemote(id,now:processingTime)) }
             stream.lastReceipt = now
             var commands: [SensorCommand] = []
             if let deadline = stream.strikeReleaseAt, now >= deadline {
@@ -685,15 +784,19 @@ public struct PhysicalPatchRuntime: Sendable {
             return .accepted(commands)
         case .accelerationRelease, .rotationRelease:
             let signal: SensorSignal = frame.kind == .accelerationRelease ? .accelerationMagnitude : .rotationMagnitude
-            guard let stream = peer.inertial.removeValue(forKey: signal) else { return .close(revokeRemote(id)) }
-            let commands = stream.session.map { router.disconnect($0) } ?? []
+            guard let stream = peer.inertial.removeValue(forKey: signal) else { return .close(revokeRemote(id,now:processingTime)) }
             remotePeers[id] = peer
-            return .accepted(commands)
+            return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([stream.session].compactMap { $0 })))
         }
     }
 
     public mutating func revokeRemote(_ id: UUID) -> [SensorCommand] {
         router.disconnect(sessions:removeRemoteSessions(id))
+    }
+
+    private mutating func revokeRemote(_ id:UUID,now:Double) -> [SensorCommand] {
+        guard now.isFinite,now>=0 else { return revokeRemote(id) }
+        return expire(now:now,removingRemote:[id])
     }
 
     private mutating func removeRemoteSessions(_ id: UUID) -> Set<UUID> {
@@ -715,40 +818,65 @@ public struct PhysicalPatchRuntime: Sendable {
         return router.disconnect(sessions:removed)
     }
 
+    /// The native bridge has a trusted processing timestamp. Combine
+    /// listener retirement with known expiry, retaining fresh local input.
+    public mutating func disableRemote(now:Double) -> [SensorCommand] {
+        guard now.isFinite,now>=0 else { return disableRemote() }
+        remoteEnabled=false
+        pairing.clear()
+        mappingProjections=[:]
+        return expire(now:now,removingRemote:Set(remotePeers.keys))
+    }
+
     public mutating func expire(now: Double) -> [SensorCommand] {
+        expire(now:now,removingRemote:[])
+    }
+
+    // Known transport departures and already expired owners must be
+    // disconnected in one router transaction, never restored in between.
+    mutating func expire(now:Double,removingRemote departures:Set<UUID>,
+                         removingPhysical physical:Set<SensorSource> = [],
+                         removingHybrid:Bool = false,
+                         releasingSignals:[UUID:Set<SensorSignal>] = [:],
+                         removingSessions:Set<UUID> = []) -> [SensorCommand] {
         guard now.isFinite else { return [] }
         let dualExpired = (airDualEnabled || cameraHandsEnabled) && (seen[.camera].map { now - $0 >= 0.25 } ?? false)
         if dualExpired { airDual.reset(); airActiveSlot = nil; airStrum?.reset(); cameraHands.reset() }
         // Remove all expired owners atomically, including camera and remote.
-        let stale = sessions.keys.filter {
+        let stale = Set(sessions.keys.filter {
             ($0 == .camera && dualExpired) || !Self.admitsPhysicalReceipt(seen[$0] ?? 0,now:now)
-        }.sorted { $0.rawValue < $1.rawValue }
-        var removed: Set<UUID> = []
+        }).union(physical).union(gamepadArmed.filter {
+            !Self.admitsPhysicalReceipt(seen[$0] ?? 0,now:now)
+        }).sorted { $0.rawValue < $1.rawValue }
+        var removed = removingSessions
         for source in stale {
             if GamepadFrame.sources.contains(source) {
                 gamepadArmed.remove(source); seen.removeValue(forKey:source)
+                gamepadRetiredAt[source]=max(gamepadRetiredAt[source] ?? now,now)
                 lastGamepadActive.removeValue(forKey:source)
             }
             if let id = sessions.removeValue(forKey:source) { removed.insert(id) }
         }
-        let expiredPeers = remotePeers.filter { $0.value.expired(now:now) }.map(\.key)
-        for id in expiredPeers { removed.formUnion(removeRemoteSessions(id)) }
-        if let id = hybridSession,let last = hybridReceipt, !Self.admitsPhysicalReceipt(last,now:now) {
+        let expiredPeers = Set(remotePeers.filter { $0.value.expired(now:now) }.map(\.key))
+        for id in expiredPeers.union(departures) { removed.formUnion(removeRemoteSessions(id)) }
+        if let id = hybridSession,removingHybrid || hybridReceipt.map({ !Self.admitsPhysicalReceipt($0,now:now) }) != false {
             removed.insert(id); hybridSession = nil; hybridReceipt = nil
         }
-        var commands = router.disconnect(sessions:removed)
-        if let camera = sessions[.camera], airStrum != nil {
-            commands += airStrum!.expire(now:now,session:camera,router:&router)
+        // A watchdog tick retires due pulses and departing sessions together.
+        // No transient state between string/strike cleanup and device expiry.
+        var releasing=releasingSignals
+        if let camera=sessions[.camera],airStrum != nil {
+            releasing[camera,default:[]].formUnion(airStrum!.takeExpiredSignals(now:now))
         }
         for id in remotePeers.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
             guard var peer = remotePeers[id], var stream = peer.inertial[.accelerationMagnitude],
                   let deadline = stream.strikeReleaseAt, now >= deadline, let session = stream.session else { continue }
-            commands += router.releaseSignal(session: session, signal: .airStrike)
+            releasing[session,default:[]].insert(.airStrike)
             stream.strikeReleaseAt = nil
             peer.inertial[.accelerationMagnitude] = stream
             remotePeers[id] = peer
         }
-        return commands
+        return router.disconnect(sessions:removed,releasing:releasing)
     }
 
     /// Camera failure must not revoke unrelated physical or remote owners.
@@ -758,6 +886,15 @@ public struct PhysicalPatchRuntime: Sendable {
         airDual.reset()
         airActiveSlot = nil
         return disconnect(.camera)
+    }
+
+    public mutating func releaseCamera(now:Double) -> [SensorCommand] {
+        guard now.isFinite,now>=0 else { return releaseCamera() }
+        cameraHands.reset()
+        airStrum?.reset()
+        airDual.reset()
+        airActiveSlot = nil
+        return expire(now:now,removingRemote:[],removingPhysical:[.camera])
     }
 
     private mutating func disconnect(_ source: SensorSource) -> [SensorCommand] {
@@ -772,6 +909,7 @@ public struct PhysicalPatchRuntime: Sendable {
         hybridSource = nil; hybridInputs = []; hybridSession = nil; hybridReceipt = nil
         seen = [:]
         gamepadArmed = []
+        gamepadRetiredAt = [:]
         gamepadMappedSignals = [:]
         gamepadSmoothedSources = []
         lastGamepadActive = [:]

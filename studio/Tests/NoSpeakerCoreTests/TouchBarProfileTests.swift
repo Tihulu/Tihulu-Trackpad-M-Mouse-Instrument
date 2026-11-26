@@ -73,3 +73,68 @@ extension TouchBarProfileTests {
         XCTAssertEqual(profile.normalizedTilt(105),0.5)
     }
 }
+
+extension TouchBarProfileTests {
+    func testPianoKeysMatchNormalizedBaseAcrossAllSupportedNotes() throws {
+        for base in 0...115 {
+            let profile=TouchBarProfile(baseNote:base)
+            XCTAssertEqual(profile.pianoKeys.count,8)
+            for (index,key) in profile.pianoKeys.enumerated() {
+                XCTAssertEqual(key.note,base+index)
+                XCTAssertEqual(try MusicTheory.midiNumber(note:key.label),key.note)
+            }
+        }
+        XCTAssertEqual(TouchBarProfile(baseNote:62).pianoKeys.first?.label,"D4")
+        XCTAssertEqual(TouchBarProfile(baseNote:-10).pianoKeys.first?.note,0)
+        XCTAssertEqual(TouchBarProfile(baseNote:999).pianoKeys.last?.note,122)
+    }
+    func testVelocityRoundTripAndBounds() throws {
+        let profile=TouchBarProfile(noteVelocity:77)
+        XCTAssertEqual(try JSONDecoder().decode(TouchBarProfile.self,from:JSONEncoder().encode(profile)).noteVelocity,77)
+        XCTAssertEqual(TouchBarProfile(noteVelocity:0).normalized().noteVelocity,1)
+        XCTAssertEqual(TouchBarProfile(noteVelocity:128).normalized().noteVelocity,127)
+    }
+}
+
+extension TouchBarProfileTests {
+    func testVisibleKeysRoundTripAndOldProfilesKeepEight() throws {
+        let old=TouchBarProfile(baseNote:115)
+        let encoded=try JSONEncoder().encode(old)
+        XCTAssertEqual(try JSONDecoder().decode(TouchBarProfile.self,from:encoded).effectiveKeyCount,8)
+        var profile=old
+        profile.visibleKeyCount=13
+        XCTAssertEqual(profile.pianoKeys.count,13)
+        XCTAssertEqual(profile.pianoKeys.last?.note,127)
+        XCTAssertEqual(try JSONDecoder().decode(TouchBarProfile.self,from:JSONEncoder().encode(profile)).effectiveKeyCount,13)
+        profile.visibleKeyCount=Int.max
+        XCTAssertEqual(profile.normalized().visibleKeyCount,13)
+        profile.visibleKeyCount=Int.min
+        XCTAssertEqual(profile.normalized().visibleKeyCount,2)
+    }
+    func testLayoutPresetsChangeZonesOnly() {
+        var profile=TouchBarProfile(sustainMode:.hold,channel:9,baseNote:45,noteVelocity:77)
+        profile.visibleKeyCount=5
+        let original=profile
+        for preset in TouchBarLayoutPreset.allCases {
+            profile.zones=preset.zones
+            XCTAssertEqual(profile.normalized().zones,preset.zones)
+            var restored=profile
+            restored.zones=original.zones
+            XCTAssertEqual(restored,original)
+        }
+    }
+}
+
+extension TouchBarProfileTests {
+    func testSynthOnlyProfileAndEmptyFallback() throws {
+        var profile=TouchBarProfile(zones:[])
+        let bank=try XCTUnwrap(TouchBarSynthBank(controls:[.init(name:"Attack",cc:73)]))
+        profile.synthBank=bank
+        XCTAssertTrue(profile.normalized().zones.isEmpty)
+        let restored=try JSONDecoder().decode(TouchBarProfile.self,from:JSONEncoder().encode(profile))
+        XCTAssertTrue(restored.normalized().zones.isEmpty)
+        XCTAssertEqual(restored.effectiveSynthBank,bank)
+        profile.synthBank = .init()
+        XCTAssertEqual(profile.normalized().zones,[.keys])
+    }
+}

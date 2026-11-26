@@ -19,8 +19,17 @@ public enum RemoteHostAction: Equatable, Sendable {
 
 public struct RemoteHostBatch: Sendable {
     public var commands: [SensorCommand] = []
+    /// Oldest wire receipt contributing accepted performance commands.
+    /// The flattened Builder batch must not outlive that receipt. Cleanup
+    /// without accepted frame output has no new performance receipt.
+    public private(set) var deliveryReceipt:Double?
     public var actions: [RemoteHostAction] = []
     public var fault = false
+    mutating func appendFrameCommands(_ commands:[SensorCommand],receipt:Double) {
+        guard !commands.isEmpty else { return }
+        deliveryReceipt=min(deliveryReceipt ?? receipt,receipt)
+        self.commands += commands
+    }
 }
 
 /// Main-actor/serial caller owns this value and the existing physical runtime.
@@ -28,6 +37,8 @@ public struct RemoteHostBatch: Sendable {
 /// listener lifetime; a retired bridge cannot accept more events.
 public struct RemoteHostBridge: Sendable {
     private var bindings: [UUID: UUID] = [:]
+    private var invitationIssuedAt:Double?
+    private var observedHostClock=0.0
     public private(set) var ready = false
     public private(set) var stopped = false
     public var connectionIDs: Set<UUID> { Set(bindings.keys) }
@@ -36,7 +47,10 @@ public struct RemoteHostBridge: Sendable {
     public mutating func issue(secret: Data, source: SensorSource, now: Double,
                                runtime: inout PhysicalPatchRuntime, mappingDetails: Bool = false, mappingLabels: Bool = false) throws {
         guard ready, !stopped else { throw RemoteTouchError.unavailable }
+        guard now.isFinite,now>=observedHostClock else { throw RemoteTouchError.invalidPairing }
         try runtime.issueRemotePairing(secret: secret, source: source, now: now, mappingDetails: mappingDetails, mappingLabels: mappingLabels)
+        invitationIssuedAt = now
+        observedHostClock = now
     }
 
     public mutating func revoke(_ connection: UUID, runtime: inout PhysicalPatchRuntime) -> RemoteHostBatch {
@@ -48,66 +62,112 @@ public struct RemoteHostBridge: Sendable {
         return result
     }
 
+    /// Native host uses a current clock so explicit revocation cannot
+    /// restore a second owner whose deadline has already passed.
+    public mutating func revoke(_ connection:UUID,now:Double,
+                                runtime:inout PhysicalPatchRuntime) -> RemoteHostBatch {
+        guard !stopped else { return .init() }
+        guard now.isFinite,now>=observedHostClock else {
+            return retireClockFault(runtime:&runtime)
+        }
+        observedHostClock=now
+        guard let peer=bindings.removeValue(forKey:connection) else {
+            var result=RemoteHostBatch()
+            result.actions=[.revoke(connection)]
+            return result
+        }
+        var result=RemoteHostBatch()
+        result.commands=runtime.expire(now:now,removingRemote:[peer])
+        result.actions=[.revoke(connection)]
+        let expired=bindings.filter { !runtime.remotePeerIDs.contains($0.value) }.map(\.key)
+        for id in expired.sorted(by:{ $0.uuidString < $1.uuidString }) {
+            bindings.removeValue(forKey:id)
+            result.actions.append(.revoke(id))
+        }
+        return result
+    }
+
     public mutating func stop(runtime: inout PhysicalPatchRuntime) -> RemoteHostBatch {
         stopped = true
         ready = false
         bindings.removeAll()
+        invitationIssuedAt = nil
         var result = RemoteHostBatch()
         result.commands = runtime.disableRemote()
         result.actions = [.stop]
         return result
     }
 
+    public mutating func stop(now:Double,runtime:inout PhysicalPatchRuntime) -> RemoteHostBatch {
+        guard now.isFinite,now>=observedHostClock else {
+            return retireClockFault(runtime:&runtime)
+        }
+        observedHostClock=now
+        stopped=true
+        ready=false
+        bindings.removeAll()
+        invitationIssuedAt=nil
+        var result=RemoteHostBatch()
+        result.commands=runtime.disableRemote(now:now)
+        result.actions=[.stop]
+        return result
+    }
+
     public mutating func process(_ events: [RemoteHostEvent], now: Double,
                                  runtime: inout PhysicalPatchRuntime) -> RemoteHostBatch {
         guard !stopped else { return RemoteHostBatch() }
-        guard now.isFinite, now >= 0, events.count <= 32,
+        guard now.isFinite,now>=observedHostClock else {
+            return retireClockFault(runtime:&runtime)
+        }
+        observedHostClock=now
+        guard events.count <= 32,
               !events.contains(where: { if case .fault = $0 { return true }; return false })
         else {
-            var result = stop(runtime: &runtime)
+            var result = stop(now:now,runtime:&runtime)
             result.fault = true
             return result
         }
         var result = RemoteHostBatch()
-        // Expire before processing delayed events. Never resurrect a timed-out peer.
-        result.commands += runtime.expire(now: now)
-        let expired = bindings.filter { !runtime.remotePeerIDs.contains($0.value) }.map(\.key)
-        for id in expired {
-            bindings.removeValue(forKey: id)
-            result.actions.append(.revoke(id))
-        }
-        // A disconnected connection cannot emit a queued note from this batch.
+        // Remove known transport departures and expired owners together.
         let disconnected = Set(events.compactMap { event -> UUID? in
             if case .disconnected(let id) = event { return id }; return nil
         })
-        for id in disconnected.sorted(by: { $0.uuidString < $1.uuidString }) {
-            if let peer = bindings.removeValue(forKey: id) { result.commands += runtime.revokeRemote(peer) }
+        let departures = Set(disconnected.compactMap { bindings.removeValue(forKey:$0) })
+        result.commands += runtime.expire(now:now,removingRemote:departures)
+        let expired = Set(bindings.filter { !runtime.remotePeerIDs.contains($0.value) }.map(\.key))
+        var rejected = disconnected.union(expired)
+        for id in expired.sorted(by:{ $0.uuidString < $1.uuidString }) {
+            bindings.removeValue(forKey: id)
+            result.actions.append(.revoke(id))
         }
         for event in events {
             switch event {
             case .ready: ready = true
             case .fault, .disconnected: break
             case .invitation(let connection, let secret, let time):
-                guard ready, !disconnected.contains(connection), bindings[connection] == nil,
-                      !expired.contains(connection), fresh(time, now: now),
-                      let peer = try? runtime.admitRemote(secret: secret, now: now)
+                guard ready, !rejected.contains(connection), bindings[connection] == nil,
+                      fresh(time, now: now),let issued = invitationIssuedAt,time >= issued,
+                      let peer = try? runtime.admitRemote(secret: secret, receipt:time,now:now)
                 else {
                     if let peer = bindings.removeValue(forKey: connection) { result.commands += runtime.revokeRemote(peer) }
+                    rejected.insert(connection)
                     result.actions.append(.acknowledge(connection, false))
                     continue
                 }
+                invitationIssuedAt = nil
                 bindings[connection] = peer
                 result.actions.append(.acknowledge(connection, true))
             case .frame(let connection, let bytes, let time):
-                guard !disconnected.contains(connection), let peer = bindings[connection],
+                guard !rejected.contains(connection), let peer = bindings[connection],
                       fresh(time, now: now) else {
                     if let peer = bindings.removeValue(forKey: connection) { result.commands += runtime.revokeRemote(peer) }
+                    rejected.insert(connection)
                     result.actions.append(.acknowledge(connection, false))
                     continue
                 }
-                switch runtime.receiveRemote(peer, bytes: bytes, now: now) {
+                switch runtime.receiveRemote(peer, bytes: bytes, receipt:time,now:now) {
                 case .accepted(let commands):
-                    result.commands += commands
+                    result.appendFrameCommands(commands,receipt:time)
                     let frame = try? RemoteTouchFrame.read(bytes)
                     if frame?.kind == .capabilities {
                         if let capabilities = runtime.remoteCapabilities(peer) {
@@ -115,6 +175,7 @@ public struct RemoteHostBridge: Sendable {
                         } else {
                             result.commands += runtime.revokeRemote(peer)
                             bindings.removeValue(forKey: connection)
+                            rejected.insert(connection)
                             result.actions.append(.acknowledge(connection, false))
                         }
                     } else if let frame, frame.kind == .mapping {
@@ -124,6 +185,7 @@ public struct RemoteHostBridge: Sendable {
                         } else {
                             result.commands += runtime.revokeRemote(peer)
                             bindings.removeValue(forKey: connection)
+                            rejected.insert(connection)
                             result.actions.append(.acknowledge(connection,false))
                         }
                     } else if let frame, frame.kind == .mappingLabels {
@@ -133,6 +195,7 @@ public struct RemoteHostBridge: Sendable {
                         } else {
                             result.commands += runtime.revokeRemote(peer)
                             bindings.removeValue(forKey: connection)
+                            rejected.insert(connection)
                             result.actions.append(.acknowledge(connection,false))
                         }
                     } else {
@@ -141,11 +204,41 @@ public struct RemoteHostBridge: Sendable {
                 case .close(let commands):
                     result.commands += commands
                     bindings.removeValue(forKey: connection)
+                    rejected.insert(connection)
                     result.actions.append(.acknowledge(connection, false))
                 }
             }
         }
+        // Success acknowledgements and metadata are deferred until the
+        // batch returns. A later rejection invalidates all earlier success.
+        result.actions=actionsAfterDelivery(result.actions)
         return result
+    }
+
+    /// Broken trusted host time invalidates all physical and remote
+    /// leases. Remove them in one panic, with no stale owner restoration.
+    private mutating func retireClockFault(runtime:inout PhysicalPatchRuntime) -> RemoteHostBatch {
+        stopped=true
+        ready=false
+        bindings.removeAll()
+        invitationIssuedAt=nil
+        var result=RemoteHostBatch()
+        result.commands=runtime.stop()
+        result.actions=[.stop]
+        result.fault=true
+        return result
+    }
+
+    /// Deferred acknowledgements/metadata must still refer to a live peer
+    /// after synchronous host MIDI delivery and final expiry reconciliation.
+    public func actionsAfterDelivery(_ actions:[RemoteHostAction]) -> [RemoteHostAction] {
+        actions.filter { action in
+            switch action {
+            case .acknowledge(let id,true),.capabilities(let id,_),.mapping(let id,_),.mappingLabels(let id,_):
+                return bindings[id] != nil
+            default: return true
+            }
+        }
     }
 
     private func fresh(_ receipt: Double, now: Double) -> Bool {

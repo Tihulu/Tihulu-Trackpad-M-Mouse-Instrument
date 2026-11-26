@@ -18,6 +18,8 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     private let prefix = "com.tihulu.instrument.touchbar."
 
     private var builderToken: UUID?
+    private var synthPrefix:String {prefix+"synth."}
+    private func synthID(_ id:UUID)->NSTouchBarItem.Identifier {.init(synthPrefix+id.uuidString)}
     private var builderID: NSTouchBarItem.Identifier { .init(prefix + "builderRibbon") }
 
     func install(profile: TouchBarProfile, builderToken: UUID? = nil, force: Bool = false) {
@@ -46,6 +48,9 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         bar.customizationIdentifier = NSTouchBar.CustomizationIdentifier(prefix + "layout")
         bar.defaultItemIdentifiers = self.profile.zones.map(identifier)
         bar.customizationAllowedItemIdentifiers = TouchBarZone.allCases.map(identifier)
+        let customIDs=self.profile.effectiveSynthBank.controls.map{synthID($0.id)}
+        bar.defaultItemIdentifiers.append(contentsOf:customIDs)
+        bar.customizationAllowedItemIdentifiers.append(contentsOf:customIDs)
         if builderToken != nil {
             bar.defaultItemIdentifiers.append(builderID)
             bar.customizationAllowedItemIdentifiers.append(builderID)
@@ -92,12 +97,45 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             item.view = slider
             return item
         }
+        if identifier.rawValue.hasPrefix(synthPrefix),
+           let id=UUID(uuidString:String(identifier.rawValue.dropFirst(synthPrefix.count))),
+           let control=profile.effectiveSynthBank.controls.first(where:{$0.id==id}) {
+            let item=NSCustomTouchBarItem(identifier:identifier)
+            item.customizationLabel=control.name
+            if control.style == .toggle {
+                let button=NSButton(checkboxWithTitle:control.name,target:self,action:#selector(synthToggleChanged(_:)))
+                button.identifier = .init(id.uuidString)
+                button.state=(controller?.touchBarSynthPosition(control) ?? control.initialPosition)>=0.5 ? .on:.off
+                profileControls.add(button)
+                item.view=button
+            } else {
+                let slider=PerformanceTouchSlider(value:controller?.touchBarSynthPosition(control) ?? control.initialPosition,minValue:0,maxValue:1,target:self,action:#selector(synthSliderChanged(_:)))
+                slider.identifier = .init(id.uuidString)
+                slider.sliderType=control.style == .knob ? .circular:.linear
+                slider.isContinuous=true
+                slider.setAccessibilityLabel(control.name)
+                profileControls.add(slider)
+                slider.onPress={ [weak self,weak slider] pressed in
+                    guard let slider else{return}
+                    if pressed,let self,self.profileEpoch.accepts(profileStamp),let controller=self.controller {
+                        slider.gesture=controller.touchBarGestureEpoch.revision
+                    } else {slider.gesture=nil}
+                }
+                let label=NSTextField(labelWithString:control.name)
+                let stack=NSStackView(views:[label,slider])
+                stack.orientation = .horizontal
+                stack.alignment = .centerY
+                slider.widthAnchor.constraint(greaterThanOrEqualToConstant:control.style == .knob ? 32:70).isActive=true
+                item.view=stack
+            }
+            return item
+        }
         guard let zone = zone(for: identifier) else { return nil }
         switch zone {
         case .keys:
             let item = NSCustomTouchBarItem(identifier: identifier)
-            item.customizationLabel = "Fretted Piano"
-            let labels = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G"]
+            item.customizationLabel = "Piano keys (native tap)"
+            let labels = profile.pianoKeys.map(\.label)
             let piano = NSSegmentedControl(
                 labels: labels,
                 trackingMode: .momentary,
@@ -124,7 +162,7 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         case .sustain:
             let item = NSCustomTouchBarItem(identifier: identifier)
             item.customizationLabel = "Sustain"
-            if profile.sustainMode == .hold {
+            if profile.sustainMode != .toggle {
                 let button = HoldSustainButton(title: "Sustain Hold", target: nil, action: nil)
                 var gesture: UInt64?
                 button.onPress = { [weak self] pressed in
@@ -133,10 +171,14 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
                         controller.recordNativeTouchBarInput()
                         guard gesture == nil else { return }
                         gesture = controller.touchBarGestureEpoch.revision
-                        controller.touchBarSustainPressed(true)
+                        if profile.sustainMode == .slideLock,let gesture {
+                            controller.touchBarSlideEvent(.begin,owner:.native,revision:gesture)
+                        } else {controller.touchBarSustainPressed(true)}
                     } else if let captured = gesture {
                         gesture = nil
-                        if controller.touchBarGestureEpoch.accepts(captured) { controller.touchBarSustainPressed(false) }
+                        if profile.sustainMode == .slideLock {
+                            controller.touchBarSlideEvent(.end(lock:false),owner:.native,revision:captured)
+                        } else if controller.touchBarGestureEpoch.accepts(captured) { controller.touchBarSustainPressed(false) }
                     }
                 }
                 item.view = button
@@ -242,6 +284,38 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         controller?.triggerChordPad(slot)
     }
 
+    func refreshSynthControls(){
+        guard let controller else{return}
+        for view in profileControls.allObjects {
+            guard let id=view.identifier.flatMap({UUID(uuidString:$0.rawValue)}),
+                  let control=profile.effectiveSynthBank.controls.first(where:{$0.id==id}) else{continue}
+            let position=controller.touchBarSynthPosition(control)
+            if let slider=view as? PerformanceTouchSlider {
+                if slider.gesture == nil {slider.doubleValue=position}
+            } else if let button=view as? NSButton {
+                button.state=position>=0.5 ? .on:.off
+            }
+        }
+    }
+    @objc private func synthSliderChanged(_ sender:NSSlider){
+        guard profileControls.contains(sender),let controller,
+              let slider=sender as? PerformanceTouchSlider,
+              let id=sender.identifier.flatMap({UUID(uuidString:$0.rawValue)}) else{return}
+        if controller.touchBarSynthValue(id:id,normalized:sender.doubleValue,revision:slider.gesture) {
+            controller.recordNativeTouchBarInput()
+        } else if let control=profile.effectiveSynthBank.controls.first(where:{$0.id==id}) {
+            sender.doubleValue=controller.touchBarSynthPosition(control)
+        }
+    }
+
+    @objc private func synthToggleChanged(_ sender:NSButton){
+        guard profileControls.contains(sender),let controller,
+              let id=sender.identifier.flatMap({UUID(uuidString:$0.rawValue)}) else{return}
+        if controller.touchBarSynthValue(id:id,normalized:sender.state == .on ? 1:0) {
+            controller.recordNativeTouchBarInput()
+        } else {sender.state=sender.state == .on ? .off:.on}
+    }
+
     @objc private func sliderChanged(_ sender: NSSlider) {
         guard profileControls.contains(sender) else { return }
         guard let controller else { return }
@@ -262,8 +336,9 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     }
 
     @objc private func pianoKeyPressed(_ sender: NSSegmentedControl) {
-        guard profileControls.contains(sender), sender.selectedSegment >= 0 else { return }
-        let note = profile.baseNote + sender.selectedSegment
+        let keys=profile.pianoKeys
+        guard profileControls.contains(sender), keys.indices.contains(sender.selectedSegment) else { return }
+        let note = keys[sender.selectedSegment].note
         // Controller owns the bounded tap and invalidates delayed releases on stop.
         controller?.recordNativeTouchBarInput()
         controller?.touchBarNativeTap(note)

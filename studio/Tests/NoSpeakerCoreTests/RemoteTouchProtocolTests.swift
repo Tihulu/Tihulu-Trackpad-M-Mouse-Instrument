@@ -86,3 +86,19 @@ private func pair(_ runtime: inout PhysicalPatchRuntime, at now: Double, byte: U
     #expect(runtime.receiveRemote(ids[1], bytes: remoteBytes(2), now: 1.3) == .close([]))
     #expect(throws: RemoteTouchError.unavailable) { try runtime.admitRemote(secret: Data(repeating: 5, count: 32), now: 1.3) }
 }
+
+
+@Test func remoteTouchSnapshotDoesNotRetriggerSharedGateDuringAxisTransfer() throws {
+    let note=SensorDestination(.note,number:60)
+    let bend=SensorDestination(.pitchBend)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"x",source:.phone,signal:.x,destination:note),
+        .init(id:"y",source:.phone,signal:.y,destination:note),
+        .init(id:"bend",source:.phone,signal:.contact,destination:bend)
+    ]),allowRemote:true)
+    let id=try pair(&runtime,at:1)
+    #expect(runtime.receiveRemote(id,bytes:remoteBytes(1),now:1.1) == .accepted([.init(bend,value:16383),.init(note,value:100)]))
+    let transfer=Data("{\"version\":1,\"sequence\":2,\"kind\":\"touch\",\"x\":0.2,\"y\":0.8}".utf8)
+    #expect(runtime.receiveRemote(id,bytes:transfer,now:1.2) == .accepted([]))
+}

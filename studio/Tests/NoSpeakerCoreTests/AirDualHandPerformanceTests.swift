@@ -26,6 +26,19 @@ final class AirDualHandPerformanceTests: XCTestCase {
         XCTAssertTrue(runtime.receiveDualHand(count: 1, confidence: 1, helper: hand(true), hostTime: 0.2, now: 0.2).isEmpty)
     }
 
+    func testDelayedDualHandFrameCannotRenewExpiredChord() throws {
+        var runtime=PhysicalPatchRuntime()
+        try runtime.configure(.init(routes:AirDualHandPerformance.routes()))
+        _=runtime.receiveDualHand(count:0,confidence:1,helper:hand(false),hostTime:0,now:0)
+        _=runtime.receiveDualHand(count:1,confidence:1,helper:hand(false),hostTime:0.01,now:0.01)
+        _=runtime.receiveDualHand(count:1,confidence:1,helper:hand(false),hostTime:0.15,now:0.15)
+        XCTAssertEqual(runtime.receiveDualHand(count:1,confidence:1,helper:hand(true),hostTime:0.16,now:0.16).count,3)
+        let expired=runtime.receiveDualHand(count:1,confidence:1,helper:hand(true),hostTime:0.3,now:0.42)
+        XCTAssertEqual(expired.filter{$0.value==0}.count,3)
+        XCTAssertFalse(runtime.activeSources.contains(.camera))
+        XCTAssertTrue(runtime.receiveDualHand(count:1,confidence:1,helper:hand(true),hostTime:0.43,now:0.43).isEmpty)
+    }
+
     func testWatchdogReleasesChord() throws {
         var runtime = PhysicalPatchRuntime()
         try runtime.configure(.init(name: "Air", routes: AirDualHandPerformance.routes()))

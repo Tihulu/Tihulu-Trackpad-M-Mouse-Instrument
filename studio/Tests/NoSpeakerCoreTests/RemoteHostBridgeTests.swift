@@ -68,3 +68,280 @@ private func bridgeRuntime() throws -> PhysicalPatchRuntime {
     let localRelease = runtime.receive(source: .trackpad, x: nil,y:nil,size:nil,hostTime:1.53,now:1.53)
     #expect(localRelease == [.init(bridgeNote,value:0)])
 }
+
+@Test func builderRemoteBatchRetainsOldestCommandProducingReceipt() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    let paired=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    #expect(paired.deliveryReceipt==nil)
+    let release=Data("{\"version\":1,\"sequence\":2,\"kind\":\"release\"}".utf8)
+    let batch=bridge.process([.frame(id,bridgeTouch,1.01),.frame(id,release,1.03)],now:1.04,runtime:&runtime)
+    #expect(batch.deliveryReceipt==1.01)
+    #expect(batch.commands.first == .init(bridgeNote,value:100))
+    var fence=batch.deliveryReceipt.map { PhysicalReceiptSendFence(receipt:$0,maximumAge:0.1) }
+    var ledger=PatchOutputLedger()
+    var now=1.04
+    var sent:[SensorCommand]=[]
+    let result=PhysicalReceiptCommandBatch.dispatch(batch.commands,fence:&fence,now:{now},send:{cmd in
+        ledger.deliver(cmd,send:{sent.append($0);now=1.11;return true})
+    })
+    #expect(result == .expired)
+    #expect(sent == [.init(bridgeNote,value:100)])
+    let clean=ledger.releaseAll(send:{sent.append($0);return true})
+    #expect(clean && sent == [.init(bridgeNote,value:100),.init(bridgeNote,value:0)])
+}
+
+@Test func builderRemoteDisconnectCleanupHasNoNewReceipt() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    _=bridge.process([.frame(id,bridgeTouch,1.02)],now:1.03,runtime:&runtime)
+    let release=bridge.process([.disconnected(id)],now:1.04,runtime:&runtime)
+    #expect(release.deliveryReceipt==nil && release.commands == [.init(bridgeNote,value:0)])
+}
+
+
+@Test func builderRemoteRejectsSameBatchReinvitationAndPreIssueReceipt() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    let stale=bridge.process([.invitation(id,bridgeSecret,0.99)],now:1.01,runtime:&runtime)
+    #expect(stale.actions == [.acknowledge(id,false)] && bridge.connectionIDs.isEmpty)
+    let other=UUID()
+    let rejected=bridge.process([.frame(other,bridgeTouch,1.02),.invitation(other,bridgeSecret,1.02),
+                                 .frame(other,bridgeTouch,1.02)],now:1.02,runtime:&runtime)
+    #expect(rejected.actions == [.acknowledge(other,false),.acknowledge(other,false),.acknowledge(other,false)])
+    #expect(rejected.commands.isEmpty && bridge.connectionIDs.isEmpty)
+    let fresh=UUID()
+    #expect(bridge.process([.invitation(fresh,bridgeSecret,1.03)],now:1.03,runtime:&runtime).actions == [.acknowledge(fresh,true)])
+}
+
+@Test func builderRemoteSuppressesMetadataQueuedBeforeRejection() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    let capabilities=Data("{\"version\":7,\"sequence\":1,\"kind\":\"capabilities\"}".utf8)
+    let result=bridge.process([.frame(id,capabilities,1.01),.frame(id,Data([0xff]),1.01)],now:1.01,runtime:&runtime)
+    #expect(result.actions == [.acknowledge(id,false)] && result.commands.isEmpty)
+    #expect(bridge.connectionIDs.isEmpty && runtime.remotePeerIDs.isEmpty)
+}
+
+@Test func builderRemoteSimultaneousDeparturesDoNotRestoreDyingContinuousOwner() throws {
+    var runtime=PhysicalPatchRuntime()
+    let target=SensorDestination(.controlChange,number:74)
+    try runtime.configure(.init(routes:[
+        .init(id:"high",source:.phone,signal:.x,destination:target,priority:10),
+        .init(id:"low",source:.tablet,signal:.x,destination:target,priority:0)
+    ]),allowRemote:true)
+    var bridge=RemoteHostBridge()
+    let a=UUID(),b=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(a,bridgeSecret,1)],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.tablet,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(b,bridgeSecret,1)],now:1,runtime:&runtime)
+    let high=Data("{\"version\":1,\"sequence\":1,\"kind\":\"touch\",\"x\":0.8,\"y\":0.5}".utf8)
+    let low=Data("{\"version\":1,\"sequence\":1,\"kind\":\"touch\",\"x\":0.3,\"y\":0.5}".utf8)
+    _=bridge.process([.frame(a,high,1.01)],now:1.01,runtime:&runtime)
+    _=bridge.process([.frame(b,low,1.2)],now:1.2,runtime:&runtime)
+    let result=bridge.process([.disconnected(b)],now:1.37,runtime:&runtime)
+    #expect(result.commands == [.init(target,value:0)])
+    #expect(result.actions == [.revoke(a)] && bridge.connectionIDs.isEmpty)
+}
+
+
+@Test func builderRemoteLeaseUsesOriginalReceiptEvenForSilentRenewal() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    let played=bridge.process([.frame(id,bridgeTouch,1.01)],now:1.09,runtime:&runtime)
+    #expect(played.commands == [.init(bridgeNote,value:100)])
+    let same=Data("{\"version\":1,\"sequence\":2,\"kind\":\"touch\",\"x\":0.2,\"y\":0.8}".utf8)
+    let renewed=bridge.process([.frame(id,same,1.1)],now:1.18,runtime:&runtime)
+    #expect(renewed.commands.isEmpty && renewed.actions == [.acknowledge(id,true)])
+    let expired=bridge.process([],now:1.46,runtime:&runtime)
+    #expect(expired.commands == [.init(bridgeNote,value:0)] && expired.actions == [.revoke(id)])
+    #expect(bridge.connectionIDs.isEmpty)
+}
+
+@Test func builderRemoteReorderedReceiptCannotRenewLiveNote() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    _=bridge.process([.frame(id,bridgeTouch,1.05)],now:1.06,runtime:&runtime)
+    let same=Data("{\"version\":1,\"sequence\":2,\"kind\":\"touch\",\"x\":0.2,\"y\":0.8}".utf8)
+    let rejected=bridge.process([.frame(id,same,1.04)],now:1.07,runtime:&runtime)
+    #expect(rejected.commands == [.init(bridgeNote,value:0)] && rejected.actions == [.acknowledge(id,false)])
+    #expect(bridge.connectionIDs.isEmpty)
+}
+
+
+@Test func builderRemoteExplicitRevokeDoesNotRestoreExpiredPeer() throws {
+    var runtime=PhysicalPatchRuntime()
+    let target=SensorDestination(.controlChange,number:74)
+    try runtime.configure(.init(routes:[
+        .init(id:"high",source:.phone,signal:.x,destination:target,priority:10),
+        .init(id:"low",source:.tablet,signal:.x,destination:target,priority:0)
+    ]),allowRemote:true)
+    var bridge=RemoteHostBridge()
+    let a=UUID(),b=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(a,bridgeSecret,1)],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.tablet,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(b,bridgeSecret,1)],now:1,runtime:&runtime)
+    let low=Data("{\"version\":1,\"sequence\":1,\"kind\":\"touch\",\"x\":0.3,\"y\":0.5}".utf8)
+    let high=Data("{\"version\":1,\"sequence\":1,\"kind\":\"touch\",\"x\":0.8,\"y\":0.5}".utf8)
+    _=bridge.process([.frame(b,low,1.01)],now:1.01,runtime:&runtime)
+    _=bridge.process([.frame(a,high,1.2)],now:1.2,runtime:&runtime)
+    let result=bridge.revoke(a,now:1.37,runtime:&runtime)
+    #expect(result.commands==[.init(target,value:0)])
+    #expect(result.actions==[.revoke(a),.revoke(b)])
+    #expect(bridge.connectionIDs.isEmpty && runtime.remotePeerIDs.isEmpty)
+}
+
+
+@Test func builderRemoteDeferredActionsDoNotAcknowledgeExpiredPeerAfterDelivery() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    let batch=bridge.process([.frame(id,bridgeTouch,1.01)],now:1.01,runtime:&runtime)
+    #expect(batch.commands==[.init(bridgeNote,value:100)])
+    #expect(bridge.actionsAfterDelivery(batch.actions)==[.acknowledge(id,true)])
+    let expired=bridge.process([],now:1.37,runtime:&runtime)
+    #expect(expired.commands==[.init(bridgeNote,value:0)])
+    #expect(bridge.actionsAfterDelivery(batch.actions+expired.actions)==[.revoke(id)])
+    #expect(bridge.connectionIDs.isEmpty)
+}
+
+@Test func builderRemoteDeferredMetadataIsFilteredOnlyForRetiredPeers() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let a=UUID(),b=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(a,bridgeSecret,1)],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1.1,runtime:&runtime)
+    _=bridge.process([.invitation(b,bridgeSecret,1.1)],now:1.1,runtime:&runtime)
+    let capabilities=Data("{\"version\":7,\"sequence\":1,\"kind\":\"capabilities\"}".utf8)
+    let batch=bridge.process([.frame(a,capabilities,1.2),.frame(b,capabilities,1.2)],now:1.2,runtime:&runtime)
+    #expect(batch.actions.count==2)
+    let revoked=bridge.revoke(a,now:1.21,runtime:&runtime)
+    let retained=bridge.actionsAfterDelivery(batch.actions+revoked.actions)
+    #expect(retained.count==2)
+    if case .some(.capabilities(let id,_))=retained.first { #expect(id==b) }
+    else { Issue.record("Surviving peer metadata was lost") }
+    #expect(retained.last == .revoke(a))
+}
+
+
+@Test func builderRemoteClockRegressionRetiresPhysicalAndRemoteOwnersTogether() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    #expect(runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1.01,now:1.01)==[.init(bridgeNote,value:100)])
+    _=bridge.process([.frame(id,bridgeTouch,1.02)],now:1.02,runtime:&runtime)
+    #expect(bridge.process([],now:1.1,runtime:&runtime).commands.isEmpty)
+    let result=bridge.process([],now:1.09,runtime:&runtime)
+    #expect(result.fault && result.actions==[.stop] && bridge.stopped)
+    #expect(result.commands==[.init(bridgeNote,value:0)])
+    #expect(runtime.activeSources.isEmpty && runtime.remotePeerIDs.isEmpty)
+    #expect(bridge.process([.ready],now:2,runtime:&runtime).actions.isEmpty)
+    #expect(runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:2,now:2).isEmpty)
+}
+
+@Test func builderRemoteManualRevokeWithInvalidHostClockCannotRestoreOtherOwner() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    _=runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1.01,now:1.01)
+    _=bridge.process([.frame(id,bridgeTouch,1.02)],now:1.02,runtime:&runtime)
+    let result=bridge.revoke(id,now:.nan,runtime:&runtime)
+    #expect(result.fault && result.actions==[.stop] && bridge.stopped)
+    #expect(result.commands==[.init(bridgeNote,value:0)])
+    #expect(runtime.activeSources.isEmpty && runtime.remotePeerIDs.isEmpty)
+}
+
+
+@Test func directRemoteReleaseOrRejectionBatchesExpiredPhysicalOwner() throws {
+    for reject in [false,true] {
+        let cc=SensorDestination(.controlChange,number:74)
+        var runtime=PhysicalPatchRuntime()
+        try runtime.configure(.init(routes:[
+            .init(id:"local",source:.trackpad,signal:.x,destination:cc,priority:0),
+            .init(id:"remote",source:.phone,signal:.x,destination:cc,priority:10)
+        ]),allowRemote:true)
+        try runtime.issueRemotePairing(secret:bridgeSecret,source:.phone,now:1)
+        let id=try runtime.admitRemote(secret:bridgeSecret,now:1)
+        _=runtime.receive(source:.trackpad,x:0.3,y:0.5,size:0.5,hostTime:1,now:1)
+        _=runtime.receiveRemote(id,bytes:bridgeTouch,now:1.2)
+        let release=Data("{\"version\":1,\"sequence\":2,\"kind\":\"release\"}".utf8)
+        let result=runtime.receiveRemote(id,bytes:reject ? Data([0xff]) : release,now:1.36)
+        #expect(result == (reject ? .close([.init(cc,value:0)]) : .accepted([.init(cc,value:0)])))
+        #expect(runtime.activeSources.isEmpty && runtime.activeRouterSessionCount==0)
+        #expect(runtime.remotePeerIDs == (reject ? [] : [id]))
+    }
+}
+
+
+@Test func builderRemoteTransportFaultDoesNotRestoreExpiredLocalContinuousOwner() throws {
+    for localExpired in [false,true] {
+        let cc=SensorDestination(.controlChange,number:74)
+        var runtime=PhysicalPatchRuntime()
+        try runtime.configure(.init(routes:[
+            .init(id:"local",source:.trackpad,signal:.x,destination:cc,priority:0),
+            .init(id:"remote",source:.phone,signal:.x,destination:cc,priority:10)
+        ]),allowRemote:true)
+        var bridge=RemoteHostBridge()
+        let id=UUID()
+        _=bridge.process([.ready],now:1,runtime:&runtime)
+        try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+        _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+        let localTime=localExpired ? 1.01 : 1.15
+        _=runtime.receive(source:.trackpad,x:0.3,y:0.5,size:0.5,hostTime:localTime,now:localTime)
+        _=bridge.process([.frame(id,bridgeTouch,1.2)],now:1.2,runtime:&runtime)
+        let result=bridge.process([.fault],now:1.37,runtime:&runtime)
+        #expect(result.fault && result.actions==[.stop] && bridge.stopped)
+        #expect(result.commands==[.init(cc,value:localExpired ? 0 : 38)])
+        #expect(runtime.remotePeerIDs.isEmpty)
+        #expect(runtime.activeSources == (localExpired ? [] : [.trackpad]))
+    }
+}
+
+
+@Test func builderRemoteSameBatchRejectionSuppressesEarlierPairingSuccess() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    let result=bridge.process([.invitation(id,bridgeSecret,1.01),.frame(id,Data([0xff]),1.02)],now:1.02,runtime:&runtime)
+    #expect(result.actions==[.acknowledge(id,false)])
+    #expect(result.commands.isEmpty && bridge.connectionIDs.isEmpty && runtime.remotePeerIDs.isEmpty)
+}

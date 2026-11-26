@@ -95,7 +95,8 @@ public final class RemoteLoopbackPageServer: @unchecked Sendable {
             "HTTP/1.1 200 OK", "Content-Type: " + type, "Content-Length: " + String(body.count),
             "Connection: close", "Cache-Control: no-store", "Referrer-Policy: no-referrer",
             "X-Content-Type-Options: nosniff", "X-Frame-Options: DENY",
-            "Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src wss://\(endpoint.socketAuthority); frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            "Permissions-Policy: camera=(self), microphone=(), geolocation=()",
+            "Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src wss://\(endpoint.socketAuthority); media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
         ].joined(separator: "\r\n") + "\r\n\r\n"
         var response = Data(headers.utf8)
         response.append(body)
@@ -131,10 +132,23 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pad[aria-disabled=true]{opacity:.45}#dot{position:absolute;width:22px;height:22px;background:#e34f4f;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}#dot[hidden]{display:none}
 #releaseAll{min-height:44px;border-color:#e5a33b}#status{min-height:2.8em}small{color:#bdbdbd}
 #drumGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}#drumGrid button{margin:0;min-height:80px;padding:8px;touch-action:none;user-select:none;overflow-wrap:anywhere}#drumGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5} @media(max-width:420px){#drumGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+#kitBoard{container-type:size;position:relative;height:clamp(250px,48vh,430px);border:1px solid #777;border-radius:12px;background:radial-gradient(#454545 1px,transparent 1px) 0 0/16px 16px;overflow:hidden}
+#kitBoard button{position:absolute;margin:0;transform:translate(-50%,-50%);width:clamp(44px,18%,100px);max-width:min(24cqw,30cqh);box-sizing:border-box;aspect-ratio:1;border-radius:50%;padding:3px;touch-action:none;font-size:clamp(10px,2.4vw,14px);background:#303947;border:2px solid #8e9bad;overflow-wrap:anywhere}
+#kitBoard button[data-cymbal=true]{background:#66512a;border-color:#d9b65c}
+#kitBoard button[data-selected=true]{outline:3px solid #79c9a5;outline-offset:2px}
+#kitBoard button[data-hit=true]{background:#286b50;border-color:#79c9a5}
+#kitEditor label{display:block}#kitEditor button{min-height:44px}
 #pianoBoard{position:relative;height:clamp(145px,30vh,240px);touch-action:none;user-select:none}
 #pianoBoard button{position:absolute;margin:0;border-radius:0 0 6px 6px;padding:0 0 8px;display:flex;align-items:flex-end;justify-content:center;touch-action:none;user-select:none;font-size:12px}
 #pianoBoard .whiteKey{top:0;height:100%;background:#f1f1f1;color:#252525;border-color:#555;z-index:1}
 #pianoBoard .blackKey{top:0;height:60%;background:#222;color:white;border-color:#666;z-index:2}
+#pianoBoard button[data-arp-selected=true]{box-shadow:inset 0 -8px #6ba9ed}
+#pianoTools{display:flex;gap:6px;flex-wrap:wrap;align-items:center}#pianoTools button{min-height:44px}
+#pedalSection[data-synth=true] output[data-dial]{display:grid;place-items:center;position:relative;margin:8px auto;width:68px;height:68px;border-radius:50%;border:5px solid #607b96;background:#292f38;touch-action:none;user-select:none;font-size:11px}
+ #pedalSection[data-compact=true] output[data-dial]{width:48px;height:48px;border-width:3px;margin:4px auto}
+#pedalSection[data-compact=true] input[type=range]{height:22px}
+#synthChoiceGrid{display:flex;flex-wrap:wrap;gap:4px}#synthChoiceGrid button{margin:2px;min-height:40px}
+#pedalSection[data-synth=true] output[data-dial]::before{content:"";position:absolute;inset:5px;border-top:3px solid #9bc9fa;border-radius:50%;transform:rotate(var(--dial-angle,0deg));pointer-events:none}
 #pianoBoard button[data-scale=true]{border-bottom:7px solid #79a8d2}
 #pianoBoard button[aria-pressed=true],#pianoSustain[aria-pressed=true]{background:#286b50;color:white;border-color:#79c9a5}
 #pianoBoard[data-strips=true]{display:flex;gap:3px;height:clamp(180px,40vh,340px)}
@@ -160,7 +174,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #drumGrid[data-columns="3"],#pedalGrid[data-columns="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}
 #drumGrid[data-columns="4"],#pedalGrid[data-columns="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}
 @media(max-width:360px){#drumGrid[data-columns="4"],#pedalGrid[data-columns="4"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
-#layoutSection select{max-width:100%;font:inherit;padding:10px;background:#252525;color:inherit}
+#layoutSection select,#playMode{max-width:100%;font:inherit;padding:10px;background:#252525;color:inherit}#playModeSection{grid-column:1/-1;order:-2}#playMode{width:100%;min-height:44px}
 #layoutSection button{min-height:44px}
 #layoutDragList{display:grid;gap:4px;max-width:460px}
 #layoutDragList button{margin:0;text-align:left;touch-action:none;user-select:none}
@@ -177,11 +191,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #customGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5}
 #layoutDragList button[data-target=true]{border-color:#e5a33b;background:#4c3820}
 </style></head>
-<body><h1>TIHULU Remote</h1><p>Local MIDI performance controller · Experimental</p>
+<body><h1>TIHULU Remote</h1><p>Local MIDI performance controller · No app installation required · Experimental</p>
 <div id="remoteBar"><nav aria-label="Controller views"><button id="navPlay" aria-pressed="false" disabled>Play</button><button id="navSetup" aria-pressed="false" disabled>Setup</button><button id="navConnection" aria-pressed="true">Connection</button></nav><button id="releaseAll" disabled>Release my controls</button><button id="disconnect" disabled>Disconnect / release</button><p id="navStatus" role="status"></p><p id="playWorkloadStatus" role="status"></p><p id="status" role="status" aria-live="polite">Not connected.</p><small id="ackLatency">Mac ACK round trip: no sample.</small></div>
 <section id="connectionView"><label for="secret">One-time invitation (64 hexadecimal characters)</label>
 <input id="secret" type="password" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
-<button id="connect">Connect</button><p>Use the matching trusted TLS certificate and a new invitation for each connection. ACK round trip includes Mac processing; it is not audio or MIDI latency.</p></section>
+<button id="connect">Connect</button><p>Use the matching trusted TLS certificate and a new invitation for each connection. ACK round trip includes Mac processing; it is not audio or MIDI latency.</p><div id="webCameraConnectionHost"><details id="webCameraPanel"><summary id="webCameraSummary">Browser camera check (optional)</summary><p id="webCameraDescription">Local camera preview only. No hand recognition, depth or MIDI output in this check. Stop before pairing. Nothing is recorded or sent to the Mac.</p><label for="webCameraFacing">Camera direction</label><select id="webCameraFacing"><option value="environment">Rear</option><option value="user">Front</option></select><label for="webCameraDevice">Available camera</label><select id="webCameraDevice"><option value="">Default for direction</option></select><button id="webCameraStart" type="button">Start camera check</button><button id="webCameraStop" type="button" disabled>Stop camera</button><video id="webCameraVideo" muted playsinline autoplay hidden style="width:100%;max-width:480px;border-radius:12px"></video><label for="webCameraZoom">Device zoom</label><input id="webCameraZoom" type="range" disabled><p id="webCameraStatus" role="status">Camera off.</p><small>Camera access requires a trusted HTTPS connection. Lens and zoom availability are browser/device dependent. Native LiDAR/ToF APIs are not available in this preview.</small></details></div></section>
 <div id="setupView" hidden>
 <section id="mappingSection" hidden><h2>Mapped MIDI destinations</h2><p id="mappingStatus" role="status"></p><pre id="mappingDetails" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></section>
 <section id="workloadSection" hidden aria-labelledby="workloadTitle"><h2 id="workloadTitle">Performance combinations</h2>
@@ -220,7 +234,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <small>Changes how the button sends its active state. The Mac still defines its MIDI assignment and behavior.</small></fieldset>
 <button id="layoutSave" type="button">Save on this browser</button><button id="layoutReset" type="button">Reset layout</button>
 <p id="layoutStatus" role="status"></p><small>Only presentation preferences are stored locally. Release and disable controls before editing. No invitation, mapping or device name is stored.</small></section></div>
-<div id="playView" hidden><section id="customSection" hidden data-wide="true" aria-labelledby="customTitle"><h2 id="customTitle">My performance panel</h2>
+<div id="playView" hidden><section id="playModeSection" data-wide="true"><label for="playMode">Instrument / controller mode</label><select id="playMode" disabled aria-describedby="playModeStatus"></select><p id="playModeStatus" role="status"></p><small>Switch surfaces here. Only modes assigned on the Mac are available. Pitch bend requires a mapped XY axis or pedal slider. Switching releases previous controls before showing the new surface.</small></section><section id="webCameraPlayHost" hidden data-wide="true"><h2>Camera motion helper (experimental)</h2><p>Keep the device stationary. Image change controls a mapped continuous pedal. Not hand recognition or depth. Stop to change lens or zoom.</p><label for="webCameraTarget">Assigned helper</label><select id="webCameraTarget"></select><label for="webCameraExtra1">Additional helper 1 (optional)</label><select id="webCameraExtra1"></select><label for="webCameraExtraMetric1">Additional control 1</label><select id="webCameraExtraMetric1"><option value="x">Motion X</option><option value="y">Motion Y</option><option value="amount">Motion amount</option></select><label for="webCameraExtraInvert1"><input id="webCameraExtraInvert1" type="checkbox" style="width:auto"> Invert additional control 1</label><label for="webCameraExtraGain1">Additional control 1 gain</label><select id="webCameraExtraGain1"><option value="1">100%</option><option value="0.5">50%</option><option value="1.5">150%</option><option value="2">200%</option></select><label for="webCameraExtra2">Additional helper 2 (optional)</label><select id="webCameraExtra2"></select><label for="webCameraExtraMetric2">Additional control 2</label><select id="webCameraExtraMetric2"><option value="y">Motion Y</option><option value="x">Motion X</option><option value="amount">Motion amount</option></select><label for="webCameraExtraInvert2"><input id="webCameraExtraInvert2" type="checkbox" style="width:auto"> Invert additional control 2</label><label for="webCameraExtraGain2">Additional control 2 gain</label><select id="webCameraExtraGain2"><option value="1">100%</option><option value="0.5">50%</option><option value="1.5">150%</option><option value="2">200%</option></select><label for="webCameraMetric">Motion control</label><select id="webCameraMetric"><option value="amount">Motion amount</option><option value="x">Motion position X</option><option value="y">Motion position Y (up)</option></select><label for="webCameraGain">Primary control gain</label><select id="webCameraGain"><option value="1">100%</option><option value="0.5">50%</option><option value="1.5">150%</option><option value="2">200%</option></select><label for="webCameraSensitivity">Sensitivity</label><select id="webCameraSensitivity"><option value="normal">Normal</option><option value="fine">Sensitive</option><option value="low">Low</option></select><label for="webCameraRegion">Detection region</label><select id="webCameraRegion"><option value="full">Full frame</option><option value="center">Center</option><option value="left">Left half</option><option value="right">Right half</option></select><label for="webCameraDesiredZoom">Performance zoom factor (optional)</label><input id="webCameraDesiredZoom" type="number" min="0.1" step="any" inputmode="decimal" placeholder="Device default"><small>Applied and verified before performance starts; unsupported values are rejected.</small><label for="webCameraCalibration">Startup calibration</label><select id="webCameraCalibration"><option value="quiet">Require quiet frame baseline</option><option value="direct">Direct (experimental)</option></select><label><input id="webCameraLight" type="checkbox" style="width:auto"> Reduce uniform lighting changes</label><label><input id="webCameraInvert" type="checkbox" style="width:auto"> Invert active output</label><button id="webCameraSave" type="button">Save sensor settings locally</button><button id="webCameraLoad" type="button">Load saved sensor settings</button><button id="webCameraReset" type="button">Reset sensor settings</button><p id="webCameraProfileStatus" role="status"></p><small>Stores calibration and display preferences only; not camera IDs, MIDI assignments or invitations. Load never starts capture.</small><p id="webCameraMotionStatus" role="status">Off.</p></section><section id="customSection" hidden data-wide="true" aria-labelledby="customTitle"><h2 id="customTitle">My performance panel</h2>
 <p>Enable the mapped control families separately. Existing workload limits still apply.</p>
 <button id="customDrumEnable" type="button" disabled>Enable drum pads</button><button id="customPedalEnable" type="button" disabled>Enable pedalboard</button>
 <button id="customDrumRelease" type="button" disabled>Release all drum pads</button><button id="customPedalRelease" type="button" disabled>Release all pedals</button>
@@ -230,9 +244,19 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <p>Only pads mapped for this paired device are available. Pad numbers identify controls, not assumed MIDI notes. Actual destinations are listed in Setup when shared.</p>
 <button id="drumEnable" disabled>Enable drum pads</button><button id="drumRelease" disabled>Release all pads</button>
 <p id="drumStatus" role="status">Off.</p><div id="drumGrid"><button id="drum0" type="button" aria-pressed="false" disabled>1 · Kick</button><button id="drum1" type="button" aria-pressed="false" disabled>2 · Snare</button><button id="drum2" type="button" aria-pressed="false" disabled>3 · Closed Hi-Hat</button><button id="drum3" type="button" aria-pressed="false" disabled>4 · Open Hi-Hat</button><button id="drum4" type="button" aria-pressed="false" disabled>5 · Low Tom</button><button id="drum5" type="button" aria-pressed="false" disabled>6 · High Tom</button><button id="drum6" type="button" aria-pressed="false" disabled>7 · Crash</button><button id="drum7" type="button" aria-pressed="false" disabled>8 · Ride</button></div>
-<small>Multiple fingers supported. Hold a pad to sustain its note; lift to release. Fixed host velocity, no pressure sensing. Release all clears pending hits.</small></section>
+<small>Multiple fingers supported. Hold a pad to sustain its note; lift to release. Fixed host velocity, no pressure sensing. Release all clears pending hits.</small>
+<div id="airStickSection" hidden><h3>Air stick · Drum kit</h3><div id="kitBoard" aria-label="Editable assigned drum kit"></div>
+<button id="kitEdit" type="button" aria-pressed="false">Edit kit layout</button><div id="kitEditor" hidden>
+<label for="kitPart">Kit element</label><select id="kitPart"></select><button id="kitAdd" type="button">Add to layout</button><button id="kitRemove" type="button">Remove from layout</button>
+<label for="kitX">Horizontal position</label><input id="kitX" type="range" min="12" max="88" step="1">
+<label for="kitY">Vertical position</label><input id="kitY" type="range" min="15" max="85" step="1">
+<label for="kitSize">Element size</label><input id="kitSize" type="range" min="12" max="24" step="1">
+<button id="kitSave" type="button">Save layout on this browser</button><button id="kitReset" type="button">Reset kit</button><p id="kitStatus" role="status"></p>
+<small>Drag a visible element or adjust its position and size. Add/remove changes presentation only; the Mac owns MIDI assignments. Only assigned pads can be added.</small></div>
+<label for="airStickPad">Assigned strike pad</label><select id="airStickPad"></select><button id="airStickStart" type="button" disabled>Enable air stick</button><button id="airStickStop" type="button" disabled>Stop air stick</button><p id="airStickStatus" role="status">Off.</p><small>Select a mapped pad between strikes, then hold still before striking it. Gravity-free motion triggers the selected pad at fixed velocity. Hold securely, use small movements and never hit a surface.</small></div></section>
 <section id="pianoSection" hidden aria-labelledby="piano-title"><h2 id="piano-title">Piano</h2>
 <p>Only keys and sustain mapped for this paired device are available. Key positions identify logical controls. Scale hints are available only for a verified default pitch mapping.</p>
+<div id="pianoTools"><button id="pianoArp" type="button" aria-pressed="false" disabled>Arp</button><button id="pianoChord" type="button" aria-pressed="false" disabled>Chord</button><button id="pianoSynth" type="button" aria-pressed="false" disabled>Show synth controls</button><button id="synthCompact" type="button" aria-pressed="false" hidden>Compact knobs</button></div><div id="synthChoices" hidden><small>Visible controls (edit while pedals are off)</small><div id="synthChoiceGrid"></div></div>
 <button id="pianoEnable" disabled>Enable piano</button><button id="pianoRelease" disabled>Release keys &amp; pedal</button>
 <p id="pianoStatus" role="status">Off.</p>
 <button id="octaveDown" disabled>Octave −</button><span id="octaveLabel">C3–C4</span><button id="octaveUp" disabled>Octave +</button>
@@ -242,7 +266,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <small id="pianoStripHint" hidden>Slide between assigned notes or hold multiple fingers. Lift to release; leaving the surface releases that finger. Discrete notes only, no independent pitch bend. Change layouts when all notes and pedal are released.</small>
 <div id="pianoBoard" aria-label="Piano keyboard"><button id="piano0" class="whiteKey" type="button" style="left:0%;width:12.5%" aria-pressed="false" disabled></button><button id="piano2" class="whiteKey" type="button" style="left:12.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano4" class="whiteKey" type="button" style="left:25%;width:12.5%" aria-pressed="false" disabled></button><button id="piano5" class="whiteKey" type="button" style="left:37.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano7" class="whiteKey" type="button" style="left:50%;width:12.5%" aria-pressed="false" disabled></button><button id="piano9" class="whiteKey" type="button" style="left:62.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano11" class="whiteKey" type="button" style="left:75%;width:12.5%" aria-pressed="false" disabled></button><button id="piano12" class="whiteKey" type="button" style="left:87.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano1" class="blackKey" type="button" style="left:8.6%;width:7.8%" aria-pressed="false" disabled></button><button id="piano3" class="blackKey" type="button" style="left:21.1%;width:7.8%" aria-pressed="false" disabled></button><button id="piano6" class="blackKey" type="button" style="left:46.1%;width:7.8%" aria-pressed="false" disabled></button><button id="piano8" class="blackKey" type="button" style="left:58.6%;width:7.8%" aria-pressed="false" disabled></button><button id="piano10" class="blackKey" type="button" style="left:71.1%;width:7.8%" aria-pressed="false" disabled></button></div>
 <button id="pianoSustain" type="button" aria-pressed="false" disabled>Sustain (hold)</button>
-<small>Hold multiple keys or the pedal. Lift to release. Octave changes are available only after all piano messages are acknowledged. Scale guide does not alter MIDI routing.</small></section>
+<small id="pianoManualHint">Hold multiple keys or the pedal. Lift to release. Octave changes are available only after all piano messages are acknowledged. Scale guide does not alter MIDI routing.</small>
+<div id="phraseSection" hidden><h3 id="phraseTitle">Chord pads</h3>
+<div id="chordGrid"><button id="chord0" type="button" disabled></button><button id="chord1" type="button" disabled></button><button id="chord2" type="button" disabled></button><button id="chord3" type="button" disabled></button></div>
+<div id="phraseTransport" hidden><label for="phraseTempo">Tempo</label><select id="phraseTempo"><option value="60">60 BPM</option><option value="90">90 BPM</option><option value="120" selected>120 BPM</option><option value="150">150 BPM</option></select><label id="arpLabel" for="arpChoice">Arpeggio chord</label><select id="arpChoice"></select><div id="arpKeyboardTools" hidden><button id="arpClear" type="button">Clear selected notes</button><label for="arpDirection">Direction</label><select id="arpDirection"><option value="up">Up</option><option value="down">Down</option><option value="bounce">Up / down</option></select><label for="arpRate">Rate</label><select id="arpRate"><option value="8">1/8</option><option value="4">1/4</option><option value="16">1/16</option><option value="12">1/8 triplet</option></select><label for="arpSwing">Swing</label><select id="arpSwing"><option value="50">Straight (50%)</option><option value="55">55%</option><option value="60">60%</option></select><p id="arpSelected" role="status"></p></div><div id="sequenceSteps"><label for="phraseStep0">Step 1</label><select id="phraseStep0"></select><label for="phraseStep1">Step 2</label><select id="phraseStep1"></select><label for="phraseStep2">Step 3</label><select id="phraseStep2"></select><label for="phraseStep3">Step 4</label><select id="phraseStep3"></select><label for="phraseStep4">Step 5</label><select id="phraseStep4"></select><label for="phraseStep5">Step 6</label><select id="phraseStep5"></select><label for="phraseStep6">Step 7</label><select id="phraseStep6"></select><label for="phraseStep7">Step 8</label><select id="phraseStep7"></select></div><button id="phraseStart" type="button" disabled>Start loop</button><button id="phraseStop" type="button" disabled>Stop loop</button></div>
+<p id="phraseStatus" role="status">Off.</p><small>Only mapped logical keys are used. Actual pitch depends on Mac mapping. Browser clock, no DAW synchronization; delayed playback stops instead of replaying old notes.</small></div></section>
 <section id="pedalSection" hidden aria-labelledby="pedal-title"><h2 id="pedal-title">Pedalboard</h2>
 <p>Only pedals mapped for this paired device are available. These are MIDI controls, not audio effects. Labels identify logical controls; actual destinations depend on the Mac mapping.</p>
 <button id="pedalEnable" disabled>Enable pedalboard</button><button id="pedalRelease" disabled>Release all pedals</button>
@@ -269,6 +297,219 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const get = id => document.getElementById(id);
   const pad=get("pad"), dot=get("dot"), secret=get("secret"), connect=get("connect"), disconnect=get("disconnect"), status=get("status");
   let ws=null, admitted=false, pending=false, sequence=0, pointer=null, position=null, timer=null, deadline=null, lastSend=0;
+  const cameraPanel=get("webCameraPanel"),cameraFacing=get("webCameraFacing"),cameraDevice=get("webCameraDevice"),cameraStart=get("webCameraStart"),cameraStop=get("webCameraStop"),cameraVideo=get("webCameraVideo"),cameraZoom=get("webCameraZoom"),cameraStatus=get("webCameraStatus");
+  let cameraStream=null,cameraEpoch=0,cameraPending=false,cameraInFlight=false,cameraZoomPending=false,cameraDevices=[],cameraZoomRange=null;
+  const cameraTarget=get("webCameraTarget"),cameraMotionStatus=get("webCameraMotionStatus");
+  const cameraMetric=get("webCameraMetric"),cameraSensitivity=get("webCameraSensitivity"),cameraRegion=get("webCameraRegion"),cameraLight=get("webCameraLight"),cameraInvert=get("webCameraInvert"),cameraCalibration=get("webCameraCalibration"),cameraDesiredZoom=get("webCameraDesiredZoom");
+  const cameraExtra=[get("webCameraExtra1"),get("webCameraExtra2")],cameraExtraMetric=[get("webCameraExtraMetric1"),get("webCameraExtraMetric2")];
+  const cameraGains=[get("webCameraGain"),get("webCameraExtraGain1"),get("webCameraExtraGain2")],cameraExtraInvert=[get("webCameraExtraInvert1"),get("webCameraExtraInvert2")];
+  const cameraSave=get("webCameraSave"),cameraLoad=get("webCameraLoad"),cameraReset=get("webCameraReset"),cameraProfileStatus=get("webCameraProfileStatus");
+  const cameraProfileKey="tihulu.remote.camera-settings.v1";
+  let cameraConfig=null,cameraBaseline=0,cameraArmed=false,cameraSetupTimer=null,cameraGeometry=null,cameraTrackSettings=null;
+  function clearCameraSetupTimer(){if(cameraSetupTimer!==null)clearTimeout(cameraSetupTimer);cameraSetupTimer=null;}
+  let cameraHelper=false,cameraHost="connection",cameraTargetKey="",cameraLane=-1,cameraFrameId=null,cameraContext=null,cameraPrior=null,cameraAt=null,cameraStartedAt=0,cameraMediaTime=-Infinity,cameraQuiet=0,cameraReleaseAt=null;
+  const cameraMedia=()=>window.isSecureContext===true&&typeof navigator!=="undefined"&&navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==="function"?navigator.mediaDevices:null;
+  const cameraMode=()=>Boolean(ws&&admitted&&caps&&(caps.pedals&7)&&currentView==="play"&&playMode==="camera");
+  const canEditCameraProfile=()=>cameraMode()&&!cameraHelper&&!cameraInFlight&&!cameraStream&&!releasingAll&&workloadMask()===0;
+  const validCameraGain=v=>typeof v==="number"&&[.5,1,1.5,2].includes(v);
+  function validCameraProfile(p){return p&&typeof p==="object"&&!Array.isArray(p)&&((p.version===1&&Object.keys(p).sort().join(",")==="calibration,facing,invert,light,metric,region,sensitivity,version,zoom")||(p.version===2&&Object.keys(p).sort().join(",")==="calibration,extraInvert,extraMetric,facing,gains,invert,light,metric,region,sensitivity,version,zoom"&&Array.isArray(p.gains)&&p.gains.length===3&&p.gains.every(validCameraGain)&&Array.isArray(p.extraInvert)&&p.extraInvert.length===2&&p.extraInvert.every(v=>typeof v==="boolean")&&Array.isArray(p.extraMetric)&&p.extraMetric.length===2&&p.extraMetric.every(v=>["amount","x","y"].includes(v))))&&["quiet","direct"].includes(p.calibration)&&["user","environment"].includes(p.facing)&&typeof p.invert==="boolean"&&typeof p.light==="boolean"&&["amount","x","y"].includes(p.metric)&&["full","center","left","right"].includes(p.region)&&["normal","fine","low"].includes(p.sensitivity)&&(p.zoom===null||typeof p.zoom==="number"&&Number.isFinite(p.zoom)&&p.zoom>0&&p.zoom<=100);}
+  function applyCameraProfile(p){cameraCalibration.value=p.calibration;cameraFacing.value=p.facing;cameraDevice.value="";cameraInvert.checked=p.invert;cameraLight.checked=p.light;cameraMetric.value=p.metric;cameraRegion.value=p.region;cameraSensitivity.value=p.sensitivity;cameraDesiredZoom.value=p.zoom===null?"":String(p.zoom);cameraGains.forEach((el,i)=>el.value=String(p.version===2?p.gains[i]:1));cameraExtraInvert.forEach((el,i)=>el.checked=p.version===2?p.extraInvert[i]:false);cameraExtraMetric.forEach((el,i)=>el.value=p.version===2?p.extraMetric[i]:i===0?"x":"y");}
+  cameraSave.addEventListener("click",()=>{if(!canEditCameraProfile())return;
+    const raw=cameraDesiredZoom.value.trim(),p={version:2,gains:cameraGains.map(el=>Number(el.value||"1")),extraInvert:cameraExtraInvert.map(el=>el.checked===true),extraMetric:cameraExtraMetric.map((el,i)=>el.value||(i===0?"x":"y")),calibration:cameraCalibration.value||"quiet",facing:cameraFacing.value||"environment",invert:cameraInvert.checked===true,light:cameraLight.checked===true,metric:cameraMetric.value||"amount",region:cameraRegion.value||"full",sensitivity:cameraSensitivity.value||"normal",zoom:raw===""?null:Number(raw)};
+    if(!validCameraProfile(p)){cameraProfileStatus.textContent="Invalid sensor settings.";return;}
+    try{window.localStorage.setItem(cameraProfileKey,JSON.stringify(p));cameraProfileStatus.textContent="Sensor settings saved on this browser.";}catch{cameraProfileStatus.textContent="Local storage unavailable.";}
+  });
+  cameraLoad.addEventListener("click",()=>{if(!canEditCameraProfile())return;
+    try{const raw=window.localStorage.getItem(cameraProfileKey);if(typeof raw!=="string"||raw.length>1024)throw Error();const p=JSON.parse(raw);if(!validCameraProfile(p))throw Error();applyCameraProfile(p);cameraProfileStatus.textContent="Settings loaded. Review and start explicitly.";}catch{cameraProfileStatus.textContent="No valid saved sensor settings.";}
+  });
+  cameraReset.addEventListener("click",()=>{if(!canEditCameraProfile())return;
+    applyCameraProfile({version:1,calibration:"quiet",facing:"environment",invert:false,light:false,metric:"amount",region:"full",sensitivity:"normal",zoom:null});
+    try{window.localStorage.removeItem(cameraProfileKey);cameraProfileStatus.textContent="Sensor settings reset.";}catch{cameraProfileStatus.textContent="Reset for this page only; storage unavailable.";}
+  });
+  function syncCamera(){
+    const helper=cameraMode(),host=helper?"play":"connection";
+    if(host!==cameraHost){get(helper?"webCameraPlayHost":"webCameraConnectionHost").appendChild(cameraPanel);cameraHost=host;}
+    get("webCameraPlayHost").hidden=!helper;
+    textIfChanged("webCameraSummary",helper?"Camera source and controls":"Browser camera check (optional)");
+    textIfChanged("webCameraStart",helper?"Start motion helper":"Start camera check");
+    textIfChanged("webCameraDescription",helper?"Local video is analyzed for image motion. Only the assigned helper level is sent to the Mac. No recording, hand recognition or depth.":"Local camera preview only. No hand recognition, depth or MIDI output in this check. Stop before pairing. Nothing is recorded or sent to the Mac.");
+    const targetKey=String(caps?.pedals??0);
+    if(targetKey!==cameraTargetKey){cameraTarget.replaceChildren(...Array.from({length:3},(_,i)=>i).filter(i=>has("pedals",i)).map(i=>{const o=document.createElement("option");o.value=String(i);o.textContent=["Expression","Volume","Wah / filter"][i];return o;}));cameraTarget.value=String(Array.from({length:3},(_,i)=>i).find(i=>has("pedals",i))??0);for(const extra of cameraExtra){const off=document.createElement("option");off.value="";off.textContent="Off";extra.replaceChildren(off,...Array.from({length:3},(_,i)=>i).filter(i=>has("pedals",i)).map(i=>{const o=document.createElement("option");o.value=String(i);o.textContent=["Expression","Volume","Wah / filter"][i];return o;}));extra.value="";}cameraTargetKey=targetKey;}
+    for(const control of [cameraTarget,...cameraExtra,...cameraExtraMetric,...cameraGains,...cameraExtraInvert,cameraMetric,cameraSensitivity,cameraRegion,cameraLight,cameraInvert,cameraCalibration,cameraDesiredZoom])control.disabled=cameraHelper||cameraInFlight||!helper;
+    for(const b of [cameraSave,cameraLoad,cameraReset])b.disabled=!canEditCameraProfile();
+    cameraStart.disabled=(!!ws&&!helper)||!cameraMedia()||cameraInFlight||!!cameraStream||document.hidden||(helper&&(releasingAll||pending||workloadMask()!==0||typeof cameraVideo.requestVideoFrameCallback!=="function"));
+    if(!cameraMedia()&&!cameraStream&&!cameraPending)cameraStatus.textContent="Camera unavailable in this browser or insecure context. Touch controls remain separate.";
+    cameraStop.disabled=!cameraPending&&!cameraStream;
+    cameraFacing.disabled=(!!ws&&!helper)||cameraInFlight||!!cameraStream;
+    cameraDevice.disabled=cameraFacing.disabled||cameraDevices.length===0;
+    cameraZoom.disabled=!!ws||!cameraStream||!cameraZoomRange||cameraZoomPending;
+  }
+  function disposeCamera(stream){if(stream)for(const track of stream.getTracks()){try{track.stop();}catch{}}}
+  function stopCamera(message="Camera off."){
+    clearCameraSetupTimer();
+    if(cameraFrameId!==null){try{cameraVideo.cancelVideoFrameCallback?.(cameraFrameId);}catch{}}cameraFrameId=null;
+    cameraHelper=false;cameraLane=-1;cameraConfig=null;cameraBaseline=0;cameraArmed=false;cameraGeometry=null;cameraTrackSettings=null;cameraContext=null;cameraPrior=null;cameraAt=null;cameraMediaTime=-Infinity;cameraQuiet=0;cameraMotionStatus.textContent="Off.";
+    cameraEpoch++;cameraPending=false;cameraZoomPending=false;cameraZoomRange=null;
+    const previous=cameraStream;cameraStream=null;
+    cameraVideo.srcObject=null;cameraVideo.hidden=true;disposeCamera(previous);
+    cameraStatus.textContent=message;syncCamera();
+  }
+  function showCameraChoices(devices){
+    cameraDevices=devices.filter(d=>d.kind==="videoinput"&&typeof d.deviceId==="string"&&d.deviceId.length>0).slice(0,32);
+    cameraDevice.replaceChildren();
+    const defaultOption=document.createElement("option");defaultOption.value="";defaultOption.textContent="Default for direction";cameraDevice.appendChild(defaultOption);
+    cameraDevices.forEach((d,i)=>{const o=document.createElement("option");o.value=d.deviceId;o.textContent=(typeof d.label==="string"&&d.label?d.label:"Camera "+(i+1)).slice(0,120);cameraDevice.appendChild(o);});
+    cameraDevice.value="";
+  }
+  cameraFacing.addEventListener("change",()=>{cameraDevice.value="";});
+  function stopCameraExplicit(message){if(cameraHelper&&admitted){releaseMyControls();cameraStatus.textContent=message;}else stopCamera(message);}
+  cameraPanel.addEventListener("toggle",()=>{if(cameraPanel.open===false&&(cameraStream||cameraPending))stopCameraExplicit("Camera panel closed.");});
+  cameraStart.addEventListener("click",async()=>{
+    const media=cameraMedia();
+    const helper=cameraMode();
+    if(!media||(ws&&!helper)||cameraInFlight||cameraStream||document.hidden)return;
+    if(helper&&(releasingAll||pending||workloadMask()!==0||typeof cameraVideo.requestVideoFrameCallback!=="function"))return;
+    const facing=cameraFacing.value||"environment",id=cameraDevice.value;
+    if(!["user","environment"].includes(facing)||id&&!cameraDevices.some(d=>d.deviceId===id))return;
+    if(helper){const lane=Number(cameraTarget.value);if(!Number.isInteger(lane)||lane<0||lane>2||!has("pedals",lane))return;
+      const metric=cameraMetric.value||"amount",sensitivity=cameraSensitivity.value||"normal",region=cameraRegion.value||"full",calibration=cameraCalibration.value||"quiet";
+      if(!["amount","x","y"].includes(metric)||!["normal","fine","low"].includes(sensitivity)||!["full","center","left","right"].includes(region)||!["quiet","direct"].includes(calibration))return;
+      const gain=i=>{const v=cameraGains[i].value||"1";return ["0.5","1","1.5","2"].includes(v)?Number(v):null;};
+      if(gain(0)===null)return;
+      const assignments=[{lane,metric,gain:gain(0),invert:cameraInvert.checked===true}];
+      for(let i=0;i<cameraExtra.length;i++){const raw=cameraExtra[i].value;if(raw==="")continue;const extra=Number(raw),kind=cameraExtraMetric[i].value|| (i===0?"x":"y");
+        if(!/^[0-2]$/.test(raw)||!has("pedals",extra)||assignments.some(a=>a.lane===extra)||!["amount","x","y"].includes(kind)){cameraMotionStatus.textContent="Choose distinct assigned helpers.";return;}const g=gain(i+1);if(g===null)return;assignments.push({lane:extra,metric:kind,gain:g,invert:cameraExtraInvert[i].checked===true});}
+      const requested=cameraDesiredZoom.value.trim(),desiredZoom=requested===""?null:Number(requested);
+      if(desiredZoom!==null&&(!Number.isFinite(desiredZoom)||desiredZoom<=0))return;
+      cameraConfig={metric,assignments,mask:assignments.reduce((m,a)=>m|(1<<a.lane),0),sensitivity,region,light:cameraLight.checked===true,invert:cameraInvert.checked===true,calibration,desiredZoom};cameraArmed=calibration==="direct";cameraHelper=true;cameraLane=lane;pedalEnabled=true;}
+    const epoch=++cameraEpoch;cameraPending=true;cameraInFlight=true;cameraStatus.textContent="Requesting local camera…";syncCamera();
+    let stream=null;
+    try{
+      stream=await media.getUserMedia({audio:false,video:{...(id?{deviceId:{exact:id}}:{facingMode:{exact:facing}}),width:{ideal:640},height:{ideal:480}}});
+      if(epoch!==cameraEpoch||(helper?!cameraMode():!!ws)||document.hidden){disposeCamera(stream);return;}
+      const tracks=stream.getVideoTracks();
+      if(tracks.length!==1||stream.getTracks().length!==1||tracks[0].readyState==="ended")throw Error("Invalid camera stream");
+      const track=tracks[0];cameraStream=stream;cameraVideo.srcObject=stream;cameraVideo.hidden=false;
+      track.addEventListener("ended",()=>{if(epoch===cameraEpoch){if(cameraHelper)close("Camera ended. Reconnect explicitly.");else stopCamera("Camera ended. Start explicitly again.");}});
+      track.addEventListener("mute",()=>{if(epoch===cameraEpoch){if(cameraHelper)close("Camera muted. Reconnect explicitly.");else stopCamera("Camera muted. Start explicitly again.");}});
+      if(track.muted===true)throw Error("Camera muted");
+      const zoom=typeof track.getCapabilities==="function"?track.getCapabilities().zoom:null;
+      if(zoom&&Number.isFinite(zoom.min)&&Number.isFinite(zoom.max)&&zoom.min>0&&zoom.max>zoom.min){
+        cameraZoomRange={min:zoom.min,max:zoom.max,step:Number.isFinite(zoom.step)&&zoom.step>0?zoom.step:0.1};
+        cameraZoom.min=String(zoom.min);cameraZoom.max=String(zoom.max);cameraZoom.step=String(cameraZoomRange.step);
+        const current=typeof track.getSettings==="function"?track.getSettings().zoom:null;
+        cameraZoom.value=String(Number.isFinite(current)?Math.max(zoom.min,Math.min(zoom.max,current)):Math.max(zoom.min,Math.min(zoom.max,1)));
+      }
+      if(helper&&cameraConfig?.desiredZoom!==null){
+        const requested=cameraConfig.desiredZoom;
+        if(!cameraZoomRange||requested<cameraZoomRange.min||requested>cameraZoomRange.max||typeof track.applyConstraints!=="function")throw Error("Requested zoom unavailable");
+        cameraSetupTimer=setTimeout(()=>{if(epoch===cameraEpoch)stopCameraExplicit("Camera zoom setup timed out. Stop and restart explicitly.");},3000);
+        await track.applyConstraints({advanced:[{zoom:requested}]});
+        if(epoch===cameraEpoch)clearCameraSetupTimer();
+        if(epoch!==cameraEpoch||!cameraMode()||cameraStream!==stream||document.hidden)return;
+        const actual=track.getSettings?.().zoom;
+        if(!Number.isFinite(actual)||actual<cameraZoomRange.min||actual>cameraZoomRange.max||Math.abs(actual-requested)>0.001)throw Error("Requested zoom not confirmed");
+        cameraZoom.value=String(actual);
+      }
+      const settings=track.getSettings?.()??{};
+      if(helper)cameraTrackSettings={zoom:Number.isFinite(settings.zoom)?settings.zoom:null,deviceId:typeof settings.deviceId==="string"?settings.deviceId:null,facingMode:typeof settings.facingMode==="string"?settings.facingMode:null};
+      cameraPending=false;const actualFacing=settings.facingMode;
+      cameraStatus.textContent="Camera active locally"+(actualFacing==="user"?" · front":actualFacing==="environment"?" · rear":" · direction not reported")+(helper?". Motion helper · zoom locked while armed.":". Stop before pairing.");syncCamera();
+      if(helper){const canvas=document.createElement("canvas");canvas.width=16;canvas.height=12;cameraContext=canvas.getContext("2d",{willReadFrequently:true});if(!cameraContext)throw Error("Canvas unavailable");cameraStartedAt=performance.now();cameraMotionStatus.textContent="Waiting for local video frames…";cameraFrameId=cameraVideo.requestVideoFrameCallback((now,meta)=>cameraFrame(epoch,now,meta));}
+      if(typeof media.enumerateDevices==="function"){
+        // Inventory is best effort and must never hold the capture request fence.
+        Promise.resolve().then(()=>media.enumerateDevices()).then(devices=>{if(epoch===cameraEpoch&&cameraStream===stream){showCameraChoices(devices);syncCamera();}}).catch(()=>{});
+      }
+    }catch{if(epoch===cameraEpoch&&helper){if(cameraStream!==stream)disposeCamera(stream);stopCameraExplicit("Camera or requested zoom unavailable. Check browser permission, HTTPS and zoom range.");}else if(epoch===cameraEpoch&&cameraStream===stream)stopCamera("Camera denied or unavailable. Check browser permission and HTTPS.");else{disposeCamera(stream);if(epoch===cameraEpoch)stopCamera("Camera denied or unavailable. Check browser permission and HTTPS.");}}
+    finally{cameraInFlight=false;syncCamera();}
+  });
+  cameraStop.addEventListener("click",()=>stopCameraExplicit("Camera off."));
+  function cameraFrame(epoch,callbackTime,metadata){
+    if(epoch!==cameraEpoch||!cameraHelper||!cameraMode()||!cameraStream)return;
+    const track=cameraStream.getVideoTracks()[0];
+    if(!track||track.readyState==="ended"||track.muted===true){close("Camera unavailable. Reconnect explicitly.");return;}
+    cameraFrameId=null;
+    const now=performance.now(),mediaTime=metadata?.mediaTime;
+    if((cameraAt!==null&&now-cameraAt>=150)||(cameraAt===null&&now-cameraStartedAt>=3000)){close("Camera frames stopped. Reconnect explicitly.");return;}
+    try{
+      if(!Number.isFinite(callbackTime)||callbackTime>now||now-callbackTime>=150||!Number.isFinite(mediaTime)||mediaTime<0||mediaTime<cameraMediaTime)throw Error("Invalid video timing");
+      if(metadata.captureTime!==undefined&&(!Number.isFinite(metadata.captureTime)||metadata.captureTime<0||metadata.captureTime>now||now-metadata.captureTime>=150))throw Error("Stale capture timestamp");
+      const width=metadata.width,height=metadata.height;
+      if(width!==undefined||height!==undefined){
+        if(!Number.isInteger(width)||!Number.isInteger(height)||width<=0||height<=0||width>8192||height>8192)throw Error("Invalid frame geometry");
+        if(cameraGeometry&&(cameraGeometry[0]!==width||cameraGeometry[1]!==height))throw Error("Camera geometry changed");
+        cameraGeometry=[width,height];
+      }
+      const settings=track.getSettings?.()??{},locked=cameraTrackSettings;
+      if(locked&&((locked.zoom!==null&&(!Number.isFinite(settings.zoom)||Math.abs(settings.zoom-locked.zoom)>.001))||(locked.deviceId!==null&&settings.deviceId!==locked.deviceId)||(locked.facingMode!==null&&settings.facingMode!==locked.facingMode)))throw Error("Camera settings changed");
+      if(mediaTime>cameraMediaTime){
+        cameraContext.drawImage(cameraVideo,0,0,16,12);
+        const bytes=cameraContext.getImageData(0,0,16,12).data;
+        if(bytes.length!==768)throw Error("Invalid video frame");
+        const gray=Array.from({length:192},(_,i)=>(bytes[i*4]*.299+bytes[i*4+1]*.587+bytes[i*4+2]*.114));
+        if(!gray.every(Number.isFinite))throw Error("Invalid pixel");
+        const previous=cameraPrior;
+        cameraPrior=gray;cameraMediaTime=mediaTime;cameraAt=now;
+        if(previous){
+          // Motion centroid, not hand/pose recognition. Neutral is independent of inversion.
+          const cfg=cameraConfig;if(!cfg)throw Error("Missing camera configuration");
+          const diffs=gray.map((v,i)=>v-previous[i]);
+          const shift=cfg.light?diffs.reduce((a,b)=>a+b,0)/192:0;
+          let total=0,weightedX=0,weightedY=0,count=0;
+          for(let i=0;i<192;i++){const x=i%16,y=Math.floor(i/16);
+            if(cfg.region==="center"&&(x<4||x>=12||y<3||y>=9)||cfg.region==="left"&&x>=8||cfg.region==="right"&&x<8)continue;
+            const weight=Math.abs(diffs[i]-shift)/255;total+=weight;weightedX+=weight*(x+.5)/16;weightedY+=weight*(1-(y+.5)/12);count++;
+          }
+          const amount=total/count,threshold=cfg.sensitivity==="fine"?.012:cfg.sensitivity==="low"?.05:.025;
+          const span=cfg.sensitivity==="fine"?.10:cfg.sensitivity==="low"?.35:.20;
+          const strength=Math.round(Math.max(0,Math.min(1,(amount-threshold)/span))*100);
+          if(!cameraArmed){
+            cameraBaseline=strength===0?Math.min(3,cameraBaseline+1):0;
+            cameraArmed=cameraBaseline>=3;
+            cameraMotionStatus.textContent=cameraArmed?"Calibrated · move to control":"Keep camera and scene still · "+cameraBaseline+"/3";
+            tick();
+            if(epoch===cameraEpoch&&cameraHelper)cameraFrameId=cameraVideo.requestVideoFrameCallback((t,m)=>cameraFrame(epoch,t,m));
+            return;
+          }
+          const active=strength>0;
+          const valueFor=a=>{if(!active)return 0;const raw=a.metric==="x"?weightedX/total*100:a.metric==="y"?weightedY/total*100:strength;const v=Math.round(Math.max(0,Math.min(100,raw*a.gain)));return a.invert?100-v:v;};
+          if(performance.now()-now>=150){close("Camera analysis overdue. Reconnect explicitly.");return;}
+          if(active){cameraQuiet=0;
+            if(cameraReleaseAt===null&&!pedalMask&&!pedalBusy()){
+              for(const a of cfg.assignments)pedalPositions[a.lane]=valueFor(a);
+              pedalMask=cfg.mask;pedalQueue.push({snapshot:pedalSnapshot(),at:now});pedalDirty=false;syncPedals();tick();
+            }else if(pedalMask===cfg.mask){
+              for(const a of cfg.assignments)pedalPositions[a.lane]=valueFor(a);
+              // Continuous camera values may coalesce, but never extend the original onset deadline.
+              if(pedalSentMask===0&&pedalQueue.length===1&&pedalQueue[0].snapshot.mask===cfg.mask)pedalQueue[0].snapshot=pedalSnapshot();
+              else pedalDirty=true;
+            }
+          }else if(++cameraQuiet>=1&&pedalMask){
+            if(pedalSentMask===0&&pendingKind!=="pedalboard"){pedalMask=0;pedalQueue=[];pedalDirty=false;}
+            else if(cameraQuiet>=2){cameraReleaseAt=now;releasePedals();}
+          }
+          cameraMotionStatus.textContent=cfg.assignments.map(a=>["Expression","Volume","Wah / filter"][a.lane]+": "+valueFor(a)+"%").join(" · ")+" · "+(pedalMask?"helper active":"neutral");
+          tick();
+        }
+      }
+      if(epoch===cameraEpoch&&cameraHelper)cameraFrameId=cameraVideo.requestVideoFrameCallback((t,m)=>cameraFrame(epoch,t,m));
+    }catch{close("Camera processing unavailable. Reconnect explicitly.");}
+  }
+
+  cameraZoom.addEventListener("change",async()=>{
+    if(!cameraStream||!cameraZoomRange||cameraZoomPending||ws)return;
+    const value=Number(cameraZoom.value),range=cameraZoomRange,epoch=cameraEpoch,track=cameraStream.getVideoTracks()[0];
+    if(!Number.isFinite(value)||value<range.min||value>range.max||typeof track.applyConstraints!=="function")return;
+    cameraZoomPending=true;syncCamera();
+    try{
+      await track.applyConstraints({advanced:[{zoom:value}]});
+      if(epoch!==cameraEpoch)return;
+      const actual=track.getSettings?.().zoom;
+      if(Number.isFinite(actual)&&actual>=range.min&&actual<=range.max){cameraZoom.value=String(actual);cameraStatus.textContent="Camera active locally · "+actual.toFixed(2)+"×";}
+      else {cameraZoomRange=null;cameraStatus.textContent="Camera active locally · zoom could not be verified.";}
+    }catch{if(epoch===cameraEpoch){cameraZoomRange=null;cameraStatus.textContent="Camera active locally · zoom unavailable.";}}
+    finally{if(epoch===cameraEpoch){cameraZoomPending=false;syncCamera();}}
+  });
   const motionStart=get("motionStart"), motionStop=get("motionStop"), meter=get("tiltMeter"), motionStatus=get("motionStatus");
   let mode="idle", sample=null, neutral=null, sampleAt=0, sentAt=-1, permissionEpoch=0, waitingSince=0, pendingKind=null;
   let lastTouchSend=-Infinity,lastTiltSend=-Infinity;
@@ -284,6 +525,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   let groupReady=null;
   let releasingAll=false,releaseAllTimer=null;
   let currentView="connection",ackSamples=[];
+  let playMode="all",pendingPlayMode=null,modeOptionsKey="";
   const viewNames=["play","setup","connection"];
   const navId=v=>"nav"+v[0].toUpperCase()+v.slice(1);
   function navigationBusy(){return releasingAll||pending||workloadMask()!==0;}
@@ -459,8 +701,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function localAlias(id){return customActive.includes(id)?(details.customAliases[id]??""):"";}
   function customEditorLabel(id){const original=customLabel(id);return details.customAliases[id]?details.customAliases[id]+" · "+original:original;}
   function syncCustom(){
-    const drums=Boolean(caps)&&customActive.some(id=>id[0]==="d");
-    const pedals=Boolean(caps)&&customActive.some(id=>id[0]==="p");
+    const drums=Boolean(caps)&&playMode!=="stick"&&modeAllows("drums")&&customActive.some(id=>id[0]==="d");
+    const pedals=Boolean(caps)&&modeAllows("pedals")&&customActive.some(id=>id[0]==="p"&&synthVisible(Number(id[1])));
+    for(const id of customActive)customNode(id).hidden=!modeAllows(id[0]==="d"?"drums":"pedals")||!customMapped(id)||(id[0]==="p"&&!synthVisible(Number(id[1])));
     get("customSection").hidden=!drums&&!pedals;
     for(const [id,visible,enabled,label] of [["customDrumEnable",drums,drumEnabled,"drum pads"],["customPedalEnable",pedals,pedalEnabled,"pedalboard"]]){
       const b=get(id);b.hidden=!visible;b.disabled=!visible||!admitted||releasingAll;
@@ -713,6 +956,56 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     catch{layoutMessage="Default layout restored for this page; saved data could not be removed.";}
     applyLayout();syncLayout();
   }
+  const playModes=[
+    ["all","All assigned controls",[]],
+    ["xy","XY / pitch bend (as mapped)",["touch"]],
+    ["piano","Piano / note strips",["piano"]],
+    ["chord","Chord pads",["piano"]],
+    ["arp","Arpeggiator",["piano"]],
+    ["seq","Step sequencer",["piano"]],
+    ["drums","Drum pads",["drums"]],
+    ["stick","Air stick (motion to drum pad)",["drums"]],
+    ["pedals","Pedals / effects",["pedals"]],
+    ["camera","Camera motion helper (experimental)",[]],
+    ["tilt","Tilt / orientation",["tilt"]],
+    ["gyro","Gyro / rotation",["rotation"]],
+    ["accel","Acceleration / Air Drums",["acceleration"]],
+    ["motion","All assigned motion sensors",["tilt","rotation","acceleration"]]
+  ];
+  function modeAvailable(id){
+    const entry=playModes.find(p=>p[0]===id);
+    return Boolean(caps&&entry&&(["chord","arp","seq"].includes(id)?Boolean(caps.piano&33554431):id==="camera"?Boolean(caps.pedals&7):id==="all"||entry[2].some(kind=>Boolean(caps[kind]))));
+  }
+  function modeAllows(kind){
+    return playMode==="all"||(kind==="pedals"&&synthOpen&&["piano","arp","chord","seq"].includes(playMode))||Boolean(playModes.find(p=>p[0]===playMode)?.[2].includes(kind));
+  }
+  function syncPlayMode(){
+    const select=get("playMode");
+    const key=JSON.stringify(playModes.map(p=>[p[0],modeAvailable(p[0])]));
+    if(key!==modeOptionsKey){
+      select.replaceChildren(...playModes.map(([id,label])=>{
+        const option=document.createElement("option");option.value=id;
+        const available=modeAvailable(id);
+        option.disabled=!available;option.textContent=label+(available?"":" — not assigned");
+        return option;
+      }));
+      modeOptionsKey=key;
+    }
+    select.value=pendingPlayMode??playMode;
+    select.disabled=!admitted||!caps||currentView!=="play"||releasingAll;
+    textIfChanged("playModeStatus",pendingPlayMode!==null?"Releasing previous controls; waiting for Mac acknowledgments…":
+      "Select an assigned mode. Enable notes, pedals or sensors explicitly when needed.");
+  }
+  function choosePlayMode(){
+    const id=get("playMode").value;
+    if(currentView!=="play"||!admitted||!caps||releasingAll||!modeAvailable(id)||id===playMode){
+      syncPlayMode();return;
+    }
+    // Global release already cancels unsent onsets, waits for ACKs and
+    // closes on timeout. Never open a second lane or arm automatically.
+    pendingPlayMode=id;
+    releaseMyControls();
+  }
   function syncNavigation(){
     for(const v of viewNames){
       get(v+"View").hidden=currentView!==v;
@@ -743,6 +1036,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function finishGlobalRelease(){
     if(!releasingAll||pending||workloadMask()!==0)return false;
     cancelGlobalTimer();releasingAll=false;
+    if(pendingPlayMode!==null){
+      if(modeAvailable(pendingPlayMode)){playMode=pendingPlayMode;synthOpen=false;dialDrags.clear();arpSelected.clear();}
+      pendingPlayMode=null;
+    }
     drumStatus.textContent=pianoStatus.textContent=pedalStatus.textContent="Off.";
     status.textContent="My controls released locally; required Mac acknowledgments received. MIDI/audio output not confirmed. Enable controls again to play.";
     syncControls();return true;
@@ -750,10 +1047,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function releaseMyControls(){
     if(!admitted||!caps||releasingAll)return;
     releasingAll=true;const now=performance.now();
+    if(cameraHelper){if(pedalSentMask!==0||pendingKind==="pedalboard")cameraReleaseAt??=now;stopCamera("Camera stopped; releasing controls.");}
     // Cancel unsent onsets; retain the state of every already sent owner.
     pointer=null;position=null;dot.hidden=true;touchQueue=touchSent?[{kind:"release",at:now}]:[];
-    drumEnabled=false;drumOwners.clear();drumDesired=0;drumQueue=[];drumEmergency=drumSent!==0;
-    pianoEnabled=false;pianoOwners.clear();pianoDesired=0;pianoQueue=[];pianoEmergency=pianoSent!==0;
+    resetStick();drumEnabled=false;drumOwners.clear();drumDesired=0;drumQueue=[];drumEmergency=drumSent!==0;
+    resetPhrase();pianoEnabled=false;pianoOwners.clear();pianoDesired=0;pianoQueue=[];pianoEmergency=pianoSent!==0;
     pedalEnabled=false;pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;
     drumStatus.textContent=pianoStatus.textContent=pedalStatus.textContent="Off; releasing sent controls.";
     permissionEpoch++;window.removeEventListener("deviceorientation",orientation);
@@ -896,7 +1194,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if(manifest.drums)queue.push(["drumPads",{mask:0}]);
       if(manifest.piano)queue.push(["pianoKeys",{mask:0}]);
       if(manifest.pedals)queue.push(["pedalboard",{mask:0,levels:[0,0,0,0,0,0]}]);
-      if(queue.length<1||queue.length>2||manifest.tilt||manifest.acceleration||manifest.rotation||manifest.airDrums){close("Unsupported group surface.");return;}
+      if(queue.length<1||queue.length>4||manifest.tilt||manifest.acceleration||manifest.rotation||manifest.airDrums){close("Unsupported group surface.");return;}
       groupReady={manifest,rows,labels,queue};
       status.textContent="Arming neutral group controls…";
       send(...queue.shift());
@@ -961,7 +1259,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     return discrete===0?sensors<=3:discrete===1&&sensors<=2;
   }
   function workloadAllows(group){
-    return !releasingAll&&(experimentalWorkload||conservativeCombination(workloadMask()|workloadBits[group]));
+    const requested=workloadMask()|workloadBits[group];
+    return !releasingAll&&modeAllows(group)&&(!groupNeutralHandshake||popcount(requested)<=2)&&
+      (experimentalWorkload||conservativeCombination(requested));
   }
   function requestWorkload(group){
     if(workloadAllows(group)){workloadRefusal="";return true;}
@@ -1021,19 +1321,169 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     // The custom panel owns the existing DOM nodes, not duplicated MIDI
     // controls. Suppress an original panel only when every mapped control
     // has moved; restoring any one control immediately restores its panel.
-    const originalDrums=indices(8).some(i=>has("drums",i)&&!customActive.includes("d"+i));
-    const originalPedals=indices(6).some(i=>has("pedals",i)&&!customActive.includes("p"+i));
-    for(const [id,visible] of [["touchSection",caps?.touch],["drumSection",originalDrums],["pianoSection",caps?.piano],["pedalSection",originalPedals],["tiltSection",caps?.tilt],["inertialSection",caps?.acceleration||caps?.rotation],["accelSection",caps?.acceleration],["rotationSection",caps?.rotation],["airDrumNotice",caps?.airDrums]])get(id).hidden=!visible;
+    const originalDrums=playMode==="stick"&&Boolean(caps?.drums)||indices(8).some(i=>has("drums",i)&&!customActive.includes("d"+i));
+    const originalPedals=indices(6).some(i=>has("pedals",i)&&synthVisible(i)&&!customActive.includes("p"+i));
+    for(const [id,visible] of [["touchSection",caps?.touch&&modeAllows("touch")],["drumSection",originalDrums&&modeAllows("drums")],["pianoSection",caps?.piano&&modeAllows("piano")],["pedalSection",originalPedals&&modeAllows("pedals")],["tiltSection",caps?.tilt&&modeAllows("tilt")],["inertialSection",(caps?.acceleration&&modeAllows("acceleration"))||(caps?.rotation&&modeAllows("rotation"))],["accelSection",caps?.acceleration&&modeAllows("acceleration")],["rotationSection",caps?.rotation&&modeAllows("rotation")],["airDrumNotice",caps?.airDrums&&modeAllows("acceleration")]])get(id).hidden=!visible;
   }
   const drumButtons=Array.from({length:8},(_,i)=>get("drum"+i));
   const drumEnable=get("drumEnable"),drumRelease=get("drumRelease"),drumStatus=get("drumStatus");
   let drumEnabled=false,drumOwners=new Map(),drumQueue=[],drumDesired=0,drumSent=0,lastDrumSend=-Infinity,drumEmergency=false;
-  function syncDrums(){
-    drumEnable.disabled=!admitted||!caps?.drums;drumEnable.textContent=drumEnabled?"Disable drum pads":"Enable drum pads";
-    drumRelease.disabled=!admitted||(!drumDesired&&!drumSent&&!drumQueue.length);
-    drumButtons.forEach((b,i)=>{b.hidden=!has("drums",i);b.disabled=!admitted||!drumEnabled||!has("drums",i)||drumEmergency;b.setAttribute("aria-pressed",String(Boolean(drumDesired&(1<<i))));});
+  let stickState="idle",stickEpoch=0,stickPad=0,stickKey="",stickAt=0,stickReady=false,stickPulseAt=null,stickLast=-Infinity;
+  const kitKey="tihulu.remote.drum-kit.v1";
+  const kitNames=["Kick","Snare","Closed hi-hat","Open hi-hat","Low tom","High tom","Crash","Ride"];
+  const kitDefault=()=>[[50,78],[25,53],[16,24],[84,50],[63,43],[39,35],[38,15],[77,15]].map(([x,y])=>({x,y,size:18,visible:true}));
+  function within(value, min, max) {
+    return Number.isInteger(value) && value >= min && value <= max;
   }
-  function resetDrums(){drumEnabled=false;drumOwners.clear();drumQueue=[];drumDesired=0;drumSent=0;lastDrumSend=-Infinity;drumEmergency=false;drumStatus.textContent="Off.";syncDrums();}
+  function loadKit() {
+    try {
+      const raw = window.localStorage?.getItem(kitKey);
+      if (typeof raw === "string" && raw.length < 1024) {
+        const saved = JSON.parse(raw);
+        if (Array.isArray(saved) && saved.length === 8 && saved.every(part =>
+          part && Object.keys(part).every(key => ["x","y","size","visible"].includes(key)) &&
+          typeof part.visible === "boolean" && within(part.x,12,88) && within(part.y,15,85) &&
+          (part.size === undefined || within(part.size,12,24)))) {
+          return saved.map(part => ({...part, size: part.size ?? 18}));
+        }
+      }
+    } catch {}
+    return kitDefault();
+  }
+  let kit=loadKit(),kitEditing=false,kitPart=0,kitOptionsKey="",kitDrag=null;
+  const kitNodes=kitNames.map((name,i)=>{
+    const b=document.createElement("button");b.type="button";b.textContent=name;b.setAttribute("data-cymbal",String([2,3,6,7].includes(i)));
+    get("kitBoard").appendChild(b);
+    b.addEventListener("click",()=>{
+      if(!has("drums",i)||!kit[i].visible)return;
+      if(kitEditing&&kitIdle()){kitPart=i;syncStick();}
+      else chooseStrikePad(i);
+    });
+    b.addEventListener("pointerdown",e=>{
+      if(kitDrag||!kitEditing||!kitIdle()||!has("drums",i)||!kit[i].visible||e.button!==0)return;
+      e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{return;}
+      kitPart=i;kitDrag={id:e.pointerId,i};syncStick();
+    });
+    b.addEventListener("pointermove",e=>{
+      if(!kitEditing||!kitIdle()||kitDrag?.id!==e.pointerId||kitDrag.i!==i)return;
+      const r=get("kitBoard").getBoundingClientRect();
+      if(![r.left,r.top,r.width,r.height,e.clientX,e.clientY].every(Number.isFinite)||r.width<=0||r.height<=0)return;
+      kit[i].x=Math.round(Math.max(12,Math.min(88,100*(e.clientX-r.left)/r.width)));
+      kit[i].y=Math.round(Math.max(15,Math.min(85,100*(e.clientY-r.top)/r.height)));syncStick();
+    });
+    for(const event of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(event,e=>{if(kitDrag?.id===e.pointerId&&kitDrag.i===i)kitDrag=null;});
+    return b;
+  });
+  function kitIdle(){return currentView==="play"&&playMode==="stick"&&admitted&&stickState==="idle"&&!releasingAll&&!drumBusy();}
+  function canChooseStrikePad(){
+    return currentView==="play"&&playMode==="stick"&&admitted&&!releasingAll&&
+      stickState!=="requesting"&&stickPulseAt===null&&!drumBusy();
+  }
+  function chooseStrikePad(index){
+    if(canChooseStrikePad()&&within(index,0,7)&&has("drums",index)&&index!==stickPad){
+      stickPad=index;
+      if(stickState!=="idle"){
+        stickReady=false;
+        get("airStickStatus").textContent="New pad selected. Hold still before the next strike.";
+      }
+    }
+    get("airStickPad").value=String(stickPad);
+    syncKit();
+  }
+  function syncKit(){
+    const key=String(caps?.drums??0),idle=kitIdle();
+    if(key!==kitOptionsKey){
+      const assigned=kitNames.map((_,i)=>i).filter(i=>has("drums",i));
+      get("kitPart").replaceChildren(...assigned.map(i=>{const o=document.createElement("option");o.value=String(i);o.textContent=kitNames[i]+" · "+labelFor(9+i);return o;}));
+      kitPart=assigned[0]??0;kitOptionsKey=key;
+    }
+    if(!idle){kitEditing=false;kitDrag=null;}
+    get("kitEdit").disabled=!idle;get("kitEdit").setAttribute("aria-pressed",String(kitEditing));
+    get("kitEditor").hidden=!kitEditing;get("kitPart").value=String(kitPart);
+    for(const id of ["kitPart","kitX","kitY","kitSize","kitAdd","kitRemove","kitSave","kitReset"])get(id).disabled=!kitEditing||!idle;
+    get("kitAdd").disabled||=kit[kitPart].visible;get("kitRemove").disabled||=!kit[kitPart].visible;
+    get("kitX").value=String(kit[kitPart].x);get("kitY").value=String(kit[kitPart].y);
+    get("kitSize").value=String(kit[kitPart].size);
+    kitNodes.forEach((b,i)=>{
+      b.hidden=!has("drums",i)||!kit[i].visible;b.disabled=!canChooseStrikePad();
+      b.style.left=kit[i].x+"%";b.style.top=kit[i].y+"%";
+      b.style.width="clamp(44px, "+kit[i].size+"%, "+Math.round(100*kit[i].size/18)+"px)";
+      b.setAttribute("data-selected",String(i===(kitEditing?kitPart:stickPad)));
+      b.setAttribute("data-hit",String(Boolean(drumDesired&(1<<i))));
+      b.textContent=mappingLabels.get(9+i)||kitNames[i];b.setAttribute("aria-label",b.textContent+" · "+labelFor(9+i));
+    });
+  }
+  function editKit(action){
+    if(!kitIdle()||!kitEditing)return;
+    if(action==="reset"){kit=kitDefault();}
+    else if(action==="save"){try{window.localStorage.setItem(kitKey,JSON.stringify(kit));get("kitStatus").textContent="Layout saved. No assignments stored.";}catch{get("kitStatus").textContent="Storage unavailable.";}}
+    else if(has("drums",kitPart)){
+      if(action==="add"||action==="remove")kit[kitPart].visible=action==="add";
+      else if(action==="size"){
+        const size=Number(get("kitSize").value);
+        if(within(size,12,24))kit[kitPart].size=size;
+      }else if(action==="x"||action==="y"){
+        const n=Number(get(action==="x"?"kitX":"kitY").value),lo=action==="x"?12:15,hi=action==="x"?88:85;
+        if(Number.isInteger(n)&&n>=lo&&n<=hi)kit[kitPart][action]=n;
+      }
+    }
+    syncStick();
+  }
+  function syncStick(){
+    const select=get("airStickPad"),key=String(caps?.drums??0);
+    if(key!==stickKey){
+      select.replaceChildren(...Array.from({length:8},(_,i)=>i).filter(i=>has("drums",i)).map(i=>{
+        const o=document.createElement("option");o.value=String(i);o.textContent=labelFor(9+i);return o;
+      }));
+      stickPad=Array.from({length:8},(_,i)=>i).find(i=>has("drums",i))??0;select.value=String(stickPad);stickKey=key;
+    }
+    get("airStickSection").hidden=playMode!=="stick";
+    select.disabled=!canChooseStrikePad()||!caps?.drums;
+    get("airStickStart").disabled=playMode!=="stick"||!admitted||!caps?.drums||releasingAll||stickState!=="idle"||drumBusy();
+    get("airStickStop").disabled=stickState==="idle";syncKit();
+  }
+  function resetStick(message="Off."){
+    stickEpoch++;stickState="idle";stickReady=false;stickPulseAt=null;stickLast=-Infinity;
+    get("airStickStatus").textContent=message;syncInertialListener();
+  }
+  async function startStick(){
+    if(playMode!=="stick"||currentView!=="play"||!admitted||releasingAll||stickState!=="idle"||drumBusy()||!has("drums",stickPad))return;
+    if(!window.isSecureContext||typeof window.DeviceMotionEvent==="undefined"){get("airStickStatus").textContent="DeviceMotion unavailable.";return;}
+    if(!requestWorkload("drums"))return;
+    kitEditing=false;kitDrag=null;const epoch=++stickEpoch;stickState="requesting";drumEnabled=true;syncControls();
+    get("airStickStatus").textContent="Waiting for motion permission…";
+    try{
+      const api=window.DeviceMotionEvent;
+      if(typeof api.requestPermission==="function"&&await api.requestPermission()!=="granted"){
+        if(epoch===stickEpoch){resetStick("Motion permission denied.");drumEnabled=false;syncControls();}return;
+      }
+    }catch{if(epoch===stickEpoch){resetStick("Motion permission unavailable.");drumEnabled=false;syncControls();}return;}
+    if(epoch!==stickEpoch||!admitted||stickState!=="requesting"||playMode!=="stick")return;
+    stickState="waiting";stickAt=performance.now();stickReady=false;syncInertialListener();syncControls();
+    get("airStickStatus").textContent="Hold still to arm.";
+  }
+  function stickMotion(e){
+    if(stickState!=="waiting"&&stickState!=="active")return;
+    const v=e.acceleration,axes=v?[v.x,v.y,v.z]:[];
+    if(axes.length!==3||!axes.every(x=>Number.isFinite(x)&&Math.abs(x)<=100)){
+      if(stickState==="active")close("Air stick sensor invalid. Reconnect explicitly.");return;
+    }
+    const now=performance.now(),magnitude=Math.hypot(...axes);
+    stickAt=now;
+    if(magnitude<=3){stickReady=true;stickState="active";get("airStickStatus").textContent="Ready · make a small controlled strike.";return;}
+    if(stickState!=="active"||!stickReady||magnitude<8)return;
+    stickReady=false;
+    if(now-stickLast<150||pending||drumBusy()||releasingAll)return;
+    stickLast=now;stickPulseAt=now;drumDown("air-stick",stickPad);
+  }
+  function stopStick(){if(playMode!=="stick"||stickState==="idle")return;resetStick();drumEnabled=false;releaseDrums();}
+  function syncDrums(){
+    drumEnable.disabled=!admitted||!caps?.drums||!modeAllows("drums");drumEnable.textContent=drumEnabled?"Disable drum pads":"Enable drum pads";
+    drumRelease.disabled=!admitted||(!drumDesired&&!drumSent&&!drumQueue.length);
+    drumButtons.forEach((b,i)=>{b.hidden=playMode==="stick"||!has("drums",i);b.disabled=playMode==="stick"||!admitted||!drumEnabled||!has("drums",i)||drumEmergency;b.setAttribute("aria-pressed",String(Boolean(drumDesired&(1<<i))));});
+    drumEnable.hidden=playMode==="stick";syncStick();
+  }
+  function resetDrums(){resetStick();drumEnabled=false;drumOwners.clear();drumQueue=[];drumDesired=0;drumSent=0;lastDrumSend=-Infinity;drumEmergency=false;drumStatus.textContent="Off.";syncDrums();}
   function drumChanged(){
     let mask=0;for(const index of drumOwners.values())mask|=1<<index;
     if(mask===drumDesired)return;
@@ -1042,11 +1492,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     drumQueue.push({mask,at:performance.now()});syncDrums();tick();
   }
   function releaseDrums(){
+    if(stickState!=="idle"){resetStick();drumEnabled=false;}
     drumOwners.clear();drumDesired=0;drumQueue=[];
     drumEmergency=drumSent!==0;syncControls();tick();
   }
   function drumDown(owner,index){
-    if(!admitted||!drumEnabled||!has("drums",index)||drumEmergency||drumOwners.has(owner))return;
+    if(!admitted||!drumEnabled||!has("drums",index)||drumEmergency||drumOwners.has(owner)||(playMode==="stick")!==(owner==="air-stick"))return;
     if(drumOwners.size>=16){close("Too many drum contacts. Reconnect explicitly.");return;}
     drumOwners.set(owner,index);drumChanged();
   }
@@ -1060,9 +1511,105 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const pianoBoard=get("pianoBoard"),pianoStrips=get("pianoStrips"),pianoStripHint=get("pianoStripHint");
   let strips=false;
   let pianoEnabled=false,pianoOctave=0,pianoOwners=new Map(),pianoQueue=[],pianoDesired=0,pianoSent=0,lastPianoSend=-Infinity,pianoEmergency=false;
-  function pianoBusy(){return pianoDesired!==0||pianoSent!==0||pianoQueue.length!==0||pianoEmergency||pendingKind==="pianoKeys";}
+  function pianoBusy(){return phraseRun!==null||pianoDesired!==0||pianoSent!==0||pianoQueue.length!==0||pianoEmergency||pendingKind==="pianoKeys";}
+  const chordShapes=[[0,4,7],[2,5,9],[5,9,12],[7,11,14]];
+  const phraseModes=["chord","arp","seq"];
+  const chordOwners=new Map();
+  let phraseMask=0,phraseRun=null,phraseOptionsKey="",synthOpen=false;
+  const arpSelected=new Set(),arpContacts=new Set();
+  let synthCompact=false,synthHidden=new Set();
+  const dialDrags=new Map();
+  const synthChoiceButtons=Array.from({length:6},(_,i)=>{const b=document.createElement("button");b.type="button";get("synthChoiceGrid").appendChild(b);b.addEventListener("click",()=>{if(!synthOpen||!admitted||releasingAll||pedalEnabled||pedalBusy()||!has("pedals",i))return;if(synthHidden.has(i))synthHidden.delete(i);else synthHidden.add(i);syncControls();});return b;});
+  const synthVisible=i=>!synthOpen||!synthHidden.has(i);
+  function choosePianoTool(id){if(currentView!=="play"||!admitted||releasingAll||!modeAvailable(id))return;get("playMode").value=id;choosePlayMode();}
+  function toggleSynth(){if(currentView!=="play"||!admitted||releasingAll||!["piano","arp","chord","seq"].includes(playMode)||!caps?.pedals)return;dialDrags.clear();if(synthOpen){synthOpen=false;pedalEnabled=false;releasePedals();}else{synthOpen=true;syncControls();}}
+  const specialPiano=()=>phraseModes.includes(playMode);
+  const chordAvailable=i=>chordShapes[i]?.every(k=>has("piano",k));
+  const chordMask=i=>chordShapes[i].reduce((m,k)=>m|(1<<k),0);
+  const chordLabel=i=>chordShapes[i].map(k=>labelFor(17+k)).join(" + ");
+  function syncPhrase(){
+    const special=specialPiano(),playing=phraseRun!==null,key=String(caps?.piano??0);
+    if(key!==phraseOptionsKey){
+      const options=[-1,...Array.from({length:25},(_,i)=>i).filter(i=>has("piano",i))];
+      for(let i=0;i<8;i++){
+        const el=get("phraseStep"+i);
+        el.replaceChildren(...options.map(k=>{const o=document.createElement("option");o.value=String(k);o.textContent=k<0?"Rest":labelFor(17+k);return o;}));
+        el.value="-1";
+      }
+      const available=chordShapes.map((_,i)=>i).filter(chordAvailable);
+      get("arpChoice").replaceChildren(...available.map(i=>{const o=document.createElement("option");o.value=String(i);o.textContent=chordLabel(i);return o;}));
+      get("arpChoice").value=available.length?String(available[0]):"";
+      phraseOptionsKey=key;
+    }
+    get("phraseSection").hidden=!special;
+    get("pianoBoard").hidden=(special&&playMode!=="arp")||!Boolean(caps?.piano&33554431);
+    get("pianoArp").disabled=!admitted||!modeAvailable("arp")||releasingAll;get("pianoArp").setAttribute("aria-pressed",String(playMode==="arp"));
+    get("pianoChord").disabled=!admitted||!modeAvailable("chord")||releasingAll;get("pianoChord").setAttribute("aria-pressed",String(playMode==="chord"));
+    get("pianoSynth").hidden=!["piano","arp","chord","seq"].includes(playMode)||!caps?.pedals;get("pianoSynth").disabled=!admitted||releasingAll;
+    get("pianoSynth").setAttribute("aria-pressed",String(synthOpen));get("pianoSynth").textContent=synthOpen?"Hide synth controls":"Show synth controls";
+    get("synthCompact").hidden=!synthOpen;get("synthCompact").setAttribute("aria-pressed",String(synthCompact));get("synthChoices").hidden=!synthOpen;
+    synthChoiceButtons.forEach((b,i)=>{b.hidden=!has("pedals",i);b.disabled=!synthOpen||pedalEnabled||pedalBusy()||releasingAll;b.textContent=labelFor(43+i)+(synthVisible(i)?" · shown":" · hidden");b.setAttribute("aria-pressed",String(synthVisible(i)));});
+    get("pianoManualHint").hidden=special;
+    get("pianoStrips").hidden=special;
+    for(const id of ["octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot","pianoSustain"])if(special&&playMode!=="arp")get(id).hidden=true;
+    else if(id!=="pianoSustain")get(id).hidden=false;
+    get("phraseTitle").textContent=playMode==="chord"?"Chord pads":playMode==="arp"?"Arpeggiator":"8-step sequencer";
+    get("chordGrid").hidden=playMode!=="chord";
+    get("phraseTransport").hidden=playMode==="chord";
+    get("arpChoice").hidden=get("arpLabel").hidden=playMode!=="arp";
+    get("sequenceSteps").hidden=playMode!=="seq";
+    get("arpKeyboardTools").hidden=playMode!=="arp";get("arpClear").disabled=playing;get("arpDirection").disabled=playing;get("arpRate").disabled=playing;get("arpSwing").disabled=playing;
+    get("arpSelected").textContent=arpSelected.size?"Selected keys: "+[...arpSelected].sort((a,b)=>a-b).map(k=>labelFor(17+k)).join(", "):"Tap keys to select a custom arpeggio, or use the chord menu.";
+    for(let i=0;i<4;i++){
+      const b=get("chord"+i);b.textContent=chordLabel(i);b.disabled=playMode!=="chord"||!pianoEnabled||!admitted||releasingAll||!chordAvailable(i);
+      b.setAttribute("aria-pressed",String([...chordOwners.values()].includes(i)));
+    }
+    for(const id of ["phraseTempo","arpChoice",...Array.from({length:8},(_,i)=>"phraseStep"+i)])get(id).disabled=playing;
+    get("phraseStart").disabled=!pianoEnabled||!admitted||releasingAll||pianoBusy()||!["arp","seq"].includes(playMode);
+    get("phraseStop").disabled=!playing;
+  }
+  function resetPhrase(message="Off."){phraseRun=null;phraseMask=0;chordOwners.clear();arpContacts.clear();get("phraseStatus").textContent=message;}
+  function chordDown(owner,i){
+    if(currentView!=="play"||playMode!=="chord"||!admitted||!pianoEnabled||releasingAll||pianoEmergency||!chordAvailable(i)||chordOwners.has(owner))return;
+    if(chordOwners.size>=16){close("Too many chord contacts.");return;}
+    chordOwners.set(owner,i);pianoChanged();
+  }
+  function chordUp(owner){if(chordOwners.delete(owner))pianoChanged();}
+  function startPhrase(){
+    if(currentView!=="play"||!["arp","seq"].includes(playMode)||!pianoEnabled||!admitted||releasingAll||pianoBusy())return;
+    const bpm=Number(get("phraseTempo").value);
+    if(![60,90,120,150].includes(bpm))return;
+    const selection=get("arpChoice").value,index=Number(selection);
+    let pattern=playMode==="arp"?(arpSelected.size?[...arpSelected].sort((a,b)=>a-b):selection!==""&&chordAvailable(index)?[...chordShapes[index]]:[]):
+      Array.from({length:8},(_,i)=>Number(get("phraseStep"+i).value));
+    const direction=get("arpDirection").value,rate=get("arpRate").value||"8";
+    if(playMode==="arp"){if(!["","up","down","bounce"].includes(direction)||!["4","8","12","16"].includes(rate))return;if(direction==="down")pattern.reverse();if(direction==="bounce"&&pattern.length>2)pattern=pattern.concat(pattern.slice(1,-1).reverse());}
+    if(!pattern.length||!pattern.some(i=>i>=0)||!pattern.every(i=>Number.isInteger(i)&&(i===-1||(i<25&&has("piano",i)))))return;
+    const swing=playMode==="arp"?Number(get("arpSwing").value||"50"):50;
+    if(![50,55,60].includes(swing))return;
+    phraseRun={pattern,index:0,on:false,longStep:true,swing,next:performance.now(),period:240000/(bpm*(playMode==="arp"?Number(rate):8))};
+    get("phraseStatus").textContent="Playing · local browser clock.";syncControls();tick();
+  }
+  function advancePhrase(now){
+    const run=phraseRun;if(!run||now<run.next)return true;
+    if(now-run.next>=150){close("Sequencer delayed. Reconnect explicitly.");return false;}
+    if(pending||pianoQueue.length||pianoEmergency)return true;
+    if(!pianoEnabled||releasingAll||!admitted||!["arp","seq"].includes(playMode)){releasePiano();return false;}
+    // Alternate by elapsed steps, including across an odd-length pattern wrap.
+    const halfStep=run.period*(run.longStep?run.swing:100-run.swing)/100;
+    const scheduled=run.next+halfStep;
+    // Absorb timer jitter without bunching edges after a delayed acknowledgment.
+    run.next=scheduled-now>=25?scheduled:now+halfStep;
+    if(!run.on){
+      const i=run.pattern[run.index];phraseMask=i<0?0:1<<i;
+      run.on=true;
+    }else{
+      phraseMask=0;run.on=false;run.index=(run.index+1)%run.pattern.length;run.longStep=!run.longStep;
+    }
+    pianoChanged(false);return Boolean(admitted);
+  }
   function syncPiano(){
-    pianoEnable.disabled=!admitted||!caps?.piano;pianoEnable.textContent=pianoEnabled?"Disable piano":"Enable piano";
+    pianoEnable.disabled=!admitted||!caps?.piano||!modeAllows("piano");pianoEnable.textContent=(pianoEnabled?"Disable ":"Enable ")+({chord:"chord pads",arp:"arpeggiator",seq:"sequencer"}[playMode]||"piano");
     pianoRelease.disabled=!admitted||!pianoBusy();
     octaveDown.disabled=!admitted||!pianoEnabled||pianoOctave===0||!octaveAvailable(0)||pianoBusy();
     octaveUp.disabled=!admitted||!pianoEnabled||pianoOctave===1||!octaveAvailable(1)||pianoBusy();
@@ -1087,30 +1634,34 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       b.style.order=String(i);
       b.textContent=label;b.setAttribute("aria-label",(mappingLabels.has(17+index)?labelFor(17+index)+" · ":"")+label+(rows.length?" · "+rows.map(targetText).join("; "):" · mapping details hidden"));
       b.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<index))));
+      b.setAttribute("data-arp-selected",String(playMode==="arp"&&arpSelected.has(index)));if(playMode==="arp"&&phraseRun)b.disabled=true;
       b.setAttribute("data-scale",String(scaleAllowed&&pianoScale.value!=="all"&&scale.includes((index-root+12)%12)));
     });
     get("pianoBoard").hidden=!Boolean(caps?.piano&33554431);
     pianoPedal.hidden=!has("piano",25);pianoPedal.disabled=!admitted||!pianoEnabled||!has("piano",25)||pianoEmergency;
-    pianoPedal.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<25))));
+    pianoPedal.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<25))));syncPhrase();
   }
-  function resetPiano(){strips=false;pianoEnabled=false;pianoOctave=0;pianoOwners.clear();pianoQueue=[];pianoDesired=0;pianoSent=0;lastPianoSend=-Infinity;pianoEmergency=false;pianoStatus.textContent="Off.";syncPiano();}
-  function pianoChanged(){
-    let mask=0;for(const index of pianoOwners.values())mask|=1<<index;
+  function resetPiano(){resetPhrase();arpSelected.clear();synthOpen=false;dialDrags.clear();synthHidden.clear();strips=false;pianoEnabled=false;pianoOctave=0;pianoOwners.clear();pianoQueue=[];pianoDesired=0;pianoSent=0;lastPianoSend=-Infinity;pianoEmergency=false;pianoStatus.textContent="Off.";syncPiano();}
+  function pianoChanged(runTick=true){
+    let mask=phraseMask;for(const index of pianoOwners.values())mask|=1<<index;
+    for(const index of chordOwners.values())mask|=chordMask(index);
     if(mask===pianoDesired)return;
     pianoDesired=mask;
     if(pianoQueue.length>=8){close("Piano input backlog. Reconnect explicitly.");return;}
-    pianoQueue.push({mask,at:performance.now()});syncPiano();tick();
+    pianoQueue.push({mask,at:performance.now()});syncPiano();if(runTick)tick();
   }
   function releasePiano(){
-    pianoOwners.clear();pianoDesired=0;pianoQueue=[];
+    resetPhrase();pianoOwners.clear();pianoDesired=0;pianoQueue=[];
     pianoEmergency=pianoSent!==0;syncControls();tick();
   }
   function pianoDown(owner,index){
-    if(!admitted||!pianoEnabled||!has("piano",index)||pianoEmergency||pianoOwners.has(owner))return;
+    if(!admitted||!pianoEnabled||!has("piano",index)||pianoEmergency||releasingAll||pianoOwners.has(owner))return;
+    if(playMode==="arp"&&index!==25){if(phraseRun||arpContacts.has(owner)||arpContacts.size>=32)return;arpContacts.add(owner);if(arpSelected.has(index))arpSelected.delete(index);else arpSelected.add(index);syncPiano();return;}
+    if(specialPiano()&&!(playMode==="arp"&&index===25))return;
     if(pianoOwners.size>=32){close("Too many piano contacts. Reconnect explicitly.");return;}
     pianoOwners.set(owner,index);pianoChanged();
   }
-  function pianoUp(owner){if(pianoOwners.delete(owner))pianoChanged();}
+  function pianoUp(owner){arpContacts.delete(owner);if(pianoOwners.delete(owner))pianoChanged();}
   function moveStrip(e){
     const owner="p"+e.pointerId;
     if(!strips||!admitted||!pianoEnabled||pianoEmergency||!pianoOwners.has(owner)||pianoOwners.get(owner)===25)return;
@@ -1142,11 +1693,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   let pedalEnabled=false,pedalMask=0,pedalSentMask=0,pedalPositions=[...details.sliderDefaults],pedalQueue=[],pedalDirty=false,lastPedalSend=-Infinity,pedalEmergency=false;
   function pedalBusy(){return pedalMask!==0||pedalSentMask!==0||pedalQueue.length!==0||pedalEmergency||pendingKind==="pedalboard";}
   function syncPedals(){
-    pedalEnable.disabled=!admitted||!caps?.pedals;pedalEnable.textContent=pedalEnabled?"Disable pedalboard":"Enable pedalboard";
+    get("pedalSection").setAttribute("data-synth",String(synthOpen));get("pedalSection").setAttribute("data-compact",String(synthCompact));
+    pedalEnable.disabled=!admitted||!caps?.pedals||!modeAllows("pedals");pedalEnable.textContent=pedalEnabled?"Disable pedalboard":"Enable pedalboard";
     pedalRelease.disabled=!admitted||!pedalBusy();
     pedalToggles.forEach((b,i)=>{
       const active=Boolean(pedalMask&(1<<i));
-      get("pedalCell"+i).hidden=!has("pedals",i);
+      get("pedalCell"+i).hidden=!has("pedals",i)||!synthVisible(i);
       b.disabled=!admitted||!pedalEnabled||!has("pedals",i)||pedalEmergency;
       const hold=isHoldPedal(i);
       const alias=localAlias("p"+i);
@@ -1157,6 +1709,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pedalSliders.forEach((b,i)=>{
       b.disabled=!admitted||!pedalEnabled||!has("pedals",i)||pedalEmergency||!(pedalMask&(1<<i));
       b.value=String(pedalPositions[i]);pedalOutputs[i].textContent=pedalPositions[i]+"%";
+      pedalOutputs[i].setAttribute("data-dial","true");pedalOutputs[i].style.setProperty?.("--dial-angle",(pedalPositions[i]*2.7-135)+"deg");
     });
   }
   function pedalSnapshot(){
@@ -1167,11 +1720,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pedalStatus.textContent="Off.";syncPedals();
   }
   function pedalAdmitted(i){
-    return currentView==="play"&&!releasingAll&&admitted&&pedalEnabled&&has("pedals",i)&&!pedalEmergency;
+    return currentView==="play"&&!releasingAll&&admitted&&pedalEnabled&&!cameraHelper&&modeAllows("pedals")&&has("pedals",i)&&synthVisible(i)&&!pedalEmergency;
   }
   function pedalSet(i,active){
     const next=active?pedalMask|(1<<i):pedalMask&~(1<<i);
     if(next===pedalMask)return;
+    if(!active)dialDrags.delete(i);
     pedalMask=next;
     if(pedalQueue.length>=8){close("Pedal input backlog. Reconnect explicitly.");return;}
     pedalQueue.push({snapshot:pedalSnapshot(),at:performance.now()});pedalDirty=false;syncPedals();tick();
@@ -1197,7 +1751,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pedalPositions[i]=Math.round(n);pedalDirty=true;syncPedals();tick();
   }
   function releasePedals(){
-    pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;syncControls();tick();
+    dialDrags.clear();pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;syncControls();tick();
   }
   function sendPedals(snapshot){send("pedalboard",snapshot);}
   function inertialState(kind,prefix,limit,scale){return {kind,start:get(prefix+"Start"),stop:get(prefix+"Stop"),meter:get(prefix+"Meter"),status:get(prefix+"Status"),limit,scale,mode:"idle",epoch:0,sample:null,at:0,sent:-1,last:-Infinity,waiting:0};}
@@ -1205,13 +1759,15 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const capturing=s=>["waiting","arming","active"].includes(s.mode);
   function syncInertialListener(){
     window.removeEventListener("devicemotion",deviceMotion);
-    if(streams.some(capturing))window.addEventListener("devicemotion",deviceMotion);
+    if(streams.some(capturing)||stickState==="waiting"||stickState==="active")window.addEventListener("devicemotion",deviceMotion);
   }
   function resetInertial(s,message){
     s.epoch++;s.mode="idle";s.sample=null;s.at=0;s.sent=-1;s.last=-Infinity;s.meter.value=0;s.status.textContent=message;
     syncInertialListener();syncControls();
   }
   function deviceMotion(e){
+    stickMotion(e);
+    if(!admitted)return;
     for(const s of streams){
       if(!capturing(s))continue;
       const v=s.kind==="acceleration"?e.acceleration:e.rotationRate;
@@ -1244,12 +1800,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     s.epoch++;s.mode="releasing";s.sample=null;s.status.textContent="Releasing…";syncInertialListener();syncControls();tick();
   }
   function syncControls(){
-    pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncCustom();syncWorkload();syncNavigation();syncLatency();syncLayout();
+    syncCamera();pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncCustom();syncWorkload();syncNavigation();syncPlayMode();syncLatency();syncLayout();
     releaseAll.disabled=!admitted||!caps||releasingAll;
     const asking=releasingAll||mode==="requesting"||streams.some(s=>s.mode==="requesting");
     if(releasingAll){drumEnable.disabled=true;pianoEnable.disabled=true;pedalEnable.disabled=true;}
-    motionStart.disabled=!admitted||!caps?.tilt||mode!=="idle"||asking;
-    for(const s of streams){s.start.disabled=!admitted||!caps?.[s.kind]||s.mode!=="idle"||asking;s.stop.disabled=!admitted||s.mode==="idle"||s.mode==="releasing";}
+    motionStart.disabled=!admitted||!caps?.tilt||!modeAllows("tilt")||mode!=="idle"||asking;
+    for(const s of streams){s.start.disabled=!admitted||!caps?.[s.kind]||!modeAllows(s.kind)||s.mode!=="idle"||asking;s.stop.disabled=!admitted||s.mode==="idle"||s.mode==="releasing";}
     motionStop.disabled=!admitted||mode==="idle"||mode==="releasing";
   }
   function resetMotion(message){
@@ -1293,7 +1849,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
-    const old=ws;ws=null;admitted=false;caps=null;groupReady=null;currentView="connection";ackSamples=[];releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
+    cameraReleaseAt=null;stopCamera("Camera off.");
+    const old=ws;ws=null;admitted=false;caps=null;groupReady=null;currentView="connection";ackSamples=[];playMode="all";pendingPlayMode=null;releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
     if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();syncControls();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
@@ -1324,6 +1881,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function tick(){
     if(!admitted||!caps)return;
     const now=performance.now();syncLatency();
+    if(cameraReleaseAt!==null){if(now-cameraReleaseAt>=150){close("Camera helper release overdue. Reconnect explicitly.");return;}if(!pedalBusy()&&pedalMask===0)cameraReleaseAt=null;}
+    if(cameraHelper&&cameraStream&&!cameraPending&&((cameraAt!==null&&now-cameraAt>=150)||(cameraAt===null&&now-cameraStartedAt>=3000))){close("Camera frames stopped. Reconnect explicitly.");return;}
+    if(stickState==="waiting"&&now-stickAt>=3000){resetStick("No valid motion data.");drumEnabled=false;syncControls();}
+    if(stickState==="active"&&now-stickAt>=250){close("Air stick motion stopped. Reconnect explicitly.");return;}
+    if(stickPulseAt!==null&&now-stickPulseAt>=80){
+      if(now-stickPulseAt>=150){close("Air stick pulse delayed. Reconnect explicitly.");return;}
+      stickPulseAt=null;drumOwners.delete("air-stick");drumDesired=0;drumQueue=[];drumEmergency=drumSent!==0;syncControls();
+    }
     if(mode==="waiting"&&now-waitingSince>=3000){resetMotion("No valid orientation data. Check permission and device support.");}
     if((mode==="active"||mode==="arming")&&now-sampleAt>=250){close("Orientation stopped. Host releases tilt; reconnect explicitly.");return;}
     for(const s of streams){
@@ -1334,6 +1899,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(drumQueue.length&&now-drumQueue[0].at>=150){close("Drum input delayed. Reconnect explicitly.");return;}
     if(pianoQueue.length&&now-pianoQueue[0].at>=150){close("Piano input delayed. Reconnect explicitly.");return;}
     if(pedalQueue.length&&now-pedalQueue[0].at>=150){close("Pedal input delayed. Reconnect explicitly.");return;}
+    if(!advancePhrase(now))return;
     if(pending)return;
     if(releasingAll&&finishGlobalRelease())return;
     // Bound sends before dequeue, including releases.
@@ -1350,7 +1916,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(releasingAll){close("Release state incomplete. Mac cleanup not confirmed. Request a new invitation.");return;}
     const ready=[];
     if(pedalQueue.length&&now-lastPedalSend>=25)ready.push({last:lastPedalSend,edge:pedalQueue[0].at,run:()=>sendPedals(pedalQueue.shift().snapshot)});
-    else if(!pedalQueue.length&&pedalMask!==0&&now-lastPedalSend>=50)ready.push({last:lastPedalSend,run:()=>{pedalDirty=false;sendPedals(pedalSnapshot());}});
+    else if(!pedalQueue.length&&pedalMask!==0&&now-lastPedalSend>=50&&(!cameraHelper||cameraQuiet===0))ready.push({last:lastPedalSend,run:()=>{pedalDirty=false;sendPedals(pedalSnapshot());}});
     if(pianoQueue.length&&now-lastPianoSend>=25)ready.push({last:lastPianoSend,edge:pianoQueue[0].at,run:()=>sendPiano(pianoQueue.shift().mask)});
     else if(pianoSent!==0&&!pianoQueue.length&&now-lastPianoSend>=50)ready.push({last:lastPianoSend,run:()=>sendPiano(pianoSent)});
     if(drumQueue.length&&now-lastDrumSend>=25)ready.push({last:lastDrumSend,edge:drumQueue[0].at,run:()=>sendDrum(drumQueue.shift().mask)});
@@ -1376,13 +1942,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   connect.addEventListener("click",()=>{
     if(ws)return;
+    stopCamera("Camera off · pairing.");
     const value=secret.value.trim();secret.value="";
     if(!/^[0-9a-fA-F]{64}$/.test(value)){status.textContent="Enter a valid invitation.";return;}
     const key=new Uint8Array(32);for(let i=0;i<32;i++)key[i]=parseInt(value.slice(i*2,i*2+2),16);
     if(location.origin!=="__REMOTE_ORIGIN__"){key.fill(0);close("Wrong origin. Open the local HTTPS page from the Mac app.");return;}
     let socket;
     try{socket=new WebSocket("__REMOTE_SOCKET__","tihulu-touch-v1");}catch{key.fill(0);close("Connection unavailable.");return;}
-    ws=socket;connect.disabled=true;disconnect.disabled=false;status.textContent="Connecting…";wait(5000);
+    ws=socket;syncCamera();connect.disabled=true;disconnect.disabled=false;status.textContent="Connecting…";wait(5000);
     socket.onopen=()=>{if(ws!==socket){key.fill(0);return;}try{socket.send(key);}catch{close("Pairing failed.");}finally{key.fill(0);}};
     socket.onmessage=e=>{
       if(ws!==socket)return;
@@ -1416,7 +1983,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         finishReady(armed.manifest,armed.rows,armed.labels);return;
       }
       if(!pending||!caps||e.data!=="accepted"){close("Unexpected response.");return;}
+      if(cameraReleaseAt!==null&&performance.now()-cameraReleaseAt>=150){close("Camera helper release ACK overdue. Reconnect explicitly.");return;}
+      if(cameraHelper&&cameraAt!==null&&performance.now()-cameraAt>=150){close("Camera frames stopped. Reconnect explicitly.");return;}
       recordAck();clearDeadline();pending=false;const kind=pendingKind;pendingKind=null;
+      if(kind==="pedalboard"&&cameraReleaseAt!==null&&pedalSentMask===0&&pedalMask===0&&!pedalEmergency&&!pedalQueue.length)cameraReleaseAt=null;
       if(kind==="orientationArm"&&mode==="arming"){mode="active";motionStatus.textContent="Tilt active. Move gently; release when finished.";}
       if(kind==="motionRelease")resetMotion("Tilt released.");
       for(const s of streams){
@@ -1451,7 +2021,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   // let host disconnect/watchdog release already delivered owners.
   for(const event of ["pointercancel","lostpointercapture"])pad.addEventListener(event,e=>{if(e.pointerId===pointer)close("Touch cancelled. Reconnect explicitly.");});
   function toggleDrums(){
-    if(currentView!=="play"||releasingAll||!admitted||!caps?.drums)return;
+    if(currentView!=="play"||releasingAll||!admitted||!caps?.drums||playMode==="stick")return;
     if(!drumEnabled&&!requestWorkload("drums"))return;
     drumEnabled=!drumEnabled;
     if(!drumEnabled)releaseDrums();
@@ -1485,6 +2055,21 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pianoStatus.textContent=pianoEnabled?"Enabled. Use only with the mapped Mac preset.":"Off.";syncPiano();
   });
   pianoRelease.addEventListener("click",releasePiano);
+  get("pianoArp").addEventListener("click",()=>choosePianoTool(playMode==="arp"?"piano":"arp"));
+  get("pianoChord").addEventListener("click",()=>choosePianoTool(playMode==="chord"?"piano":"chord"));
+  get("pianoSynth").addEventListener("click",toggleSynth);
+  get("synthCompact").addEventListener("click",()=>{if(synthOpen&&admitted&&!releasingAll){synthCompact=!synthCompact;syncControls();}});
+  get("arpClear").addEventListener("click",()=>{if(playMode==="arp"&&!phraseRun&&!releasingAll){arpSelected.clear();syncPiano();}});
+  get("phraseStart").addEventListener("click",startPhrase);
+  get("phraseStop").addEventListener("click",releasePiano);
+  for(let i=0;i<4;i++){
+    const b=get("chord"+i);
+    b.addEventListener("pointerdown",e=>{if(e.button!==0||b.disabled)return;e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{close("Chord pointer capture failed.");return;}chordDown("c"+i+":"+e.pointerId,i);});
+    for(const event of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(event,e=>chordUp("c"+i+":"+e.pointerId));
+    b.addEventListener("keydown",e=>{if((e.key===" "||e.key==="Enter")&&!e.repeat){e.preventDefault();chordDown("k"+i,i);}});
+    b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();chordUp("k"+i);}});
+    b.addEventListener("blur",()=>chordUp("k"+i));
+  }
   pianoStrips.addEventListener("click",()=>{
     if(currentView!=="play"||!admitted||releasingAll||pianoBusy()||!Boolean(caps?.piano&33554431))return;
     strips=!strips;syncPiano();
@@ -1510,7 +2095,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     b.addEventListener("blur",()=>pianoUp("k"+i));
   });
   function togglePedals(){
-    if(currentView!=="play"||releasingAll||!admitted||!caps?.pedals)return;
+    if(currentView!=="play"||releasingAll||!admitted||!caps?.pedals||cameraHelper||!modeAllows("pedals"))return;
     if(!pedalEnabled&&!requestWorkload("pedals"))return;
     pedalEnabled=!pedalEnabled;
     if(!pedalEnabled)releasePedals();
@@ -1519,8 +2104,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   pedalEnable.addEventListener("click",togglePedals);
   get("customPedalEnable").addEventListener("click",()=>{if(customActive.some(id=>id[0]==="p"))togglePedals();});
-  pedalRelease.addEventListener("click",releasePedals);
+  pedalRelease.addEventListener("click",()=>{if(!cameraHelper&&modeAllows("pedals"))releasePedals();});
   get("customPedalRelease").addEventListener("click",()=>{
+    if(cameraHelper||!modeAllows("pedals"))return;
     if(currentView==="play"&&admitted&&!releasingAll&&pedalEnabled&&customActive.some(id=>id[0]==="p"))releasePedals();
   });
   pedalToggles.forEach((b,i)=>{
@@ -1543,6 +2129,25 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     b.addEventListener("blur",()=>pedalHoldUp(i,"k"+i));
   });
   pedalSliders.forEach((b,i)=>b.addEventListener("input",()=>pedalMove(i)));
+  pedalOutputs.forEach((dial,i)=>{
+    dial.addEventListener("pointerdown",e=>{
+      if(dialDrags.has(i)||!synthOpen||!pedalAdmitted(i)||!(pedalMask&(1<<i))||
+         e.button!==0||!Number.isFinite(e.clientY))return;
+      e.preventDefault();
+      try{dial.setPointerCapture(e.pointerId);}catch{return;}
+      dialDrags.set(i,{id:e.pointerId,y:e.clientY,value:pedalPositions[i]});
+    });
+    dial.addEventListener("pointermove",e=>{
+      const drag=dialDrags.get(i);
+      if(!drag||drag.id!==e.pointerId||!synthOpen||!pedalAdmitted(i)||
+         !(pedalMask&(1<<i))||!Number.isFinite(e.clientY))return;
+      pedalSliders[i].value=String(Math.round(Math.max(0,Math.min(100,drag.value+drag.y-e.clientY))));
+      pedalMove(i);
+    });
+    for(const event of ["pointerup","pointercancel","lostpointercapture"])dial.addEventListener(event,e=>{
+      if(dialDrags.get(i)?.id===e.pointerId)dialDrags.delete(i);
+    });
+  });
   workloadMode.addEventListener("click",()=>{
     if(currentView!=="setup"||releasingAll||!admitted||!caps||workloadMask()!==0||pending)return;
     experimentalWorkload=!experimentalWorkload;workloadRefusal="";syncControls();
@@ -1568,17 +2173,26 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("layoutSave").addEventListener("click",saveLayout);
   get("layoutReset").addEventListener("click",resetLayout);
   for(const v of viewNames)get(navId(v)).addEventListener("click",()=>chooseView(v));
+  get("playMode").addEventListener("change",choosePlayMode);
+  get("airStickPad").addEventListener("change",()=>{const i=Number(get("airStickPad").value);chooseStrikePad(get("airStickPad").value===String(i)?i:-1);});
+  get("kitEdit").addEventListener("click",()=>{if(kitIdle()){kitEditing=!kitEditing;kitDrag=null;syncStick();}});
+  get("kitPart").addEventListener("change",()=>{const i=Number(get("kitPart").value);if(kitIdle()&&kitEditing&&get("kitPart").value===String(i)&&within(i,0,7)&&has("drums",i))kitPart=i;syncStick();});
+  for(const [id,action] of [["kitAdd","add"],["kitRemove","remove"],["kitSave","save"],["kitReset","reset"]])get(id).addEventListener("click",()=>editKit(action));
+  get("kitSize").addEventListener("input",()=>editKit("size"));
+  get("kitX").addEventListener("input",()=>editKit("x"));get("kitY").addEventListener("input",()=>editKit("y"));
+  get("airStickStart").addEventListener("click",startStick);
+  get("airStickStop").addEventListener("click",stopStick);
   releaseAll.addEventListener("click",releaseMyControls);
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);
   for(const s of streams){s.start.addEventListener("click",()=>startInertial(s));s.stop.addEventListener("click",()=>stopInertial(s));}
-  function rotated(){if(ws&&(touchBusy()||pedalBusy()||pianoBusy()||drumDesired!==0||drumSent!==0||drumQueue.length||mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
+  function rotated(){if(ws&&(cameraHelper||stickState!=="idle"||touchBusy()||pedalBusy()||pianoBusy()||drumDesired!==0||drumSent!==0||drumQueue.length||mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
   window.addEventListener("orientationchange",rotated);
   if(window.screen&&window.screen.orientation&&typeof window.screen.orientation.addEventListener==="function")window.screen.orientation.addEventListener("change",rotated);
   disconnect.addEventListener("click",()=>close("Disconnected. Host releases owned controls."));
-  window.addEventListener("blur",()=>{if(ws)close("Window lost focus. Reconnect explicitly.");});
-  window.addEventListener("pagehide",()=>{if(ws)close("Page hidden.");});
-  document.addEventListener("visibilitychange",()=>{if(document.hidden&&ws)close("Page hidden. Reconnect explicitly.");});
+  window.addEventListener("blur",()=>{if(ws)close("Window lost focus. Reconnect explicitly.");else if(cameraStream)stopCamera("Camera stopped: window lost focus.");});
+  window.addEventListener("pagehide",()=>{if(ws)close("Page hidden.");else stopCamera("Page hidden.");});
+  document.addEventListener("visibilitychange",()=>{if(document.hidden){if(ws)close("Page hidden. Reconnect explicitly.");else stopCamera("Page hidden.");}else syncCamera();});
   applyLayout();syncControls();
 })();
 """#

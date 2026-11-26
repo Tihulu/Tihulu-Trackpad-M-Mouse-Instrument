@@ -1,6 +1,7 @@
 #if os(macOS)
 import Foundation
 import IOKit.hid
+import NoSpeakerCore
 
 /// Optional, read-only MacBook lid-angle HID adapter. It is NOT a standard
 /// Apple API and is enabled only by explicit user action. No persistent raw HID
@@ -16,7 +17,7 @@ final class MacBookHingeAngleSource {
     private var device: IOHIDDevice?
     private var timer: Timer?
     private(set) var status = "Not detected"
-    var onAngle: ((Double) -> Void)?
+    var onAngle: ((Double,Double) -> Void)?
     var onLoss: ((String) -> Void)?
     private var lastValidSample: TimeInterval = 0
     private var readDiagnostic = "No report read"
@@ -46,11 +47,13 @@ final class MacBookHingeAngleSource {
                 readDiagnostic = "Device open failed (\(result))"
                 continue
             }
-            if let firstAngle = readAngle(from: candidate) {
+            let receipt = ProcessInfo.processInfo.systemUptime
+            if let firstAngle = readAngle(from: candidate),
+               PhysicalPatchRuntime.admitsPhysicalReceipt(receipt,now:ProcessInfo.processInfo.systemUptime) {
                 self.manager = manager
                 self.device = candidate
                 status = "Sensor found · " + readDiagnostic
-                lastValidSample = ProcessInfo.processInfo.systemUptime
+                lastValidSample = receipt
                 let generation = pollGeneration
                 timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                     Task { @MainActor in
@@ -58,7 +61,7 @@ final class MacBookHingeAngleSource {
                         self.poll()
                     }
                 }
-                onAngle?(firstAngle)
+                onAngle?(firstAngle,receipt)
                 return device != nil
             }
             IOHIDDeviceClose(candidate, noOptions)
@@ -92,10 +95,16 @@ final class MacBookHingeAngleSource {
 
     private func poll() {
         guard let device else { return }
-        if let angle = readAngle(from: device) {
-            lastValidSample = ProcessInfo.processInfo.systemUptime
-            onAngle?(angle)
-        } else if ProcessInfo.processInfo.systemUptime - lastValidSample >= 0.35 {
+        let receipt = ProcessInfo.processInfo.systemUptime
+        let angle = readAngle(from:device)
+        let now = ProcessInfo.processInfo.systemUptime
+        // A successful but blocking read cannot renew an expired lease.
+        if let angle,PhysicalPatchRuntime.admitsPhysicalReceipt(receipt,now:now),
+           PhysicalPatchRuntime.admitsPhysicalReceipt(lastValidSample,now:now) {
+            lastValidSample = receipt
+            onAngle?(angle,receipt)
+        } else if !PhysicalPatchRuntime.admitsPhysicalReceipt(lastValidSample,now:now) ||
+                  !PhysicalPatchRuntime.admitsPhysicalReceipt(receipt,now:now) {
             let reason = "Lid signal lost · " + readDiagnostic
             stop()
             status = reason

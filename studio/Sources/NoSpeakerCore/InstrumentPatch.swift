@@ -25,7 +25,7 @@ public struct InstrumentPatch: Codable, Equatable, Sendable {
         !name.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } &&
         routes.count <= SensorRouter.maxMappings &&
         Set(routes.map(\.id)).count == routes.count &&
-        routes.allSatisfy(Self.permits) && AirDualHandPerformance.permitsCombination(routes) && AirHandsHelper.permitsCombination(routes) && ContinuousResponse.releaseValues(for: routes) != nil && GamepadPedalMode.switchTargets(routes) != nil &&
+        routes.allSatisfy(Self.permits) && RemotePedalboard.permitsXYZHelpers(in: routes) && AirDualHandPerformance.permitsCombination(routes) && AirHandsHelper.permitsCombination(routes) && ContinuousResponse.releaseValues(for: routes) != nil && GamepadPedalMode.switchTargets(routes) != nil &&
         AirDrumSensitivity.settings(for: routes) != nil &&
         (performanceLayout?.isValid ?? true)
     }
@@ -272,6 +272,11 @@ public struct PatchOutputLedger: Sendable {
     private func releaseValue(_ target: SensorDestination) -> Int {
         releases[target] ?? Self.neutral(target)
     }
+    /// Use the frozen configured release, including custom CC neutrals.
+    func isRelease(_ command:SensorCommand) -> Bool {
+        command.value == releaseValue(command.destination)
+    }
+
     public mutating func deliver(_ command: SensorCommand, send: (SensorCommand) -> Bool) -> Bool {
         let target = command.destination
         guard target.isValid else { return false }

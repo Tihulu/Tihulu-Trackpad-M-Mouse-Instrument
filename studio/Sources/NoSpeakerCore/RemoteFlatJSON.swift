@@ -58,7 +58,7 @@ enum RemoteFlatJSON {
             guard let key = try? JSONDecoder().decode(String.self, from: keyData),
                   keys.insert(key).inserted else { return nil }
             let token = input.substring(with: match.range(at: 2))
-            if ["version", "sequence", "mask", "page"].contains(key) {
+            if ["version", "sequence", "mask", "keys", "page"].contains(key) {
                 guard unsigned(token) else { return nil }
                 if key == "mask" { mask = Int(token) }
             }

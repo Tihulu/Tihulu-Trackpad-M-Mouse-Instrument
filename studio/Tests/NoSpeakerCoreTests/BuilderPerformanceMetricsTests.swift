@@ -39,3 +39,37 @@ import Testing
     m = BuilderPerformanceMetrics()
     #expect(m.commandBatches == 0 && m.logicalCommands == 0 && m.midiAttempts == 0)
 }
+
+
+@Test func builderCleanupDrainRechecksAfterSlowSendAndRetiresNewlyExpiredOwner() throws {
+    let a=SensorDestination(.note,number:60)
+    let b=SensorDestination(.note,number:64)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:a),
+        .init(id:"b",source:.magicMouse,signal:.contact,destination:b)
+    ]))
+    _=runtime.receive(source:.trackpad,x:0.5,y:0.5,size:0.5,hostTime:1,now:1)
+    _=runtime.receive(source:.magicMouse,x:0.5,y:0.5,size:0.5,hostTime:1.2,now:1.2)
+    var now=1.36
+    var sent:[SensorCommand]=[]
+    var rounds=0
+    let result=BuilderCleanupDrain.run {
+        rounds+=1
+        let commands=runtime.expire(now:now)
+        sent += commands
+        if !commands.isEmpty { now+=0.2 }
+        return commands.isEmpty ? .settled : .again
+    }
+    #expect(result == .settled && rounds==3)
+    #expect(sent==[.init(a,value:0),.init(b,value:0)] && runtime.activeSources.isEmpty)
+}
+
+@Test func builderCleanupDrainBoundsWorkAndStopsImmediatelyOnInterruption() {
+    var rounds=0
+    let bounded=BuilderCleanupDrain.run { rounds+=1;return .again }
+    #expect(bounded == .exhausted && rounds==32)
+    rounds=0
+    let interrupted=BuilderCleanupDrain.run { rounds+=1;return rounds==2 ? .interrupted : .again }
+    #expect(interrupted == .interrupted && rounds==2)
+}

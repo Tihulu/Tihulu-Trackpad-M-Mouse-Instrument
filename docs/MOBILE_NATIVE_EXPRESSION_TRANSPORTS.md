@@ -47,3 +47,21 @@ Required negative tests: forged/stale/replayed invitation or session, unauthoriz
 - Android BLE: https://developer.android.com/develop/connectivity/bluetooth/ble/ble-overview
 - Android permissions: https://developer.android.com/develop/connectivity/bluetooth/bt-permissions
 - Web Bluetooth availability: https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API
+
+## Native input validation increment
+
+Swift `MobileLANEndpoint` and Kotlin `MobileLanEndpoint` accept only the host's canonical HTTPS page address (RFC1918 IPv4, port 9444, root path); derive exact WSS :9443, origin and subprotocol. Reject loopback, public/DNS addresses, userinfo, query/fragment, noncanonical octets and wrong ports. Invitations are separate exact 64 ASCII hex characters decoded to 32 binary bytes. No QR secret, persistence, discovery, network call, TLS validation or transport is implemented by these types. A caller must authenticate TLS and verify the negotiated subprotocol before binary invitation delivery; actual admission/capability negotiation and hardware acceptance remain open.
+
+The first native single-family proof now has strict v7 capability decoders in Swift and Kotlin. They accept only a nonempty piano-only family or pedalboard-only family with a continuous lane, reject all extra families, duplicates, noncanonical masks and unsupported manifests, and derive a lane using the exact host mask. This intentionally does not yet support mixed native families or labels. These are pure parsers: actual transport must verify TLS, admission, sequence and neutral ACK separately before enabling performance.
+
+## Single-family native protocol policy
+
+Swift MobileLANSession and Kotlin MobileLanSession now coordinate the single-use connection policy: an independently authenticated current socket with exact subprotocol -> separate binary invitation -> admitted -> v7 capabilities sequence 1 -> selected-family neutral sequence 2 -> accepted -> fresh gestures through the existing sender gate. Optional mapping/label disclosure is not requested (group bridge permits metadata omission); only the group single-family proof is targeted. The adapters must serialize all calls, dispatch each action immediately, route only current-socket responses, poll independently, and close on error or abort. The trustedTLS input is a caller assertion, not TLS validation. No socket or network permission has been added yet. Admission budget 3s; other negotiation ACKs 220ms; existing performance limits retained.
+
+## Android transport adapter prototype
+
+`MobileLanSocket` uses OkHttp 4.12 with default TLS hostname and certificate validation, no redirects, no proxy or retry, exact Origin/subprotocol and binary invitation only after the TLS upgrade. A serial lock and 25 ms independent watchdog drive the shared policy, cancel on errors/backpressure, and discard late callbacks from retired sockets. Explicit caller stop on lifecycle loss remains required. The RGB/ARCore debug APK retains its no-INTERNET gate; no UI invokes the adapter. Android target 24+ normally excludes user-added CAs from default trust (Android network security configuration documentation); a separately reviewed trust provisioning design is required for typical private-IP certificates. No trust bypass was added. OkHttp delivers complete messages before the policy bounds them; an authenticated malicious server's oversized frame memory behavior remains a library-level acceptance risk. Real WebSocket upgrade, certificate provisioning, lifecycle and device testing remain open.
+
+## iOS transport adapter prototype
+
+`MobileLANSocket` in NoSpeakerMobileCapture uses ephemeral URLSession with default TLS validation, exact private-IP request and protocol, rejects redirects, limits buffered WebSocket messages to 256 bytes, has one outstanding send and independent 25 ms watchdog. Invitation is in-memory only until didOpen. Serial queue owns state and rejects callbacks for retired tasks; willResignActive stops the socket. Caller must still stop on view/permission loss, and provide observations using the same monotonic clock. URLSession platform proxy/trust behavior and actual Origin header delivery must be verified on devices. The preview UI remains disconnected; no local-network permission string or pairing UI is activated yet. No production trust bypass or signing change.

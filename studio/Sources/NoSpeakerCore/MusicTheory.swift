@@ -16,15 +16,22 @@ public enum MusicTheory {
         let normalized = note.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard normalized.count >= 2 else { throw MusicTheoryError.invalidNote(note) }
 
-        let octaveStart = normalized.lastIndex(where: { $0 == "-" || $0.isNumber })
-        guard let octaveStart else { throw MusicTheoryError.invalidNote(note) }
+        // Find the first octave character, not the final digit. This
+        // preserves the sign and every digit of scientific pitch notation.
+        guard let octaveStart = normalized.firstIndex(where: { $0 == "-" || $0.isNumber }) else {
+            throw MusicTheoryError.invalidNote(note)
+        }
         let name = String(normalized[..<octaveStart])
+            .replacingOccurrences(of: "♯", with: "#")
+            .replacingOccurrences(of: "♭", with: "B")
         let octaveString = String(normalized[octaveStart...])
         guard let semitone = semitones[name], let octave = Int(octaveString) else {
             throw MusicTheoryError.invalidNote(note)
         }
-
-        let midi = (octave + 1) * 12 + semitone
+        let (shifted, overflow1) = octave.addingReportingOverflow(1)
+        let (base, overflow2) = shifted.multipliedReportingOverflow(by: 12)
+        let (midi, overflow3) = base.addingReportingOverflow(semitone)
+        guard !overflow1, !overflow2, !overflow3 else { throw MusicTheoryError.invalidNote(note) }
         guard (0...127).contains(midi) else { throw MusicTheoryError.midiOutOfRange(midi) }
         return midi
     }

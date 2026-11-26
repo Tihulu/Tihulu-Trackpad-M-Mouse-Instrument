@@ -30,7 +30,7 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     #expect(try PerformanceGroupProfile.read(next.archive()) == next)
 }
 
-@Test func mobileDraftRejectsStaleSourceConflictsAndThirdFamily() throws {
+@Test func mobileDraftRejectsStaleSourceConflictsAndUnsupportedSignal() throws {
     let profile = mobileDraftFixture()
     var draft = try PerformanceGroupMobileDraft(profile:profile,groupID:profile.groups[0].id,source:.phone2)
     var changed = profile
@@ -38,7 +38,11 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     #expect(throws:PerformanceGroupMobileDraft.EditError.staleProfile) { try draft.applying(to:changed) }
     let added = draft.append(.drumPad1)
     #expect(added)
-    #expect(throws:PerformanceGroupMobileDraft.EditError.unsupportedSurface) { try draft.applying(to:profile) }
+    let third = try draft.applying(to:profile)
+    #expect(PerformanceGroupGamepadSession.supports(third,allowRemote:true))
+    #expect(third.groups[1] == profile.groups[1])
+    draft.routes[draft.routes.count-1].signal = .pressure
+    #expect(throws:PerformanceGroupMobileDraft.EditError.invalidMapping) { try draft.applying(to:profile) }
     draft.routes.removeLast()
     draft.routes[0].source = .tablet
     #expect(throws:PerformanceGroupMobileDraft.EditError.invalidMapping) { try draft.applying(to:profile) }
@@ -170,14 +174,19 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     #expect(mutation11)
     let snapshot=draft.routes
     let mutation12 = draft.appendFamily(.piano)
-    #expect(!mutation12)
-    #expect(draft.routes==snapshot)
+    #expect(mutation12)
+    #expect(Array(draft.routes.prefix(snapshot.count))==snapshot)
+    let fourth = draft.appendFamily(.pedalboard)
+    #expect(fourth)
+    let all = draft.routes
+    let duplicate = draft.appendFamily(.pedalboard)
+    #expect(!duplicate && draft.routes==all)
     let next=try draft.applying(to:profile)
     #expect(PerformanceGroupGamepadSession.supports(next,allowRemote:true))
     #expect(try PerformanceGroupProfile.read(next.archive())==next)
 }
 
-@Test func mobileDraftFamilyFillRefusesPartialCapacityAndForeignFamilyConflict() throws {
+@Test func mobileDraftFamilyFillRespectsSiblingAssignmentsAndRefusesPartialCapacity() throws {
     let lead = PerformanceInstrumentGroup(name:"Lead",patch:.init(routes:[
         .init(id:"x",source:.phone,signal:.x,destination:.init(.pitchBend))
     ]))
@@ -187,8 +196,10 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     let profile=PerformanceGroupProfile(groups:[lead,sibling])
     var draft=try PerformanceGroupMobileDraft(profile:profile,groupID:lead.id,source:.phone)
     let mutation13 = draft.appendFamily(.drums)
-    #expect(!mutation13)
-    #expect(draft.routes==lead.patch.routes)
+    #expect(mutation13)
+    #expect(draft.routes.first==lead.patch.routes.first)
+    let expanded = try draft.applying(to:profile)
+    #expect(expanded.groups[1] == sibling)
     var full=profile
     for i in 0..<(PerformanceGroupProfile.maximumRoutes-3) {
         full.groups[1].patch.routes.append(.init(id:"f-\(i)",source:.phone,signal:.pedalSustain,destination:.init(.sustain)))
@@ -300,4 +311,59 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     #expect(draft.routes==group.patch.routes)
     let changed=draft.transformFamily(.piano,transpose:-12)
     #expect(changed && draft.routes.map(\.destination.number)==[48,115])
+}
+
+@Test func measuredXYZPresetKeepsOtherPlayersAndRejectsTargetCollisions() throws {
+    let group = PerformanceInstrumentGroup(name: "Keys", patch: .init(routes: [
+        .init(id: "keys", source: .tablet, signal: .pianoKey0, destination: .init(.note, number: 60))
+    ]))
+    let profile = PerformanceGroupProfile(groups: [group])
+    var draft = try PerformanceGroupMobileDraft(profile: profile, groupID: group.id, source: .phone)
+    let conflicting = draft.addXYZHelper(.expression, channel: 0)
+    #expect(!conflicting && draft.routes.isEmpty)
+    let added = draft.addXYZHelper(.expression, channel: 1)
+    #expect(added && draft.xyzHelperIsCompatible)
+    #expect(try draft.applying(to: profile).groups[0].patch.routes.first == group.patch.routes.first)
+    draft.routes[1].destination = draft.routes[2].destination
+    #expect(!draft.xyzHelperIsCompatible)
+}
+
+@Test func measuredAxisSensitivityPreservesLegacyCalibrationAndCenter() throws {
+    var calibration = try JSONDecoder().decode(SensorCalibration.self, from:
+        Data(#"{"minimum":0,"maximum":1,"inverted":false,"deadZone":0,"exponent":1}"#.utf8))
+    #expect(calibration.apply(0.25) == 0.25)
+    calibration.sensitivity = 2
+    #expect(calibration.apply(0.25) == 0 && calibration.apply(0.5) == 0.5 && calibration.apply(1) == 1)
+    calibration.sensitivity = .nan
+    #expect(calibration.apply(0.5) == nil)
+}
+
+@Test func xyzProfileAfterReloadRetainsItsOutputExclusivity() throws {
+    let group = PerformanceInstrumentGroup(name: "Depth")
+    let empty = PerformanceGroupProfile(groups: [group])
+    var draft = try PerformanceGroupMobileDraft(profile: empty, groupID: group.id, source: .phone)
+    let added = draft.addXYZHelper(.filter, channel: 1)
+    #expect(added)
+    let saved = try draft.applying(to: empty)
+    var reloaded = try JSONDecoder().decode(PerformanceGroupProfile.self, from: JSONEncoder().encode(saved))
+    #expect(reloaded.isValid)
+    var edited = try PerformanceGroupMobileDraft(profile: reloaded, groupID: group.id, source: .phone)
+    edited.routes[0].destination = edited.routes[1].destination
+    #expect(throws: PerformanceGroupMobileDraft.EditError.self) { try edited.applying(to: reloaded) }
+    reloaded.groups.append(.init(name: "Other", patch: .init(routes: [
+        .init(id: "other", source: .phone, signal: .pianoKey0, destination: .init(.note, number: 60))
+    ])))
+    #expect(!reloaded.isValid)
+}
+
+@Test func measuredXYZInstrumentUsesTheSelectedGroupScaleAndOneNativeFamily() throws {
+    let group = PerformanceInstrumentGroup(name: "Air lead")
+    var draft = try PerformanceGroupMobileDraft(profile: .init(groups:[group]), groupID: group.id, source: .phone)
+    let outside = draft.addXYZInstrument(.major, root: 120, channel: 2)
+    #expect(!outside && draft.routes.isEmpty)
+    let added = draft.addXYZInstrument(.pentatonic, root: 62, channel: 2)
+    #expect(added)
+    #expect(draft.routes.map(\.destination.number) == [62,64,66,69,71,74])
+    #expect(draft.routes.map(\.signal) == Array(RemotePiano.keySignals.prefix(6)))
+    #expect(draft.routes.allSatisfy { $0.destination.channel == 2 })
 }

@@ -9,6 +9,7 @@ public final class SharedLiveNoteOutput: @unchecked Sendable {
     private struct Input {
         let lease: HapticMixLease
         let failure: @Sendable (String) -> Void
+        let admitted: @Sendable () -> Bool
         var frame: HapticFrame?
         var level: Double = 0
         var attacks = HapticAttackBuffer<HapticFrame>()
@@ -39,13 +40,19 @@ public final class SharedLiveNoteOutput: @unchecked Sendable {
 
     public func begin(_ source: HapticMixSource,
                       onFailure: @escaping @Sendable (String) -> Void) throws -> HapticMixLease {
+        try begin(source,admitted:{true},onFailure:onFailure)
+    }
+
+    // Nonblocking publication check, never reenter the host or sink.
+    func begin(_ source:HapticMixSource,admitted:@escaping @Sendable ()->Bool,
+               onFailure:@escaping @Sendable (String)->Void) throws -> HapticMixLease {
         try queue.sync {
             guard source == .chords || source == .touchBar || source == .gamepad else {
                 throw SharedLiveNoteError.unsupportedSource
             }
             guard inputs[source] == nil else { throw SharedLiveNoteError.alreadyArmed }
             let lease = try coordinator.begin(source)
-            inputs[source] = Input(lease: lease, failure: onFailure)
+            inputs[source] = Input(lease:lease,failure:onFailure,admitted:admitted)
             return lease
         }
     }
@@ -53,7 +60,7 @@ public final class SharedLiveNoteOutput: @unchecked Sendable {
     public func update(_ lease: HapticMixLease, frame: HapticFrame?, level: Double,
                        attack: Bool = false, discardPendingAttacks: Bool = false) {
         queue.sync {
-            guard var input = inputs[lease.source], input.lease == lease else { return }
+            guard var input = inputs[lease.source], input.lease == lease,input.admitted() else { return }
             let gain = level.isFinite ? min(1, max(0, level)) : 0
             let sounding = gain > 0 && (frame?.level ?? 0) > 0 ? frame : nil
             if discardPendingAttacks || gain == 0 { input.attacks.removeAll() }
@@ -117,6 +124,16 @@ public final class SharedLiveNoteOutput: @unchecked Sendable {
         let now = clock()
         for source in Array(inputs.keys) {
             guard var input = inputs[source] else { continue }
+            if !input.admitted() {
+                input.frame=nil
+                input.attacks.removeAll()
+                inputs[source]=input
+                guard coordinator.submit(nil,from:input.lease) else {
+                    failLocked("Invalid or expired shared haptic source.")
+                    return
+                }
+                continue
+            }
             let frame = LiveHapticFrameSelection.select(held:input.frame,attack:input.attacks.take(now:now))
             inputs[source] = input
             guard coordinator.submit(frame, from:input.lease, masterLevel:input.level) else {

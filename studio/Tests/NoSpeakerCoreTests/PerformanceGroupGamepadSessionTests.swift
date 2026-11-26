@@ -107,6 +107,7 @@ private func gamepadGroup(_ source: SensorSource) -> PerformanceInstrumentGroup 
     _ = engine.receive(.gamepad2,token:y,frame:neutral,now:0,send:{ _ in true })
     _ = engine.receive(.gamepad2,token:y,frame:held,now:0.01,send:{ _ in true })
     let failure = engine.receive(.gamepad1,token:x,frame:held,now:0.01,send:{ _ in false })
+    #expect(failure.status == .lost && engine.sourceStates[.gamepad1] == .waitingForNeutral)
     #expect(failure.reports.last?.failedGroups == [a.id])
     #expect(engine.pendingCleanup == [a.id] && engine.activeSessions == 1)
     var output: [PerformanceGroupCommand] = []
@@ -194,4 +195,75 @@ private func gamepadGroup(_ source: SensorSource) -> PerformanceInstrumentGroup 
     #expect(groups.allSatisfy { counts[$0.id] == 1000 })
     let final = engine.panic(send:sink)
     #expect(final.accepted == 0 && final.pendingCleanup.isEmpty)
+}
+
+
+@Test func groupManualStopAndRetryDrainOtherExpiredNotesBeforeReturning() throws {
+    for retry in [false,true] {
+        let a = gamepadGroup(.gamepad1)
+        let b = gamepadGroup(.gamepad2)
+        let c = gamepadGroup(.gamepad3)
+        var engine = try PerformanceGroupGamepadSession(profile:.init(groups:[a,b,c]))
+        let x = try engine.bind(.gamepad1,now:0)
+        let y = try engine.bind(.gamepad2,now:0)
+        let z = try engine.bind(.gamepad3,now:0)
+        let neutral = try gamepadSnapshot()
+        let held = try gamepadSnapshot(true)
+        let sources:[(SensorSource,UUID)] = [(.gamepad1,x),(.gamepad2,y),(.gamepad3,z)]
+        for (source,token) in sources {
+            _ = engine.receive(source,token:token,frame:neutral,now:0,send:{ _ in true })
+        }
+        for (source,token) in sources {
+            _ = engine.receive(source,token:token,frame:held,now:0.01,send:{ _ in true })
+        }
+        #expect(engine.activeSessions == 3)
+        if retry {
+            let failed = engine.stopGroup(a.id,send:{ _ in false })
+            #expect(failed.pendingCleanup == [a.id])
+        }
+        _ = engine.receive(.gamepad3,token:z,frame:held,now:0.25,send:{ _ in true })
+        var now = 0.25
+        var sent:[PerformanceGroupCommand] = []
+        let sink:(PerformanceGroupCommand)->Bool = { command in
+            sent.append(command)
+            if command.groupID == a.id { now = 0.37 }
+            return true
+        }
+        let result = retry
+            ? engine.retryCleanup(a.id,refreshNow:{now},send:sink)
+            : engine.stopGroup(a.id,refreshNow:{now},send:sink)
+        #expect(result.pendingCleanup.isEmpty && result.failedGroups.isEmpty)
+        #expect(sent.count == 2 && sent.map(\.groupID) == [a.id,b.id])
+        #expect(sent.allSatisfy { $0.command.value == 0 })
+        #expect(engine.sourceStates[.gamepad2] == .waitingForNeutral)
+        #expect(engine.sourceStates[.gamepad3] == .leased && engine.activeSessions == 1)
+    }
+}
+
+
+@Test func groupManualDrainPreservesNewFailureAndFinalCleanupDebt() throws {
+    let a = gamepadGroup(.gamepad1)
+    let b = gamepadGroup(.gamepad2)
+    var engine = try PerformanceGroupGamepadSession(profile:.init(groups:[a,b]))
+    let x = try engine.bind(.gamepad1,now:0)
+    let y = try engine.bind(.gamepad2,now:0)
+    let neutral = try gamepadSnapshot()
+    let held = try gamepadSnapshot(true)
+    let sources:[(SensorSource,UUID)] = [(.gamepad1,x),(.gamepad2,y)]
+    for (source,token) in sources {
+        _ = engine.receive(source,token:token,frame:neutral,now:0,send:{_ in true})
+    }
+    for (source,token) in sources {
+        _ = engine.receive(source,token:token,frame:held,now:0.01,send:{_ in true})
+    }
+    #expect(engine.activeSessions == 2)
+    let first = engine.stopGroup(a.id,send:{_ in false})
+    #expect(first.pendingCleanup == [a.id])
+    var now = 0.25
+    let report = engine.retryCleanup(a.id,refreshNow:{now}) { command in
+        if command.groupID == a.id { now = 0.37; return true }
+        return false
+    }
+    #expect(report.failedGroups == [b.id] && report.pendingCleanup == [b.id])
+    #expect(engine.pendingCleanup == [b.id] && engine.activeSessions == 0)
 }

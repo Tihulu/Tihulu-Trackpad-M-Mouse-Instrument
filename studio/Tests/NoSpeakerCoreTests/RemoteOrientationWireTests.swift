@@ -116,3 +116,18 @@ private func pairTilt(_ runtime: inout PhysicalPatchRuntime, now: Double = 1) th
     let end = runtime.receiveRemote(id, bytes: tiltBytes(5, "release", version: 1), now: 1.23)
     #expect(end == .accepted([.init(.init(.note, number: 60), value: 0)]))
 }
+
+
+@Test func remoteOrientationSharedTargetUsesOnlyFinalAxisWinner() throws {
+    let target=SensorDestination(.controlChange,number:74)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"yaw",source:.phone,signal:.tiltYaw,destination:target,priority:0),
+        .init(id:"pitch",source:.phone,signal:.tiltPitch,destination:target,priority:10)
+    ]),allowRemote:true)
+    let id=try pairTilt(&runtime)
+    #expect(runtime.receiveRemote(id,bytes:tiltBytes(1,"orientationArm"),now:1.1) == .accepted([]))
+    #expect(runtime.receiveRemote(id,bytes:tiltBytes(2,"orientation",beta:45),now:1.2) == .accepted([.init(target,value:127)]))
+    #expect(runtime.receiveRemote(id,bytes:tiltBytes(3,"orientation",beta:45),now:1.3) == .accepted([]))
+    #expect(runtime.receiveRemote(id,bytes:tiltBytes(4,"motionRelease"),now:1.4) == .accepted([.init(target,value:0)]))
+}

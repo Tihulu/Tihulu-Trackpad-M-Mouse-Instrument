@@ -59,6 +59,18 @@ public struct PerformanceGroupTunedDelivery: Sendable {
         }
     }
 
+    mutating func admittedFrame(lease:UUID,sequence:UInt64,now:Double,
+                                values:[SensorSignal:Double],releasing:Set<SensorSignal>,
+                                admit:()->Bool,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        guard state == .ready else { return .rejectedReceipt }
+        let frozen = plan
+        return delivery.admittedFrame(lease:lease,sequence:sequence,now:now,values:values,
+                                       releasing:releasing,admit:admit) {
+            guard let translated = frozen.translate($0) else { return false }
+            return send(translated)
+        }
+    }
+
     public mutating func disconnect(_ lease:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
         guard state == .ready else { return .init() }
         let frozen = plan
@@ -69,9 +81,14 @@ public struct PerformanceGroupTunedDelivery: Sendable {
     }
 
     public mutating func disconnectBatch(_ leases:Set<UUID>,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        disconnectBatch(leases,admitRestoration:nil,send:send)
+    }
+
+    mutating func disconnectBatch(_ leases:Set<UUID>,admitRestoration:((PerformanceGroupCommand)->Bool)?,
+                                  send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
         guard state == .ready else { return .init() }
         let frozen = plan
-        return delivery.disconnectBatch(leases) {
+        return delivery.disconnectBatch(leases,admitRestoration:admitRestoration) {
             guard let translated = frozen.translate($0) else { return false }
             return send(translated)
         }

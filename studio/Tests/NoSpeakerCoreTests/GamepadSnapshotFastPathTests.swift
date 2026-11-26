@@ -104,3 +104,45 @@ private func snapshot(a:Bool = false,b:Bool = false,stick:Double = 0) throws -> 
     #expect(metrics.skippedDuplicates == 1)
     #expect(metrics.mappedEvents == Int.max)
 }
+
+
+@Test func gamepadSmoothingUsesCaptureIntervalRatherThanDispatchDelay() throws {
+    let target=SensorDestination(.controlChange,number:74)
+    let response=ContinuousResponse(smoothingMS:100)
+    let patch=InstrumentPatch(routes:[
+        .init(id:"filter",source:.gamepad1,signal:.padLSX,destination:target,response:response)
+    ])
+    var immediate=PhysicalPatchRuntime(),delayed=PhysicalPatchRuntime()
+    try immediate.configure(patch)
+    try delayed.configure(patch)
+    let idle=try snapshot(),low=try snapshot(a:true,stick:-1),high=try snapshot(a:true,stick:1)
+    _=immediate.receiveGamepad(source:.gamepad1,frame:idle,now:1)
+    _=delayed.receiveGamepad(source:.gamepad1,frame:idle,now:1.01,hostTime:1)
+    #expect(immediate.receiveGamepad(source:.gamepad1,frame:low,now:1.02)==[.init(target,value:0)])
+    #expect(delayed.receiveGamepad(source:.gamepad1,frame:low,now:1.04,hostTime:1.02)==[.init(target,value:0)])
+    for (receipt,delivery) in [(1.05,1.15),(1.08,1.16),(1.11,1.20),(1.14,1.21)] {
+        let expected=immediate.receiveGamepad(source:.gamepad1,frame:high,now:receipt)
+        let actual=delayed.receiveGamepad(source:.gamepad1,frame:high,now:delivery,hostTime:receipt)
+        #expect(actual==expected)
+    }
+    #expect(immediate.expire(now:1.50)==[.init(target,value:0)])
+    #expect(delayed.expire(now:1.50)==[.init(target,value:0)])
+}
+
+
+@Test func gamepadSnapshotEngagesSustainBeforeSameFrameNoteEdges() throws {
+    let note=SensorDestination(.note,number:60)
+    let sustain=SensorDestination(.sustain)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"note",source:.gamepad1,signal:.padA,destination:note),
+        .init(id:"pedal",source:.gamepad1,signal:.padB,destination:sustain)
+    ]))
+    let idle=try snapshot(),both=try snapshot(a:true,b:true),onlyNote=try snapshot(a:true),onlyPedal=try snapshot(b:true)
+    _=runtime.receiveGamepad(source:.gamepad1,frame:idle,now:1)
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:both,now:1.01)==[.init(sustain,value:127),.init(note,value:100)])
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:idle,now:1.02)==[.init(note,value:0),.init(sustain,value:0)])
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:onlyNote,now:1.03)==[.init(note,value:100)])
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:onlyPedal,now:1.04)==[.init(sustain,value:127),.init(note,value:0)])
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:onlyNote,now:1.05)==[.init(note,value:100),.init(sustain,value:0)])
+}

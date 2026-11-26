@@ -96,10 +96,16 @@ struct PerformanceControlsView: View {
     let patch: InstrumentPatch
     @Binding var values: [PatchSimulation.Input: Double]
 
+    private var resolvedWidgets:[PerformanceWidget] {
+        (patch.performanceLayout ?? .init()).resolved(for:patch.routes)
+    }
     private var widgets: [PerformanceWidget] {
         let available = Set(studio.patchInputs)
-        return (patch.performanceLayout ?? .init()).resolved(for: patch.routes)
-            .filter { $0.inputs.allSatisfy { available.contains($0) } }
+        return resolvedWidgets.filter { $0.inputs.allSatisfy { available.contains($0) } }
+    }
+    private var unavailableWidgets:[PerformanceWidget] {
+        let available=Set(studio.patchInputs)
+        return resolvedWidgets.filter{ !$0.inputs.allSatisfy{available.contains($0)} }
     }
     // Preserve order and honor full-width controls without a nested ScrollView.
     private var rows: [[PerformanceWidget]] {
@@ -115,8 +121,12 @@ struct PerformanceControlsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Performance controls").font(.headline)
-            Text("On-screen inputs · live MIDI only if explicitly enabled. Knobs hold position; ribbons and note keys release on lift. Tap pads send a 150 ms pulse. Release removes ownership, not a synthetic zero.")
+            Text("On-screen inputs · live MIDI only if explicitly enabled. Knobs and XY pads hold position until Release; ribbons and note keys release on lift. Tap pads send a 150 ms pulse. Release removes ownership, not a synthetic zero.")
                 .font(.caption).foregroundStyle(.secondary)
+            if widgets.isEmpty {Text("No on-screen inputs available for the current session.").font(.caption).foregroundStyle(.secondary)}
+            ForEach(unavailableWidgets) { widget in
+                Text("\(widget.title) · unavailable: assigned input is not active in this on-screen session.").font(.caption).foregroundStyle(.secondary)
+            }
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(alignment: .top, spacing: 8) {
                     ForEach(row) { widget in
@@ -185,10 +195,19 @@ struct PerformanceControlsView: View {
                             press: { studio.sendPatchInput(input, value: press) },
                             release: { release(input) },
                             pulse: { studio.pulsePatchInput(input, value: press) })
+                    } else {
+                        Text("Key unavailable: no compatible press endpoint. Adjust its mapping or choose another control.").font(.caption).foregroundStyle(.orange)
                     }
                 case .xy:
                     if widget.inputs.count == 2 {
                         XYPerformancePad(x: value(input), y: value(widget.inputs[1]), label: widget.title)
+                        Text("Holds both axes on lift. Release relinquishes both input owners.").font(.caption).foregroundStyle(.secondary)
+                        ForEach(widget.inputs,id:\.self) { axis in
+                            let targets=patch.routes.filter{$0.source==axis.source && $0.signal==axis.signal}.map{BuilderRouteTools.summary($0)}
+                            Text(axis.signal.rawValue.uppercased()+": "+targets.joined(separator:" · ")).font(.caption2).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("XY unavailable: two assigned axes are required.").font(.caption).foregroundStyle(.orange)
                     }
                 }
                 if widget.kind != .pad && widget.kind != .xy && widget.kind != .key {

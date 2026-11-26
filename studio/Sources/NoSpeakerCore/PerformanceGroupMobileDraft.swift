@@ -240,3 +240,89 @@ public struct PerformanceGroupMobileDraft: Identifiable, Equatable, Sendable {
         return next
     }
 }
+
+/// A measured XYZ client asks for one continuous pedal family. Adding a preset
+/// is an offline edit to an unused mobile source in the selected group.
+public enum DepthXYZHelperPreset: String, CaseIterable, Sendable {
+    case expression = "Pitch bend / Modulation / Expression"
+    case filter = "Cutoff / Resonance / Reverb"
+    case beam = "Depth expression"
+
+    public var destinations: [SensorDestination?] {
+        switch self {
+        case .expression: return [.init(.pitchBend), .init(.controlChange, number: 1), .init(.controlChange, number: 11)]
+        case .filter: return [74, 71, 91].map { .init(.controlChange, number: $0) }
+        case .beam: return [nil, nil, .init(.controlChange, number: 11)]
+        }
+    }
+}
+
+extension PerformanceGroupMobileDraft {
+    /// A named group is the destination, so validate its other sources as
+    /// well as this draft. A channel bend is not an independent per-note bend.
+    public var xyzHelperIsCompatible: Bool {
+        guard let profile = try? applying(to: baseline),
+              let group = profile.groups.first(where: { $0.id == groupID }),
+              !profile.groups.contains(where: { $0.id != groupID && $0.patch.routes.contains { $0.source == source } }),
+              !routes.isEmpty else { return false }
+        return routes.allSatisfy { $0.measuredXYZHelper == true && RemotePedalboard.signals.prefix(3).contains($0.signal) } &&
+            RemotePedalboard.permitsXYZHelpers(in: group.patch.routes)
+    }
+
+    public mutating func addXYZHelper(_ preset: DepthXYZHelperPreset, channel: Int) -> Bool {
+        guard routes.isEmpty, (0...15).contains(channel) else { return false }
+        var next = self
+        for (signal, value) in zip(RemotePedalboard.signals, preset.destinations) {
+            guard var destination = value else { continue }
+            destination.channel = channel
+            let response: ContinuousResponse? = destination.kind == .controlChange && [7,11].contains(destination.number) ? .init(release: 0) : nil
+            var route = SensorMapping(id: UUID().uuidString, source: source, signal: signal, destination: destination, response: response)
+            route.measuredXYZHelper = true
+            next.routes.append(route)
+        }
+        guard next.xyzHelperIsCompatible else { return false }
+        self = next
+        return true
+    }
+}
+
+extension PerformanceGroupMobileDraft {
+    /// Key-only assignments negotiate the existing native v5 lane. Keep all
+    /// pitches and routes in the destination group; no client-specified MIDI.
+    public mutating func addXYZInstrument(_ scale: MobileExpressionPreset, root: Int,
+                                          channel: Int, custom: String = "") -> Bool {
+        guard routes.isEmpty, (0...15).contains(channel), let notes = scale.notes(root: root, custom: custom),
+              Set(notes).count == notes.count, notes.count <= remainingRouteCapacity else { return false }
+        var next = self
+        next.routes = zip(RemotePiano.keySignals,notes).map { signal,note in
+            .init(id: UUID().uuidString, source: source, signal: signal, destination: .init(.note, channel: channel, number: note))
+        }
+        guard let profile = try? next.applying(to: baseline),
+              !profile.groups.contains(where: { $0.id != groupID && $0.patch.routes.contains { $0.source == source } }),
+              let group = profile.groups.first(where: { $0.id == groupID }),
+              !group.patch.routes.contains(where: { $0.destination.kind == .pitchBend && $0.destination.channel == channel })
+        else { return false }
+        self = next
+        return true
+    }
+}
+
+extension PerformanceGroupMobileDraft {
+    /// Prevent ordinary key/pedal surfaces from sharing this opt-in atomic
+    /// hybrid owner. Both sets of targets must fit before changing the draft.
+    public mutating func addXYZHybrid(_ helper: DepthXYZHelperPreset, helperChannel: Int,
+                                      scale: MobileExpressionPreset, root: Int, noteChannel: Int,
+                                      custom: String = "") -> Bool {
+        var keys = self
+        var mixed = self
+        guard keys.addXYZInstrument(scale,root:root,channel:noteChannel,custom:custom),
+              mixed.addXYZHelper(helper,channel:helperChannel) else { return false }
+        for var key in keys.routes {
+            key.measuredXYZHelper = true
+            mixed.routes.append(key)
+        }
+        guard (try? mixed.applying(to: baseline)) != nil else { return false }
+        self = mixed
+        return true
+    }
+}

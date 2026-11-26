@@ -82,6 +82,18 @@ public struct BoundedMIDIPlayback: Sendable {
         return true
     }
 
+    /// Classifies the state at the start of a scheduler wait. This is
+    /// diagnostic only: all identity and event deadlines remain unchanged.
+    public enum WaitPhase: Sendable, Equatable {
+        case sounding, awaitingEvent, trailingRest
+    }
+
+    public var waitPhase:WaitPhase? {
+        guard state == .playing else { return nil }
+        if !outstanding.isEmpty { return .sounding }
+        return next < events.count ? .awaitingEvent : .trailingRest
+    }
+
     /// A driver should wait for this deadline instead of busy spinning.
     public var nextDeadline: UInt64? {
         guard state == .playing else { return nil }
@@ -148,6 +160,9 @@ public struct BoundedMIDIPlayback: Sendable {
                 guard let end=onsetEnds[next],end>admittedElapsed else {
                     retire(.faulted,fault:.expiredOnset,send:send); return
                 }
+                // The final clock read is a caller callback too. If it
+                // observed cancellation, do not acquire unattempted debt.
+                if shouldStop() { retire(.stopped,send:send); return }
                 outstanding.insert(cmd.destination)
             }
             guard send(cmd) else { retire(.faulted,fault:.sendFailed,send:send); return }

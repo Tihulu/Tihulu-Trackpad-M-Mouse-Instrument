@@ -58,14 +58,15 @@ public struct AirStrumPerformance: Sendable {
 
     public mutating func reset() { detector.reset(); selected = nil; deadlines = [:] }
 
+    mutating func takeExpiredSignals(now:Double) -> Set<SensorSignal> {
+        let due=Set(deadlines.filter { !now.isFinite || now >= $0.value }.keys)
+        for signal in due { deadlines.removeValue(forKey:signal) }
+        return due
+    }
+
     mutating func expire(now: Double, session: UUID, router: inout SensorRouter) -> [SensorCommand] {
-        let due = deadlines.filter { !now.isFinite || now >= $0.value }.keys.sorted { $0.rawValue < $1.rawValue }
-        var commands: [SensorCommand] = []
-        for signal in due {
-            deadlines.removeValue(forKey: signal)
-            commands += router.releaseSignal(session: session,signal:signal)
-        }
-        return commands
+        let due=takeExpiredSignals(now:now)
+        return router.releaseSignals(session:session,signals:due)
     }
 
     mutating func update(slot: Int?, position: Double, time: Double, now: Double,

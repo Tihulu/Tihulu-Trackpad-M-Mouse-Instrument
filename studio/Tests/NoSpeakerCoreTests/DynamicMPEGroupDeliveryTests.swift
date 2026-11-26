@@ -96,3 +96,73 @@ private func dynamicSpec(_ cents:Int) -> PerformanceGroupTuningPlan.Specificatio
     #expect(sent.allSatisfy { $0.command.value == 0 })
     #expect(output.sessionCount == 0 && output.pendingCleanup.isEmpty)
 }
+
+
+@Test func dynamicGroupReceiptExpiryRetainsExactAllocatedMemberDebt() throws {
+    let a = dynamicGroup(.gamepad1,name:"A"), b = dynamicGroup(.gamepad2,name:"B")
+    let spec = dynamicSpec(20)
+    var output = try DynamicMPEGroupDelivery(profile:.init(groups:[a,b]),tuning:[a.id:spec,b.id:spec])
+    #expect(output.prepare { _ in true })
+    let x = try output.connect(.gamepad1,now:1), y = try output.connect(.gamepad2,now:1)
+    _ = output.frame(lease:y,sequence:1,now:1,values:[.padA:1]) { _ in true }
+    var fresh = true
+    var wire:[PerformanceGroupCommand] = []
+    let report = output.admittedFrame(lease:x,sequence:1,now:1,values:[.padA:1,.padB:1],releasing:[],
+                                      admit:{fresh}) {
+        wire.append($0)
+        if $0.command.value > 0 { fresh = false; return true }
+        return false
+    }
+    #expect(report.admissionExpired && report.failedGroups == [a.id] && report.pendingCleanup == [a.id])
+    #expect(wire.count == 2 && wire.allSatisfy { $0.groupID == a.id })
+    #expect(wire.first?.command.destination == wire.last?.command.destination)
+    #expect(wire.first?.command.value == 100 && wire.last?.command.value == 0)
+    #expect(output.activeGroups == [b.id] && output.hasLease(y) && !output.hasLease(x))
+    let target = try #require(wire.first?.command.destination)
+    wire = []
+    let retry = output.retryCleanup(a.id) { wire.append($0); return true }
+    #expect(retry.pendingCleanup.isEmpty && wire == [.init(groupID:a.id,command:.init(target,value:0))])
+}
+
+@Test func dynamicGroupReceiptExpiryRollsBackSilentJoin() throws {
+    let group = PerformanceInstrumentGroup(name:"Shared",patch:.init(routes:[
+        .init(id:"a",source:.gamepad1,signal:.padA,destination:.init(.note,channel:3,number:62)),
+        .init(id:"b",source:.gamepad2,signal:.padA,destination:.init(.note,channel:3,number:62))
+    ]))
+    var output = try DynamicMPEGroupDelivery(profile:.init(groups:[group]),tuning:[group.id:dynamicSpec(20)])
+    #expect(output.prepare { _ in true })
+    let x = try output.connect(.gamepad1,now:1), y = try output.connect(.gamepad2,now:1)
+    var wire:[PerformanceGroupCommand] = []
+    _ = output.frame(lease:x,sequence:1,now:1,values:[.padA:1]) { wire.append($0); return true }
+    let target = try #require(wire.first?.command.destination)
+    wire = []
+    var checks = 0
+    let rejected = output.admittedFrame(lease:y,sequence:1,now:1,values:[.padA:1],releasing:[],
+                                        admit:{ checks += 1; return checks == 1 }) { wire.append($0); return true }
+    #expect(rejected.admissionExpired && rejected.failedGroups.isEmpty && wire.isEmpty)
+    #expect(output.activeGroups == [group.id] && output.hasLease(x) && output.hasLease(y))
+    _ = output.disconnectBatch([x]) { wire.append($0); return true }
+    #expect(wire == [.init(groupID:group.id,command:.init(target,value:0))])
+    _ = output.disconnectBatch([y]) { wire.append($0); return true }
+    #expect(wire.count == 1 && output.pendingCleanup.isEmpty)
+}
+
+
+@Test func dynamicGroupDisconnectFencesStaleMasterBendRestoration() throws {
+    let bend = SensorDestination(.pitchBend,channel:3)
+    let group = PerformanceInstrumentGroup(name:"Shared bend",patch:.init(routes:[
+        .init(id:"note",source:.gamepad1,signal:.padA,destination:.init(.note,channel:3,number:62)),
+        .init(id:"low",source:.gamepad1,signal:.padLSX,destination:bend,priority:0),
+        .init(id:"high",source:.gamepad2,signal:.padLSX,destination:bend,priority:10)
+    ]))
+    var state = try DynamicMPEGroupDelivery(profile:.init(groups:[group]),tuning:[group.id:dynamicSpec(20)])
+    #expect(state.prepare { _ in true })
+    let low = try state.connect(.gamepad1,now:1), high = try state.connect(.gamepad2,now:1)
+    _ = state.frame(lease:low,sequence:1,now:1,values:[.padLSX:0.2]) { _ in true }
+    _ = state.frame(lease:high,sequence:1,now:1,values:[.padLSX:0.8]) { _ in true }
+    var wire:[PerformanceGroupCommand] = []
+    let report = state.disconnectBatch([high],admitRestoration:{_ in false}) { wire.append($0);return true }
+    #expect(report.admissionExpired && report.failedGroups == [group.id] && report.pendingCleanup.isEmpty)
+    #expect(wire == [.init(groupID:group.id,command:.init(.init(.pitchBend),value:8192))])
+    #expect(state.activeGroups.isEmpty && !state.hasLease(low))
+}

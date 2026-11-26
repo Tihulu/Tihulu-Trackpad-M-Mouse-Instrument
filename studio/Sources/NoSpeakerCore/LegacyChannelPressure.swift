@@ -28,6 +28,25 @@ public struct LegacyChannelPressure: Sendable {
             return previous[channel] == 0 ? nil : .init(channel,0)
         }
     }
+    /// A physical pressure snapshot commits only individually admitted
+    /// channel updates. Transport failures are recorded by the wire ledger.
+    public mutating func replaceAdmitted(_ next:[Int:Int],permits:()->Bool,
+                                         send:(Update)->Bool)->Bool {
+        guard next.allSatisfy({ (0...15).contains($0.key) && (0...127).contains($0.value) }) else { return false }
+        let channels=Set(values.keys).union(next.keys).filter { values[$0] != next[$0] }.sorted()
+        for channel in channels {
+            guard permits() else { return false }
+            var staged=values
+            staged[channel]=next[channel]
+            var candidate=self
+            for update in candidate.replace(staged) {
+                guard permits(),send(update) else { return false }
+            }
+            self=candidate
+        }
+        return permits()
+    }
+
     public mutating func release(_ channel: Int) -> [Update] {
         replace(values.filter { $0.key != channel })
     }

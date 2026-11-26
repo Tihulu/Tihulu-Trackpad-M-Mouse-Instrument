@@ -63,7 +63,24 @@ struct InstrumentBuilderView: View {
                 Text("Create sensor-to-MIDI rules. Save your instrument, test it with simulated controls, or deliberately enable live MIDI. Native Trackpad and compatible external touch-surface input is optional and experimental.")
                     .foregroundStyle(.secondary)
                 quickStartPanel { proxy.scrollTo("builder-test", anchor: .top) }
-                PerformanceGroupEditorView(currentPatch:draft).disabled(studio.patchRunning)
+                PerformanceGroupEditorView(currentPatch:draft,editInBuilder:{ patch in
+                    replaceDraft(with:patch)
+                }).disabled(studio.patchRunning)
+                GroupBox("Input roles · draft mapping") {
+                    VStack(alignment:.leading,spacing:4) {
+                        Text("A device is not tied to one role: notes = Instrument, control routes = Helper, both = Hybrid. This describes the draft, not active hardware or output permission.").font(.caption).foregroundStyle(.secondary)
+                        if draft.routes.isEmpty {Text("No assigned input routes").font(.caption)}
+                        ForEach(BuilderRouteTools.sourceRoles(in:draft)){ item in
+                            HStack {
+                                Text(item.source.rawValue)
+                                Spacer()
+                                Text(item.role.rawValue).font(.caption.bold())
+                                Text("\(item.noteRoutes) note / \(item.helperRoutes) control").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            }
+                        }
+                    }.padding(4)
+                }
+                CustomSurfacePadEditor()
                 GroupBox("Instrument") {
                     VStack(alignment: .leading, spacing: 8) {
                         TextField("Instrument name", text: $draft.name)
@@ -872,10 +889,7 @@ struct InstrumentBuilderView: View {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url, !studio.patchRunning else { return }
         do {
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
-            let data = try handle.read(upToCount: WorkspaceArchive.maximumBytes + 1) ?? Data()
-            replaceDraft(with: try InstrumentPatch.read(data))
+            replaceDraft(with:try InstrumentPatch.read(WorkspaceArchive.readFile(at:url)))
         } catch { message = error.localizedDescription }
     }
 }

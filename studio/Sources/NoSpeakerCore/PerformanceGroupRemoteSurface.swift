@@ -14,9 +14,10 @@ public enum PerformanceGroupRemoteSurface: String, CaseIterable, Sendable {
         }
     }
 
-    /// Initial mixed-surface candidate: at most two mapped families per
-    /// connection. The shared rate budget is not multiplied by family count.
-    public static let maximumFamilies = 2
+    /// All four existing wire surface families may be assigned. Assignment
+    /// does not increase the simultaneous active family or shared rate budget.
+    public static let maximumFamilies = 4
+    public static let maximumActiveFamilies = 2
 
     public static func modes(for routes:[SensorMapping]) -> Set<Self>? {
         guard !routes.isEmpty, routes.allSatisfy({
@@ -87,6 +88,39 @@ public enum PerformanceGroupRemoteSurface: String, CaseIterable, Sendable {
             result[signal] = 1
         }
         return result
+    }
+}
+
+/// A v9 frame only exists for an explicitly configured measured Hybrid slot.
+/// Its initial neutral proves both families. Legacy slots never authorize it.
+struct GroupRemoteSnapshot {
+    let families: Set<PerformanceGroupRemoteSurface>
+    let signals: Set<SensorSignal>
+    let values: [SensorSignal:Double]
+
+    init?(frame: RemoteTouchFrame, modes: Set<PerformanceGroupRemoteSurface>,
+          mapped: Set<SensorSignal>, hybrid: Bool) {
+        if hybrid {
+            guard frame.kind == .xyzHybrid, modes == [.piano,.pedalboard],
+                  let keys = frame.keys, let mask = frame.mask, let levels = frame.levels else { return nil }
+            var active: [SensorSignal:Double] = [:]
+            if keys != 0 {
+                let key = RemotePiano.keySignals[keys.trailingZeroBitCount]
+                guard mapped.contains(key) else { return nil }
+                active[key] = 1
+            }
+            for i in 0..<3 where mask & (1 << i) != 0 {
+                let axis = RemotePedalboard.signals[i]
+                guard mapped.contains(axis) else { return nil }
+                active[axis] = levels[i]
+            }
+            families = modes; signals = mapped; values = active
+        } else {
+            guard let family = PerformanceGroupRemoteSurface.family(for:frame), modes.contains(family) else { return nil }
+            signals = mapped.intersection(family.signals)
+            guard let active = family.snapshot(frame,mapped:signals) else { return nil }
+            families = [family]; values = active
+        }
     }
 }
 

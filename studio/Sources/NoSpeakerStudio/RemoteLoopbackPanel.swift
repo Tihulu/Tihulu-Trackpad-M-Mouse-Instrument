@@ -32,9 +32,9 @@ struct RemoteLoopbackPanel: View {
     }
 
     var body: some View {
-        GroupBox("Remote · TLS controller") {
+        GroupBox("Web Remote · phone / tablet browser") {
             VStack(alignment: .leading, spacing: 7) {
-                Text("Experimental. Requires a dedicated trusted TLS identity for the selected address. No automatic certificate installation or trust bypass. Run a successful Mac-only diagnostic before enabling LAN in this app session.")
+                Text("No mobile app required: use a phone or tablet browser on the same private network. Experimental HTTPS/WSS requires a dedicated trusted TLS identity for the selected address. Run the Mac-only diagnostic before enabling LAN. Native companion apps are separate.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !studio.patchRunning {
                     Toggle("Enable experimental LAN (trusted private network only)", isOn: $lan)
@@ -73,7 +73,7 @@ struct RemoteLoopbackPanel: View {
                             ForEach(identities) { choice in Text(choice.name).tag(Optional(choice.id)) }
                         }
                     }
-                    Button(lan ? "Start LAN listener" : "Start loopback listener") {
+                    Button(lan ? "Start local web remote" : "Start loopback diagnostic") {
                         guard let choice = identities.first(where: { $0.id == selected }), let endpoint else { return }
                         if lan && (!studio.remoteLoopbackVerified || !confirmedLAN || !RemoteLANChoice.available().contains(where: { $0.id == selectedLAN && $0.endpoint == endpoint })) {
                             message = "Select and confirm a current private LAN address."; return
@@ -104,6 +104,10 @@ struct RemoteLoopbackPanel: View {
                     Text(studio.patchRemotePageReady ? "HTTPS controller ready" : "HTTPS controller not ready").font(.caption)
                     if studio.patchRemotePageReady, let endpoint = studio.patchRemoteEndpoint {
                         Text(endpoint.pageURL).font(.caption.monospacedDigit()).textSelection(.enabled)
+                        Button("Copy web address (no secret)") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(endpoint.pageURL, forType: .string)
+                        }
                         Button("Open browser controller on this Mac") {
                             if let url = URL(string: endpoint.pageURL) { NSWorkspace.shared.open(url) }
                         }
@@ -111,7 +115,7 @@ struct RemoteLoopbackPanel: View {
                             Image(nsImage: image).interpolation(.none).resizable()
                                 .frame(width: 160, height: 160)
                                 .accessibilityLabel("QR code for controller page address")
-                            Text("Scan the page address on your phone. Enter the separate invitation; QR contains no secret.").font(.caption)
+                            Text("Scan the page QR or type this HTTPS address in Safari, Chrome or another compatible browser on your phone/tablet. Enter the separate invitation; QR and copied address contain no secret.").font(.caption)
                         }
                     }
                     Toggle("Share MIDI destination details with this invitation", isOn: $shareMappingDetails)

@@ -7,14 +7,17 @@ const source=fs.readFileSync(path.join(__dirname,"../Sources/NoSpeakerMac/Remote
 const script=source.split('private static let script = #"""')[1].split('"""#')[0]
   .replaceAll("__REMOTE_ORIGIN__","https://local.test").replaceAll("__REMOTE_SOCKET__","wss://local.test");
 const fullManifest={kind:"capabilities",version:7,touch:true,tilt:true,acceleration:true,rotation:true,airDrums:true,drums:255,piano:67108863,pedals:63};
-function setup(permission="granted",manifest=fullManifest,experimental=true,autoMapping=true,groupNeutral=false,stored=new Map()){
+function setup(permission="granted",manifest=fullManifest,experimental=true,autoMapping=true,groupNeutral=false,stored=new Map(),offline=false,mediaDevices=null){
   let time=1000, ticker, socket, nextTimer=0;const timers=new Map();
   function target(){return {events:new Map(),disabled:false,value:"",style:{},textContent:"",attributes:{},children:[],
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
-  const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:()=>target()});
+  const elements=Object.fromEntries(["webCameraGain","webCameraExtraGain1","webCameraExtraGain2","webCameraExtraInvert1","webCameraExtraInvert2","webCameraSave","webCameraLoad","webCameraReset","webCameraProfileStatus","webCameraExtra1","webCameraExtra2","webCameraExtraMetric1","webCameraExtraMetric2","webCameraDesiredZoom","webCameraCalibration","webCameraMetric","webCameraSensitivity","webCameraRegion","webCameraLight","webCameraInvert","webCameraSummary","webCameraDescription","webCameraPlayHost","webCameraConnectionHost","webCameraTarget","webCameraMotionStatus","webCameraPanel","webCameraFacing","webCameraDevice","webCameraStart","webCameraStop","webCameraVideo","webCameraZoom","webCameraStatus","synthCompact","synthChoices","synthChoiceGrid","pianoArp","pianoChord","pianoSynth","arpKeyboardTools","arpClear","arpDirection","arpRate","arpSwing","arpSelected","kitBoard","kitEdit","kitEditor","kitPart","kitAdd","kitRemove","kitX","kitY","kitSize","kitSave","kitReset","kitStatus","pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  let videoCallback=null,videoId=0,pixel=0;
+  elements.webCameraCalibration.value="direct";
+  elements.webCameraVideo.requestVideoFrameCallback=f=>{videoCallback=f;return ++videoId};elements.webCameraVideo.cancelVideoFrameCallback=()=>{videoCallback=null};
+  const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:tag=>tag==="canvas"?{getContext:()=>({drawImage(){},getImageData(){return {data:typeof pixel==="number"?new Uint8Array(768).fill(pixel):pixel}}})}:target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
   class WS{
@@ -23,8 +26,9 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     send(data){if(typeof data==="string"){this.frames.push(JSON.parse(data));this.sentAt=time;(this.sendTimes??=[]).push(time);}}
     close(){this.closed=true;}
   }
-  vm.runInNewContext(script.replaceAll("__GROUP_NEUTRAL__",groupNeutral?"enabled":"disabled"),{document,window,location:{origin:"https://local.test"},WebSocket:WS,performance:{now:()=>time},
+  vm.runInNewContext(script.replaceAll("__GROUP_NEUTRAL__",groupNeutral?"enabled":"disabled"),{document,window,navigator:{mediaDevices},location:{origin:"https://local.test"},WebSocket:WS,performance:{now:()=>time},
     setTimeout:(f,ms)=>{const id=++nextTimer;timers.set(id,{f,at:time+ms});return id;},clearTimeout:id=>timers.delete(id),setInterval:f=>(ticker=f,1),clearInterval(){ticker=null;}});
+  if(offline)return {elements,window,document,getSocket:()=>socket};
   elements.secret.value="aa".repeat(32);elements.connect.emit("click");socket.onopen();socket.onmessage({data:"admitted"});
   const query=socket.frames.shift();
   time+=13;if(manifest!==null)socket.onmessage({data:typeof manifest==="string"?manifest:JSON.stringify(manifest)});
@@ -33,7 +37,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
   function withheldLabels(){step(50);const q=socket.frames.at(-1);if(q?.kind==="mappingLabels"){socket.frames.pop();time+=13;socket.onmessage({data:JSON.stringify({kind:"mappingLabels",version:8,sequence:q.sequence,page:0,pages:1,total:0,rows:[]})});}}
   if(autoMapping&&!socket.closed&&manifest!==null){withheld();if(groupNeutral&&!socket.closed)withheldLabels();}
   if(experimental&&!socket.closed&&manifest!==null){elements.navSetup.emit("click");elements.workloadMode.emit("click");elements.navPlay.emit("click");}
-  return {query,elements,window,document,socket,step,withheld,ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
+  return {query,elements,window,document,socket,step,withheld,video(v,mediaTime,metadata={}){pixel=v;const cb=videoCallback;videoCallback=null;cb?.(time,{mediaTime,...metadata});},ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
     orientation(beta=0){window.emit("deviceorientation",{alpha:0,beta,gamma:0})}};
 }
 test("permission denial never attaches listener or sends motion",async()=>{
@@ -621,8 +625,8 @@ test("group browser neutral handshake covers drum piano and pedal masks",()=>{
     assert.equal(a.elements.playView.hidden,false);
   }
 });
-test("group browser rejects more than two families and missing neutral ACK",()=>{
-  const mixed=setup("granted",{...touchOnly,drums:1,piano:1},false,true,true);
+test("group browser rejects motion families and missing neutral ACK",()=>{
+  const mixed=setup("granted",{...touchOnly,tilt:true,drums:1,piano:1},false,true,true);
   assert.equal(mixed.socket.closed,true);
   const a=setup("granted",touchOnly,false,true,true);
   a.step(221);
@@ -1165,4 +1169,718 @@ test("malformed stored alias selections fail closed and reset clears unsaved tex
     assert.equal(a.elements.customSection.hidden,true);
     assert.equal(a.socket.frames.length,0);
   }
+});
+
+
+test("device mode menu switches only after old touch release ACK",()=>{
+  const a=setup(),e=a.elements;
+  const down={pointerId:1,button:0,clientX:25,clientY:25,preventDefault(){}};
+  e.pad.emit("pointerdown",down);assert.equal(a.socket.frames.at(-1).kind,"touch");
+  e.playMode.value="piano";e.playMode.emit("change");
+  assert.equal(e.playMode.disabled,true);assert.equal(e.pianoEnable.disabled,true);
+  a.ack();a.step(50);assert.equal(a.socket.frames.at(-1).kind,"release");
+  assert.equal(e.playMode.disabled,true);
+  a.ack();assert.equal(e.playMode.disabled,false);
+  assert.equal(e.playMode.value,"piano");assert.equal(e.touchSection.hidden,true);assert.equal(e.pianoSection.hidden,false);
+  assert.equal(e.pianoEnable.disabled,false);assert.equal(e.drumEnable.disabled,true);
+  const count=a.socket.frames.length;
+  e.pad.emit("pointerdown",down);assert.equal(a.socket.frames.length,count);
+  e.pianoEnable.emit("click");assert.equal(a.socket.frames.length,count);
+});
+
+test("device mode menu refuses unassigned modes and never auto-arms",()=>{
+  const a=setup("granted",{...fullManifest,touch:true,tilt:false,acceleration:false,rotation:false,airDrums:false,drums:0,piano:0,pedals:0},false),e=a.elements;
+  assert.equal(e.playMode.children.find(x=>x.value==="gyro").disabled,true);
+  e.playMode.value="gyro";e.playMode.emit("change");assert.equal(e.playMode.value,"all");
+  e.playMode.value="xy";e.playMode.emit("change");assert.equal(e.playMode.value,"xy");
+  assert.equal(a.socket.frames.length,0);
+  assert.equal(e.pianoSection.hidden,true);assert.equal(e.touchSection.hidden,false);
+});
+
+test("device mode transition with missing release acknowledgement closes without opening next mode",()=>{
+  const a=setup(),e=a.elements;
+  e.pad.emit("pointerdown",{pointerId:1,button:0,clientX:25,clientY:25,preventDefault(){}});a.ack();
+  e.playMode.value="drums";e.playMode.emit("change");a.step(50);
+  assert.equal(a.socket.frames.at(-1).kind,"release");
+  a.step(350);assert.equal(a.socket.closed,true);
+  assert.equal(e.playMode.disabled,true);assert.equal(e.playMode.value,"all");
+  assert.equal(e.drumEnable.disabled,true);
+});
+
+test("device mode menu keeps motion permission explicit and releases active gyro before selecting pedals",async()=>{
+  const a=setup(),e=a.elements;
+  e.playMode.value="gyro";e.playMode.emit("change");
+  assert.equal(e.tiltSection.hidden,true);assert.equal(e.rotationSection.hidden,false);assert.equal(e.accelSection.hidden,true);
+  assert.equal(a.window.events.has("devicemotion"),false);
+  await e.rotationStart.emit("click");
+  a.window.emit("devicemotion",{rotationRate:{alpha:0,beta:0,gamma:0}});a.step();a.ack();
+  e.playMode.value="pedals";e.playMode.emit("change");a.step(50);
+  assert.equal(a.socket.frames.at(-1).kind,"rotationRelease");
+  a.ack();assert.equal(e.playMode.value,"pedals");assert.equal(e.pedalSection.hidden,false);
+  assert.equal(a.window.events.has("devicemotion"),false);
+});
+
+
+test("group browser arms four assigned families but retains a two-family workload limit",()=>{
+  const a=setup("granted",{...touchOnly,drums:1,piano:1,pedals:8},false,true,true);
+  for(const kind of ["release","drumPads","pianoKeys","pedalboard"]){
+    assert.equal(a.socket.frames.at(-1).kind,kind);
+    assert.equal(a.elements.playView.hidden,true);
+    a.ack();
+  }
+  assert.equal(a.elements.playView.hidden,false);
+  a.elements.navSetup.emit("click");
+  a.elements.workloadMode.emit("click");
+  a.elements.navPlay.emit("click");
+  a.elements.drumEnable.emit("click");
+  a.elements.pianoEnable.emit("click");
+  a.elements.pedalEnable.emit("click");
+  assert.match(a.elements.playWorkloadStatus.textContent,/Combination unavailable/);
+  assert.equal(a.elements.pedalEnable.textContent,"Enable pedalboard");
+  const b=setup("granted",{...touchOnly,drums:1,piano:1,pedals:8},false,true,true);
+  b.ack();b.ack();b.ack();
+  assert.equal(b.socket.frames.at(-1).kind,"pedalboard");
+  b.step(221);
+  assert.equal(b.socket.closed,true);
+  assert.equal(b.elements.playView.hidden,true);
+});
+
+
+test("air stick requires neutral and sends mapped bounded pulse",async()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:2},false);
+  a.elements.playMode.value="stick";a.elements.playMode.emit("change");
+  await a.elements.airStickStart.emit("click");
+  const motion=x=>a.window.emit("devicemotion",{acceleration:{x,y:0,z:0}});
+  motion(10);assert.equal(a.socket.frames.length,0);
+  motion(0);motion(10);a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"drumPads");assert.equal(a.socket.frames.at(-1).mask,2);
+  a.ack();a.step(80);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  a.elements.airStickStop.emit("click");assert.equal(a.window.events.has("devicemotion"),false);
+});
+test("air stick permission denial does not send attacks",async()=>{
+  const a=setup("denied",{...touchOnly,touch:false,drums:1},false);
+  a.elements.playMode.value="stick";a.elements.playMode.emit("change");await a.elements.airStickStart.emit("click");
+  assert.match(a.elements.airStickStatus.textContent,/denied/);assert.equal(a.window.events.has("devicemotion"),false);
+  assert.equal(a.socket.frames.length,0);
+});
+
+
+test("chord mode uses only authorized complete logical chord and releases it",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:145},false);
+  a.elements.playMode.value="chord";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  assert.equal(a.elements.chord0.disabled,false);assert.equal(a.elements.chord1.disabled,true);
+  const e={button:0,pointerId:1,preventDefault(){}};
+  a.elements.chord0.emit("pointerdown",e);a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"pianoKeys");assert.equal(a.socket.frames.at(-1).mask,145);a.ack();
+  a.elements.chord0.emit("pointerup",e);a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+});
+test("step sequencer uses mapped keys, explicit start and stop",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="seq";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseStep0.value="0";
+  a.elements.phraseStart.emit("click");a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"pianoKeys");assert.equal(a.socket.frames.at(-1).mask,1);a.ack();
+  a.elements.phraseStop.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  const count=a.socket.frames.length;a.step(100);assert.equal(a.socket.frames.length,count);
+});
+test("arp selection cannot start with an unmapped chord",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="arp";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.arpChoice.value="0";a.elements.phraseStart.emit("click");
+  assert.equal(a.socket.frames.length,0);
+});
+
+
+test("active sequencer mode switch cancels loop and waits for release ACK",()=>{
+  const a=setup("granted",{...touchOnly,touch:true,piano:1},false);
+  a.elements.playMode.value="seq";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseStep0.value="0";a.elements.phraseStart.emit("click");a.step(25);
+  assert.equal(a.socket.frames.at(-1).mask,1);a.ack();
+  a.elements.playMode.value="xy";a.elements.playMode.emit("change");a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"pianoKeys");assert.equal(a.socket.frames.at(-1).mask,0);
+  assert.equal(a.elements.playMode.disabled,true);a.ack();
+  assert.equal(a.elements.playMode.value,"xy");assert.equal(a.elements.phraseSection.hidden,true);
+  const count=a.socket.frames.length;a.step(100);
+  assert.equal(a.socket.frames.length,count);
+});
+test("sequencer refuses overdue notes instead of catching up",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="seq";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseStep0.value="0";a.elements.phraseStart.emit("click");a.step(25);a.ack();
+  const count=a.socket.frames.length;a.step(400);
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,count);
+});
+test("air stick mode departure during permission request cannot arm stale callback",async()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:1,piano:1},false);
+  let resolve;a.window.DeviceMotionEvent.requestPermission=()=>new Promise(r=>resolve=r);
+  a.elements.playMode.value="stick";a.elements.playMode.emit("change");
+  const permission=a.elements.airStickStart.emit("click");
+  a.elements.playMode.value="piano";a.elements.playMode.emit("change");
+  resolve("granted");await permission;
+  assert.equal(a.window.events.has("devicemotion"),false);
+  assert.equal(a.elements.playMode.value,"piano");assert.equal(a.socket.frames.length,0);
+});
+
+
+test("air stick kit edits only assigned visual elements and never sends notes",()=>{
+  const stored=new Map(),a=setup("granted",{...touchOnly,touch:false,drums:130},false,true,false,stored);
+  a.elements.playMode.value="stick";a.elements.playMode.emit("change");
+  assert.equal(a.elements.kitBoard.children[0].hidden,true);assert.equal(a.elements.kitBoard.children[7].hidden,false);
+  a.elements.kitEdit.emit("click");a.elements.kitPart.value="7";a.elements.kitPart.emit("change");
+  a.elements.kitX.value="60";a.elements.kitX.emit("input");assert.equal(a.elements.kitBoard.children[7].style.left,"60%");
+  a.elements.kitRemove.emit("click");assert.equal(a.elements.kitBoard.children[7].hidden,true);
+  a.elements.kitAdd.emit("click");assert.equal(a.elements.kitBoard.children[7].hidden,false);
+  a.elements.kitSave.emit("click");assert.equal(JSON.parse(stored.get("tihulu.remote.drum-kit.v1"))[7].x,60);
+  a.elements.kitPart.value="0";a.elements.kitPart.emit("change");assert.equal(a.elements.kitPart.value,"7");
+  assert.equal(a.socket.frames.length,0);
+});
+test("kit layout editing disabled while air stick armed",async()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:2},false);
+  a.elements.playMode.value="stick";a.elements.playMode.emit("change");a.elements.kitEdit.emit("click");
+  await a.elements.airStickStart.emit("click");
+  assert.equal(a.elements.kitEditor.hidden,true);assert.equal(a.elements.kitEdit.disabled,true);
+  a.elements.kitRemove.emit("click");assert.equal(a.elements.kitBoard.children[1].hidden,false);
+  assert.equal(a.socket.frames.length,0);
+});
+
+
+test("piano toolbar arp keyboard selects logical keys without sounding until start",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:145},false);
+  a.elements.pianoArp.emit("click");a.elements.pianoEnable.emit("click");
+  const e={button:0,pointerId:1,preventDefault(){}};
+  a.elements.piano4.emit("pointerdown",e);a.elements.piano4.emit("pointerup",e);
+  assert.equal(a.elements.pianoBoard.hidden,false);assert.equal(a.socket.frames.length,0);
+  a.elements.phraseTempo.value="120";a.elements.arpDirection.value="up";a.elements.arpRate.value="8";
+  a.elements.phraseStart.emit("click");a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"pianoKeys");assert.equal(a.socket.frames.at(-1).mask,16);a.ack();
+});
+test("optional synth controls do not automatically enable pedals and hide releases them",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1,pedals:1},false);
+  a.elements.playMode.value="piano";a.elements.playMode.emit("change");
+  assert.equal(a.elements.pedalSection.hidden,true);
+  a.elements.pianoSynth.emit("click");assert.equal(a.elements.pedalSection.hidden,false);
+  assert.equal(a.socket.frames.length,0);a.elements.pedalEnable.emit("click");a.elements.pedalToggle0.emit("click");a.step(25);
+  assert.equal(a.socket.frames.at(-1).mask,1);a.ack();
+  a.elements.pianoSynth.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).kind,"pedalboard");assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  assert.equal(a.elements.pedalSection.hidden,true);
+});
+
+
+test("synth hidden controls cannot be activated and compact mode is presentation only",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1,pedals:3},false);
+  a.elements.playMode.value="piano";a.elements.playMode.emit("change");a.elements.pianoSynth.emit("click");
+  a.elements.synthChoiceGrid.children[1].emit("click");assert.equal(a.elements.pedalCell1.hidden,true);
+  a.elements.synthCompact.emit("click");assert.equal(a.elements.pedalSection.attributes["data-compact"],"true");
+  a.elements.pedalEnable.emit("click");a.elements.pedalToggle1.emit("click");
+  assert.equal(a.socket.frames.length,0);
+  a.elements.pedalToggle0.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,1);a.ack();
+});
+
+test("kit size migrates older layouts, survives reload and ignores invalid edits",()=>{
+  const key="tihulu.remote.drum-kit.v1";
+  const legacy=Array.from({length:8},()=>({x:32,y:49,visible:true}));
+  const stored=new Map([[key,JSON.stringify(legacy)]]);
+  function open() {
+    const a=setup("granted",{...touchOnly,touch:false,drums:130},false,true,false,stored);
+    a.elements.playMode.value="stick";a.elements.playMode.emit("change");
+    a.elements.kitEdit.emit("click");a.elements.kitPart.value="7";a.elements.kitPart.emit("change");
+    return a;
+  }
+  const a=open(), e=a.elements;
+  assert.equal(e.kitSize.value,"18");
+  assert.equal(e.kitX.value,"32");
+  e.kitSize.value="24";e.kitSize.emit("input");
+  assert.match(e.kitBoard.children[7].style.width,/24%/);
+  assert.match(e.kitBoard.children[1].style.width,/18%/);
+  e.kitSize.value="25";e.kitSize.emit("input");assert.equal(e.kitSize.value,"24");
+  e.kitSave.emit("click");
+  const b=open();assert.equal(b.elements.kitSize.value,"24");assert.equal(b.elements.kitY.value,"49");
+  b.elements.kitReset.emit("click");assert.equal(b.elements.kitSize.value,"18");
+  assert.equal(a.socket.frames.length+b.socket.frames.length,0);
+  legacy[7].size=null;stored.set(key,JSON.stringify(legacy));
+  assert.equal(open().elements.kitX.value,"77");
+});
+
+test("strike pad selector updates the board immediately and rejects an unmapped pad",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:130},false);
+  const e=a.elements;e.playMode.value="stick";e.playMode.emit("change");
+  for(const choice of ["7","6"]) {
+    e.airStickPad.value=choice;e.airStickPad.emit("change");
+    assert.equal(e.airStickPad.value,"7");
+    assert.equal(e.kitBoard.children[7].attributes["data-selected"],"true");
+    assert.equal(e.kitBoard.children[1].attributes["data-selected"],"false");
+  }
+  assert.equal(a.socket.frames.length,0);
+});
+
+test("rotation cancels pending stick permission and removes an armed stick listener",async()=>{
+  for(const pending of [true,false]){
+    const a=setup("granted",{...touchOnly,touch:false,drums:2},false);
+    a.elements.playMode.value="stick";a.elements.playMode.emit("change");
+    let resolve;
+    if(pending)a.window.DeviceMotionEvent.requestPermission=()=>new Promise(r=>{resolve=r;});
+    const started=a.elements.airStickStart.emit("click");
+    if(!pending)await started;
+    a.window.screen.orientation.emit("change");
+    if(pending)resolve("granted");
+    await started;
+    assert.equal(a.socket.closed,true);
+    assert.equal(a.window.events.has("devicemotion"),false);
+    assert.equal(a.socket.frames.length,0);
+  }
+});
+
+test("sixteenth and triplet arpeggios release each note before the next mapped note",()=>{
+  for(const [rate,halfStep] of [["16",50],["12",200/3]]){
+    const a=setup("granted",{...touchOnly,touch:false,piano:17},false), e=a.elements;
+    e.pianoArp.emit("click");e.pianoEnable.emit("click");
+    for(const i of [0,4]){
+      const event={button:0,pointerId:i+1,preventDefault(){}};
+      e["piano"+i].emit("pointerdown",event);e["piano"+i].emit("pointerup",event);
+    }
+    e.phraseTempo.value="150";e.arpDirection.value="down";e.arpRate.value=rate;
+    e.phraseStart.emit("click");
+    assert.equal(a.socket.frames.at(-1).mask,16);a.ack(13);
+    a.step(36);assert.equal(a.socket.frames.at(-1).mask,16);
+    a.step(Math.ceil(halfStep)-49);assert.equal(a.socket.frames.at(-1).mask,0);a.ack(13);
+    a.step(Math.ceil(halfStep)-13);assert.equal(a.socket.frames.at(-1).mask,1);a.ack(13);
+    e.phraseStop.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);
+    assert.equal(a.socket.closed,undefined);
+  }
+});
+
+test("kit editor rejects pad numbers that wrap a JavaScript bit mask",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:3},false),e=a.elements;
+  e.playMode.value="stick";e.playMode.emit("change");e.kitEdit.emit("click");
+  e.kitPart.value="1";e.kitPart.emit("change");
+  for(const invalid of ["33","-31","","1.5"]){
+    e.kitPart.value=invalid;e.kitPart.emit("change");assert.equal(e.kitPart.value,"1");
+  }
+  assert.equal(a.socket.frames.length,0);
+});
+
+test("synth dial keeps its first contact and discards it when that control is released",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1,pedals:1},false),e=a.elements;
+  e.playMode.value="piano";e.playMode.emit("change");e.pianoSynth.emit("click");e.pedalEnable.emit("click");
+  const toggle=()=>{e.pedalToggle0.emit("click");a.step(25);a.ack();};
+  const finger=(id,y)=>({pointerId:id,clientY:y,button:0,preventDefault(){}});
+  toggle();
+  const dial=e.pedalValue0, initial=Number(e.pedalLevel0.value);
+  const delta=initial<=80?10:-10;
+  dial.emit("pointerdown",finger(1,50));dial.emit("pointerdown",finger(2,50));
+  dial.emit("pointermove",finger(2,50-delta));assert.equal(Number(e.pedalLevel0.value),initial);
+  dial.emit("pointermove",finger(1,50-delta));assert.equal(Number(e.pedalLevel0.value),initial+delta);
+  toggle();toggle();
+  dial.emit("pointermove",finger(1,50-2*delta));assert.equal(Number(e.pedalLevel0.value),initial+delta);
+  dial.emit("pointerdown",finger(3,50));dial.emit("pointermove",finger(3,50-delta));
+  assert.equal(Number(e.pedalLevel0.value),initial+2*delta);
+});
+
+test("swing alternates across a one-note arp and absorbs ordinary timer jitter",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false), e=a.elements;
+  e.pianoArp.emit("click");e.pianoEnable.emit("click");
+  e.piano0.emit("keydown",{key:"Enter",preventDefault(){}});e.piano0.emit("keyup",{key:"Enter",preventDefault(){}});
+  e.phraseTempo.value="150";e.arpRate.value="16";e.arpSwing.value="99";
+  e.phraseStart.emit("click");assert.equal(a.socket.frames.length,0);
+  e.arpSwing.value="60";e.phraseStart.emit("click");assert.equal(a.socket.frames.at(-1).mask,1);
+  assert.equal(e.arpSwing.disabled,true);
+  for(const [elapsed,mask] of [[65,0],[55,1],[40,0],[40,1]]){
+    a.ack(13);a.step(elapsed-13);assert.equal(a.socket.frames.at(-1).mask,mask);
+  }
+  assert.deepEqual(a.socket.sendTimes.slice(-5).map((time,i,times)=>time-times[0]),[0,65,120,160,200]);
+  a.ack(13);e.phraseStop.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);
+});
+
+test("armed stick retargets between acknowledged strikes and requires fresh neutral motion",async()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:130},false),e=a.elements;
+  e.playMode.value="stick";e.playMode.emit("change");await e.airStickStart.emit("click");
+  const motion=x=>a.window.emit("devicemotion",{acceleration:{x,y:0,z:0}});
+  motion(0);e.kitBoard.children[7].emit("click");
+  motion(10);assert.equal(a.socket.frames.length,0);assert.equal(e.airStickPad.value,"7");
+  motion(0);motion(10);a.step(25);assert.equal(a.socket.frames.at(-1).mask,128);
+  const attempt=()=>{e.airStickPad.value="1";e.airStickPad.emit("change");};
+  attempt();assert.equal(e.airStickPad.value,"7");
+  a.ack();a.step(80);assert.equal(a.socket.frames.at(-1).mask,0);
+  attempt();assert.equal(e.airStickPad.value,"7");
+  a.ack();assert.equal(e.airStickPad.disabled,false);assert.equal(e.kitBoard.children[1].disabled,false);
+  attempt();assert.equal(e.airStickPad.value,"1");
+  a.step(40);motion(10);assert.equal(a.socket.frames.at(-1).mask,0);
+  motion(0);motion(10);a.step(25);assert.equal(a.socket.frames.at(-1).mask,2);
+  assert.equal(e.kitEdit.disabled,true);assert.equal(a.socket.closed,undefined);
+});
+
+function mockCamera(){
+  const events=new Map();let zoom=1;
+  const track={readyState:"live",stops:0,stop(){this.stops++;this.readyState="ended";},addEventListener(n,cb){events.set(n,cb);},getCapabilities(){return {zoom:{min:1,max:4,step:.1}}},getSettings(){return {zoom}},async applyConstraints(c){zoom=c.advanced[0].zoom;},events};
+  return {track,stream:{getTracks:()=>[track],getVideoTracks:()=>[track]}};
+}
+test("unpaired browser local camera uses no microphone and hardware zoom",async()=>{
+  const c=mockCamera();let requested;
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,{async getUserMedia(options){requested=options;return c.stream},async enumerateDevices(){return [{kind:"videoinput",deviceId:"back",label:"Rear lens"},{kind:"audioinput",deviceId:"mic",label:"Microphone"}]}});
+  a.elements.webCameraFacing.value="environment";
+  await a.elements.webCameraStart.emit("click");
+  assert.equal(requested.audio,false);assert.equal(requested.video.facingMode.exact,"environment");
+  assert.equal(a.elements.webCameraVideo.srcObject,c.stream);assert.equal(a.elements.webCameraZoom.disabled,false);
+  await Promise.resolve();await Promise.resolve();
+  assert.equal(a.elements.webCameraDevice.children.length,2);
+  a.elements.webCameraZoom.value="2.5";await a.elements.webCameraZoom.emit("change");
+  assert.equal(c.track.getSettings().zoom,2.5);assert.equal(a.getSocket(),undefined);
+  a.elements.webCameraStop.emit("click");assert.equal(c.track.stops,1);assert.equal(a.elements.webCameraVideo.srcObject,null);
+});
+test("camera completion after pairing is discarded and cannot send sensor data",async()=>{
+  const c=mockCamera();let resolve;
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:()=>new Promise(r=>resolve=r)});
+  const pending=a.elements.webCameraStart.emit("click");
+  a.elements.secret.value="aa".repeat(32);a.elements.connect.emit("click");
+  resolve(c.stream);await pending;
+  assert.equal(c.track.stops,1);assert.equal(a.elements.webCameraVideo.srcObject,null);
+  assert.equal(a.getSocket().frames.length,0);assert.equal(a.elements.webCameraStart.disabled,true);
+});
+test("camera visibility loss stops active stream and permission denial stays neutral",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:async()=>c.stream});
+  await a.elements.webCameraStart.emit("click");a.document.hidden=true;a.document.emit("visibilitychange");
+  assert.equal(c.track.stops,1);assert.equal(a.elements.webCameraStart.disabled,true);
+  const b=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:async()=>{throw Error("denied")}});
+  await b.elements.webCameraStart.emit("click");assert.match(b.elements.webCameraStatus.textContent,/denied/);assert.equal(b.getSocket(),undefined);
+});
+
+test("cancelled camera request cannot overlap a second permission request",async()=>{
+  const c=mockCamera();let resolve,count=0;
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:()=>{count++;return new Promise(r=>resolve=r)}});
+  const pending=a.elements.webCameraStart.emit("click");
+  a.elements.webCameraStop.emit("click");await a.elements.webCameraStart.emit("click");
+  assert.equal(count,1);assert.equal(a.elements.webCameraStart.disabled,true);
+  resolve(c.stream);await pending;
+  assert.equal(c.track.stops,1);assert.equal(a.elements.webCameraStart.disabled,false);
+});
+test("unsupported zoom and invalid selected camera never create bogus controls",async()=>{
+  const c=mockCamera();c.track.getCapabilities=()=>({zoom:{min:4,max:1}});
+  let count=0;
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:async()=>{count++;return c.stream}});
+  a.elements.webCameraDevice.value="unlisted";await a.elements.webCameraStart.emit("click");assert.equal(count,0);
+  a.elements.webCameraDevice.value="";await a.elements.webCameraStart.emit("click");
+  assert.equal(a.elements.webCameraZoom.disabled,true);assert.equal(count,1);
+  a.window.emit("pagehide");assert.equal(c.track.stops,1);
+});
+
+test("unresolved camera enumeration does not block explicit restart",async()=>{
+  const first=mockCamera(),second=mockCamera();let count=0,finishInventory;
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,{getUserMedia:async()=>++count===1?first.stream:second.stream,enumerateDevices:()=>new Promise(r=>finishInventory=r)});
+  await a.elements.webCameraStart.emit("click");
+  a.elements.webCameraStop.emit("click");
+  assert.equal(a.elements.webCameraStart.disabled,false);
+  await a.elements.webCameraStart.emit("click");assert.equal(count,2);
+  a.elements.webCameraPanel.open=false;a.elements.webCameraPanel.emit("toggle");
+  assert.equal(first.track.stops,1);assert.equal(second.track.stops,1);
+  finishInventory([]);await Promise.resolve();
+  assert.equal(a.elements.webCameraVideo.srcObject,null);
+});
+test("browser without camera API keeps pairing path usable",()=>{
+  const a=setup("granted",fullManifest,true,true,false,new Map(),true,null);
+  assert.equal(a.elements.webCameraStart.disabled,true);
+  assert.match(a.elements.webCameraStatus.textContent,/unavailable/);
+  a.elements.secret.value="aa".repeat(32);a.elements.connect.emit("click");
+  assert.ok(a.getSocket());
+});
+
+test("paired camera motion helper uses only mapped pedal lane and releases on stop",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraTarget.value="2";await a.elements.webCameraStart.emit("click");
+  a.video(0,1);a.step(25);a.video(100,2);
+  assert.equal(a.socket.frames.at(-1).kind,"pedalboard");assert.equal(a.socket.frames.at(-1).mask,4);
+  a.ack();a.step(25);
+  a.elements.webCameraStop.emit("click");
+  assert.equal(c.track.stops,1);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+});
+test("stale camera frames fail closed without refreshing active helper",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(100,2);a.ack();
+  a.step(151);assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);
+});
+test("camera mode requires a mapped continuous pedal",()=>{
+  const a=setup("granted",{...fullManifest,pedals:56});
+  const choice=a.elements.playMode.children.find(x=>x.value==="camera");
+  assert.equal(choice.disabled,true);
+});
+
+test("camera quiet release clears unsent edges and cannot be deferred by new motion",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(100,2);
+  const sent=a.socket.frames.length;
+  a.step(25);a.video(100,3);a.step(25);a.video(100,4);
+  a.step(50);a.video(0,5);a.step(50);a.video(100,6);
+  assert.equal(a.socket.frames.length,sent);
+  a.step(51);assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);
+});
+test("camera mode excludes manual pedal activation and repeated video frames",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");
+  a.elements.pedalEnable.emit("click");a.elements.pedalToggle0.emit("click");
+  a.video(0,1);a.step(25);a.video(100,1);
+  assert.equal(a.socket.frames.filter(x=>x.kind==="pedalboard"&&x.mask!==0).length,0);
+  a.step(126);assert.equal(a.socket.closed,true);
+});
+
+test("late release ACK without an intervening tick cannot revive camera helper",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(100,2);a.ack();a.step(25);
+  a.elements.webCameraStop.emit("click");
+  assert.equal(a.socket.frames.at(-1).mask,0);
+  a.ack(150);
+  assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);
+});
+test("camera mode switch waits for release ACK and stops video",async()=>{
+  const c=mockCamera();
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(100,2);a.ack();a.step(25);
+  a.elements.playMode.value="piano";a.elements.playMode.emit("change");
+  assert.equal(c.track.stops,1);assert.equal(a.socket.frames.at(-1).mask,0);
+  assert.equal(a.elements.playMode.disabled,true);a.ack();
+  assert.equal(a.elements.playMode.value,"piano");assert.equal(a.elements.pianoSection.hidden,false);
+});
+
+test("camera motion position X is region restricted and settings freeze during capture",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraMetric.value="x";a.elements.webCameraRegion.value="right";
+  await a.elements.webCameraStart.emit("click");
+  assert.equal(a.elements.webCameraMetric.disabled,true);
+  a.video(0,1);a.step(25);
+  const left=new Uint8Array(768);for(let i=0;i<192;i++)if(i%16<8)left.fill(255,i*4,i*4+3);
+  a.video(left,2);assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+  a.elements.webCameraRegion.value="left"; // scripted mutation must not affect frozen config
+  const right=left.slice();for(let i=0;i<192;i++)if(i%16>=12)right.fill(255,i*4,i*4+3);
+  a.step(25);a.video(right,3);
+  assert.equal(a.socket.frames.at(-1).kind,"pedalboard");
+  assert.equal(a.socket.frames.at(-1).levels[0],.88);
+});
+test("uniform brightness compensation suppresses whole-frame light changes",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraLight.checked=true;
+  await a.elements.webCameraStart.emit("click");
+  a.video(0,1);a.step(25);a.video(180,2);
+  assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+  const patch=new Uint8Array(768).fill(180);for(let i=0;i<48;i++)patch.fill(0,i*4,i*4+3);
+  a.step(25);a.video(patch,3);
+  assert.equal(a.socket.frames.at(-1).mask,1);
+});
+test("inverted active zero remains distinct from neutral",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraInvert.checked=true;
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(255,2);
+  assert.equal(a.socket.frames.at(-1).mask,1);assert.equal(a.socket.frames.at(-1).levels[0],0);
+  a.ack();a.step(25);a.video(255,3);a.step(25);a.video(255,4);assert.equal(a.socket.frames.at(-1).mask,0);
+});
+
+test("quiet startup baseline prevents motion activation until three quiet comparisons",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraCalibration.value="quiet";
+  await a.elements.webCameraStart.emit("click");
+  a.video(0,1);a.step(25);a.video(100,2);a.step(25);a.video(0,3);
+  assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+  for(let i=4;i<=6;i++){a.step(25);a.video(0,i);}
+  assert.match(a.elements.webCameraMotionStatus.textContent,/Calibrated/);
+  a.step(25);a.video(100,7);
+  assert.equal(a.socket.frames.at(-1).kind,"pedalboard");
+  assert.equal(a.socket.frames.at(-1).mask,1);
+});
+test("invalid camera calibration configuration does not request camera",async()=>{
+  let requests=0;
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>{requests++;return mockCamera().stream}});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraCalibration.value="unknown";
+  await a.elements.webCameraStart.emit("click");assert.equal(requests,0);
+});
+
+test("first quiet camera comparison suppresses active refresh while release is being confirmed",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(100,2);a.ack();
+  const count=a.socket.frames.length;
+  a.step(25);a.video(100,3);a.step(25);
+  assert.equal(a.socket.frames.length,count);
+  a.video(100,4);assert.equal(a.socket.frames.at(-1).mask,0);
+});
+
+test("performance zoom is applied and confirmed before the first camera callback",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraDesiredZoom.value="2.5";
+  await a.elements.webCameraStart.emit("click");
+  assert.equal(c.track.getSettings().zoom,2.5);
+  assert.equal(a.elements.webCameraDesiredZoom.disabled,true);
+  a.video(0,1);a.step(25);a.video(100,2);assert.equal(a.socket.frames.at(-1).mask,1);
+});
+test("out of range or unconfirmed performance zoom stops without sending notes",async()=>{
+  for(const value of ["10","2.5"]){
+    const c=mockCamera();c.track.applyConstraints=async()=>{};
+    const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+    a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+    a.elements.webCameraDesiredZoom.value=value;
+    await a.elements.webCameraStart.emit("click");
+    assert.equal(c.track.stops,1);assert.equal(a.elements.webCameraVideo.srcObject,null);
+    assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+  }
+});
+test("late zoom completion after explicit stop cannot start capture",async()=>{
+  const c=mockCamera();let resolve,signal;const entered=new Promise(r=>signal=r);c.track.applyConstraints=()=>new Promise(r=>{resolve=r;signal();});
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraDesiredZoom.value="2";
+  const start=a.elements.webCameraStart.emit("click");await entered;
+  a.elements.webCameraStop.emit("click");resolve();await start;
+  a.video(0,1);a.step(25);a.video(100,2);
+  assert.equal(c.track.stops,1);assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+});
+
+test("hung pre-arm zoom stops camera and never arms when the promise settles",async()=>{
+  const c=mockCamera();let resolve,signal;const entered=new Promise(r=>signal=r);c.track.applyConstraints=()=>new Promise(r=>{resolve=r;signal();});
+  const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraDesiredZoom.value="2";
+  const start=a.elements.webCameraStart.emit("click");await entered;
+  a.step(3000);assert.equal(c.track.stops,1);assert.equal(a.elements.webCameraVideo.srcObject,null);
+  resolve();await start;
+  a.video(0,1);a.step(25);a.video(100,2);
+  assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+});
+test("muted camera track closes the paired helper even before another frame",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(100,2);
+  c.track.events.get("mute")();
+  assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);
+});
+
+test("three mapped camera metrics use one atomic pedal snapshot and one release",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraTarget.value="0";a.elements.webCameraMetric.value="amount";
+  a.elements.webCameraExtra1.value="1";a.elements.webCameraExtraMetric1.value="x";
+  a.elements.webCameraExtra2.value="2";a.elements.webCameraExtraMetric2.value="y";
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(255,2);
+  const attack=a.socket.frames.at(-1);assert.equal(attack.kind,"pedalboard");assert.equal(attack.mask,7);
+  assert.deepEqual(attack.levels,[1,.5,.5,0,0,0]);
+  a.ack();a.step(25);a.video(255,3);a.step(25);a.video(255,4);
+  assert.equal(a.socket.frames.at(-1).mask,0);
+});
+test("camera extra helpers reject duplicate and unassigned lanes before permission",async()=>{
+  for(const extra of ["0","2"]){
+    let requests=0;const a=setup("granted",{...fullManifest,pedals:3},true,true,false,new Map(),false,{getUserMedia:async()=>{requests++;return mockCamera().stream}});
+    a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraExtra1.value=extra;
+    await a.elements.webCameraStart.emit("click");assert.equal(requests,0);
+  }
+});
+
+test("sensor settings are saved locally without assignment or camera identity and load never starts capture",async()=>{
+  const stored=new Map();let requests=0;
+  const a=setup("granted",fullManifest,true,true,false,stored,false,{getUserMedia:async()=>{requests++;return mockCamera().stream}});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraMetric.value="y";a.elements.webCameraRegion.value="center";a.elements.webCameraDesiredZoom.value="2";a.elements.webCameraTarget.value="2";
+  a.elements.webCameraSave.emit("click");
+  const saved=JSON.parse(stored.get("tihulu.remote.camera-settings.v1"));assert.equal(saved.metric,"y");assert.equal(saved.zoom,2);assert.equal("target" in saved,false);assert.equal("deviceId" in saved,false);
+  a.elements.webCameraMetric.value="x";a.elements.webCameraTarget.value="1";a.elements.webCameraLoad.emit("click");
+  assert.equal(a.elements.webCameraMetric.value,"y");assert.equal(a.elements.webCameraTarget.value,"1");assert.equal(requests,0);
+  a.elements.webCameraReset.emit("click");assert.equal(a.elements.webCameraCalibration.value,"quiet");assert.equal(stored.has("tihulu.remote.camera-settings.v1"),false);
+});
+test("invalid camera profile cannot change settings and cannot be loaded during capture",async()=>{
+  const stored=new Map([["tihulu.remote.camera-settings.v1",JSON.stringify({version:1,metric:"x",target:2})]]);
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,stored,false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraMetric.value="amount";
+  a.elements.webCameraLoad.emit("click");assert.equal(a.elements.webCameraMetric.value,"amount");assert.match(a.elements.webCameraProfileStatus.textContent,/No valid/);
+  await a.elements.webCameraStart.emit("click");
+  assert.equal(a.elements.webCameraSave.disabled,true);a.elements.webCameraSave.emit("click");
+  assert.equal(JSON.parse(stored.get("tihulu.remote.camera-settings.v1")).target,2);
+});
+
+test("first quiet frame cancels camera onset queued behind heartbeat ACK",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");
+  a.step(500);assert.equal(a.socket.frames.at(-1).kind,"heartbeat");
+  a.video(0,1);a.step(25);a.video(100,2);a.step(25);a.video(100,3);
+  a.ack();a.step(25);
+  assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+});
+test("queued continuous camera attack coalesces latest value without new sequence",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");
+  a.step(500);assert.equal(a.socket.frames.at(-1).kind,"heartbeat");
+  a.video(0,1);a.step(25);a.video(100,2);a.step(25);a.video(120,3);
+  a.ack();a.step(25);
+  const attacks=a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask);
+  assert.equal(attacks.length,1);assert.equal(attacks[0].levels[0],.27);
+});
+
+test("camera helpers independently apply gain and inversion with one atomic snapshot",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraGain.value="0.5";a.elements.webCameraInvert.checked=true;
+  a.elements.webCameraExtra1.value="1";a.elements.webCameraExtraMetric1.value="x";a.elements.webCameraExtraGain1.value="1.5";
+  a.elements.webCameraExtra2.value="2";a.elements.webCameraExtraMetric2.value="y";a.elements.webCameraExtraInvert2.checked=true;
+  await a.elements.webCameraStart.emit("click");
+  a.elements.webCameraExtraGain1.value="2";a.elements.webCameraExtraInvert2.checked=false;
+  a.video(0,1);a.step(25);a.video(255,2);
+  const attack=a.socket.frames.at(-1);assert.equal(attack.mask,7);assert.deepEqual(attack.levels,[.5,.75,.5,0,0,0]);
+  a.ack();a.step(25);a.video(255,3);a.step(25);a.video(255,4);assert.equal(a.socket.frames.at(-1).mask,0);
+});
+test("invalid extra camera gain refuses permission",async()=>{
+  let requests=0;const a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>{requests++;return mockCamera().stream}});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraExtra1.value="1";a.elements.webCameraExtraGain1.value="Infinity";
+  await a.elements.webCameraStart.emit("click");assert.equal(requests,0);
+});
+
+test("camera profile v2 persists response preferences but never logical lane assignments",async()=>{
+  const stored=new Map(),a=setup("granted",fullManifest,true,true,false,stored,false,{getUserMedia:async()=>mockCamera().stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraGain.value="0.5";a.elements.webCameraExtraGain1.value="2";a.elements.webCameraExtraInvert1.checked=true;a.elements.webCameraExtraMetric1.value="y";a.elements.webCameraExtra1.value="2";
+  a.elements.webCameraSave.emit("click");
+  const p=JSON.parse(stored.get("tihulu.remote.camera-settings.v1"));assert.equal(p.version,2);assert.deepEqual(p.gains,[.5,2,1]);assert.deepEqual(p.extraInvert,[true,false]);assert.equal("assignments" in p,false);
+  a.elements.webCameraExtra1.value="1";a.elements.webCameraExtraGain1.value="1";a.elements.webCameraLoad.emit("click");
+  assert.equal(a.elements.webCameraExtra1.value,"1");assert.equal(a.elements.webCameraExtraGain1.value,"2");assert.equal(a.elements.webCameraExtraMetric1.value,"y");
+});
+test("v1 camera profile migrates neutral response defaults and rejects corrupt v2",()=>{
+  const old={version:1,calibration:"quiet",facing:"environment",invert:false,light:false,metric:"amount",region:"center",sensitivity:"normal",zoom:null};
+  const stored=new Map([["tihulu.remote.camera-settings.v1",JSON.stringify(old)]]);
+  const a=setup("granted",fullManifest,true,true,false,stored,false,{getUserMedia:async()=>mockCamera().stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraGain.value="2";a.elements.webCameraLoad.emit("click");assert.equal(a.elements.webCameraGain.value,"1");assert.equal(a.elements.webCameraRegion.value,"center");
+  stored.set("tihulu.remote.camera-settings.v1",JSON.stringify({...old,version:2,gains:[1,99,1],extraInvert:[false,false],extraMetric:["x","y"]}));
+  a.elements.webCameraRegion.value="full";a.elements.webCameraLoad.emit("click");assert.equal(a.elements.webCameraRegion.value,"full");
+});
+
+test("camera rotation stops even a calibrated but neutral helper",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");
+  a.video(0,1);a.window.emit("orientationchange");
+  assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);
+});
+test("changed camera geometry or track zoom cannot reuse the prior motion baseline",async()=>{
+  for(const drift of ["geometry","zoom"]){
+    const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+    a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+    await a.elements.webCameraStart.emit("click");a.video(0,1,{width:640,height:480});a.step(25);
+    if(drift==="zoom")await c.track.applyConstraints({advanced:[{zoom:2}]});
+    a.video(255,2,drift==="geometry"?{width:480,height:640}:{width:640,height:480});
+    assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+  }
+});
+test("reported stale capture timestamp closes before motion activation",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.step(200);a.video(255,1,{captureTime:0});
+  assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
 });

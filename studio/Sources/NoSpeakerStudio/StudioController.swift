@@ -40,6 +40,7 @@ final class StudioController: ObservableObject {
     @Published var bpm = 120.0
     @Published private(set) var instrumentPatch = StudioController.readInstrumentPatch()
     private var builderDraftSession = BuilderDraftSession()
+    private var groupDraftSession=PerformanceGroupDraftSession()
     @Published private(set) var patchRunning = false
     @Published private(set) var patchInputs: [PatchSimulation.Input] = []
     @Published private(set) var patchMessages: [String] = []
@@ -360,8 +361,9 @@ final class StudioController: ObservableObject {
                 return
             }
         }
-        guard releaseBuilderOutput() else {
-            groupGamepadStatus = "Builder MIDI cleanup remains pending. Retry Builder Stop."
+        let builderCleanup=BuilderStopSequence.release(notes:releaseBuilderOutput,clock:clearEnsembleClockDebt)
+        guard builderCleanup.complete else {
+            groupGamepadStatus = builderCleanup.notice(reason:"Builder MIDI cleanup remains pending. Retry Builder Stop.")
             return
         }
         guard builderGamepads.bind(required:sources,choices:gamepadBindings) else {
@@ -430,9 +432,9 @@ final class StudioController: ObservableObject {
         if sources.contains(.lid) {
             let sensor = MacBookHingeAngleSource()
             groupHinge = sensor
-            sensor.onAngle = { [weak self, weak sensor] degrees in
+            sensor.onAngle = { [weak self, weak sensor] degrees,receipt in
                 guard let self, let sensor, self.groupHinge === sensor, self.groupRunToken == token else { return }
-                self.receiveGroupScalar(.lid,value:PhysicalPatchRuntime.normalizedLid(degrees),run:token)
+                self.receiveGroupScalar(.lid,value:PhysicalPatchRuntime.normalizedLid(degrees),run:token,hostTime:receipt)
             }
             sensor.onLoss = { [weak self, weak sensor] reason in
                 guard let self, let sensor, self.groupHinge === sensor, self.groupRunToken == token else { return }
@@ -489,8 +491,8 @@ final class StudioController: ObservableObject {
         }
         pollGroupGamepads(run:token)
         guard groupRunToken == token else { return }
-        builderGamepads.beginEvents { [weak self] source,frame in
-            self?.receiveGroupGamepad(source:source,frame:frame,run:token)
+        builderGamepads.beginEventsWithReceipt { [weak self] source,frame,receipt in
+            self?.receiveGroupGamepad(source:source,frame:frame,run:token,hostTime:receipt)
         }
         groupWatchdog = Task { [weak self] in
             while !Task.isCancelled {
@@ -556,7 +558,7 @@ final class StudioController: ObservableObject {
         groupHapticStatus = reason
     }
 
-    private func consumeGroupReports(_ reports: [PerformanceGroupDelivery.Report]) {
+    private func consumeGroupReports(_ reports: [PerformanceGroupDelivery.Report],reason:String? = nil) {
         for report in reports where report.capacityRefused > 0 {
             groupCapacityRefusals += min(report.capacityRefused,Int.max-groupCapacityRefusals)
         }
@@ -564,8 +566,9 @@ final class StudioController: ObservableObject {
         if !failures.isEmpty {
             groupFaultIDs.formUnion(failures)
             groupStoppedIDs.formUnion(failures)
-            groupGamepadStatus = "A group MIDI send failed. Affected groups stopped; inspect cleanup status."
         }
+        let faultNotice=PerformanceGroupDelivery.faultNotice(reports)
+        if let faultNotice { groupGamepadStatus = faultNotice }
         // Publish reconciled edges promptly, not just on the next 20 ms
         // watchdog. The independent latest-frame mailbox never waits for
         // the physical driver. Silent polling does not do extra rendering.
@@ -573,8 +576,14 @@ final class StudioController: ObservableObject {
             updateGroupHaptics()
         }
         refreshGroupOutputState()
+        if let reason {
+            groupGamepadStatus = PerformanceGroupDelivery.eventNotice(reason:reason,reports:reports,
+                hasPending:!groupCleanupIDs.isEmpty || groupDisposalCount != 0)
+        }
         if groupGamepadsRunning, !groupRegisteredIDs.isEmpty,
-           groupRegisteredIDs.isSubset(of:groupStoppedIDs) { stopGroupGamepads() }
+           groupRegisteredIDs.isSubset(of:groupStoppedIDs) {
+            stopGroupGamepads(after:reports,reason:reason)
+        }
     }
 
     /// Sample the complete set of mapped Xbox slots before sending MIDI.
@@ -582,44 +591,50 @@ final class StudioController: ObservableObject {
     /// snapshots. Event callbacks still provide immediate individual edges.
     private func pollGroupGamepads(run:UUID) {
         guard groupRunToken == run else { return }
-        var snapshots:[(SensorSource,GamepadFrame)] = []
+        var snapshots:[(SensorSource,GamepadFrame,Double)] = []
         var departing:[SensorSource:UUID] = [:]
         for source in GamepadFrame.orderedSources {
             guard let token = groupGamepadTokens[source] else { continue }
-            if let frame = builderGamepads.read(source) { snapshots.append((source,frame)) }
+            let receipt = ProcessInfo.processInfo.systemUptime
+            if let frame = builderGamepads.read(source) { snapshots.append((source,frame,receipt)) }
             else { departing[source] = token }
         }
         if !departing.isEmpty {
             for source in departing.keys { groupGamepadTokens.removeValue(forKey:source) }
-            consumeGroupReports(groupHost.unbindGroupSources(departing))
+            let reports=groupHost.unbindGroupSources(departing)
+            let reason="Controller input lost. Affected slots released; restart to rebind."
+            consumeGroupReports(reports,reason:reason)
             guard groupRunToken == run else { return }
-            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads(); return }
-            groupGamepadStatus = "Controller input lost. Affected slots released; restart to rebind."
+            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil {
+                stopGroupGamepads(after:reports,reason:reason); return
+            }
         }
-        for (source,frame) in snapshots {
+        for (source,frame,receipt) in snapshots {
             guard groupRunToken == run else { return }
-            receiveGroupGamepad(source:source,frame:frame,run:run)
+            receiveGroupGamepad(source:source,frame:frame,run:run,hostTime:receipt)
         }
     }
 
-    private func receiveGroupGamepad(source:SensorSource,frame:GamepadFrame?,run:UUID) {
+    private func receiveGroupGamepad(source:SensorSource,frame:GamepadFrame?,run:UUID,hostTime:Double? = nil) {
         guard groupRunToken == run, let token = groupGamepadTokens[source] else { return }
         guard let frame else {
             groupGamepadTokens.removeValue(forKey:source)
-            consumeGroupReports(groupHost.unbindGamepad(source,token:token))
-            groupGamepadStatus = "Controller input lost. Stop and explicitly restart to bind a replacement."
-            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
+            let reports=groupHost.unbindGamepad(source,token:token)
+            let reason="Controller input lost. Stop and explicitly restart to bind a replacement."
+            consumeGroupReports(reports,reason:reason)
+            if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads(after:reports,reason:reason) }
             return
         }
-        if let result = groupHost.receiveGamepad(source,token:token,frame:frame,now:ProcessInfo.processInfo.systemUptime) {
+        if let result = groupHost.receiveGamepad(source,token:token,frame:frame,
+                                                  now:ProcessInfo.processInfo.systemUptime,hostTime:hostTime) {
             consumeGroupReports(result.reports)
         }
     }
 
-    private func receiveGroupScalar(_ source:SensorSource,value:Double?,run:UUID) {
+    private func receiveGroupScalar(_ source:SensorSource,value:Double?,run:UUID,hostTime:Double? = nil) {
         guard groupRunToken == run, let token = groupGamepadTokens[source] else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        guard let result = groupHost.receiveScalar(source,token:token,value:value,hostTime:now,now:now) else { return }
+        guard let result = groupHost.receiveScalar(source,token:token,value:value,hostTime:hostTime ?? now,now:now) else { return }
         consumeGroupReports(result.reports)
         if source == .lid, result.status == .lost || result.status == .waitingForNeutral {
             groupHinge?.stop()
@@ -630,9 +645,9 @@ final class StudioController: ObservableObject {
 
     private func retireGroupSource(_ source:SensorSource,reason:String,run:UUID) {
         guard groupRunToken == run, let token = groupGamepadTokens.removeValue(forKey:source) else { return }
-        consumeGroupReports(groupHost.unbindGamepad(source,token:token))
-        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
-        groupGamepadStatus = reason + (groupCleanupIDs.isEmpty ? "" : " MIDI cleanup pending.")
+        let reports=groupHost.unbindGamepad(source,token:token)
+        consumeGroupReports(reports,reason:reason)
+        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads(after:reports,reason:reason) }
     }
 
     private func stopGroupCamera(reason:String,run:UUID) {
@@ -694,7 +709,8 @@ final class StudioController: ObservableObject {
             if let token = groupGamepadTokens.removeValue(forKey:source) { tokens[source] = token }
         }
         guard !tokens.isEmpty else { return }
-        consumeGroupReports(groupHost.unbindGroupSources(tokens))
+        let reports=groupHost.unbindGroupSources(tokens)
+        consumeGroupReports(reports,reason:reason)
         guard groupRunToken == run else { return }
         if groupGamepadTokens[.trackpad] == nil && groupGamepadTokens[.magicMouse] == nil,
            let mailbox = groupSurfaceMailbox {
@@ -703,8 +719,7 @@ final class StudioController: ObservableObject {
             groupSurfaceMailbox = nil
             refreshSharedSurfaceMonitoring()
         }
-        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads() }
-        groupGamepadStatus = reason + (groupCleanupIDs.isEmpty ? "" : " MIDI cleanup pending.")
+        if groupGamepadTokens.isEmpty && groupRemoteRunID == nil { stopGroupGamepads(after:reports,reason:reason) }
     }
 
     private func drainGroupSurfaces(run:UUID) {
@@ -846,6 +861,10 @@ final class StudioController: ObservableObject {
     }
 
     func stopGroupGamepads() {
+        stopGroupGamepads(after:[],reason:nil)
+    }
+
+    private func stopGroupGamepads(after previous:[PerformanceGroupDelivery.Report],reason:String?) {
         // Invalidate callbacks before stopping the existing adapter.
         guard groupGamepadsRunning else { return }
         groupRunToken = nil
@@ -858,7 +877,11 @@ final class StudioController: ObservableObject {
         // Block new actuator frames before potentially slow MIDI cleanup.
         groupHaptics?.invalidateGroupFrames()
         // Release MIDI before potentially slow native monitor teardown.
-        if let report = groupHost.panic() { consumeGroupReports([report]) }
+        var reports=previous
+        if let report = groupHost.panic() {
+            reports.append(report)
+            consumeGroupReports([report])
+        }
         stopGroupHaptics(reason:"Group Trackpad output off")
         detachGroupRemoteTransport(reason:"Mobile listener off")
         builderGamepads.stop()
@@ -879,9 +902,9 @@ final class StudioController: ObservableObject {
             groupSurfaceMailbox = nil
             refreshSharedSurfaceMonitoring()
         }
-        groupGamepadStatus = groupCleanupIDs.isEmpty
-            ? (!groupRetainsTuning ? "Group MIDI stopped. Registered ports retained for restart." : "MPE stopped. Close retained ports before another Start.")
-            : "Group MIDI stopped; cleanup pending. Retry before restarting."
+        let stopped = !groupRetainsTuning ? "Group MIDI stopped. Registered ports retained for restart." : "MPE stopped. Close retained ports before another Start."
+        groupGamepadStatus = PerformanceGroupDelivery.eventNotice(reason:[reason,stopped].compactMap{$0}.joined(separator:" "),
+            reports:reports,hasPending:!groupCleanupIDs.isEmpty || groupDisposalCount != 0)
     }
 
     func stopPerformanceGroup(_ id:UUID) {
@@ -895,8 +918,14 @@ final class StudioController: ObservableObject {
     }
 
     func retryGroupCleanup() {
-        for id in groupHost.pendingCleanup {
-            if let report = groupHost.retryCleanup(id) { consumeGroupReports([report]) }
+        var reports:[PerformanceGroupDelivery.Report] = []
+        // Snapshot the pending IDs; a newly discovered fault is reported,
+        // not silently retried in the same user action.
+        for id in groupHost.pendingCleanup.sorted(by:{ $0.uuidString < $1.uuidString }) {
+            if let report = groupHost.retryCleanup(id) {
+                reports.append(report)
+                consumeGroupReports([report])
+            }
         }
         _ = groupHost.retryDisposal()
         refreshGroupOutputState()
@@ -904,8 +933,8 @@ final class StudioController: ObservableObject {
             groupTunedConfiguration = nil
             groupDynamicPreview = nil
         }
-        groupGamepadStatus = groupCleanupIDs.isEmpty && groupDisposalCount == 0
-            ? "No pending group cleanup." : "Group cleanup still pending. Check CoreMIDI and retry."
+        groupGamepadStatus = PerformanceGroupDelivery.cleanupNotice(reports,
+            hasPending:!groupCleanupIDs.isEmpty || groupDisposalCount != 0)
     }
 
     func closeGroupPorts() {
@@ -1178,6 +1207,8 @@ final class StudioController: ObservableObject {
     @Published var captureStatus = "Cursor free · capture is OFF by default"
     @Published var touchBarProfile = StudioController.readTouchBarProfile()
     @Published var touchBarSustainOn = false
+    @Published private(set) var touchBarSynthIntent:[UUID:Double]=[:]
+    @Published private(set) var touchBarSlideSustain = SustainSlideLock()
     @Published var simulatedHingeAngle = 90.0
     @Published var liveHingeEnabled = false
     @Published var hingeSensorStatus = "Hardware sensor OFF · manual simulator available"
@@ -1292,6 +1323,18 @@ final class StudioController: ObservableObject {
         builderDraftSession.clear()
     }
 
+    func resumeGroupDraft(saved:PerformanceGroupProfile,archive:Data?) -> PerformanceGroupProfile {
+        groupDraftSession.resume(saved:saved,archive:archive)
+    }
+
+    func rememberGroupDraft(_ draft:PerformanceGroupProfile,saved:PerformanceGroupProfile,archive:Data?) {
+        let current=UserDefaults.standard.object(forKey:"TIHULU.performanceGroups.v1")
+        guard (current==nil && archive==nil) || (current is Data && (current as? Data)==archive) else { return }
+        groupDraftSession.remember(draft,saved:saved,archive:archive)
+    }
+
+    func discardGroupDraft() { groupDraftSession.clear() }
+
     func refreshBuilderCameras() {
         guard !patchRunning else { return }
         patchCameraChoices = BuilderCameraSource.choices()
@@ -1391,8 +1434,9 @@ final class StudioController: ObservableObject {
                 }
             }
         }
-        guard releaseBuilderOutput() else {
-            patchStatus = "Unreleased MIDI controls. Reset the DAW and retry Stop."
+        let builderCleanup=BuilderStopSequence.release(notes:releaseBuilderOutput,clock:clearEnsembleClockDebt)
+        guard builderCleanup.complete else {
+            patchStatus = builderCleanup.notice(reason:"Builder restart refused.")
             return
         }
         do {
@@ -1405,8 +1449,7 @@ final class StudioController: ObservableObject {
                 airTunedPlan = requestedTuning
                 try airTunedMIDI.open()
                 guard airTunedSelectors.configure(requestedTuning.setupCommands,send:{ airTunedMIDI.send($0) }) else {
-                    stopInstrumentPatch()
-                    patchStatus = "Tuned Air MPE setup failed. Check DAW and retry Stop."
+                    stopInstrumentPatch(reason:"Tuned Air MPE setup failed. Check DAW and retry Stop.")
                     return
                 }
             } else if sendMIDI { try patchMIDI.open() }
@@ -1423,14 +1466,12 @@ final class StudioController: ObservableObject {
                     touch?.setPatchMailbox(mailbox)
                     refreshSharedSurfaceMonitoring()
                     guard touchPreviewRunning else {
-                        stopInstrumentPatch()
-                        patchStatus = "Shared native surface monitoring failed."
+                        stopInstrumentPatch(reason:"Shared native surface monitoring failed.")
                         return
                     }
                     let physicalSources = Set(sources).filter { $0 != synthetic }
                     if let message = missingNativeSurfaceMessage(nativeSurfaces(for:physicalSources)) {
-                        stopInstrumentPatch()
-                        patchStatus = message
+                        stopInstrumentPatch(reason:message)
                         return
                     }
                 }
@@ -1450,8 +1491,7 @@ final class StudioController: ObservableObject {
                 try output.start { [weak self] message in
                     Task { @MainActor in
                         guard let self, self.gamepadHapticToken == token else { return }
-                        self.stopInstrumentPatch()
-                        self.patchStatus = "Gamepad Trackpad output failed: " + message
+                        self.stopInstrumentPatch(reason:"Gamepad Trackpad output failed: " + message)
                     }
                 }
             }
@@ -1477,10 +1517,10 @@ final class StudioController: ObservableObject {
                     guard let token = patchNativeToken else { stopInstrumentPatch(); return }
                     let sensor = MacBookHingeAngleSource()
                     patchHinge = sensor
-                    sensor.onAngle = { [weak self] degrees in
+                    sensor.onAngle = { [weak self] degrees,receipt in
                         guard let self, self.patchNativeToken == token, self.patchRunning else { return }
                         self.patchLidDegrees = degrees
-                        self.receiveBuilderScalar(.lid, value: PhysicalPatchRuntime.normalizedLid(degrees))
+                        self.receiveBuilderScalar(.lid, value: PhysicalPatchRuntime.normalizedLid(degrees),hostTime:receipt)
                     }
                     sensor.onLoss = { [weak self, weak sensor] reason in
                         guard let self, let sensor, self.patchHinge === sensor, self.patchNativeToken == token else { return }
@@ -1490,9 +1530,8 @@ final class StudioController: ObservableObject {
                     }
                     if !sensor.start() {
                         let reason = sensor.status
-                        stopInstrumentPatch()
+                        stopInstrumentPatch(reason:reason)
                         patchLidStatus = reason
-                        patchStatus = reason
                         return
                     }
                     guard patchRunning, patchNativeToken == token else { sensor.stop(); return }
@@ -1525,12 +1564,10 @@ final class StudioController: ObservableObject {
                 // Arm from a real initial snapshot, then process native value
                 // changes without waiting for the 20 ms watchdog.
                 if let token = patchNativeToken {
-                    for source in patchGamepadPollSources {
-                        receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token)
-                    }
+                    pollBuilderGamepads(token:token)
                     if patchRunning {
-                        builderGamepads.beginEvents { [weak self] source,frame in
-                            self?.receiveBuilderGamepad(source:source,frame:frame,token:token)
+                        builderGamepads.beginEventsWithReceipt { [weak self] source,frame,receipt in
+                            self?.receiveBuilderGamepad(source:source,frame:frame,token:token,hostTime:receipt)
                         }
                     }
                 }
@@ -1539,8 +1576,7 @@ final class StudioController: ObservableObject {
                 startAirDebugWatchdog()
             }
         } catch {
-            stopInstrumentPatch()
-            patchStatus = error.localizedDescription
+            stopInstrumentPatch(reason:error.localizedDescription)
         }
     }
 
@@ -1588,11 +1624,8 @@ final class StudioController: ObservableObject {
 
     func revokeBuilderRemote(_ connection: UUID) {
         guard var bridge = patchRemoteBridge, let transport = patchRemoteTransport else { return }
-        let result = bridge.revoke(connection, runtime: &patchPhysicalRuntime)
-        patchRemoteBridge = bridge
-        patchRemotePeers = bridge.connectionIDs
-        recordPatchCommands(result.commands)
-        transport.revoke(connection)
+        let result = bridge.revoke(connection,now:ProcessInfo.processInfo.systemUptime,runtime:&patchPhysicalRuntime)
+        finishBuilderRemoteBatch(result,bridge:bridge,transport:transport)
     }
 
     private func drainBuilderRemote(now: Double) {
@@ -1600,8 +1633,7 @@ final class StudioController: ObservableObject {
         if let page = patchRemotePage {
             switch page.status {
             case .failed, .stopped:
-                stopInstrumentPatch()
-                patchStatus = "HTTPS page server failed. Outputs released."
+                stopInstrumentPatch(reason:"HTTPS page server failed.")
                 return
             case .ready: if !patchRemotePageReady { patchRemotePageReady = true }
             case .starting: break
@@ -1609,18 +1641,45 @@ final class StudioController: ObservableObject {
         }
         let events = transport.drain()
         let result = bridge.process(events, now: ProcessInfo.processInfo.systemUptime, runtime: &patchPhysicalRuntime)
+        finishBuilderRemoteBatch(result,bridge:bridge,transport:transport)
+    }
+
+    private func finishBuilderRemoteBatch(_ result:RemoteHostBatch,bridge initialBridge:RemoteHostBridge,
+                                          transport:RemoteLoopbackTransport) {
+        var bridge=initialBridge
         patchRemoteBridge = bridge
-        if patchRemoteReady != bridge.ready { patchRemoteReady = bridge.ready }
-        if patchRemotePeers != bridge.connectionIDs { patchRemotePeers = bridge.connectionIDs }
-        recordPatchCommands(result.commands)
-        // MIDI failure can retire the entire Builder while delivering commands.
+        recordPatchCommands(result.commands,receipt:result.deliveryReceipt,maximumAge:0.1)
+        // MIDI failure or receipt expiry can retire the entire Builder while delivering commands.
         guard patchRunning, patchRemoteTransport === transport else { return }
         if result.fault {
-            stopInstrumentPatch()
-            patchStatus = "Remote transport fault. Outputs released; restart explicitly."
+            stopInstrumentPatch(reason:"Remote transport fault. Restart explicitly.")
             return
         }
-        for action in result.actions {
+        // Synchronous cleanup/output can cross another owner's deadline.
+        // Reconcile before publishing acknowledgements or metadata. No
+        // new input is admitted by these empty ticks. Bound the work even
+        // if the clock or transport behaves unexpectedly.
+        var actions=result.actions
+        let drained=BuilderCleanupDrain.run {
+            let final=bridge.process([],now:ProcessInfo.processInfo.systemUptime,runtime:&patchPhysicalRuntime)
+            patchRemoteBridge=bridge
+            actions += final.actions
+            recordPatchCommands(final.commands)
+            guard patchRunning,patchRemoteTransport === transport else { return .interrupted }
+            if final.fault {
+                stopInstrumentPatch(reason:"Remote final expiry fault. Restart explicitly.")
+                return .interrupted
+            }
+            return final.commands.isEmpty ? .settled : .again
+        }
+        if drained == .interrupted { return }
+        guard drained == .settled else {
+            stopInstrumentPatch(reason:"Remote cleanup did not settle. Restart explicitly.")
+            return
+        }
+        if patchRemoteReady != bridge.ready { patchRemoteReady = bridge.ready }
+        if patchRemotePeers != bridge.connectionIDs { patchRemotePeers = bridge.connectionIDs }
+        for action in bridge.actionsAfterDelivery(actions) {
             switch action {
             case .acknowledge(let id, let accepted): transport.acknowledge(id, accepted: accepted)
             case .capabilities(let id, let capabilities): transport.acknowledge(id, accepted: true, capabilities: capabilities)
@@ -1632,11 +1691,16 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func receiveBuilderScalar(_ source: SensorSource, value: Double?) {
+    private func receiveBuilderScalar(_ source: SensorSource, value: Double?,hostTime:Double? = nil) {
         guard patchRunning, patchPhysical else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        let commands = patchPhysicalRuntime.receiveScalar(source: source, value: value, hostTime: now, now: now)
-        recordPatchCommands(commands)
+        let receipt=hostTime ?? now
+        guard PhysicalPatchRuntime.admitsPhysicalReceipt(receipt,now:now) else {
+            stopInstrumentPatch(reason:"Scalar input expired before delivery. Restart Builder explicitly.")
+            return
+        }
+        let commands = patchPhysicalRuntime.receiveScalar(source: source, value: value, hostTime:receipt, now:now)
+        recordPatchCommands(commands,receipt:receipt)
     }
 
     var builderBarToken: UUID? { groupNativeBar ? groupRunToken : (patchNativeBar ? patchNativeToken : nil) }
@@ -1677,7 +1741,7 @@ final class StudioController: ObservableObject {
 
     func releaseHelperDebugFrame(runID:UUID) {
         guard patchHelperDebugAvailable,patchDebugCameraRunID == runID else { return }
-        recordPatchCommands(patchPhysical ? patchPhysicalRuntime.releaseHybridSource() : patchSimulation.releaseDualHand())
+        recordPatchCommands(patchPhysical ? patchPhysicalRuntime.releaseHybridSource(now:ProcessInfo.processInfo.systemUptime) : patchSimulation.releaseDualHand())
     }
 
     func sendAirDebugFrame(count: Int, aperture: Double, x: Double, y: Double,
@@ -1767,15 +1831,42 @@ final class StudioController: ObservableObject {
 
     func releaseAirDebugFrame() {
         guard patchAirDebugAvailable else { return }
-        let commands = patchPhysical ? patchPhysicalRuntime.releaseHybridSource() : patchSimulation.releaseDualHand()
+        let commands = patchPhysical ? patchPhysicalRuntime.releaseHybridSource(now:ProcessInfo.processInfo.systemUptime) : patchSimulation.releaseDualHand()
         refreshAirDebugState()
         recordPatchCommands(commands)
     }
 
-    private func receiveBuilderGamepad(source:SensorSource,frame:GamepadFrame?,token:UUID) {
+    private func receiveBuilderGamepad(source:SensorSource,frame:GamepadFrame?,token:UUID,hostTime:Double? = nil) {
         guard patchRunning, patchPhysical, patchNativeToken == token else { return }
-        let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:ProcessInfo.processInfo.systemUptime)
-        recordPatchCommands(commands)
+        let now=ProcessInfo.processInfo.systemUptime
+        let receipt=hostTime ?? now
+        guard !patchPhysicalRuntime.isRetiredGamepadReceipt(source,receipt:receipt) else { return }
+        guard PhysicalPatchRuntime.admitsPhysicalReceipt(receipt,now:now) else {
+            stopInstrumentPatch(reason:"Controller snapshot expired before delivery. Restart Builder explicitly.")
+            return
+        }
+        let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:now,hostTime:receipt)
+        recordPatchCommands(commands,receipt:receipt)
+    }
+
+    /// Capture all known losses before reconciling shared MIDI targets.
+    /// Every surviving sample retains its original read-start receipt.
+    private func pollBuilderGamepads(token:UUID) {
+        guard patchRunning,patchPhysical,patchNativeToken==token else { return }
+        var snapshots:[(SensorSource,GamepadFrame,Double)] = []
+        var departing:Set<SensorSource> = []
+        for source in patchGamepadPollSources {
+            let receipt=ProcessInfo.processInfo.systemUptime
+            if let frame=builderGamepads.read(source) { snapshots.append((source,frame,receipt)) }
+            else { departing.insert(source) }
+        }
+        if !departing.isEmpty {
+            recordPatchCommands(patchPhysicalRuntime.releaseGamepads(departing,now:ProcessInfo.processInfo.systemUptime))
+        }
+        for (source,frame,receipt) in snapshots {
+            guard patchRunning,patchNativeToken==token else { return }
+            receiveBuilderGamepad(source:source,frame:frame,token:token,hostTime:receipt)
+        }
     }
 
     private func startPatchWatchdog() {
@@ -1801,8 +1892,7 @@ final class StudioController: ObservableObject {
         }
         let now = ProcessInfo.processInfo.systemUptime
         if batch.overflow || batch.samples.contains(where: { !PhysicalPatchRuntime.admitsPhysicalReceipt($0.time,now:now) }) {
-            stopInstrumentPatch()
-            patchStatus = "Native input backlog or stale frames. Output released; restart explicitly."
+            stopInstrumentPatch(reason:"Native input backlog or stale frames. Restart explicitly.")
             return
         }
         for sample in batch.samples {
@@ -1811,8 +1901,7 @@ final class StudioController: ObservableObject {
             // receipt budget. Revalidate before every physical frame.
             let admissionNow=ProcessInfo.processInfo.systemUptime
             guard PhysicalPatchRuntime.admitsPhysicalReceipt(sample.time,now:admissionNow) else {
-                stopInstrumentPatch()
-                patchStatus = "Native input expired during processing. Output released; restart explicitly."
+                stopInstrumentPatch(reason:"Native input expired during processing. Restart explicitly.")
                 return
             }
             let surface = sample.frame.surface
@@ -1831,21 +1920,26 @@ final class StudioController: ObservableObject {
             }
             let commands = patchPhysicalRuntime.receive(source: source, x: x, y: y, size: size,
                                                         hostTime: sample.time, now: admissionNow)
-            recordPatchCommands(commands)
+            recordPatchCommands(commands,receipt:sample.time)
         }
         guard patchRunning else { return }
         drainBuilderCamera(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
         drainBuilderRemote(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
-        for source in patchGamepadPollSources {
-            guard let token = patchNativeToken else { return }
-            receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token)
-            guard patchRunning else { return }
-        }
-        let expired = patchPhysicalRuntime.expire(now: ProcessInfo.processInfo.systemUptime)
-        recordPatchCommands(expired)
+        if let token=patchNativeToken { pollBuilderGamepads(token:token) }
         guard patchRunning else { return }
+        let drained=BuilderCleanupDrain.run {
+            let expired=patchPhysicalRuntime.expire(now:ProcessInfo.processInfo.systemUptime)
+            recordPatchCommands(expired)
+            guard patchRunning else { return .interrupted }
+            return expired.isEmpty ? .settled : .again
+        }
+        if drained == .interrupted { return }
+        guard drained == .settled else {
+            stopInstrumentPatch(reason:"Physical cleanup did not settle. Restart explicitly.")
+            return
+        }
         if patchHybridSource == .camera { refreshAirDebugState() }
         let selected = patchPhysicalRuntime.airSelectedSlot
         let sounding = patchPhysicalRuntime.airSoundingSlot
@@ -1873,14 +1967,14 @@ final class StudioController: ObservableObject {
         stopAirTrace()
         patchAirLiveSelected = nil
         patchAirLiveSounding = nil
-        if let camera = patchCamera {
-            retiringPatchCamera = camera
-            camera.stop()
-        }
+        let camera = patchCamera
         patchCamera = nil
+        retiringPatchCamera = camera ?? retiringPatchCamera
         airTracking.reset()
         patchCameraHand = nil
-        recordPatchCommands(patchPhysicalRuntime.releaseCamera())
+        // Retire the runtime source before potentially slow capture teardown.
+        recordPatchCommands(patchPhysicalRuntime.releaseCamera(now:ProcessInfo.processInfo.systemUptime))
+        camera?.stop()
         patchCameraStatus = reason
     }
 
@@ -1902,7 +1996,8 @@ final class StudioController: ObservableObject {
                 case .combinedFrame(let count,let confidence,let left,let right,let time):
                     let l = left?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
                     let r = right?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
-                    if now >= time && now-time < 0.25 {
+                    let fresh=MonotonicReceiptAdmission.permits(receipt:time,now:now,maximumAge:0.25)
+                    if fresh {
                         patchCameraReceivedFrame = true
                         patchCameraLastFrame = time
                         if patchAirRecording {
@@ -1919,11 +2014,12 @@ final class StudioController: ObservableObject {
                         patchCameraStatus = "Stale combined frame · released"
                     }
                     recordPatchCommands(patchPhysicalRuntime.receiveCombinedHands(count:count,confidence:confidence,
-                        left:l,right:r,swapRoles:patchCameraSwapRoles,hostTime:time,now:now))
+                        left:l,right:r,swapRoles:patchCameraSwapRoles,hostTime:time,now:now),receipt:fresh ? time : nil,maximumAge:0.25)
                 case .helperFrame(let left, let right, let time):
                     let l = left?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
                     let r = right?.oriented(patchCameraOrientation,mirrorX:patchCameraMirrorX)
-                    if now >= time && now-time < 0.25 {
+                    let fresh=MonotonicReceiptAdmission.permits(receipt:time,now:now,maximumAge:0.25)
+                    if fresh {
                         patchCameraReceivedFrame = true
                         patchCameraLastFrame = time
                         patchCameraHand = l ?? r
@@ -1933,9 +2029,9 @@ final class StudioController: ObservableObject {
                         patchCameraHand = nil
                         patchCameraStatus = "Stale helper frame · released"
                     }
-                    recordPatchCommands(patchPhysicalRuntime.receiveHelperHands(left:l,right:r,hostTime:time,now:now))
+                    recordPatchCommands(patchPhysicalRuntime.receiveHelperHands(left:l,right:r,hostTime:time,now:now),receipt:fresh ? time : nil,maximumAge:0.25)
                 case .dualFrame(let count, let confidence, let helper, let time):
-                    guard now >= time, now - time < 0.25 else {
+                    guard MonotonicReceiptAdmission.permits(receipt:time,now:now,maximumAge:0.25) else {
                         recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: nil, confidence: 0, helper: nil, hostTime: time, now: now))
                         stopAirTrace()
                         patchCameraHand = nil
@@ -1953,9 +2049,9 @@ final class StudioController: ObservableObject {
                     patchCameraHand = oriented
                     patchCameraStatus = count.map { "Chord fingers: \($0) · pinch helper to play" } ?? "Two reliable hands required"
                     recordPatchCommands(patchPhysicalRuntime.receiveDualHand(count: count, confidence: confidence,
-                                                                            helper: oriented, hostTime: time, now: now))
+                                                                            helper: oriented, hostTime: time, now: now),receipt:time,maximumAge:0.25)
                 case .frame(let hand, let time):
-                    guard now >= time, now - time < PhysicalPatchRuntime.timeout else {
+                    guard PhysicalPatchRuntime.admitsPhysicalReceipt(time,now:now) else {
                         stopBuilderCamera(reason: "Stale camera frames. Restart Builder explicitly.")
                         return
                     }
@@ -1966,7 +2062,7 @@ final class StudioController: ObservableObject {
                     patchCameraHand = accepted
                     patchCameraStatus = accepted != nil ? "One hand tracked" :
                         (hand == nil ? "No reliable single hand" : "Acquiring hand")
-                    recordPatchCommands(patchPhysicalRuntime.receiveHand(accepted, hostTime: time, now: now))
+                    recordPatchCommands(patchPhysicalRuntime.receiveHand(accepted, hostTime: time, now: now),receipt:time)
                 }
             }
             guard patchRunning else { return }
@@ -1995,14 +2091,14 @@ final class StudioController: ObservableObject {
     private func deliverPatchInput(_ input: PatchSimulation.Input, value: Double) {
         let now = ProcessInfo.processInfo.systemUptime
         let commands = patchPhysical ? patchPhysicalRuntime.sendHybrid(input,value:value,now:now) : patchSimulation.send(input,value:value,now:now)
-        recordPatchCommands(commands)
+        recordPatchCommands(commands,receipt:patchPhysical ? now : nil)
     }
 
     func releasePatchInput(_ input: PatchSimulation.Input) {
         guard patchRunning, (!patchPhysical || patchHybridSource != nil),patchInputs.contains(input) else { return }
         cancelPatchPulse(input)
         let commands: [SensorCommand]
-        if patchPhysical { commands = patchPhysicalRuntime.releaseHybrid(input) }
+        if patchPhysical { commands = patchPhysicalRuntime.releaseHybrid(input,now:ProcessInfo.processInfo.systemUptime) }
         else if GamepadFrame.sources.contains(input.source) {
             commands = patchSimulation.liftGamepadControl(input,now:ProcessInfo.processInfo.systemUptime)
         } else { commands = patchSimulation.release(input) }
@@ -2036,7 +2132,7 @@ final class StudioController: ObservableObject {
     func releaseHybridControls() {
         guard patchRunning,let source = patchHybridSource else { return }
         for input in Array(patchPadTasks.keys) where input.source == source { cancelPatchPulse(input) }
-        recordPatchCommands(patchPhysicalRuntime.releaseHybridSource())
+        recordPatchCommands(patchPhysicalRuntime.releaseHybridSource(now:ProcessInfo.processInfo.systemUptime))
     }
 
     func disconnectPatchInput(_ source: SensorSource) {
@@ -2052,10 +2148,11 @@ final class StudioController: ObservableObject {
         let commands = patchSimulation.disconnect(source)
         patchInputs = patchSimulation.inputs
         recordPatchCommands(commands)
-        if !patchSimulation.running { stopInstrumentPatch() }
+        if patchRunning && !patchSimulation.running { stopInstrumentPatch() }
     }
 
-    private func recordPatchCommands(_ commands: [SensorCommand]) {
+    private func recordPatchCommands(_ commands: [SensorCommand],receipt:Double? = nil,
+                                     maximumAge:Double = PhysicalPatchRuntime.timeout) {
         guard !commands.isEmpty else { return }
         var attempted: [SensorCommand] = []
         var hapticAttack = false
@@ -2066,7 +2163,9 @@ final class StudioController: ObservableObject {
             builderPerformanceMetrics.recordBatch(start:batchStart,end:ProcessInfo.processInfo.systemUptime,
                 commands:attempted.count,attempts:midiAttempts,failures:midiFailures)
         }
-        for command in commands {
+        var fence=receipt.map { PhysicalReceiptSendFence(receipt:$0,maximumAge:maximumAge) }
+        let outcome=PhysicalReceiptCommandBatch.dispatch(commands,fence:&fence,
+            now:{ ProcessInfo.processInfo.systemUptime }) { command in
             attempted.append(command)
             let plan = airTunedPlan
             if patchMIDIEnabled && (gamepadOutputPlan?.sendsMIDI(command.destination) ?? true) &&
@@ -2079,13 +2178,7 @@ final class StudioController: ObservableObject {
                 return patchMIDI.send(command)
             }) {
                 midiFailures += 1
-                if ensembleRecording {
-                    ensembleTake?.interrupt(now:ProcessInfo.processInfo.systemUptime)
-                    updateEnsembleTakeState()
-                }
-                stopInstrumentPatch()
-                patchStatus = "MIDI delivery failed. Check DAW and retry Stop."
-                break
+                return false
             }
             if patchHapticEnabled && (gamepadOutputPlan?.sendsHaptics(command.destination) ?? true) {
                 gamepadHapticVoices.apply(command)
@@ -2094,6 +2187,18 @@ final class StudioController: ObservableObject {
             if ensembleRecording {
                 if ensembleTake?.append(command,now:ProcessInfo.processInfo.systemUptime) != true { updateEnsembleTakeState() }
             }
+            return true
+        }
+        if outcome != .completed {
+            // The router may have computed commands that never reached
+            // the sink. Retire Builder only, through its actual output
+            // ledger; do not invent debt for unattempted commands.
+            if ensembleRecording {
+                ensembleTake?.interrupt(now:ProcessInfo.processInfo.systemUptime)
+                updateEnsembleTakeState()
+            }
+            let reason=outcome == .expired ? "Physical receipt expired during delivery. Restart Builder explicitly." : "MIDI delivery failed. Check DAW."
+            stopInstrumentPatch(reason:reason)
         }
         // Deliver synchronously in the original order, publish the bounded
         // monitor only once. A failure still includes the attempted command.
@@ -2134,9 +2239,29 @@ final class StudioController: ObservableObject {
     }
 
     func stopInstrumentPatch() {
+        stopInstrumentPatch(reason:nil)
+    }
+
+    private func stopInstrumentPatch(reason:String?) {
         if groupGamepadsRunning { stopGroupGamepads() }
+        let result=BuilderStopSequence.run(invalidate:{
+            // Fence publication before any wire cleanup.
+            patchRunning = false
+            patchNativeToken = nil
+            patchWatchdog?.cancel()
+            patchWatchdog = nil
+            gamepadHapticToken = nil
+            gamepadHaptics?.invalidateFrames()
+            patchMIDIEnabled = false
+        },notes:releaseBuilderOutput,clock:{
+            stopEnsembleClock()
+            return !ensembleClockStopDebt
+        },teardown:finishBuilderStop)
+        patchStatus = result.notice(reason:reason)
+    }
+
+    private func finishBuilderStop() {
         flushPatchMonitor()
-        gamepadHapticToken = nil
         gamepadHaptics?.stop()
         gamepadHaptics = nil
         releaseSharedOutputIfIdle()
@@ -2147,7 +2272,6 @@ final class StudioController: ObservableObject {
         gamepadOutputPlan = nil
         builderGamepads.stop()
         stopEnsembleTake()
-        stopEnsembleClock()
         stopAirTrace()
         patchAirReplayToken = nil
         patchAirReplayTask?.cancel()
@@ -2156,15 +2280,12 @@ final class StudioController: ObservableObject {
         for task in patchPadTasks.values { task.cancel() }
         patchPadTasks.removeAll()
         patchPadTokens.removeAll()
-        patchWatchdog?.cancel()
-        patchWatchdog = nil
         patchAirDebugSelected = nil
         patchAirDebugSounding = nil
         patchAirLiveSelected = nil
         patchAirLiveSounding = nil
         let hadPhysicalInput = patchPhysical
         let hadNativeBar = patchNativeBar
-        patchNativeToken = nil
         patchGamepadPollSources = []
         patchNativeBar = false
         patchRemoteProbeToken = nil
@@ -2205,11 +2326,7 @@ final class StudioController: ObservableObject {
         _ = patchSimulation.stop()
         patchInputs = []
         debugCameraRunToken = nil
-        patchRunning = false
-        patchMIDIEnabled = false
         patchTunedAirActive = false
-        let released = releaseBuilderOutput()
-        patchStatus = released ? "Builder idle" : "MIDI release failed. Reset DAW and retry Stop."
     }
 
     private static func readChordBank() -> ChordBank {
@@ -2587,6 +2704,10 @@ final class StudioController: ObservableObject {
         // Stop the old producer before replacing its target or channel.
         if liveHingeEnabled { enableLiveHinge(false) }
         disarmTouchBarOutput()
+        guard touchBarOutputLedger.isEmpty else {
+            lastError = "Touch Bar release is pending. Reset the receiving DAW and retry before changing the layout."
+            return
+        }
         if touchBarProfile.zones.contains(.chords) && !next.zones.contains(.chords) {
             releaseChordPads()
         }
@@ -2595,6 +2716,15 @@ final class StudioController: ObservableObject {
         if touchBarSustainOn {
             touchBarSustainOn = false
             midi?.releaseTouchBarSustain()
+        }
+        // Release methods can discover a failed legacy MIDI write. Do not
+        // replace the old mapping while the service is faulted. Active
+        // unrelated owners may have legitimate debt, so do not require
+        // the entire shared bridge's ledger to be empty here.
+        guard midi?.outgoingFailureStatus == nil,
+              midi?.requiresManualDAWReset != true else {
+            lastError = "Touch Bar MIDI cleanup failed. Resolve MIDI recovery before changing the profile."
+            return
         }
         touchBarProfile = next
         if let data = try? JSONEncoder().encode(next) {
@@ -2605,6 +2735,9 @@ final class StudioController: ObservableObject {
 
     func releaseTouchBarNotes() {
         touchBarGestureEpoch.invalidate()
+        touchBarSynthIntent.removeAll()
+        touchBarBridge?.refreshSynthControls()
+        touchBarSlideSustain.reset()
         nativePianoTokens.removeAll()
         releaseOptionalTouchBarNotes()
         for command in midiTouchBarNotes.reset(channel:touchBarProfile.channel) {
@@ -2633,6 +2766,30 @@ final class StudioController: ObservableObject {
             midi?.sendPerformanceNote(note:command.destination.number,velocity:command.value,
                                       isOn:command.value>0,channel:command.destination.channel)
         }
+    }
+
+    /// Custom synth controls use the existing explicitly running MIDI source.
+    /// They never auto-start MIDI or enter the dedicated haptic/MPE path.
+    var touchBarSynthAvailable:Bool {
+        midiRunning && !groupGamepadsRunning && !touchBarProfile.effectiveOutput.sendsHaptics &&
+        midi?.outgoingFailureStatus == nil && midi?.requiresManualDAWReset == false
+    }
+    func touchBarSynthPosition(_ control:TouchBarSynthBank.Control)->Double {
+        touchBarSynthIntent[control.id] ?? control.initialPosition
+    }
+    @discardableResult
+    func touchBarSynthValue(id:UUID,normalized:Double,revision:UInt64?=nil)->Bool {
+        guard touchBarSynthAvailable,let midi,
+              touchBarGestureEpoch.permitsSample(captured:revision),
+              let control=touchBarProfile.effectiveSynthBank.controls.first(where:{$0.id==id}),
+              let value=control.value(normalized:normalized),
+              let target=control.destination(profileChannel:touchBarProfile.channel) else{return false}
+        guard midi.sendTouchBarSynthControl(target,value:value,neutral:control.neutral) else{return false}
+        if touchBarSynthIntent[id] != normalized {
+            touchBarSynthIntent[id]=normalized
+            touchBarBridge?.refreshSynthControls()
+        }
+        return true
     }
 
     func touchBarValue(_ zone: TouchBarZone, normalized value: Double, releaseOnly: Bool = false) {
@@ -2679,6 +2836,21 @@ final class StudioController: ObservableObject {
             midi?.sendTouchBarControl(.init(.controlChange,channel:channel,number:4),value:Int((safe*127).rounded()))
         case .keys, .chords, .sustain:
             break
+        }
+    }
+
+    func touchBarSlideEvent(_ event:SustainSlideLock.Event,owner:SustainSlideLock.Owner,revision:UInt64) {
+        guard touchBarProfile.sustainMode == .slideLock,
+              touchBarGestureEpoch.accepts(revision) else{return}
+        if case .begin=event {
+            guard !groupGamepadsRunning,
+                  !touchBarProfile.effectiveOutput.sendsHaptics || touchBarOutputArmed else{return}
+        }
+        if let next=touchBarSlideSustain.apply(event,owner:owner) {
+            touchBarSustainPressed(next)
+            if touchBarSustainOn != next {
+                touchBarSlideSustain.reset()
+            }
         }
     }
 
@@ -2802,6 +2974,7 @@ final class StudioController: ObservableObject {
         if touchBarGestureEpoch.invalidateOptionalOutput(
             sendsHaptics: touchBarProfile.effectiveOutput.sendsHaptics, armed: touchBarOutputArmed
         ) {
+            touchBarSlideSustain.reset()
             nativePianoTokens.removeAll()
         }
         let channel = touchBarProfile.channel
@@ -2862,7 +3035,7 @@ final class StudioController: ObservableObject {
         guard !liveHingeEnabled else { return }
         let sensor = MacBookHingeAngleSource()
         hingeSensor = sensor
-        sensor.onAngle = { [weak self, weak sensor] degrees in
+        sensor.onAngle = { [weak self, weak sensor] degrees,_ in
             guard let self, let sensor, self.hingeSensor === sensor else { return }
             self.applySimulatedHingeAngle(degrees)
         }
@@ -3622,12 +3795,12 @@ final class StudioController: ObservableObject {
         return TouchPublicationAdmission.dispatch(permits:admit,
             prepare:{
                 pedal = applyPhysicalPedalFrame(touchStates:instrumentStates,
-                    helperStates:pedalAdmitted ? helperStates : nil,freshFrame:true)
+                    helperStates:pedalAdmitted ? helperStates : nil,freshFrame:true,admitOnset:admit)
             },touch:{
                 if let instrumentStates { handleTouchStates(instrumentStates,pedal:pedal,admitOnset:admit) }
             },helper:{
                 if let helperStates {
-                    handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:effectsAdmitted)
+                    handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:effectsAdmitted,admitOnset:admit)
                 }
             })
     }
@@ -4208,7 +4381,7 @@ final class StudioController: ObservableObject {
         return helperSustained
     }
 
-    private func handleMIDIHelperStates(_ states: [HelperSurfaceContact],pedalAdmitted:Bool,effectsAdmitted:Bool) {
+    private func handleMIDIHelperStates(_ states: [HelperSurfaceContact],pedalAdmitted:Bool,effectsAdmitted:Bool,admitOnset:(()->Bool)? = nil) {
         if pedalAdmitted || !midiHelperRunning { liveHelperStates = states }
         defer {
             if helperPreviewRequested, states != midiHelperStates,
@@ -4252,7 +4425,8 @@ final class StudioController: ObservableObject {
             pitchBendRange: helperPitchBendRange,
             vibratoCC: helperVibratoCC,
             expressionCC: helperExpressionCC,
-            configureReceiverBendRange:helperConfigureReceiverBendRange
+            configureReceiverBendRange:helperConfigureReceiverBendRange,
+            admitOnset:admitOnset
         )
     }
 
@@ -4639,7 +4813,7 @@ final class StudioController: ObservableObject {
     @discardableResult
     private func applyPhysicalPedalFrame(touchStates:[TouchPerformanceState]?,
                                          helperStates:[HelperSurfaceContact]?,
-                                         freshFrame:Bool) -> MIDIHelperSustainSnapshot? {
+                                         freshFrame:Bool,admitOnset:(()->Bool)? = nil) -> MIDIHelperSustainSnapshot? {
         let touchPedal = touchRunning ? touchStates.flatMap { evaluateTouchSustain($0,freshFrame:freshFrame) } : nil
         let helperPedal = midiHelperRunning ? helperStates.flatMap { evaluateHelperSustain($0,freshFrame:freshFrame) } : nil
         let midiTouch = touchMIDIOutEnabled ? touchPedal : nil
@@ -4652,7 +4826,7 @@ final class StudioController: ObservableObject {
                 isMPE:touchMIDIMode == .mpe)
             midi?.setPhysicalSustainFrame(touch:midiTouch,separateChannels:touchSeparateChannels,
                 independent:touchIndependentDAWSustain,fixedTouchChannels:fixed,
-                helper:helperPedal,helperChannel:helperTargetChannel)
+                helper:helperPedal,helperChannel:helperTargetChannel,admitOnset:admitOnset)
         }
         return touchPedal
     }

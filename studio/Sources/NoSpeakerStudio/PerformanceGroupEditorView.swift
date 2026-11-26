@@ -1,12 +1,39 @@
 #if os(macOS)
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import NoSpeakerCore
 import NoSpeakerMac
 
 /// Configuration editor only. No endpoints are created and no MIDI is sent.
 struct PerformanceGroupEditorView: View {
     let currentPatch: InstrumentPatch
+    let editInBuilder:(InstrumentPatch)->Void
+    @State private var starter:PerformanceGroupStarterPreset = .trackpadSolo
+    @State private var groupsExpanded=false
+    @State private var offlinePreview:PerformanceGroupOfflinePreview?
+    @State private var previewMessage=""
+    @State private var previewLayering=false
+    @State private var confirmStarterReplacement=false
+    @State private var pendingStarter:PerformanceGroupStarterPreset?
+    @State private var pendingStarterDraft:PerformanceGroupProfile?
+    @State private var pendingImport:PerformanceGroupProfile?
+    @State private var pendingImportDraft:PerformanceGroupProfile?
+    @State private var confirmImport=false
+    @State private var presetLibrary=PerformanceGroupPresetLibrary()
+    @State private var libraryData:Data?
+    @State private var libraryLoaded=false
+    @State private var libraryReadFailed=false
+    @State private var libraryName=""
+    @State private var librarySelection:UUID?
+    @State private var libraryMessage=""
+    @State private var pendingLibraryDelete:PerformanceGroupPresetLibrary.Entry?
+    @State private var confirmLibraryDelete=false
+    @State private var pendingLibraryUpdate:PerformanceGroupPresetLibrary.Entry?
+    @State private var pendingLibraryUpdateProfile:PerformanceGroupProfile?
+    @State private var confirmLibraryUpdate=false
+    @State private var renamePresetName=""
+    private let libraryKey="TIHULU.performanceGroupPresetLibrary.v1"
     @EnvironmentObject private var studio: StudioController
     @State private var allowLayering = false
     @State private var hapticSelection:Set<UUID> = []
@@ -38,37 +65,49 @@ struct PerformanceGroupEditorView: View {
     private func load() {
         guard !didLoad else { return }
         didLoad = true
-        guard let stored = UserDefaults.standard.object(forKey:key) else { return }
+        guard let stored = UserDefaults.standard.object(forKey:key) else {
+            profile=studio.resumeGroupDraft(saved:saved,archive:nil)
+            return
+        }
         guard let data = stored as? Data,
               let decoded = try? PerformanceGroupProfile.read(data) else {
             readFailed = true
             message = "Saved group profile could not be read. Original data retained; saving is blocked."
             return
         }
-        profile = decoded
         saved = decoded
         storedData = data
+        profile=studio.resumeGroupDraft(saved:decoded,archive:data)
     }
 
-    private func save() {
-        guard didLoad, !readFailed, !editingLocked else { return }
+    @discardableResult
+    private func save() -> Bool {
+        guard didLoad, !readFailed, !editingLocked,!studio.patchRunning else { return false }
         let current = UserDefaults.standard.object(forKey:key)
         guard (current == nil && storedData == nil) ||
               (current is Data && (current as? Data) == storedData) else {
             message = "Saved profile changed elsewhere. Reopen this editor before saving. Your draft was not written."
-            return
+            return false
         }
         do {
             let data = try profile.archive()
             UserDefaults.standard.set(data,forKey:key)
             storedData = data
             saved = profile
+            studio.discardGroupDraft()
             allowLayering = false
             hapticSelection = []
             message = "Group configuration saved. No new MIDI endpoints created."
+            return true
         } catch {
             message = error.localizedDescription
+            return false
         }
+    }
+
+    private func rememberGroupDraft() {
+        guard didLoad,!readFailed else { return }
+        studio.rememberGroupDraft(profile,saved:saved,archive:storedData)
     }
 
     private func add(patch: InstrumentPatch) {
@@ -133,6 +172,13 @@ struct PerformanceGroupEditorView: View {
                 groupActions(group)
                 remoteRetargetMenu(group)
                 mobileEditMenu(group)
+                drumAssignmentMenu(group)
+                Button("Edit a copy in Builder") { editInBuilder(group.patch) }
+                    .disabled(!group.patch.isValid || group.patch.routes.isEmpty ||
+                              group.patch.routes.contains(where:{ $0.source.isGroupOnlyRemote }))
+                if group.patch.routes.contains(where:{ $0.source.isGroupOnlyRemote }) {
+                    Text("Use Edit mobile mappings for additional mobile slots.").font(.caption).foregroundStyle(.secondary)
+                }
                 Button("Replace draft mappings from Builder") { replaceMappings(group.id) }
                     .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
             }
@@ -161,6 +207,34 @@ struct PerformanceGroupEditorView: View {
                     }
                 }
             }.disabled(free.isEmpty || editingLocked)
+        }
+    }
+
+    @ViewBuilder private func drumAssignmentMenu(_ group:PerformanceInstrumentGroup) -> some View {
+        let routes=group.patch.routes.filter { $0.source.isGroupRemote && RemoteDrumPads.signals.contains($0.signal) }
+        if !routes.isEmpty {
+            Menu("Assign drum elements") {
+                ForEach(SensorSource.groupRemoteSources,id:\.self) { from in
+                    let signals=RemoteDrumPads.signals.filter { signal in routes.contains { $0.source == from && $0.signal == signal } }
+                    if !signals.isEmpty {
+                        Menu(from.rawValue) {
+                            ForEach(signals,id:\.self) { signal in
+                                let index=RemoteDrumPads.signals.firstIndex(of:signal) ?? 0
+                                Menu(["Kick","Snare","Closed hi-hat","Open hi-hat","Low tom","High tom","Crash","Ride"][index]) {
+                                    ForEach(SensorSource.groupRemoteSources.filter { $0 != from },id:\.self) { to in
+                                        Button(to.rawValue) {
+                                            guard !editingLocked,!readFailed,didLoad else { return }
+                                            message=profile.reassignRemoteDrum(groupID:group.id,signal:signal,from:from,to:to)
+                                                ? "Drum element reassigned in draft. Save and pair the updated slots before Start."
+                                                : "Drum assignment refused; existing mappings unchanged."
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }.disabled(!profile.isValid || editingLocked || readFailed || !didLoad)
         }
     }
 
@@ -261,14 +335,14 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var canStartGroups: Bool {
-        didLoad && !readFailed && !tuningDraft.isDirty && profile == saved && supportedLocalProfile &&
+        didLoad && !readFailed && !studio.patchRunning && !tuningDraft.isDirty && profile == saved && supportedLocalProfile &&
         selectedControllersValid && !studio.groupGamepadsRunning && !studio.groupRetainsTuning &&
         studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
         (saved.layeredInputs.isEmpty || allowLayering)
     }
 
     private var canStartRemoteGroups:Bool {
-        StudioController.groupRemoteStartEnabled && didLoad && !readFailed && !tuningDraft.isDirty &&
+        StudioController.groupRemoteStartEnabled && didLoad && !readFailed && !studio.patchRunning && !tuningDraft.isDirty &&
         profile == saved && supportedRemoteProfile && selectedControllersValid &&
         !studio.groupGamepadsRunning && !studio.groupRetainsTuning &&
         studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
@@ -482,16 +556,7 @@ struct PerformanceGroupEditorView: View {
                     Text("Mobile group Start is disabled in this build.").font(.caption).foregroundStyle(.orange)
                 }
                 groupHapticControls
-                if supportedRemoteProfile && StudioController.groupRemoteStartEnabled {
-                    PerformanceGroupRemotePanel(sources:remoteSources,canStart:canStartRemoteGroups,
-                        tuning:tuningPreview,canStartTuned:canStartTunedRemoteGroups,tunedConsent:currentTunedConsent) { transport,page,confirmed,tuning,consent in
-                        guard tuning == nil || (consent != nil && consent == currentTunedConsent && hapticSelection.isEmpty) else {
-                            message = "Remote MPE confirmation expired. Review profile and device settings."
-                            return
-                        }
-                        startSavedGroups(tuning:tuning,remoteTransport:transport,remotePage:page,confirmedLAN:confirmed)
-                    }
-                }
+
                 if localSources.contains(.lid) {
                     Text("Lid input needs a compatible sensor. Start may fail on unsupported Macs; the actual sensor is opened only on Start.").font(.caption)
                 }
@@ -614,8 +679,520 @@ struct PerformanceGroupEditorView: View {
         }
     }
 
+    private func loadStarter(_ preset:PerformanceGroupStarterPreset,append:Bool) {
+        guard didLoad,!readFailed,!editingLocked,!studio.patchRunning else { return }
+        guard !tuningDraft.isDirty else {
+            message="Apply or discard pending tuning edits before loading a preset."
+            groupsExpanded=true
+            return
+        }
+        let next=append ? preset.appending(to:profile) : preset.makeProfile()
+        guard let next else {
+            message="Preset unavailable or conflicts with existing inputs/capacity. Existing draft retained."
+            return
+        }
+        profile=next
+        allowLayering=false
+        hapticSelection=[]
+        groupsExpanded=false
+        message=preset.title + " loaded as editable draft. Save & Start or open Device setup / advanced."
+    }
+
+    private func sourceLabel(_ source:SensorSource) -> String {
+        switch source {
+        case .trackpad: "Trackpad"
+        case .magicMouse: "Magic Mouse"
+        case .phone: "Phone"
+        case .tablet: "Tablet"
+        case .phone2: "Phone 2"
+        case .tablet2: "Tablet 2"
+        case .camera: "Camera"
+        case .touchBar: "Touch Bar"
+        case .lid: "Lid sensor"
+        default: GamepadFrame.slotLabel(source)
+        }
+    }
+
+    private func exportGroupDraft() {
+        guard didLoad,!readFailed,profile.isValid else { return }
+        do {
+            let data=try profile.archive()
+            let panel=NSSavePanel()
+            panel.allowedContentTypes=[.json]
+            panel.nameFieldStringValue="TIHULU Groups.json"
+            guard panel.runModal() == .OK,let url=panel.url else { return }
+            try data.write(to:url,options:.atomic)
+            message="Group layout exported. Device assignments and MPE configuration are not included."
+        } catch { message=error.localizedDescription }
+    }
+
+    private func importGroupDraft() {
+        guard didLoad,!readFailed,!editingLocked,!studio.patchRunning,!tuningDraft.isDirty else { return }
+        let original=profile
+        let panel=NSOpenPanel()
+        panel.allowedContentTypes=[.json]
+        panel.allowsMultipleSelection=false
+        guard panel.runModal() == .OK,let url=panel.url,!editingLocked,!studio.patchRunning,
+              !tuningDraft.isDirty,profile==original else { return }
+        do {
+            let decoded=try PerformanceGroupProfile.read(WorkspaceArchive.readFile(at:url))
+            if profile.groups.isEmpty { applyImportedGroupDraft(decoded) }
+            else {
+                pendingImport=decoded
+                pendingImportDraft=original
+                confirmImport=true
+            }
+        } catch { message=error.localizedDescription }
+    }
+
+    private func applyImportedGroupDraft(_ imported:PerformanceGroupProfile) {
+        guard didLoad,!readFailed,!editingLocked,!studio.patchRunning,!tuningDraft.isDirty,
+              imported.isValid else { return }
+        profile=imported
+        allowLayering=false
+        hapticSelection=[]
+        groupsExpanded=false
+        message="Loaded editable group layout. Original port identities retained; save and review devices before Start."
+    }
+
+    private func loadPresetLibrary() {
+        guard !libraryLoaded else { return }
+        libraryLoaded=true
+        guard let raw=UserDefaults.standard.object(forKey:libraryKey) else { return }
+        guard let data=raw as? Data,let decoded=try? PerformanceGroupPresetLibrary.read(data) else {
+            libraryReadFailed=true
+            libraryMessage="Custom preset library could not be read. Original data retained; library changes blocked."
+            return
+        }
+        presetLibrary=decoded
+        libraryData=data
+        librarySelection=decoded.entries.first?.id
+    }
+
+    @discardableResult
+    private func storePresetLibrary(_ next:PerformanceGroupPresetLibrary) -> Bool {
+        guard libraryLoaded,!libraryReadFailed,!editingLocked,!studio.patchRunning else { return false }
+        let current=UserDefaults.standard.object(forKey:libraryKey)
+        guard (current==nil && libraryData==nil) || (current is Data && (current as? Data)==libraryData) else {
+            libraryMessage="Preset library changed elsewhere. Reopen this screen before editing."
+            return false
+        }
+        do {
+            let data=try next.archive()
+            UserDefaults.standard.set(data,forKey:libraryKey)
+            presetLibrary=next
+            libraryData=data
+            return true
+        } catch { libraryMessage=error.localizedDescription;return false }
+    }
+
+    private func saveNamedPreset() {
+        guard didLoad,!readFailed,!tuningDraft.isDirty,profile.isValid,!profile.groups.isEmpty else { return }
+        var next=presetLibrary
+        let id=UUID()
+        guard next.add(name:libraryName,profile:profile,id:id) else {
+            libraryMessage="Preset not added. Choose a unique name or free library space; existing presets unchanged."
+            return
+        }
+        guard storePresetLibrary(next) else { return }
+        librarySelection=id
+        libraryName=""
+        libraryMessage="Editable copy saved to My Presets. Active saved layout unchanged."
+    }
+
+    private func recallNamedPreset() {
+        guard libraryLoaded,!libraryReadFailed,!editingLocked,!studio.patchRunning,
+              didLoad,!readFailed,!tuningDraft.isDirty,
+              let entry=presetLibrary.entries.first(where:{$0.id==librarySelection}) else { return }
+        if profile==entry.profile {
+            libraryMessage="This layout is already loaded."
+            return
+        }
+        if profile.groups.isEmpty { applyImportedGroupDraft(entry.profile) }
+        else {
+            pendingImport=entry.profile
+            pendingImportDraft=profile
+            confirmImport=true
+        }
+    }
+
+    private var userPresetPanel:some View {
+        GroupBox("My presets · local layouts") {
+            VStack(alignment:.leading,spacing:6) {
+                Text("Keep multiple personal instruments and jam setups. Factory presets stay unchanged.")
+                    .font(.caption).foregroundStyle(.secondary)
+                TextField("New preset name",text:$libraryName)
+                Button("Save current draft as new preset") { saveNamedPreset() }
+                    .disabled(libraryName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ||
+                              !profile.isValid || profile.groups.isEmpty || tuningDraft.isDirty)
+                Picker("Saved preset",selection:$librarySelection) {
+                    Text("Select a preset").tag(UUID?.none)
+                    ForEach(presetLibrary.entries) { entry in
+                        Text(entry.name).tag(Optional(entry.id))
+                    }
+                }
+                if let entry=presetLibrary.entries.first(where:{$0.id==librarySelection}) {
+                    Text("\(entry.profile.groups.count) groups · \(entry.profile.groups.reduce(0) { $0+$1.patch.routes.count }) mappings")
+                        .font(.caption)
+                    HStack {
+                        TextField("Rename selected preset",text:$renamePresetName)
+                        Button("Rename") {
+                            var next=presetLibrary
+                            guard next.update(expected:entry,name:renamePresetName,profile:entry.profile),
+                                  storePresetLibrary(next) else {
+                                libraryMessage="Rename refused. Choose a unique valid name or reload the library."
+                                return
+                            }
+                            renamePresetName=""
+                            libraryMessage="Preset renamed. Mappings and port identities unchanged."
+                        }.disabled(renamePresetName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+                    }
+                    Button("Update selected preset from current draft") {
+                        pendingLibraryUpdate=entry
+                        pendingLibraryUpdateProfile=profile
+                        confirmLibraryUpdate=true
+                    }.disabled(!profile.isValid || profile.groups.isEmpty || profile==entry.profile || tuningDraft.isDirty)
+                }
+                HStack {
+                    Button("Load editable copy") { recallNamedPreset() }
+                        .disabled(librarySelection==nil || tuningDraft.isDirty)
+                    Button("Delete saved copy") {
+                        pendingLibraryDelete=presetLibrary.entries.first(where:{$0.id==librarySelection})
+                        confirmLibraryDelete=pendingLibraryDelete != nil
+                    }.disabled(librarySelection==nil)
+                }
+                Text("\(presetLibrary.entries.count) / \(PerformanceGroupPresetLibrary.maximumEntries) presets · 256 KiB total archive limit")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("Group layouts only. Device assignments and MPE tuning files are separate.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !libraryMessage.isEmpty { Text(libraryMessage).font(.caption) }
+            }.padding(6)
+        }.disabled(!didLoad || readFailed || !libraryLoaded || libraryReadFailed || editingLocked || studio.patchRunning)
+        .onChange(of:librarySelection) { _ in renamePresetName="" }
+        .confirmationDialog("Update selected preset?",isPresented:$confirmLibraryUpdate,titleVisibility:.visible) {
+            Button("Update saved copy",role:.destructive) {
+                defer { pendingLibraryUpdate=nil;pendingLibraryUpdateProfile=nil }
+                guard let entry=pendingLibraryUpdate,let draft=pendingLibraryUpdateProfile,
+                      profile==draft,!tuningDraft.isDirty,librarySelection==entry.id else {
+                    libraryMessage="Selection or draft changed. Review again."
+                    return
+                }
+                var next=presetLibrary
+                guard next.update(expected:entry,name:entry.name,profile:draft),
+                      storePresetLibrary(next) else {
+                    libraryMessage="Update refused. Existing preset retained."
+                    return
+                }
+                libraryMessage="Selected preset updated. Active saved layout unchanged."
+            }
+            Button("Cancel",role:.cancel) { pendingLibraryUpdate=nil;pendingLibraryUpdateProfile=nil }
+        } message: {
+            Text("Replace the selected personal preset with the current group draft. Factory presets and the active saved layout are not changed.")
+        }
+        .confirmationDialog("Delete saved preset copy?",isPresented:$confirmLibraryDelete,titleVisibility:.visible) {
+            Button("Delete",role:.destructive) {
+                defer { pendingLibraryDelete=nil }
+                guard let entry=pendingLibraryDelete,presetLibrary.entries.contains(entry) else { return }
+                var next=presetLibrary
+                guard next.remove(entry.id),storePresetLibrary(next) else { return }
+                if librarySelection==entry.id { librarySelection=next.entries.first?.id }
+                libraryMessage="Saved copy deleted. Current draft and active saved layout unchanged."
+            }
+            Button("Cancel",role:.cancel) { pendingLibraryDelete=nil }
+        } message: {
+            Text(pendingLibraryDelete?.name ?? "Selected preset")
+        }
+    }
+
+    private var starterPanel:some View {
+        GroupBox("Ready to play · Instrument Groups") {
+            VStack(alignment:.leading,spacing:8) {
+                Picker("Choose a setup",selection:$starter) {
+                    Section("One device / desktop") {
+                        ForEach([PerformanceGroupStarterPreset.trackpadSolo,.mouseSolo,.desktopDuo,.xboxSolo,.xboxDrums,.phoneSolo,.tabletKeys]) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                    Section("Switch modes on mobile") {
+                        ForEach([PerformanceGroupStarterPreset.dualPhoneSticks,.phoneSynth,.tabletSynth,.phoneAllSurfaces,.tabletAllSurfaces,.phoneXYKeys,.tabletKeysDrums,.phoneXYEffects]) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                    Section("Instrument + Helper") {
+                        ForEach([PerformanceGroupStarterPreset.mousePedal,.xboxHelper,.phonePedals]) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                    Section("Party Jam") {
+                        ForEach([PerformanceGroupStarterPreset.xboxDuo,.pocketJam,.mobileDuo,.mobileQuartet,.hybridBand]) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                    Section("Optional hardware") {
+                        ForEach([PerformanceGroupStarterPreset.cameraLead,.touchBarLead,.lidLead]) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                }
+                Text(starter.detail).font(.callout)
+                Text("Needs: " + starter.requiredSources.map(sourceLabel).joined(separator:", "))
+                    .font(.caption).foregroundStyle(.secondary)
+                if starter.isOptionalHardware {
+                    Text("Requires compatible hardware and any necessary permission; availability is checked at Start.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                if starter.requiresMobile {
+                    Text(StudioController.groupRemoteStartEnabled
+                         ? "Mobile pairing and explicit network consent are required before playing."
+                         : "Mobile live Start is disabled in this build; preset can still be edited offline.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button(profile.groups.isEmpty ? "Load preset" : "Replace draft with preset") {
+                        if profile.groups.isEmpty { loadStarter(starter,append:false) }
+                        else {
+                            pendingStarter=starter
+                            pendingStarterDraft=profile
+                            confirmStarterReplacement=true
+                        }
+                    }.buttonStyle(.borderedProminent)
+                    if !profile.groups.isEmpty {
+                        Button("Add preset to draft") { loadStarter(starter,append:true) }
+                    }
+                    Button("Manual / custom setup") { groupsExpanded=true }
+                }
+                HStack {
+                    Button("Export group layout…") { exportGroupDraft() }
+                        .disabled(!profile.isValid || profile.groups.isEmpty)
+                    Button("Import group layout…") { importGroupDraft() }
+                        .disabled(tuningDraft.isDirty)
+                }
+                Text("Choose → Load → Save groups → select devices → Start. Templates are editable copies. No automatic MIDI, haptic output, camera or network activation.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(6)
+        }.disabled(!didLoad || readFailed || editingLocked || studio.patchRunning)
+        .confirmationDialog("Replace current group draft?",isPresented:$confirmStarterReplacement,titleVisibility:.visible) {
+            Button("Replace draft",role:.destructive) {
+                defer { pendingStarter=nil;pendingStarterDraft=nil }
+                guard let preset=pendingStarter,pendingStarterDraft==profile else {
+                    message="Draft changed. Choose a preset again.";return
+                }
+                loadStarter(preset,append:false)
+            }
+            Button("Cancel",role:.cancel) { pendingStarter=nil;pendingStarterDraft=nil }
+        } message: {
+            Text("This replaces the current unsaved group layout, not your saved profile. Revert remains available until you save.")
+        }
+    }
+
+    private var draftControllerSources:Set<SensorSource> {
+        Set(profile.groups.flatMap { $0.patch.routes.map(\.source) }).intersection(GamepadFrame.sources)
+    }
+
+    private var quickAssignment:[SensorSource:UUID]? {
+        GamepadQuickAssignment.suggest(required:draftControllerSources,selected:studio.gamepadBindings,
+                                      available:Set(studio.gamepadChoices.map(\.id)))
+    }
+
+    private var draftControllersReady:Bool {
+        let ids=draftControllerSources.compactMap { studio.gamepadChoice(for:$0) }
+        return ids.count==draftControllerSources.count && Set(ids).count==ids.count &&
+            Set(ids).isSubset(of:Set(studio.gamepadChoices.map(\.id)))
+    }
+
+    private var quickReadiness:PerformanceGroupQuickReadiness {
+        .init(profile:profile,selected:studio.gamepadBindings,
+              available:Set(studio.gamepadChoices.map(\.id)),
+              allowLayering:profile==saved && allowLayering,
+              mobileEnabled:StudioController.groupRemoteStartEnabled)
+    }
+
+    private func readinessMessage(_ blocker:PerformanceGroupQuickReadiness.Blocker) -> String {
+        switch blocker {
+        case .invalidProfile: "Fix invalid group names or mappings."
+        case .emptyProfile: "Load a preset or create a group with mappings."
+        case .unsupportedMappings: "Review unsupported live mappings in advanced setup."
+        case .portIdentityConflict: "Group port identities conflict. Review the layout."
+        case .layeringNeedsConsent: "Shared inputs require explicit layering approval in advanced setup."
+        case .mobileSetupRequired: "Mobile layout: save and complete trusted connection setup."
+        case .mobileDisabled: "Mobile Start is disabled in this build."
+        case .controllerMissing(let source): "Select a connected " + sourceLabel(source) + "."
+        case .controllerDuplicate(let source): "Choose a distinct controller for " + sourceLabel(source) + "."
+        }
+    }
+
+    private var quickSaveAndStart:Bool {
+        didLoad && !readFailed && !editingLocked && !studio.patchRunning &&
+        !tuningDraft.isDirty && tuningPreview == nil && hapticSelection.isEmpty &&
+        profile != saved && quickReadiness.readyForLocalStart
+    }
+
+    private func previewCommandLabel(_ row:PerformanceGroupOfflinePreview.Row) -> String {
+        let command=row.command.command
+        let group=profile.groups.first(where:{$0.id==row.command.groupID})?.name ?? "Unknown group"
+        let destination=command.destination
+        let kind:String
+        switch destination.kind {
+        case .note: kind=(command.value>0 ? "Note On " : "Note Off ")+String(destination.number)
+        case .sustain: kind="Sustain CC64"
+        case .pitchBend: kind="Pitch Bend"
+        case .controlChange: kind="CC"+String(destination.number)
+        }
+        return (row.source.map(sourceLabel) ?? "Release all")+" → "+group+" · CH"+String(destination.channel+1)+" · "+kind+" = "+String(command.value)
+    }
+
+    private var offlinePreviewPanel:some View {
+        GroupBox("Try without hardware") {
+            VStack(alignment:.leading,spacing:6) {
+                Text("Run one normalized sample per mapped source, then release all. Logical standard MIDI commands only; no devices, sound or MIDI output.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !profile.layeredInputs.isEmpty {
+                    Toggle("Preview shared input layering",isOn:$previewLayering)
+                }
+                Button("Run offline preview") {
+                    do {
+                        offlinePreview=try PerformanceGroupOfflinePreview(profile:profile,allowLayering:previewLayering)
+                        previewMessage=""
+                    } catch {
+                        offlinePreview=nil
+                        previewMessage="Preview rejected: "+String(describing:error)
+                    }
+                }.disabled(!profile.isValid || profile.groups.allSatisfy { $0.patch.routes.isEmpty } ||
+                            (!profile.layeredInputs.isEmpty && !previewLayering))
+                if let preview=offlinePreview {
+                    Text("\(preview.sourceCount) simulated sources · \(preview.rows.count) commands · \(preview.cleanupCount) cleanup commands")
+                        .font(.caption.weight(.semibold))
+                    ScrollView {
+                        VStack(alignment:.leading,spacing:3) {
+                            ForEach(Array(preview.rows.prefix(100).enumerated()),id:\.offset) { item in
+                                Text(previewCommandLabel(item.element)).font(.system(.caption,design:.monospaced))
+                                    .textSelection(.enabled)
+                            }
+                        }.frame(maxWidth:.infinity,alignment:.leading)
+                    }.frame(maxHeight:200)
+                    if preview.rows.count>100 { Text("Showing first 100 commands.").font(.caption) }
+                }
+                if !previewMessage.isEmpty { Text(previewMessage).font(.caption) }
+            }.padding(6)
+        }.disabled(!didLoad || readFailed || studio.groupGamepadsRunning || studio.patchRunning)
+    }
+
+    private var quickPlayPanel:some View {
+        GroupBox("Play / setup") {
+            VStack(alignment:.leading,spacing:6) {
+                Text(studio.groupGamepadStatus).font(.caption)
+                if !studio.groupGamepadsRunning && didLoad && !readFailed {
+                    if quickReadiness.readyForLocalStart {
+                        Text("Layout and controller selections pass offline checks. Start still checks hardware and ports.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(quickReadiness.blockers.enumerated()),id:\.offset) { item in
+                            Label(readinessMessage(item.element),systemImage:"info.circle")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if !profile.groups.isEmpty {
+                    Text(profile == saved ? "Saved layout" : "Unsaved layout · retained until app closes")
+                        .font(.caption.weight(.semibold))
+                    ForEach(profile.groups) { group in
+                        VStack(alignment:.leading,spacing:2) {
+                            Text(group.name).font(.callout)
+                            Text(Set(group.patch.routes.map(\.source)).sorted { $0.rawValue < $1.rawValue }
+                                .map(sourceLabel).joined(separator:", "))
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(group.plannedPortName).font(.caption2).textSelection(.enabled)
+                        }
+                    }
+                }
+                if !draftControllerSources.isEmpty && !studio.groupGamepadsRunning {
+                    HStack {
+                        Button("Refresh controllers") { studio.refreshBuilderGamepads() }
+                        Button("Use available controller") {
+                            guard let next=quickAssignment else { return }
+                            for source in draftControllerSources {
+                                studio.setGamepadChoice(next[source],for:source)
+                            }
+                            message="Controller selected. Review or change the assignment before Start."
+                        }.disabled(quickAssignment == nil)
+                    }.disabled(studio.patchRunning || !studio.groupCleanupIDs.isEmpty || studio.groupDisposalCount != 0)
+                    ForEach(GamepadFrame.orderedSources.filter { draftControllerSources.contains($0) },id:\.self) { source in
+                        Picker(GamepadFrame.slotLabel(source),selection:Binding<UUID?>(
+                            get:{studio.gamepadChoice(for:source)},
+                            set:{studio.setGamepadChoice($0,for:source)})) {
+                            Text("Select controller").tag(UUID?.none)
+                            ForEach(studio.gamepadChoices) { choice in
+                                Text(choice.name).tag(Optional(choice.id))
+                            }
+                        }.disabled(studio.patchRunning || studio.groupGamepadsRunning)
+                    }
+                    if !draftControllersReady {
+                        Text("Select a different connected controller for each required role. No ambiguous assignment is made.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                HStack {
+                    Button("Save groups") { save() }
+                        .disabled(!didLoad || readFailed || editingLocked || studio.patchRunning || !profile.isValid || profile==saved)
+                    if quickSaveAndStart {
+                        Button("Save & Start standard MIDI") {
+                            guard quickSaveAndStart,save() else { return }
+                            startSavedGroups()
+                        }.buttonStyle(.borderedProminent)
+                    } else {
+                        Button("Start standard MIDI") { startSavedGroups() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!canStartGroups || !quickReadiness.readyForLocalStart || studio.patchRunning || tuningPreview != nil || !hapticSelection.isEmpty)
+                    }
+                    Button("Stop / Release All") { studio.stopGroupGamepads() }
+                        .disabled(!studio.groupGamepadsRunning)
+                    Button("Device setup / advanced") { groupsExpanded=true }
+                }
+                if !studio.groupRegisteredIDs.isEmpty || !studio.groupCleanupIDs.isEmpty || studio.groupDisposalCount != 0 {
+                    HStack {
+                        Button("Close ports") { studio.closeGroupPorts() }
+                            .disabled(studio.groupGamepadsRunning || studio.groupRegisteredIDs.isEmpty)
+                        Button("Retry cleanup") { studio.retryGroupCleanup() }
+                            .disabled(studio.groupGamepadsRunning ||
+                                      (studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0))
+                    }
+                    Text("\(studio.groupRegisteredIDs.count) retained/registered ports · \(studio.groupCleanupIDs.count) pending MIDI cleanups · \(studio.groupDisposalCount) pending disposals")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if tuningDraft.isDirty || tuningPreview != nil || !hapticSelection.isEmpty {
+                    Text("Advanced tuning or Trackpad output selected. Review in Device setup / advanced before Start.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if profile.groups.contains(where:{ $0.patch.routes.contains(where:{ $0.source.isGroupRemote }) }) && profile != saved {
+                    Text("Save the layout to show its mobile pairing controls. Network consent remains explicit.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !groupsExpanded && !message.isEmpty { Text(message).font(.caption) }
+                Text("Standard MIDI needs a DAW instrument on each group port. This is not an automatic audio or Trackpad-output mode.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(6)
+        }
+    }
+
     var body: some View {
-        DisclosureGroup("Performance Studio - Instrument Groups (experimental)") {
+        VStack(alignment:.leading,spacing:10) {
+            starterPanel
+            userPresetPanel
+            quickPlayPanel
+            offlinePreviewPanel
+            // Keep pairing state independent of the advanced disclosure.
+            // Collapsing manual controls must not retire a pending invitation.
+            if supportedRemoteProfile && StudioController.groupRemoteStartEnabled {
+                PerformanceGroupRemotePanel(sources:remoteSources,canStart:canStartRemoteGroups,
+                    tuning:tuningPreview,canStartTuned:canStartTunedRemoteGroups,tunedConsent:currentTunedConsent) { transport,page,confirmed,tuning,consent in
+                    guard tuning == nil || (consent != nil && consent == currentTunedConsent && hapticSelection.isEmpty) else {
+                        message = "Remote MPE confirmation expired. Review profile and device settings."
+                        return
+                    }
+                    startSavedGroups(tuning:tuning,remoteTransport:transport,remotePage:page,confirmedLAN:confirmed)
+                }
+            }
+            DisclosureGroup("Performance Studio - Instrument Groups (experimental)",isExpanded:$groupsExpanded) {
             VStack(alignment:.leading,spacing:10) {
                 Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox, Trackpad, Magic Mouse, Touch Bar ribbon, lid and single-hand camera Helper profiles. Mobile groups and MPE require their separate experimental build gates.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -624,16 +1201,7 @@ struct PerformanceGroupEditorView: View {
                     Button("Add from Builder draft") { add(patch:currentPatch) }
                         .disabled(!currentPatch.isValid || currentPatch.routes.isEmpty)
                 }.disabled(editingLocked || !didLoad || readFailed || !profile.isValid || profile.groups.count >= PerformanceGroupProfile.maximumGroups)
-                Menu("Party Jam starter groups") {
-                    ForEach(PerformanceGroupPartyJamPreset.allCases) { preset in
-                        Button(preset.title) {
-                            message = preset.install(in:&profile)
-                                ? preset.detail + " Review and save the draft before Start."
-                                : "Starter layout refused; existing draft retained."
-                        }
-                    }
-                }.disabled(editingLocked || !didLoad || readFailed || !profile.groups.isEmpty)
-                Text("Starter groups populate an empty draft only. No devices connect until explicit Start.")
+                Text("Edit group names and mobile mappings directly, or edit a copy in Builder and replace the selected group's mappings. Existing port identities are preserved when editing.")
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(profile.groups) { group in groupCard(group) }
                 if !profile.layeredInputs.isEmpty {
@@ -663,7 +1231,7 @@ struct PerformanceGroupEditorView: View {
                     }.disabled(!profile.isValid || profile.groups.isEmpty || readFailed)
                 }
                 if profile != saved {
-                    Text("Unsaved changes. Save before leaving this screen.").font(.caption).foregroundStyle(.orange)
+                    Text("Unsaved changes. Draft retained while the app is open; save before quitting.").font(.caption).foregroundStyle(.orange)
                 }
                 if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
                 if didLoad && !readFailed {
@@ -672,9 +1240,30 @@ struct PerformanceGroupEditorView: View {
                 }
                 liveControls
             }.padding(6)
-        }.onAppear { load() }
+            }
+        }.onAppear { load(); loadPresetLibrary() }
+        .onChange(of:profile) { _ in
+            rememberGroupDraft()
+            offlinePreview=nil
+            previewMessage=""
+            previewLayering=false
+        }
+        .onChange(of:previewLayering) { _ in offlinePreview=nil;previewMessage="" }
+        .onDisappear { rememberGroupDraft() }
         .onChange(of:studio.groupGamepadsRunning) { running in
             if !running { hapticSelection = [] }
+        }
+         .confirmationDialog("Load and replace group draft?",isPresented:$confirmImport,titleVisibility:.visible) {
+            Button("Replace draft",role:.destructive) {
+                defer { pendingImport=nil;pendingImportDraft=nil }
+                guard let imported=pendingImport,pendingImportDraft==profile else {
+                    message="Draft changed. Import again.";return
+                }
+                applyImportedGroupDraft(imported)
+            }
+            Button("Cancel",role:.cancel) { pendingImport=nil;pendingImportDraft=nil }
+        } message: {
+            Text("The loaded layout keeps its original group port identities. Your saved profile remains unchanged until Save groups. Device assignments and tuning are not loaded.")
         }
         .sheet(item:$mobileDraft) { draft in
             PerformanceGroupMobileDraftView(draft:draft,apply:applyMobileDraft)

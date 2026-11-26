@@ -89,3 +89,130 @@ import Testing
     let single = PerformanceGroupProfile(groups:[a])
     #expect(single.layeredInputs.isEmpty)
 }
+
+
+@Test func namedGroupPresetLibraryKeepsIndependentCopiesAndPortIdentities() throws {
+    let original=try #require(PerformanceGroupStarterPreset.desktopDuo.makeProfile())
+    var edited=original
+    var library=PerformanceGroupPresetLibrary()
+    let id=UUID()
+    let mutation1=library.add(name:"  Evening jam  ",profile:original,id:id)
+    #expect(mutation1)
+    edited.groups[0].name="Custom lead"
+    let mutation2=library.add(name:"Second version",profile:edited)
+    #expect(mutation2)
+    #expect(library.entries.first?.name=="Evening jam")
+    #expect(library.entries.first?.profile==original)
+    #expect(library.entries.last?.profile==edited)
+    #expect(library.entries.first?.profile.groups.map(\.plannedPortName)==edited.groups.map(\.plannedPortName))
+    let restored=try PerformanceGroupPresetLibrary.read(library.archive())
+    #expect(restored==library)
+    let before=library
+    let mutation3=library.add(name:"evening JAM",profile:edited)
+    #expect(!mutation3)
+    let mutation4=library.add(name:"Other",profile:edited,id:id)
+    #expect(!mutation4)
+    let mutation5=library.add(name:" ",profile:edited)
+    #expect(!mutation5)
+    let mutation6=library.add(name:"Empty",profile:.init())
+    #expect(!mutation6)
+    #expect(library==before)
+    let mutation7=library.remove(id)
+    #expect(mutation7)
+    let mutation8=library.remove(id)
+    #expect(!mutation8)
+    #expect(library.entries.count==1 && library.entries.first?.profile==edited)
+}
+
+@Test func namedGroupPresetLibraryBoundsCapacityWithoutEviction() throws {
+    var library=PerformanceGroupPresetLibrary()
+    let profile=try #require(PerformanceGroupStarterPreset.trackpadSolo.makeProfile())
+    for i in 0..<PerformanceGroupPresetLibrary.maximumEntries {
+        let mutation9=library.add(name:"Layout "+String(i),profile:profile)
+        #expect(mutation9)
+    }
+    let before=library
+    let mutation10=library.add(name:"Overflow",profile:profile)
+    #expect(!mutation10)
+    #expect(library==before)
+    #expect(try PerformanceGroupPresetLibrary.read(library.archive())==library)
+    let raw=try WorkspaceArchive.encode(name:"Invalid",payload:["entries":[
+        PerformanceGroupPresetLibrary.Entry(name:"Duplicate",profile:profile),
+        PerformanceGroupPresetLibrary.Entry(name:"duplicate",profile:profile)
+    ]])
+    #expect(throws:WorkspaceArchiveError.invalidPayload) { try PerformanceGroupPresetLibrary.read(raw) }
+}
+
+
+@Test func groupDraftSessionRetainsUnfinishedNamesButNeverReplacesNewerArchive() throws {
+    let saved=try #require(PerformanceGroupStarterPreset.desktopDuo.makeProfile())
+    let archive=try saved.archive()
+    var draft=saved
+    draft.groups[0].name=""
+    var session=PerformanceGroupDraftSession()
+    session.remember(draft,saved:saved,archive:archive)
+    #expect(session.resume(saved:saved,archive:archive)==draft)
+    #expect(session.resume(saved:saved,archive:archive+Data([10]))==saved)
+    #expect(session.resume(saved:saved,archive:archive)==saved)
+    session.remember(draft,saved:saved,archive:archive)
+    var newer=saved
+    newer.groups[0].name="Newer"
+    #expect(session.resume(saved:newer,archive:try newer.archive())==newer)
+    session.remember(draft,saved:saved,archive:archive)
+    session.remember(saved,saved:saved,archive:archive)
+    #expect(session.resume(saved:saved,archive:archive)==saved)
+    let empty=PerformanceGroupProfile()
+    session.remember(saved,saved:empty,archive:nil)
+    #expect(session.resume(saved:empty,archive:nil)==saved)
+    session.clear()
+    #expect(session.resume(saved:empty,archive:nil)==empty)
+}
+
+
+@Test func namedPresetUpdateRequiresExactEntryAndPreservesOtherCopies() throws {
+    let original=try #require(PerformanceGroupStarterPreset.trackpadSolo.makeProfile())
+    var library=PerformanceGroupPresetLibrary()
+    let a=library.add(name:"First",profile:original)
+    let b=library.add(name:"Second",profile:original)
+    #expect(a && b)
+    let first=try #require(library.entries.first)
+    let second=try #require(library.entries.last)
+    var edited=original
+    edited.groups[0].name="Custom"
+    let renamed=library.update(expected:first,name:"Lead",profile:first.profile)
+    #expect(renamed)
+    let renamedEntry=try #require(library.entries.first)
+    #expect(renamedEntry.id==first.id && renamedEntry.profile==original)
+    let stale=library.update(expected:first,name:"Stale",profile:edited)
+    let collision=library.update(expected:renamedEntry,name:"SECOND",profile:edited)
+    let invalid=library.update(expected:renamedEntry,name:"Lead",profile:.init())
+    #expect(!stale && !collision && !invalid)
+    #expect(library.entries==[renamedEntry,second])
+    let updated=library.update(expected:renamedEntry,name:renamedEntry.name,profile:edited)
+    #expect(updated && library.entries.first?.profile==edited)
+    #expect(library.entries.first?.id==first.id && library.entries.last==second)
+    #expect(try PerformanceGroupPresetLibrary.read(library.archive())==library)
+}
+
+
+@Test func quickGroupReadinessSeparatesOfflineConfigurationFromRuntimeReadiness() throws {
+    let local=try #require(PerformanceGroupStarterPreset.trackpadSolo.makeProfile())
+    let xbox=try #require(PerformanceGroupStarterPreset.xboxDuo.makeProfile())
+    let mobile=try #require(PerformanceGroupStarterPreset.pocketJam.makeProfile())
+    let a=UUID(),b=UUID()
+    #expect(PerformanceGroupQuickReadiness(profile:local,selected:[:],available:[]).readyForLocalStart)
+    #expect(PerformanceGroupQuickReadiness(profile:.init(),selected:[:],available:[]).blockers == [.emptyProfile])
+    #expect(PerformanceGroupQuickReadiness(profile:xbox,selected:[.gamepad1:a],available:[a,b]).blockers == [.controllerMissing(.gamepad2)])
+    #expect(PerformanceGroupQuickReadiness(profile:xbox,selected:[.gamepad1:a,.gamepad2:a],available:[a,b]).blockers == [.controllerDuplicate(.gamepad2)])
+    #expect(PerformanceGroupQuickReadiness(profile:xbox,selected:[.gamepad1:a,.gamepad2:b],available:[a,b]).readyForLocalStart)
+    #expect(PerformanceGroupQuickReadiness(profile:mobile,selected:[:],available:[]).blockers == [.mobileDisabled])
+    #expect(PerformanceGroupQuickReadiness(profile:mobile,selected:[:],available:[],mobileEnabled:true).blockers == [.mobileSetupRequired])
+    var invalid=local
+    invalid.groups[0].name=""
+    #expect(PerformanceGroupQuickReadiness(profile:invalid,selected:[:],available:[]).blockers == [.invalidProfile])
+    var layered=local
+    let duplicated=layered.duplicate(local.groups[0].id)
+    #expect(duplicated)
+    #expect(PerformanceGroupQuickReadiness(profile:layered,selected:[:],available:[]).blockers == [.layeringNeedsConsent])
+    #expect(PerformanceGroupQuickReadiness(profile:layered,selected:[:],available:[],allowLayering:true).readyForLocalStart)
+}

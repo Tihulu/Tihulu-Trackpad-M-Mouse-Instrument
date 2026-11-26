@@ -18,7 +18,9 @@ private func remoteGroup(_ source:SensorSource,_ signal:SensorSignal,_ target:Se
     a.patch.routes.append(.init(id:"drum",source:.phone,signal:.drumPad1,destination:.init(.note,number:36)))
     #expect(PerformanceGroupGamepadSession.supports(.init(groups:[a]),allowRemote:true))
     a.patch.routes.append(.init(id:"piano",source:.phone,signal:.pianoKey0,destination:.init(.note,number:64)))
-    #expect(!PerformanceGroupGamepadSession.supports(.init(groups:[a]),allowRemote:true))
+    #expect(PerformanceGroupGamepadSession.supports(.init(groups:[a]),allowRemote:true))
+    a.patch.routes.append(.init(id:"pedal",source:.phone,signal:.pedalSustain,destination:.init(.sustain)))
+    #expect(PerformanceGroupGamepadSession.supports(.init(groups:[a]),allowRemote:true))
     let gain = remoteGroup(.tablet,.pedalVolume,.init(.controlChange,number:7))
     #expect(!PerformanceGroupGamepadSession.supports(.init(groups:[gain]),allowRemote:true))
 }
@@ -176,4 +178,119 @@ private func remoteGroup(_ source:SensorSource,_ signal:SensorSignal,_ target:Se
     #expect(session.activeSessions == 1)
     let stale = session.receiveRemote(.phone,token:phone,bytes:wire("release",1,6),hostTime:0.40,now:0.40,send:sink)
     #expect(stale.status == .ignored)
+}
+
+
+@Test func groupRemoteFourAssignedFamiliesRequireNeutralAndKeepTwoActiveLimit() throws {
+    let group = PerformanceInstrumentGroup(name:"Switchable",patch:.init(routes:[
+        .init(id:"xy",source:.phone,signal:.contact,destination:.init(.note,number:60)),
+        .init(id:"drum",source:.phone,signal:.drumPad1,destination:.init(.note,channel:9,number:36)),
+        .init(id:"piano",source:.phone,signal:.pianoKey0,destination:.init(.note,number:64)),
+        .init(id:"pedal",source:.phone,signal:.pedalSustain,destination:.init(.sustain))
+    ]))
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowRemote:true)
+    let token = try session.bind(.phone,now:1)
+    let caps = try #require(session.remoteCapabilities(.phone))
+    #expect(caps.touch && caps.drums == 1 && caps.piano == 1 && caps.pedals == 8)
+    var events:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { events.append($0); return true }
+    let neutral:[Data] = [wire("release",1,1),wire("drumPads",4,2,",\"mask\":0"),
+                          wire("pianoKeys",5,3,",\"mask\":0"),
+                          wire("pedalboard",6,4,",\"mask\":0,\"levels\":[0,0,0,0,0,0]")]
+    for (i,frame) in neutral.enumerated() {
+        let time=1+Double(i+1)*0.01
+        let result=session.receiveRemote(.phone,token:token,bytes:frame,hostTime:time,now:time,send:sink)
+        #expect(result.status == (i == 3 ? .ready : .waitingForNeutral))
+    }
+    #expect(events.isEmpty)
+    let frames:[Data] = [
+        wire("touch",1,5,",\"x\":0.5,\"y\":0.5"), wire("release",1,6),
+        wire("pianoKeys",5,7,",\"mask\":1"), wire("pianoKeys",5,8,",\"mask\":0"),
+        wire("drumPads",4,9,",\"mask\":1"), wire("drumPads",4,10,",\"mask\":0"),
+        wire("pedalboard",6,11,",\"mask\":8,\"levels\":[0,0,0,1,0,0]"),
+        wire("pedalboard",6,12,",\"mask\":0,\"levels\":[0,0,0,0,0,0]")]
+    for (i,frame) in frames.enumerated() {
+        let time=1.05+Double(i)*0.01
+        let result=session.receiveRemote(.phone,token:token,bytes:frame,hostTime:time,now:time,send:sink)
+        #expect(result.status == .ready || result.status == .delivered)
+    }
+    #expect(events.count == 8 && events.filter { $0.command.value == 0 }.count == 4)
+    #expect(session.activeSessions == 0 && session.sourceStates[.phone] == .armed)
+    events.removeAll()
+    _ = session.receiveRemote(.phone,token:token,bytes:wire("touch",1,13,",\"x\":0.5,\"y\":0.5"),hostTime:1.2,now:1.2,send:sink)
+    _ = session.receiveRemote(.phone,token:token,bytes:wire("drumPads",4,14,",\"mask\":1"),hostTime:1.21,now:1.21,send:sink)
+    let third=session.receiveRemote(.phone,token:token,bytes:wire("pianoKeys",5,15,",\"mask\":1"),hostTime:1.22,now:1.22,send:sink)
+    #expect(third.status == .lost && session.boundSources.isEmpty && session.activeSessions == 0)
+    #expect(events.count == 4 && !events.contains { $0.command.destination.number == 64 })
+}
+
+
+@Test func dualPhoneStickLossDoesNotReleaseOtherStickOnSameDrumPort() throws {
+    let profile = try #require(PerformanceGroupStarterPreset.dualPhoneSticks.makeProfile())
+    let group = try #require(profile.groups.first)
+    var session = try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
+    let left = try session.bind(.phone,now:1)
+    let right = try session.bind(.phone2,now:1)
+    var events:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { events.append($0);return true }
+    _ = session.receiveRemote(.phone,token:left,bytes:wire("drumPads",4,1,",\"mask\":0"),hostTime:1.01,now:1.01,send:sink)
+    _ = session.receiveRemote(.phone2,token:right,bytes:wire("drumPads",4,1,",\"mask\":0"),hostTime:1.01,now:1.01,send:sink)
+    _ = session.receiveRemote(.phone,token:left,bytes:wire("drumPads",4,2,",\"mask\":2"),hostTime:1.02,now:1.02,send:sink)
+    _ = session.receiveRemote(.phone2,token:right,bytes:wire("drumPads",4,2,",\"mask\":4"),hostTime:1.03,now:1.03,send:sink)
+    #expect(events.count == 2 && events.allSatisfy { $0.groupID == group.id && $0.command.value > 0 })
+    #expect(Set(events.map(\.command.destination.number)) == [38,42])
+    events.removeAll()
+    _ = session.unbindRemoteBatch([.phone:left],send:sink)
+    #expect(events.count == 1 && events[0].command.destination.number == 38 && events[0].command.value == 0)
+    #expect(session.boundSources == [.phone2] && session.activeSessions == 1)
+    events.removeAll()
+    let stale = session.receiveRemote(.phone,token:left,bytes:wire("drumPads",4,3,",\"mask\":2"),hostTime:1.04,now:1.04,send:sink)
+    #expect(stale.status == .ignored && events.isEmpty)
+    _ = session.receiveRemote(.phone2,token:right,bytes:wire("drumPads",4,3,",\"mask\":0"),hostTime:1.05,now:1.05,send:sink)
+    #expect(events.count == 1 && events[0].command.destination.number == 42 && events[0].command.value == 0)
+    #expect(session.activeSessions == 0)
+}
+
+@Test func atomicXYZHybridRequiresConfiguredOwnerAndReleasesBothFamiliesTogether() throws {
+    let lead = PerformanceInstrumentGroup(name: "Depth lead")
+    let other = remoteGroup(.tablet,.pianoKey0,.init(.note, number: 55))
+    let base = PerformanceGroupProfile(groups:[lead,other])
+    var draft = try PerformanceGroupMobileDraft(profile:base,groupID:lead.id,source:.phone)
+    let added = draft.addXYZHybrid(.beam,helperChannel:1,scale:.pentatonic,root:60,noteChannel:0)
+    #expect(added)
+    var host = try PerformanceGroupGamepadSession(profile:draft.applying(to:base),allowRemote:true)
+    let phone = try host.bind(.phone,now:1)
+    let tablet = try host.bind(.tablet,now:1)
+    var sent:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { sent.append($0);return true }
+    _ = host.receiveRemote(.tablet,token:tablet,bytes:wire("pianoKeys",5,1,",\"mask\":0"),hostTime:1.01,now:1.01,send:sink)
+    _ = host.receiveRemote(.tablet,token:tablet,bytes:wire("pianoKeys",5,2,",\"mask\":1"),hostTime:1.02,now:1.02,send:sink)
+    sent.removeAll()
+    let active = ",\"mask\":4,\"keys\":1,\"levels\":[0,0,0.6,0,0,0]"
+    let off = ",\"mask\":0,\"keys\":0,\"levels\":[0,0,0,0,0,0]"
+    let before = host.receiveRemote(.phone,token:phone,bytes:wire("xyzHybrid",9,1,active),hostTime:1.03,now:1.03,send:sink)
+    #expect(before.status == .waitingForNeutral && sent.isEmpty)
+    _ = host.receiveRemote(.phone,token:phone,bytes:wire("xyzHybrid",9,2,off),hostTime:1.04,now:1.04,send:sink)
+    _ = host.receiveRemote(.phone,token:phone,bytes:wire("xyzHybrid",9,3,active),hostTime:1.05,now:1.05,send:sink)
+    #expect(Set(sent.map(\.command.destination.kind)) == [.note,.controlChange])
+    sent.removeAll()
+    _ = host.receiveRemote(.phone,token:phone,bytes:wire("xyzHybrid",9,4,off),hostTime:1.06,now:1.06,send:sink)
+    #expect(sent.count == 2 && sent.allSatisfy { $0.groupID == lead.id && $0.command.value == 0 })
+    sent.removeAll()
+    let oldShape = host.receiveRemote(.phone,token:phone,bytes:wire("pianoKeys",5,5,",\"mask\":1"),hostTime:1.07,now:1.07,send:sink)
+    #expect(oldShape.status == .lost && sent.isEmpty && host.boundSources == [.tablet])
+    let newOnOld = host.receiveRemote(.tablet,token:tablet,bytes:wire("xyzHybrid",9,3,off),hostTime:1.08,now:1.08,send:sink)
+    #expect(newOnOld.status == .lost && sent.allSatisfy { $0.groupID == other.id && $0.command.value == 0 })
+}
+
+@Test func atomicXYZShapeRejectsPartialReleasesAndUnknownAssignments() throws {
+    for fields in [",\"mask\":0,\"keys\":1,\"levels\":[0,0,0,0,0,0]",
+                   ",\"mask\":1,\"keys\":3,\"levels\":[1,0,0,0,0,0]",
+                   ",\"mask\":1,\"keys\":1.0,\"levels\":[1,0,0,0,0,0]",
+                   ",\"mask\":8,\"keys\":1,\"levels\":[0,0,0,1,0,0]"] {
+        #expect(throws: RemoteTouchError.self) { try RemoteTouchFrame.read(wire("xyzHybrid",9,1,fields)) }
+    }
+    let data = wire("xyzHybrid",9,2,",\"mask\":4,\"keys\":2,\"levels\":[0,0,0.7,0,0,0]")
+    let frame = try RemoteTouchFrame.read(data)
+    #expect(GroupRemoteSnapshot(frame:frame,modes:[.piano,.pedalboard],mapped:[.pianoKey0,.pedalWah],hybrid:true) == nil)
 }

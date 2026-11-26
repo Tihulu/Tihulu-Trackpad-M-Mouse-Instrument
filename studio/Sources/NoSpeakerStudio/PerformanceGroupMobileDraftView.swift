@@ -10,6 +10,11 @@ struct PerformanceGroupMobileDraftView: View {
     @State private var widgetSignal:SensorSignal = .contact
     @State private var message = ""
     @State private var family:PerformanceGroupRemoteSurface = .xy
+    @State private var xyzScale = MobileExpressionPreset.major
+    @State private var xyzRoot = 60
+    @State private var hybridHelperChannel = 1
+    @State private var xyzCustom = ""
+    @State private var xyzPreset = DepthXYZHelperPreset.expression
     @State private var familyChannel=0
     @State private var familyTranspose=12
     let apply:(PerformanceGroupMobileDraft)->Bool
@@ -20,7 +25,7 @@ struct PerformanceGroupMobileDraftView: View {
     }
 
     private var validation:PerformanceGroupProfile? {
-        try? draft.applying(to:draft.baseline)
+        return try? draft.applying(to:draft.baseline)
     }
 
     var body:some View {
@@ -30,6 +35,41 @@ struct PerformanceGroupMobileDraftView: View {
                 .font(.caption).foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment:.leading,spacing:8) {
+                    DisclosureGroup("LiDAR / measured XYZ instrument") {
+                        Picker("Key mapping", selection: $xyzScale) {
+                            ForEach(MobileExpressionPreset.allCases) { Text($0.title).tag($0) }
+                        }
+                        if xyzScale == .custom { TextField("MIDI note numbers", text: $xyzCustom) }
+                        else { Stepper("Root MIDI note \(xyzRoot)", value: $xyzRoot, in: 0...127) }
+                        Stepper("MIDI channel \(familyChannel + 1)", value: $familyChannel, in: 0...15)
+                        Button("Add assigned keys to empty mobile slot") {
+                            let added = draft.addXYZInstrument(xyzScale, root: xyzRoot, channel: familyChannel, custom: xyzCustom)
+                            message = added ? "Keys added. Select Instrument and a pitch axis on the device." : "Check note range, available slots and channel bend ownership."
+                        }.disabled(!draft.routes.isEmpty)
+                    }
+                    DisclosureGroup("LiDAR / measured XYZ helper") {
+                        Picker("XYZ preset", selection: $xyzPreset) {
+                            ForEach(DepthXYZHelperPreset.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }
+                        Stepper("MIDI channel \(familyChannel + 1)", value: $familyChannel, in: 0...15)
+                        Button("Add XYZ axes to empty mobile slot") {
+                            let added = draft.addXYZHelper(xyzPreset, channel: familyChannel)
+                            message = added ? "Edit each axis below before applying." : "A target conflicts with another route or the mobile slot is in use."
+                        }.disabled(!draft.routes.isEmpty)
+                        Text("X uses Pedal 1, Y uses Pedal 2 and Z uses Pedal 3. Choose the same enabled axes on the device. Save the group preset to keep these mappings.").font(.caption)
+                    }
+                    DisclosureGroup("LiDAR / measured XYZ hybrid") {
+                        Text("Uses the instrument key mapping and helper preset selected above. The native device must pair in Hybrid mode.")
+                            .font(.caption)
+                        Text("Keys: " + xyzScale.title + " · Helper: " + xyzPreset.rawValue)
+                        Stepper("Note channel \(familyChannel + 1)", value: $familyChannel, in: 0...15)
+                        Stepper("Helper channel \(hybridHelperChannel + 1)", value: $hybridHelperChannel, in: 0...15)
+                        Button("Add Hybrid to empty mobile slot") {
+                            let added = draft.addXYZHybrid(xyzPreset, helperChannel: hybridHelperChannel,
+                                scale: xyzScale, root: xyzRoot, noteChannel: familyChannel, custom: xyzCustom)
+                            message = added ? "Hybrid assigned. Apply and arm the group before pairing." : "Check capacity, channel conflicts and the selected scale."
+                        }.disabled(!draft.routes.isEmpty)
+                    }
                     HStack {
                         Picker("Add control",selection:$signal) {
                             ForEach(PerformanceGroupMobileDraft.signals,id:\.self) { item in Text(item.rawValue).tag(item) }
@@ -71,7 +111,7 @@ struct PerformanceGroupMobileDraftView: View {
                     ForEach($draft.routes) { $route in
                         GroupBox {
                             VStack(alignment:.leading,spacing:5) {
-                                Text(route.signal.rawValue).font(.headline)
+                                Text(RemotePedalboard.signals.firstIndex(of: route.signal).flatMap { $0 < 3 ? ["X", "Y", "Z"][$0] + " · " + route.signal.rawValue : nil } ?? route.signal.rawValue).font(.headline)
                                 Picker("MIDI target",selection:Binding(
                                     get:{ route.destination.kind },
                                     set:{ kind in
@@ -110,6 +150,11 @@ struct PerformanceGroupMobileDraftView: View {
                                         Text(String(format:"Dead zone %.2f",route.calibration.deadZone)).font(.caption)
                                         Slider(value:$route.calibration.exponent,in:0.25...4,step:0.25) { Text("Curve") }
                                         Text(String(format:"Curve %.2f",route.calibration.exponent)).font(.caption)
+                                        let sensitivity = Binding<Double>(
+                                            get: { route.calibration.sensitivity ?? 1 },
+                                            set: { route.calibration.sensitivity = $0 == 1 ? nil : $0 })
+                                        Slider(value: sensitivity, in: 0.25...4, step: 0.05) { Text("Sensitivity") }
+                                        Text(String(format: "Sensitivity %.2f×", sensitivity.wrappedValue)).font(.caption)
                                         Toggle("Invert",isOn:$route.calibration.inverted)
                                         Button("Reset calibration") { route.calibration = .init() }
                                     }
@@ -125,6 +170,10 @@ struct PerformanceGroupMobileDraftView: View {
                                             Slider(value:response.minimum,in:0...1,step:0.01) { Text("Output minimum") }
                                             Slider(value:response.maximum,in:0...1,step:0.01) { Text("Output maximum") }
                                             Text(String(format:"Output %.2f – %.2f",response.wrappedValue.minimum,response.wrappedValue.maximum)).font(.caption)
+                                            let release = Binding<Double>(
+                                                get: { response.wrappedValue.release ?? Double(ContinuousResponse.defaultRelease(route.destination)) / (route.destination.kind == .pitchBend ? 16383 : 127) },
+                                                set: { response.wrappedValue.release = $0 })
+                                            Slider(value: release, in: 0...1) { Text("Release value") }
                                             Stepper("Smoothing \(response.wrappedValue.smoothingMS) ms",value:response.smoothingMS,in:0...250,step:5)
                                         }
                                     }

@@ -42,3 +42,21 @@ public struct BuilderPerformanceMetrics: Sendable {
         maxBatchDuration = max(maxBatchDuration,end-start)
     }
 }
+
+
+/// Synchronous MIDI cleanup can consume another owner's remaining lease.
+/// Recheck after each nonempty cleanup, with a hard bound and no new input.
+public enum BuilderCleanupDrain {
+    public enum Step:Equatable,Sendable { case again,settled,interrupted }
+    public enum Result:Equatable,Sendable { case settled,interrupted,exhausted }
+    public static func run(step:()->Step) -> Result {
+        for _ in 0..<32 {
+            switch step() {
+            case .again: continue
+            case .settled: return .settled
+            case .interrupted: return .interrupted
+            }
+        }
+        return .exhausted
+    }
+}

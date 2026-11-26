@@ -29,6 +29,28 @@ public enum RemotePedalboard {
             (route.response == nil || route.response == ContinuousResponse()) &&
             ContinuousResponse.defaultRelease(route.destination) == 0
     }
+    /// Marked XYZ slots retain their exclusivity after reopening or importing a patch.
+    public static func permitsXYZHelpers(in routes: [SensorMapping]) -> Bool {
+        let sources = Set(routes.lazy.filter { $0.measuredXYZHelper == true }.map(\.source))
+        for source in sources {
+            let own = routes.filter { $0.source == source }
+            let targets = Set(own.map(\.destination))
+            let controls = own.filter { signals.prefix(3).contains($0.signal) }
+            let notes = own.filter { RemotePiano.keySignals.contains($0.signal) }
+            guard source.isGroupRemote, !controls.isEmpty, controls.count <= 3,
+                  controls.count + notes.count == own.count,
+                  own.allSatisfy({ $0.measuredXYZHelper == true }),
+                  controls.allSatisfy({ ContinuousResponse.isContinuous($0.destination) }),
+                  notes.allSatisfy({ RemotePiano.permits($0) }),
+                  Set(own.map(\.signal)).count == own.count, targets.count == own.count else { return false }
+            let bends = Set(controls.filter { $0.destination.kind == .pitchBend }.map(\.destination.channel))
+            if routes.contains(where: {
+                ($0.source != source && targets.contains($0.destination)) ||
+                ($0.destination.kind == .note && bends.contains($0.destination.channel))
+            }) { return false }
+        }
+        return true
+    }
     public static func routes(source: SensorSource = .phone) -> [SensorMapping] {
         guard source == .phone || source == .tablet else { return [] }
         let destinations: [SensorDestination] = [

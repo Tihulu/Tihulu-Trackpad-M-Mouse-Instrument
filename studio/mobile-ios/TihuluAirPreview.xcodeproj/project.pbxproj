@@ -1,0 +1,46 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ classes = {};
+ objectVersion = 56;
+ objects = {
+  A00000000000000000000001 = {isa = PBXBuildFile; fileRef = A00000000000000000000002; };
+  A00000000000000000000003 = {isa = PBXBuildFile; productRef = A00000000000000000000004; };
+  A00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TihuluAirPreviewApp.swift; sourceTree = "<group>"; };
+  A00000000000000000000005 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TihuluAirPreview.app; sourceTree = BUILT_PRODUCTS_DIR; };
+  A00000000000000000000006 = {isa = PBXGroup; children = (A00000000000000000000002,A00000000000000000000007); sourceTree = "<group>"; };
+  A00000000000000000000007 = {isa = PBXGroup; children = (A00000000000000000000005); name = Products; sourceTree = "<group>"; };
+  A00000000000000000000008 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001); runOnlyForDeploymentPostprocessing = 0; };
+  A00000000000000000000009 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000003); runOnlyForDeploymentPostprocessing = 0; };
+  A0000000000000000000000A = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+  A0000000000000000000000B = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000C; buildPhases = (A00000000000000000000008,A00000000000000000000009,A0000000000000000000000A); buildRules = (); dependencies = (); name = TihuluAirPreview; packageProductDependencies = (A00000000000000000000004); productName = TihuluAirPreview; productReference = A00000000000000000000005; productType = "com.apple.product-type.application"; };
+  A0000000000000000000000D = {isa = PBXProject; attributes = {LastSwiftUpdateCheck = 2600; LastUpgradeCheck = 2600;}; buildConfigurationList = A0000000000000000000000E; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en,Base); mainGroup = A00000000000000000000006; packageReferences = (A0000000000000000000000F); productRefGroup = A00000000000000000000007; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B); };
+  A0000000000000000000000F = {isa = XCLocalSwiftPackageReference; relativePath = ..; };
+  A00000000000000000000004 = {isa = XCSwiftPackageProductDependency; package = A0000000000000000000000F; productName = NoSpeakerMobileCapture; };
+  A0000000000000000000000C = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000010,A00000000000000000000011); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+  A0000000000000000000000E = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012,A00000000000000000000013); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+  A00000000000000000000012 = {isa = XCBuildConfiguration; buildSettings = {IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_VERSION = 6.0;}; name = Debug; };
+  A00000000000000000000013 = {isa = XCBuildConfiguration; buildSettings = {IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_VERSION = 6.0;}; name = Release; };
+  A00000000000000000000010 = {isa = XCBuildConfiguration; buildSettings = {
+    CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES;
+    INFOPLIST_KEY_CFBundleDisplayName = "TIHULU Air Preview";
+    INFOPLIST_KEY_NSCameraUsageDescription = "Scan the Mac address or use the camera and supported depth sensor to play hand instruments.";
+    INFOPLIST_FILE = Info.plist;
+    INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+    MARKETING_VERSION = 0.3.0; PRODUCT_BUNDLE_IDENTIFIER = com.tihulu.mobile.airpreview;
+    PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = "1,2";
+    SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 6.0;
+  }; name = Debug; };
+  A00000000000000000000011 = {isa = XCBuildConfiguration; buildSettings = {
+    CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES;
+    INFOPLIST_KEY_CFBundleDisplayName = "TIHULU Air Preview";
+    INFOPLIST_KEY_NSCameraUsageDescription = "Scan the Mac address or use the camera and supported depth sensor to play hand instruments.";
+    INFOPLIST_FILE = Info.plist;
+    INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+    MARKETING_VERSION = 0.3.0; PRODUCT_BUNDLE_IDENTIFIER = com.tihulu.mobile.airpreview;
+    PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = "1,2";
+    SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 6.0;
+  }; name = Release; };
+ };
+ rootObject = A0000000000000000000000D;
+}

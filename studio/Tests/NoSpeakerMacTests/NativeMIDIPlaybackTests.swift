@@ -32,7 +32,7 @@ private func nativePlaybackClip() -> MIDIClip {
     let running=try #require(task)
     let report=try await running.value
     #expect(report.state=="finished",
-            "state=\(report.state), reason=\(report.faultReason ?? "none"), max lateness ns=\(report.maximumObservedLatenessNS), identity ns=\(report.maximumIdentityCheckNS), native send ns=\(report.maximumNativeSendNS)")
+            "state=\(report.state), reason=\(report.faultReason ?? "none"), max lateness ns=\(report.maximumObservedLatenessNS), identity ns=\(report.maximumIdentityCheckNS), native send ns=\(report.maximumNativeSendNS), wake lateness ns=\(report.maximumWakeLatenessNS)")
     #expect(report.cleanupConfirmed && report.outstandingNotes==0)
     #expect(!report.cancelled && !report.receiverConfirmed)
     #expect(observation.callbackCount>=2 && observation.packetCount>=2)
@@ -126,6 +126,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
             running.cancel()
         }
         let report=try await running.value
+        print("TIHULU_NATIVE_TIMING receiver cancel=\(cancel) state=\(report.state) fault=\(report.faultReason ?? "none") late_ns=\(report.maximumObservedLatenessNS) wake_ns=\(report.maximumWakeLatenessNS) timer_ns=\(report.maximumTimerLatenessNS) resume_ns=\(report.maximumActorResumeDelayNS) sounding_wake_ns=\(report.maximumSoundingWakeLatenessNS) awaiting_wake_ns=\(report.maximumAwaitingEventWakeLatenessNS) trailing_wake_ns=\(report.maximumTrailingRestWakeLatenessNS) identity_ns=\(report.maximumIdentityCheckNS) send_ns=\(report.maximumNativeSendNS)")
         let deadline=ContinuousClock().now.advanced(by:.milliseconds(250))
         while trace.snapshot().count<2 && ContinuousClock().now<deadline {
             try await Task.sleep(nanoseconds:5_000_000)
@@ -145,7 +146,7 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
             #expect(retry.cancelled && retry.cleanupConfirmed)
         } else {
             #expect(report.state=="finished" && !report.cancelled,
-                    "state=\(report.state), reason=\(report.faultReason ?? "none"), max lateness ns=\(report.maximumObservedLatenessNS), identity ns=\(report.maximumIdentityCheckNS), native send ns=\(report.maximumNativeSendNS)")
+                    "state=\(report.state), reason=\(report.faultReason ?? "none"), max lateness ns=\(report.maximumObservedLatenessNS), identity ns=\(report.maximumIdentityCheckNS), native send ns=\(report.maximumNativeSendNS), wake lateness ns=\(report.maximumWakeLatenessNS)")
             // Deliberately broad hosted-runner tolerance, not physical latency.
             #expect((180_000_000...350_000_000).contains(gate))
         }
@@ -331,8 +332,9 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     defer { _=MIDIPortDispose(port) }
     try #require(MIDIPortConnectSource(port,source,nil)==noErr)
     let result=try await player.runAndClose()
+    print("TIHULU_NATIVE_TIMING prepared state=\(result.playback.state) fault=\(result.playback.faultReason ?? "none") late_ns=\(result.playback.maximumObservedLatenessNS) wake_ns=\(result.playback.maximumWakeLatenessNS) timer_ns=\(result.playback.maximumTimerLatenessNS) resume_ns=\(result.playback.maximumActorResumeDelayNS) sounding_wake_ns=\(result.playback.maximumSoundingWakeLatenessNS) awaiting_wake_ns=\(result.playback.maximumAwaitingEventWakeLatenessNS) trailing_wake_ns=\(result.playback.maximumTrailingRestWakeLatenessNS) identity_ns=\(result.playback.maximumIdentityCheckNS) send_ns=\(result.playback.maximumNativeSendNS)")
     #expect(result.completed && result.sourceDisposed && !result.recoveryRequired,
-            "state=\(result.playback.state), reason=\(result.playback.faultReason ?? "none"), max lateness ns=\(result.playback.maximumObservedLatenessNS), identity ns=\(result.playback.maximumIdentityCheckNS), native send ns=\(result.playback.maximumNativeSendNS)")
+            "state=\(result.playback.state), reason=\(result.playback.faultReason ?? "none"), max lateness ns=\(result.playback.maximumObservedLatenessNS), identity ns=\(result.playback.maximumIdentityCheckNS), native send ns=\(result.playback.maximumNativeSendNS), wake lateness ns=\(result.playback.maximumWakeLatenessNS)")
     #expect(result.playback.state=="finished" && !result.playback.receiverConfirmed)
     #expect(result.playback.cleanupConfirmed && result.playback.outstandingNotes==0)
     let deadline=ContinuousClock().now.advanced(by:.milliseconds(250))
@@ -401,5 +403,75 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     }
     for player in players.dropFirst() { try player.close() }
     #expect(players.allSatisfy { !$0.lifecycle.sourceOpen })
+}
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackCompoundSessionRetainsExclusiveFinalization() async throws {
+    let player=try NativeMIDIPlayback(clip:nativePlaybackClip())
+    try player.open()
+    defer { _=try? player.close() }
+    player.requestStop()
+    var visited=false
+    let result=try await player.runAndClose(beforeClose:{
+        visited=true
+        #expect(player.lifecycle.running && player.lifecycle.sourceOpen)
+        #expect(throws:NativeMIDIPlayback.Failure.self) { try player.close() }
+        #expect(throws:NativeMIDIPlayback.Failure.self) { _=try player.retryCleanup() }
+        #expect(player.lifecycle.sourceOpen)
+    })
+    #expect(visited && result.sourceDisposed && !result.completed)
+    #expect(result.playback.cleanupConfirmed && !player.lifecycle.running && !player.lifecycle.sourceOpen)
+}
+
+@Test func nativePlaybackWakeTargetNeverDelaysDueWorkOrExceedsPollCap() {
+    #expect(NativeMIDIPlayback.nextWakeTarget(deadline:100,current:100) == nil)
+    #expect(NativeMIDIPlayback.nextWakeTarget(deadline:99,current:100) == nil)
+    #expect(NativeMIDIPlayback.nextWakeTarget(deadline:101,current:100) == 101)
+    #expect(NativeMIDIPlayback.nextWakeTarget(deadline:100_000_000,current:1_000) == 20_001_000)
+    #expect(NativeMIDIPlayback.nextWakeTarget(deadline:UInt64.max,current:UInt64.max-10) == UInt64.max)
+}
+
+@Test(.enabled(if:ProcessInfo.processInfo.environment["TIHULU_NATIVE_OBSERVER_FIXTURE"] == "1" &&
+                  ProcessInfo.processInfo.environment["CI"] == "true"))
+@MainActor func nativePlaybackCompoundCancellationBeforeDisposalDoesNotReportCompletion() async throws {
+    let player=try NativeMIDIPlayback(clip:nativePlaybackClip())
+    try player.open()
+    defer { _=try? player.close() }
+    let task=Task { @MainActor in
+        try await player.runAndClose(beforeClose:{
+            #expect(player.lifecycle.state=="finished" && player.lifecycle.sourceOpen)
+            withUnsafeCurrentTask { current in current?.cancel() }
+        })
+    }
+    let result=try await task.value
+    #expect(result.playback.state=="finished" && result.playback.cancelled)
+    #expect(!result.completed && result.sourceDisposed && result.playback.cleanupConfirmed)
+    #expect(!result.recoveryRequired && !player.lifecycle.running && !player.lifecycle.sourceOpen)
+    #expect(throws:NativeMIDIMonitor.Failure.self) {
+        _=try NativeMIDIMonitor.resolve(name:player.sourceName)
+    }
+}
+
+@Test func nativePlaybackAbsoluteWakeCompletesAndCancelsWithoutMIDI() async throws {
+    for _ in 0..<8 {
+        let start=DispatchTime.now().uptimeNanoseconds
+        let fired=try await NativeMIDIPlaybackWake.wait(until:start+1_000_000)
+        #expect(fired>=start)
+    }
+    for _ in 0..<32 {
+        let task=Task {
+            try await NativeMIDIPlaybackWake.wait(until:DispatchTime.now().uptimeNanoseconds+1_000_000_000)
+        }
+        task.cancel()
+        await #expect(throws:CancellationError.self) { _=try await task.value }
+    }
+}
+
+@Test func nativePlaybackWakeHonorsAlreadyCancelledTask() async throws {
+    let task=Task {
+        withUnsafeCurrentTask { $0?.cancel() }
+        return try await NativeMIDIPlaybackWake.wait(until:DispatchTime.now().uptimeNanoseconds+1_000_000_000)
+    }
+    await #expect(throws:CancellationError.self) { _=try await task.value }
 }
 #endif
