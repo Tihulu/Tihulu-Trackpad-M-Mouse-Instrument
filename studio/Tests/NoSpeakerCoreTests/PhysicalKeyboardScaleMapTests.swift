@@ -48,3 +48,21 @@ import Testing
     invalid = slots; invalid[4] = 3
     #expect(PhysicalKeyboardScaleMap(tuning:t,inputRoot:60,layout:.chromatic(invalid)) == nil)
 }
+
+@Test func physicalKeyboardMemberEncodingPreservesQuarterToneIdentityAndReference() throws {
+    let t = try #require(MicrotonalKeyboardTuning.edo(24,rootMIDI:69))
+    let map = try #require(PhysicalKeyboardScaleMap(tuning:t,inputRoot:60,layout:.allKeys))
+    let zero = try #require(map.memberPitch(60))
+    let quarter = try #require(map.memberPitch(61))
+    let semitone = try #require(map.memberPitch(62))
+    #expect(zero.anchor == 69 && zero.bend == 8192)
+    #expect(semitone.anchor == 70 && semitone.bend == 8192)
+    #expect(quarter.inputNote != semitone.inputNote && quarter.step != semitone.step)
+    let represented = Double(quarter.anchor) + Double(quarter.bend-8192)/Double(quarter.bend>=8192 ? 8191:8192)*2
+    #expect(abs(represented-69.5)<0.0003)
+    let calibrated = try #require(MicrotonalKeyboardTuning.edo(12,rootMIDI:69,referenceA4:432))
+    let calibratedMap = try #require(PhysicalKeyboardScaleMap(tuning:calibrated,inputRoot:60,layout:.allKeys))
+    let pitch = try #require(calibratedMap.memberPitch(60))
+    #expect(pitch.anchor == 69 && pitch.bend < 8192)
+    #expect(map.memberPitch(60,bendRangeSemitones:0) == nil)
+}

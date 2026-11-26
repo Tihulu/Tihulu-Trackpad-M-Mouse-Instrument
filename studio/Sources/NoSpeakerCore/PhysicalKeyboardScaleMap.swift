@@ -73,6 +73,30 @@ public struct PhysicalKeyboardScaleMap: Equatable, Sendable {
         return Key(inputNote: note, pitch: step.flatMap { tuning.pitch(step: $0) })
     }
 
+    public struct MemberPitch: Equatable, Sendable {
+        public let inputNote: Int
+        public let step: Int
+        public let anchor: Int
+        public let bend: Int
+        public let bendRangeSemitones: Int
+    }
+    /// Offline encoding for a receiver explicitly configured to the same
+    /// bend range and A4=440. A4 calibration is included in the bend.
+    /// Input note/step identity survives coincident anchors. Never send
+    /// this as a shared-channel bend or treat it as a voice allocation.
+    public func memberPitch(_ note: Int, bendRangeSemitones: Int = 2) -> MemberPitch? {
+        guard (1...96).contains(bendRangeSemitones),
+              let pitch = key(note)?.pitch else { return nil }
+        let nominal = 69 + 12 * log2(pitch.frequency / 440)
+        guard nominal.isFinite else { return nil }
+        let anchor = min(127,max(0,Int(nominal.rounded())))
+        let fraction = (nominal - Double(anchor)) / Double(bendRangeSemitones)
+        guard (-1...1).contains(fraction) else { return nil }
+        let delta = Int((fraction * (fraction >= 0 ? 8191 : 8192)).rounded())
+        return MemberPitch(inputNote:note,step:pitch.step,anchor:anchor,bend:8192+delta,
+                           bendRangeSemitones:bendRangeSemitones)
+    }
+
     public func keyboard(low: Int, high: Int) -> [Key]? {
         guard (0...127).contains(low), (low...127).contains(high) else { return nil }
         return (low...high).compactMap { key($0) }
