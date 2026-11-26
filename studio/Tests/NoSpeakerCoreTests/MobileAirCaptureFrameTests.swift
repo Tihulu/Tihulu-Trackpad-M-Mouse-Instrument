@@ -70,3 +70,13 @@ private func observed(_ x:Double=0.5,open:Bool=true,fingers:Int?=nil) -> MobileA
     #expect(throws:RemoteTouchError.invalidFrame) { try helper.encode(.init(level:.nan),sequence:5) }
     #expect(throws:RemoteTouchError.invalidFrame) { try MobileAirWireLane.helper(index:3,authorized:8).encode(.init(level:1),sequence:6) }
 }
+
+
+@Test func androidLogicalWireFixturesAreAcceptedByHostParser() throws {
+    let keys = try RemoteTouchFrame.read(Data(#"{"kind":"pianoKeys","version":5,"sequence":1,"mask":145}"#.utf8))
+    let zero = try RemoteTouchFrame.read(Data(#"{"kind":"pedalboard","version":6,"sequence":3,"mask":4,"levels":[0.0,0.0,0.0,0.0,0.0,0.0]}"#.utf8))
+    let release = try RemoteTouchFrame.read(Data(#"{"kind":"pedalboard","version":6,"sequence":4,"mask":0,"levels":[0.0,0.0,0.0,0.0,0.0,0.0]}"#.utf8))
+    #expect(keys.mask == 145 && keys.kind == .pianoKeys)
+    #expect(zero.mask == 4 && zero.kind == .pedalboard)
+    #expect(release.mask == 0 && release.kind == .pedalboard)
+}
