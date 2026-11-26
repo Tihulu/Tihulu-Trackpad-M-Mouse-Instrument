@@ -15,6 +15,8 @@ import NoSpeakerCore
     @State private var connectionStatus = ""
     @State private var scanning = false
     @State private var touchPreview = false
+    @State private var liveTouchID:UUID?
+    @State private var liveTouchMask:Int?
     @State private var askingPermission = false
     @State private var backend:MobileAirSensorSource.Backend = .rearCamera
     @State private var cameras:[MobileAirSensorSource.CameraChoice]=[]
@@ -39,7 +41,7 @@ import NoSpeakerCore
     private let timer=Timer.publish(every:0.05,on:.main,in:.common).autoconnect()
 
     public init() {}
-    private var busy:Bool {pending || source != nil || retiring != nil}
+    private var busy:Bool {liveTouchID != nil || pending || source != nil || retiring != nil}
     private var configurationLocked: Bool { busy || socket != nil || scanning || askingPermission || touchPreview }
     private var instrumentLocked: Bool {busy || scanning || askingPermission || (socket != nil && assignment == nil)}
     private var playableAssignment: Bool {
@@ -71,6 +73,19 @@ import NoSpeakerCore
                     Text("Paired Mac").tag(true)
                 }.pickerStyle(.segmented).disabled(configurationLocked)
                 if useMac { pairingPanel }
+                if let id=liveTouchID,let mask=liveTouchMask {
+                    MobileTouchPianoPreview(authorized:mask,live:{ sample in
+                        guard liveTouchID==id,scenePhase == .active,let socket,
+                              socket.status().assignment?.piano==mask else{return false}
+                        socket.offer(sample.output,observedAt:sample.ownerAt)
+                        return socket.status().phase == .ready
+                    },stopped:{
+                        if liveTouchID==id{stop("Touch piano released · disconnected")}
+                    }).id(id).frame(height:360)
+                    Button("Release / disconnect"){stop("Touch piano released")}
+                } else if useMac,assignment?.piano ?? 0 != 0 {
+                    Button("Open assigned touch piano",action:openTouchPiano).disabled(busy || scanning || askingPermission || scenePhase != .active)
+                }
                 HStack {
                     Label(MobileAirSensorSource.hasLiDAR ? "LiDAR available":"Camera only",systemImage:"sensor")
                     Spacer()
@@ -269,6 +284,12 @@ import NoSpeakerCore
         connectionStatus = "Connecting to the Mac"
     }
 
+    private func openTouchPiano(){
+        guard !busy,useMac,scenePhase == .active,let socket,
+              let mask=socket.status().assignment?.piano,mask != 0 else{return}
+        liveTouchMask=mask;liveTouchID=UUID()
+        status="Assigned touch piano · press Arm to play"
+    }
     private func start() {
         guard !busy, !scanning, !askingPermission, valid, playableAssignment, scenePhase == .active else {return}
         let ticket=UUID();generation=ticket;pending=true;status="Waiting for camera permission"
@@ -299,6 +320,7 @@ import NoSpeakerCore
     }
     private func stop(_ message:String) {
         generation=UUID();pending=false
+        liveTouchID=nil;liveTouchMask=nil
         invitation = ""
         if let socket { socket.stop(); connectionStatus = message }
         socket = nil
