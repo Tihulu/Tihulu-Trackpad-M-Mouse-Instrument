@@ -1704,3 +1704,13 @@ test("invalid camera calibration configuration does not request camera",async()=
   a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraCalibration.value="unknown";
   await a.elements.webCameraStart.emit("click");assert.equal(requests,0);
 });
+
+test("first quiet camera comparison suppresses active refresh while release is being confirmed",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(100,2);a.ack();
+  const count=a.socket.frames.length;
+  a.step(25);a.video(100,3);a.step(25);
+  assert.equal(a.socket.frames.length,count);
+  a.video(100,4);assert.equal(a.socket.frames.at(-1).mask,0);
+});
