@@ -14,9 +14,10 @@ public enum PerformanceGroupRemoteSurface: String, CaseIterable, Sendable {
         }
     }
 
-    /// Initial mixed-surface candidate: at most two mapped families per
-    /// connection. The shared rate budget is not multiplied by family count.
-    public static let maximumFamilies = 2
+    /// All four existing wire surface families may be assigned. Assignment
+    /// does not increase the simultaneous active family or shared rate budget.
+    public static let maximumFamilies = 4
+    public static let maximumActiveFamilies = 2
 
     public static func modes(for routes:[SensorMapping]) -> Set<Self>? {
         guard !routes.isEmpty, routes.allSatisfy({

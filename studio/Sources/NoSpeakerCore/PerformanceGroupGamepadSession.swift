@@ -568,7 +568,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
 
     /// Only a trusted, authenticated host adapter may bind a remote slot and
     /// supply its token and monotonic receipt. No listener is opened here.
-    /// One selected surface per slot; an explicit neutral snapshot arms it.
+    /// All assigned families must send neutral snapshots before playback.
     /// Idle heartbeats never renew a held note, pad or control.
     public mutating func receiveRemote(_ source:SensorSource,token:UUID,bytes:Data,
                                        hostTime:Double,now:Double,refreshNow:(()->Double)? = nil,
@@ -635,7 +635,16 @@ public struct PerformanceGroupGamepadSession: Sendable {
             return .init(status:binding.armed ? .ready : .waitingForNeutral,reports:reports)
         }
         if values.isEmpty { binding.remoteActive.removeValue(forKey:family) }
-        else { binding.remoteActive[family] = hostTime }
+        else {
+            // Assigning more modes must not enlarge the previously supported
+            // concurrent workload. A third onset is rejected before routing.
+            guard binding.remoteActive[family] != nil ||
+                  binding.remoteActive.count < PerformanceGroupRemoteSurface.maximumActiveFamilies else {
+                reports += retireSources([source],refreshNow:refreshNow,send:send)
+                return .init(status:.lost,reports:reports)
+            }
+            binding.remoteActive[family] = hostTime
+        }
         if binding.remoteActive.isEmpty {
             let lease = binding.lease
             binding.reset()

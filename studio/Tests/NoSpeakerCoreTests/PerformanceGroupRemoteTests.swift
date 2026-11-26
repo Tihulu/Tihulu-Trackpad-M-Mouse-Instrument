@@ -18,7 +18,9 @@ private func remoteGroup(_ source:SensorSource,_ signal:SensorSignal,_ target:Se
     a.patch.routes.append(.init(id:"drum",source:.phone,signal:.drumPad1,destination:.init(.note,number:36)))
     #expect(PerformanceGroupGamepadSession.supports(.init(groups:[a]),allowRemote:true))
     a.patch.routes.append(.init(id:"piano",source:.phone,signal:.pianoKey0,destination:.init(.note,number:64)))
-    #expect(!PerformanceGroupGamepadSession.supports(.init(groups:[a]),allowRemote:true))
+    #expect(PerformanceGroupGamepadSession.supports(.init(groups:[a]),allowRemote:true))
+    a.patch.routes.append(.init(id:"pedal",source:.phone,signal:.pedalSustain,destination:.init(.sustain)))
+    #expect(PerformanceGroupGamepadSession.supports(.init(groups:[a]),allowRemote:true))
     let gain = remoteGroup(.tablet,.pedalVolume,.init(.controlChange,number:7))
     #expect(!PerformanceGroupGamepadSession.supports(.init(groups:[gain]),allowRemote:true))
 }
@@ -176,4 +178,48 @@ private func remoteGroup(_ source:SensorSource,_ signal:SensorSignal,_ target:Se
     #expect(session.activeSessions == 1)
     let stale = session.receiveRemote(.phone,token:phone,bytes:wire("release",1,6),hostTime:0.40,now:0.40,send:sink)
     #expect(stale.status == .ignored)
+}
+
+
+@Test func groupRemoteFourAssignedFamiliesRequireNeutralAndKeepTwoActiveLimit() throws {
+    let group = PerformanceInstrumentGroup(name:"Switchable",patch:.init(routes:[
+        .init(id:"xy",source:.phone,signal:.contact,destination:.init(.note,number:60)),
+        .init(id:"drum",source:.phone,signal:.drumPad1,destination:.init(.note,channel:9,number:36)),
+        .init(id:"piano",source:.phone,signal:.pianoKey0,destination:.init(.note,number:64)),
+        .init(id:"pedal",source:.phone,signal:.pedalSustain,destination:.init(.sustain))
+    ]))
+    var session = try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowRemote:true)
+    let token = try session.bind(.phone,now:1)
+    let caps = try #require(session.remoteCapabilities(.phone))
+    #expect(caps.touch && caps.drums == 1 && caps.piano == 1 && caps.pedals == 8)
+    var events:[PerformanceGroupCommand] = []
+    let sink:(PerformanceGroupCommand)->Bool = { events.append($0); return true }
+    let neutral:[Data] = [wire("release",1,1),wire("drumPads",4,2,",\"mask\":0"),
+                          wire("pianoKeys",5,3,",\"mask\":0"),
+                          wire("pedalboard",6,4,",\"mask\":0,\"levels\":[0,0,0,0,0,0]")]
+    for (i,frame) in neutral.enumerated() {
+        let time=1+Double(i+1)*0.01
+        let result=session.receiveRemote(.phone,token:token,bytes:frame,hostTime:time,now:time,send:sink)
+        #expect(result.status == (i == 3 ? .ready : .waitingForNeutral))
+    }
+    #expect(events.isEmpty)
+    let frames:[Data] = [
+        wire("touch",1,5,",\"x\":0.5,\"y\":0.5"), wire("release",1,6),
+        wire("pianoKeys",5,7,",\"mask\":1"), wire("pianoKeys",5,8,",\"mask\":0"),
+        wire("drumPads",4,9,",\"mask\":1"), wire("drumPads",4,10,",\"mask\":0"),
+        wire("pedalboard",6,11,",\"mask\":8,\"levels\":[0,0,0,1,0,0]"),
+        wire("pedalboard",6,12,",\"mask\":0,\"levels\":[0,0,0,0,0,0]")]
+    for (i,frame) in frames.enumerated() {
+        let time=1.05+Double(i)*0.01
+        let result=session.receiveRemote(.phone,token:token,bytes:frame,hostTime:time,now:time,send:sink)
+        #expect(result.status == .ready || result.status == .delivered)
+    }
+    #expect(events.count == 8 && events.filter { $0.command.value == 0 }.count == 4)
+    #expect(session.activeSessions == 0 && session.sourceStates[.phone] == .armed)
+    events.removeAll()
+    _ = session.receiveRemote(.phone,token:token,bytes:wire("touch",1,13,",\"x\":0.5,\"y\":0.5"),hostTime:1.2,now:1.2,send:sink)
+    _ = session.receiveRemote(.phone,token:token,bytes:wire("drumPads",4,14,",\"mask\":1"),hostTime:1.21,now:1.21,send:sink)
+    let third=session.receiveRemote(.phone,token:token,bytes:wire("pianoKeys",5,15,",\"mask\":1"),hostTime:1.22,now:1.22,send:sink)
+    #expect(third.status == .lost && session.boundSources.isEmpty && session.activeSessions == 0)
+    #expect(events.count == 4 && !events.contains { $0.command.destination.number == 64 })
 }

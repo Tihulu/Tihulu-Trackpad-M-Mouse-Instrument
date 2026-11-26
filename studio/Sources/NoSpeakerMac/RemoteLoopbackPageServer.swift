@@ -947,7 +947,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if(manifest.drums)queue.push(["drumPads",{mask:0}]);
       if(manifest.piano)queue.push(["pianoKeys",{mask:0}]);
       if(manifest.pedals)queue.push(["pedalboard",{mask:0,levels:[0,0,0,0,0,0]}]);
-      if(queue.length<1||queue.length>2||manifest.tilt||manifest.acceleration||manifest.rotation||manifest.airDrums){close("Unsupported group surface.");return;}
+      if(queue.length<1||queue.length>4||manifest.tilt||manifest.acceleration||manifest.rotation||manifest.airDrums){close("Unsupported group surface.");return;}
       groupReady={manifest,rows,labels,queue};
       status.textContent="Arming neutral group controls…";
       send(...queue.shift());
@@ -1012,7 +1012,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     return discrete===0?sensors<=3:discrete===1&&sensors<=2;
   }
   function workloadAllows(group){
-    return !releasingAll&&modeAllows(group)&&(experimentalWorkload||conservativeCombination(workloadMask()|workloadBits[group]));
+    const requested=workloadMask()|workloadBits[group];
+    return !releasingAll&&modeAllows(group)&&(!groupNeutralHandshake||popcount(requested)<=2)&&
+      (experimentalWorkload||conservativeCombination(requested));
   }
   function requestWorkload(group){
     if(workloadAllows(group)){workloadRefusal="";return true;}

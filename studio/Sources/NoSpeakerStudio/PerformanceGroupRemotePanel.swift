@@ -115,7 +115,7 @@ struct PerformanceGroupRemotePanel: View {
     var body: some View {
         GroupBox("Mobile group controllers — experimental TLS") {
             VStack(alignment:.leading,spacing:7) {
-                Text("Up to two mapped surface families per phone/tablet slot. Enable experimental combinations explicitly in the browser to play both together. MIDI addresses stay hidden. Custom labels are optional per invitation. Trusted TLS identity required.")
+                Text("Assign up to four surface families per phone/tablet slot; switch modes in Play. At most two may be active together with explicit experimental consent in the browser. MIDI addresses stay hidden. Custom labels are optional per invitation. Trusted TLS identity required.")
                     .font(.caption).foregroundStyle(.secondary)
                 if !studio.groupGamepadsRunning {
                     Toggle("Private LAN (requires successful Builder loopback diagnostic)",isOn:$lan)

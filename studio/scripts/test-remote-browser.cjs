@@ -621,8 +621,8 @@ test("group browser neutral handshake covers drum piano and pedal masks",()=>{
     assert.equal(a.elements.playView.hidden,false);
   }
 });
-test("group browser rejects more than two families and missing neutral ACK",()=>{
-  const mixed=setup("granted",{...touchOnly,drums:1,piano:1},false,true,true);
+test("group browser rejects motion families and missing neutral ACK",()=>{
+  const mixed=setup("granted",{...touchOnly,tilt:true,drums:1,piano:1},false,true,true);
   assert.equal(mixed.socket.closed,true);
   const a=setup("granted",touchOnly,false,true,true);
   a.step(221);
@@ -1214,4 +1214,29 @@ test("device mode menu keeps motion permission explicit and releases active gyro
   assert.equal(a.socket.frames.at(-1).kind,"rotationRelease");
   a.ack();assert.equal(e.playMode.value,"pedals");assert.equal(e.pedalSection.hidden,false);
   assert.equal(a.window.events.has("devicemotion"),false);
+});
+
+
+test("group browser arms four assigned families but retains a two-family workload limit",()=>{
+  const a=setup("granted",{...touchOnly,drums:1,piano:1,pedals:8},false,true,true);
+  for(const kind of ["release","drumPads","pianoKeys","pedalboard"]){
+    assert.equal(a.socket.frames.at(-1).kind,kind);
+    assert.equal(a.elements.playView.hidden,true);
+    a.ack();
+  }
+  assert.equal(a.elements.playView.hidden,false);
+  a.elements.navSetup.emit("click");
+  a.elements.workloadMode.emit("click");
+  a.elements.navPlay.emit("click");
+  a.elements.drumEnable.emit("click");
+  a.elements.pianoEnable.emit("click");
+  a.elements.pedalEnable.emit("click");
+  assert.match(a.elements.playWorkloadStatus.textContent,/Combination unavailable/);
+  assert.equal(a.elements.pedalEnable.textContent,"Enable pedalboard");
+  const b=setup("granted",{...touchOnly,drums:1,piano:1,pedals:8},false,true,true);
+  b.ack();b.ack();b.ack();
+  assert.equal(b.socket.frames.at(-1).kind,"pedalboard");
+  b.step(221);
+  assert.equal(b.socket.closed,true);
+  assert.equal(b.elements.playView.hidden,true);
 });
