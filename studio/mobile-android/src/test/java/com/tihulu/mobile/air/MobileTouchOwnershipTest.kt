@@ -47,4 +47,26 @@ class MobileTouchOwnershipTest {
         assertEquals(0,p.retire().keys)
         assertNull(p.update(ended,emptyList()))
     }
+
+    @Test fun pointerTransitionChecksExactChangedPointerAndCompletePreReleaseSet() {
+        val p=MobileTouchOwnership(3)
+        assertEquals(1,p.pointerTransition(began,listOf(c(4,0.0)),4)?.keys)
+        assertEquals(3,p.pointerTransition(began,listOf(c(4,0.0),c(9,1.0)),9)?.keys)
+        assertEquals(2,p.pointerTransition(ended,listOf(c(4,0.0),c(9,1.0)),4)?.keys)
+        assertEquals(0,p.pointerTransition(ended,listOf(c(9,1.0)),9)?.keys)
+        assertTrue(p.activeIDs.isEmpty())
+        for(id in listOf(7,9)){
+            val q=MobileTouchOwnership(3)
+            q.pointerTransition(began,listOf(c(4,0.0)),4)
+            assertNull(q.pointerTransition(ended,listOf(c(id,1.0)),id))
+            assertTrue(q.retired)
+        }
+    }
+    @Test fun pointerTransitionCannotInventSecondPointerWithoutDown() {
+        val p=MobileTouchOwnership(3)
+        p.pointerTransition(began,listOf(c(4,0.0)),4)
+        assertNull(p.pointerTransition(moved,listOf(c(4,0.0),c(9,1.0))))
+        assertTrue(p.retired)
+        assertEquals(0,p.output.keys)
+    }
 }

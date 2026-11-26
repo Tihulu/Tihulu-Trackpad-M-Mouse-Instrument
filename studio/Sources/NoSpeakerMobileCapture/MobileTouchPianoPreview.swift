@@ -15,7 +15,7 @@ import NoSpeakerCore
 }
 
 @MainActor final class MobileTouchPianoController:UIViewController {
-    private let piano=MobileTouchPianoView()
+    private let piano=MobileTouchPianoView(frame:.zero)
     private let status=UILabel()
     private let armButton=UIButton(type:.system)
     private let releaseButton=UIButton(type:.system)
@@ -78,7 +78,6 @@ import NoSpeakerCore
         backgroundColor = .secondarySystemBackground
         contentMode = .redraw
     }
-    convenience init(){self.init(frame:.zero)}
     required init?(coder:NSCoder){return nil}
     func arm(){
         guard owner==nil,window != nil,UIApplication.shared.applicationState == .active,

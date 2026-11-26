@@ -98,17 +98,20 @@ internal class TouchPianoView(context:Context,
             else->{retire();return true}
         }
         if(event.actionIndex !in 0 until event.pointerCount){retire();return true}
+        val single=event.actionMasked==MotionEvent.ACTION_DOWN||event.actionMasked==MotionEvent.ACTION_UP
+        val multi=event.actionMasked==MotionEvent.ACTION_POINTER_DOWN||event.actionMasked==MotionEvent.ACTION_POINTER_UP
+        if(single&&event.pointerCount!=1||multi&&event.pointerCount<2){retire();return true}
         if(event.actionMasked==MotionEvent.ACTION_DOWN)parent?.requestDisallowInterceptTouchEvent(true)
         val contacts=ArrayList<MobileTouchKeys.Contact>(event.pointerCount)
         for(i in 0 until event.pointerCount){
-            if(change==MobileTouchOwnership.Change.ENDED&&i==event.actionIndex)continue
             if(event.getToolType(i)!=MotionEvent.TOOL_TYPE_FINGER||
                 event.getY(i) !in 0f..height.toFloat()){retire();return true}
             contacts.add(MobileTouchKeys.Contact(event.getPointerId(i),event.getX(i).toDouble()/width))
         }
-        val output=current.update(change,contacts)
+        val changedID=if(change==MobileTouchOwnership.Change.MOVED)null else event.getPointerId(event.actionIndex)
+        val output=current.pointerTransition(change,contacts,changedID)
         if(output==null){retire();return true}
-        if(contacts.isEmpty())parent?.requestDisallowInterceptTouchEvent(false)
+        if(current.activeIDs.isEmpty())parent?.requestDisallowInterceptTouchEvent(false)
         changed(output,true);invalidate()
         return true
     }
