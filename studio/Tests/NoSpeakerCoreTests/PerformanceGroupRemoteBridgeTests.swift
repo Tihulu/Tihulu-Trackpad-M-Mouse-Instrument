@@ -550,3 +550,41 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     #expect(result.actions == [.revoke(a),.revoke(b)])
     #expect(bridge.connectionIDs.isEmpty && session.boundSources.isEmpty && session.activeSessions==0)
 }
+
+
+@Test func groupRemoteRefusesLatePerformanceOrEmptyTickAfterMetadataBudget() throws {
+    for deliverFrame in [false,true] {
+        let phone=groupRemoteFixture(.phone,.contact,60)
+        var session=try PerformanceGroupGamepadSession(profile:.init(groups:[phone]),allowRemote:true)
+        var bridge=PerformanceGroupRemoteBridge()
+        let peer=UUID(),secret=Data(repeating:3,count:32)
+        let sink:(PerformanceGroupCommand)->Bool={_ in Issue.record("Unexpected MIDI");return true}
+        _=bridge.process([.ready],now:0,session:&session,send:sink)
+        try bridge.issue(secret:secret,source:.phone,now:0,session:session)
+        _=bridge.process([.invitation(peer,secret,0)],now:0,session:&session,send:sink)
+        _=bridge.process([.frame(peer,groupRemoteWire("capabilities",7,1),0.25)],now:0.25,session:&session,send:sink)
+        for i in 1...10 {
+            _=bridge.process([.frame(peer,groupRemoteWire("heartbeat",1,i+1),Double(i))],
+                             now:Double(i),session:&session,send:sink)
+        }
+        let events:[RemoteHostEvent]=deliverFrame ? [.frame(peer,groupRemoteWire("release",1,12),10.2)] : []
+        let result=bridge.process(events,now:10.2,refreshNow:{10.26},session:&session,send:sink)
+        #expect(result.actions == (deliverFrame ? [.acknowledge(peer,false)] : [.revoke(peer)]))
+        #expect(bridge.connectionIDs.isEmpty && session.boundSources.isEmpty)
+    }
+}
+
+@Test func groupRemoteDoesNotPublishQueuedCapabilitiesAfterSameBatchRejection() throws {
+    let group=groupRemoteFixture(.phone,.contact,60)
+    var session=try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowRemote:true)
+    var bridge=PerformanceGroupRemoteBridge()
+    let peer=UUID(),secret=Data(repeating:4,count:32)
+    let sink:(PerformanceGroupCommand)->Bool={_ in Issue.record("Unexpected MIDI");return true}
+    _=bridge.process([.ready],now:1,session:&session,send:sink)
+    try bridge.issue(secret:secret,source:.phone,now:1,session:session)
+    _=bridge.process([.invitation(peer,secret,1.01)],now:1.01,session:&session,send:sink)
+    let result=bridge.process([.frame(peer,groupRemoteWire("capabilities",7,1),1.02),
+                               .frame(peer,Data([0xff]),1.02)],now:1.02,session:&session,send:sink)
+    #expect(result.actions==[.acknowledge(peer,false)])
+    #expect(bridge.connectionIDs.isEmpty && session.boundSources.isEmpty)
+}

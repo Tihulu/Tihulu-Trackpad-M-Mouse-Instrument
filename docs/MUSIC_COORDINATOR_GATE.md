@@ -102,3 +102,8 @@ A receipt fault can retire a Group after successful local MIDI sends and success
 ## Terminal Group expiry drain
 
 Rejecting malformed/stale input or failed frame admission can itself perform blocking neutral cleanup. Terminal input rejection now uses the same bounded stale-source drain as explicit retirement, rather than leaving other newly expired notes until the next watchdog tick. Ordinary surface/Touch Bar lift retains its post-cleanup receipt gate; Lid loss drains survivors. An authorized empty watchdog tick also samples the refreshed clock even when its initial expiry set is empty; unmatched unbind remains a no-op. Two tests cover invalid-input cleanup stalling an independent note and empty watchdog vs mismatched token. Existing deadlines and endpoint identity unchanged.
+
+
+## Group remote metadata budget and queued disclosure
+
+The original ten-second metadata negotiation budget is now checked at refreshed event admission, after synchronous session processing and on final/empty batch reconciliation. A delayed first performance snapshot cannot mark an expired incomplete negotiation complete. Final metadata expiry is drained in bounded rounds; queued capabilities/mapping/label actions are removed for connections retired before batch publication. Per-frame ACK semantics otherwise unchanged. Two regressions exercise a fresh wire receipt crossing the original metadata budget (including an empty tick), and same-batch rejection after an already queued capability response. No deadline changes and no additional remote permissions.

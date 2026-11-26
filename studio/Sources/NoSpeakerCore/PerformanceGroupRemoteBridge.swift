@@ -123,6 +123,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                 result.reports += retirement.reports
                 result.actions += retirement.actions
                 result.fault=true
+                discardInvalidMetadata(in:&result)
                 return result
             }
             lastProcessingTime=eventNow
@@ -152,6 +153,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                 result.actions.append(.acknowledge(id,true))
             case .frame(let id,let bytes,let receipt):
                 guard !rejected.contains(id),var binding = bindings[id],
+                      !binding.metadataExpired(now:now),
                       fresh(receipt,now:now),let validated = try? ValidatedGroupRemoteFrame(bytes:bytes) else {
                     result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
                     rejected.insert(id)
@@ -187,6 +189,26 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                                                               hostTime:receipt,now:now,refreshNow:refreshNow,send:send)
                 result.reports += received.reports
                 guard received.status == .ready || received.status == .waitingForNeutral || received.status == .delivered else {
+                    result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
+                    rejected.insert(id)
+                    result.actions.append(.acknowledge(id,false))
+                    continue
+                }
+                // The session may have synchronously released another
+                // source. An incomplete negotiation cannot cross its
+                // absolute budget during that work and then start play
+                // or disclose a label page as if still timely.
+                let completedAt=refreshNow?() ?? now
+                guard completedAt.isFinite,completedAt>=now else {
+                    let retirement=stop(session:&session,refreshNow:refreshNow,send:send)
+                    result.reports += retirement.reports
+                    result.actions += retirement.actions
+                    result.fault=true
+                    discardInvalidMetadata(in:&result)
+                    return result
+                }
+                lastProcessingTime=completedAt
+                guard !binding.metadataExpired(now:completedAt) else {
                     result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
@@ -234,9 +256,42 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                 bindings[id] = binding
             }
         }
+        // The batch can cross a metadata deadline even with no frame from
+        // that peer (or no events at all). Drain newly expired negotiations
+        // in bounded rounds, with the original ten-second deadline.
+        for _ in 0...bindings.count {
+            let current=refreshNow?() ?? now
+            guard current.isFinite,current>=lastProcessingTime else {
+                let retirement=stop(session:&session,refreshNow:refreshNow,send:send)
+                result.reports += retirement.reports
+                result.actions += retirement.actions
+                result.fault=true
+                break
+            }
+            lastProcessingTime=current
+            let timedOut=Set(bindings.compactMap { id,binding in
+                binding.metadataExpired(now:current) ? id : nil
+            })
+            guard !timedOut.isEmpty else { break }
+            result.reports += remove(timedOut,session:&session,refreshNow:refreshNow,send:send)
+            result.actions += timedOut.sorted(by:{ $0.uuidString < $1.uuidString }).map { .revoke($0) }
+        }
         // Another peer's cleanup can expire an authenticated slot.
         result.actions += reconcileRevoked(session:session)
+        discardInvalidMetadata(in:&result)
         return result
+    }
+
+    /// Actions are applied only after process returns. Never publish queued
+    /// metadata for a connection that was retired later in the same batch.
+    private func discardInvalidMetadata(in result:inout PerformanceGroupRemoteBatch) {
+        result.actions.removeAll { action in
+            switch action {
+            case .capabilities(let id,_),.mapping(let id,_),.mappingLabels(let id,_):
+                return bindings[id] == nil
+            default: return false
+            }
+        }
     }
 
     private mutating func reconcileRevoked(session:PerformanceGroupGamepadSession) -> [RemoteHostAction] {
