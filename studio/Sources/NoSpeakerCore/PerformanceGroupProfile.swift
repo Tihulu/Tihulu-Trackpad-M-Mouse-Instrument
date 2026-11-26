@@ -79,6 +79,32 @@ public struct PerformanceGroupProfile: Codable, Equatable, Sendable {
         return true
     }
 
+    /// Offline transfer of one complete logical drum element between mobile
+    /// slots. Preserve the existing note, calibration, labels and port.
+    /// Refuse a target already using that logical pad in any group.
+    @discardableResult
+    public mutating func reassignRemoteDrum(groupID:UUID,signal:SensorSignal,from:SensorSource,to:SensorSource) -> Bool {
+        guard isValid,from.isGroupRemote,to.isGroupRemote,from != to,
+              RemoteDrumPads.signals.contains(signal),
+              let index=groups.firstIndex(where:{ $0.id == groupID }),
+              groups[index].patch.routes.contains(where:{ $0.source == from && $0.signal == signal }),
+              !groups.contains(where:{ $0.patch.routes.contains(where:{ $0.source == to && $0.signal == signal }) }) else { return false }
+        var next=self
+        for i in next.groups[index].patch.routes.indices where next.groups[index].patch.routes[i].source == from && next.groups[index].patch.routes[i].signal == signal {
+            next.groups[index].patch.routes[i].source=to
+        }
+        if var layout=next.groups[index].patch.performanceLayout {
+            for i in layout.widgets.indices where layout.widgets[i].source == from && layout.widgets[i].signal == signal {
+                layout.widgets[i].source=to
+            }
+            next.groups[index].patch.performanceLayout=layout
+        }
+        let remote=Dictionary(grouping:next.groups.flatMap { $0.patch.routes }.filter { $0.source.isGroupRemote },by:{ $0.source })
+        guard next.isValid,remote.values.allSatisfy({ PerformanceGroupRemoteSurface.modes(for:$0) != nil }) else { return false }
+        self=next
+        return true
+    }
+
     /// A source assigned to several planned ports is intentional layering only
     /// after explicit runtime consent. This projection never starts any source.
     public var layeredInputs: [PatchSimulation.Input] {

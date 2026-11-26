@@ -131,6 +131,28 @@ import Testing
     let session=try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
     let left=try #require(session.remoteCapabilities(.phone))
     let right=try #require(session.remoteCapabilities(.phone2))
-    #expect(left.drums == 50 && right.drums == 204 && left.drums & right.drums == 0)
+    #expect(left.drums == 51 && right.drums == 204 && left.drums & right.drums == 0)
     #expect(profile.groups[0].patch.routes.allSatisfy { $0.destination.channel == 9 && $0.destination.kind == .note })
+}
+
+
+@Test func drumElementTransferPreservesPortAndRejectsOccupiedLogicalPad() throws {
+    var profile=try #require(PerformanceGroupStarterPreset.dualPhoneSticks.makeProfile())
+    let before=profile.groups[0]
+    let original=try #require(before.patch.routes.first { $0.signal == .drumPad2 })
+    let moved=profile.reassignRemoteDrum(groupID:before.id,signal:.drumPad2,from:.phone,to:.phone2)
+    #expect(moved && profile.groups[0].id == before.id)
+    var expected=original;expected.source = .phone2
+    #expect(profile.groups[0].patch.routes.contains(expected))
+    let session=try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
+    #expect(session.remoteCapabilities(.phone)?.drums == 49)
+    #expect(session.remoteCapabilities(.phone2)?.drums == 206)
+    let unchanged=profile
+    #expect(!profile.reassignRemoteDrum(groupID:before.id,signal:.drumPad2,from:.phone,to:.phone2))
+    #expect(profile == unchanged)
+    var duplicate=expected;duplicate.id="occupied-pad";duplicate.source = .phone
+    profile.groups[0].patch.routes.append(duplicate)
+    let occupied=profile
+    #expect(!profile.reassignRemoteDrum(groupID:before.id,signal:.drumPad2,from:.phone2,to:.phone))
+    #expect(profile == occupied)
 }

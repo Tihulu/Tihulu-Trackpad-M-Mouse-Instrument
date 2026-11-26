@@ -98,7 +98,7 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
     }
     public var detail:String {
         switch self {
-        case .dualPhoneSticks: "Phone left: snare/toms; phone2 right: hi-hat/cymbals. Shared drum port. Choose Air stick on each device."
+        case .dualPhoneSticks: "Phone left: kick/snare/toms; phone2 right: hi-hat/cymbals. Shared drum port. Choose Air stick on each device."
         case .phoneAllSurfaces,.tabletAllSurfaces: "Switch between XY lead, piano, drum pads and pedalboard on the device. Dedicated drum port; at most two active surfaces."
         case .phoneXYKeys: "Switch on phone between XY lead and piano on the same instrument port."
         case .tabletKeysDrums: "Switch on tablet between piano and drum pads on independent MIDI ports."
@@ -168,7 +168,7 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
         let groups:[PerformanceInstrumentGroup]
         switch self {
         case .dualPhoneSticks:
-            let left=RemoteDrumPads.routes(source:.phone).filter { [.drumPad2,.drumPad5,.drumPad6].contains($0.signal) }
+            let left=RemoteDrumPads.routes(source:.phone).filter { [.drumPad1,.drumPad2,.drumPad5,.drumPad6].contains($0.signal) }
             let right=RemoteDrumPads.routes(source:.phone).filter { [.drumPad3,.drumPad4,.drumPad7,.drumPad8].contains($0.signal) }.map { route -> SensorMapping in
                 var next=route;next.source = .phone2;return next
             }

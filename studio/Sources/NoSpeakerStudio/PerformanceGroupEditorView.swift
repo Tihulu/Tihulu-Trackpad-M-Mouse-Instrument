@@ -172,6 +172,7 @@ struct PerformanceGroupEditorView: View {
                 groupActions(group)
                 remoteRetargetMenu(group)
                 mobileEditMenu(group)
+                drumAssignmentMenu(group)
                 Button("Edit a copy in Builder") { editInBuilder(group.patch) }
                     .disabled(!group.patch.isValid || group.patch.routes.isEmpty ||
                               group.patch.routes.contains(where:{ $0.source.isGroupOnlyRemote }))
@@ -206,6 +207,34 @@ struct PerformanceGroupEditorView: View {
                     }
                 }
             }.disabled(free.isEmpty || editingLocked)
+        }
+    }
+
+    @ViewBuilder private func drumAssignmentMenu(_ group:PerformanceInstrumentGroup) -> some View {
+        let routes=group.patch.routes.filter { $0.source.isGroupRemote && RemoteDrumPads.signals.contains($0.signal) }
+        if !routes.isEmpty {
+            Menu("Assign drum elements") {
+                ForEach(SensorSource.groupRemoteSources,id:\.self) { from in
+                    let signals=RemoteDrumPads.signals.filter { signal in routes.contains { $0.source == from && $0.signal == signal } }
+                    if !signals.isEmpty {
+                        Menu(from.rawValue) {
+                            ForEach(signals,id:\.self) { signal in
+                                let index=RemoteDrumPads.signals.firstIndex(of:signal) ?? 0
+                                Menu(["Kick","Snare","Closed hi-hat","Open hi-hat","Low tom","High tom","Crash","Ride"][index]) {
+                                    ForEach(SensorSource.groupRemoteSources.filter { $0 != from },id:\.self) { to in
+                                        Button(to.rawValue) {
+                                            guard !editingLocked,!readFailed,didLoad else { return }
+                                            message=profile.reassignRemoteDrum(groupID:group.id,signal:signal,from:from,to:to)
+                                                ? "Drum element reassigned in draft. Save and pair the updated slots before Start."
+                                                : "Drum assignment refused; existing mappings unchanged."
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }.disabled(!profile.isValid || editingLocked || readFailed || !didLoad)
         }
     }
 
