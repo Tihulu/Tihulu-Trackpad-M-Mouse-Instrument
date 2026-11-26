@@ -67,6 +67,7 @@ class AirPreviewActivity: ComponentActivity() {
     private var ticket=0L
     private var pairedAllowed=false
     private lateinit var paired:CheckBox
+    private lateinit var touchOnly:CheckBox
     private lateinit var address:EditText
     private lateinit var invitation:EditText
     private lateinit var fingerprint:EditText
@@ -86,7 +87,8 @@ class AirPreviewActivity: ComponentActivity() {
     private var lastPhase:MobileLanSession.Phase?=null
     private val locked get()=busy||lan!=null||qrRequested
     private val wantsPair get()=pairedAllowed&&paired.isChecked
-    private val canEditInstrument get()=!busy&&!qrRequested&&(lan==null||lan?.status()?.phase==MobileLanSession.Phase.READY)
+    private val wantsTouchPair get()=wantsPair&&touchOnly.isChecked
+    private val canEditInstrument get()=!wantsTouchPair&&!busy&&!qrRequested&&(lan==null||lan?.status()?.phase==MobileLanSession.Phase.READY)
     private fun selectedMode()=(if(depthToggle.isChecked)depthModes else modes).getOrNull(modePick.selectedItemPosition)
     private fun selectedRole()=HandRole.entries.getOrNull(rolePick.selectedItemPosition)
     private fun selectedOrientation()=Orientation.entries.getOrNull(orientationPick.selectedItemPosition)
@@ -186,7 +188,7 @@ class AirPreviewActivity: ComponentActivity() {
                     controls()
                 }
             }
-            if((source!=null||depthSource!=null||lan!=null)&&ContextCompat.checkSelfPermission(this@AirPreviewActivity,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
+            if((source!=null||depthSource!=null||(lan!=null&&!wantsTouchPair))&&ContextCompat.checkSelfPermission(this@AirPreviewActivity,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
                 end("Camera permission lost");handler.postDelayed(this,50);return
             }
             if(retiring?.isStopped==true) {retiring=null;controls()}
@@ -243,6 +245,7 @@ class AirPreviewActivity: ComponentActivity() {
             pairPanel.addView(it)
         }
         fun pairButton(text:String,action:()->Unit)=Button(this).also {it.text=text;it.setOnClickListener{action()};pairPanel.addView(it)}
+        touchOnly=CheckBox(this).also {it.text="Pair for touch piano only (no camera)";pairPanel.addView(it)}
         address=field("Mac controller HTTPS address")
         qrButton=pairButton("Scan Mac address QR (camera photo)"){scanAddress()}
         invitation=field("Separate one-time invitation",true)
@@ -317,6 +320,7 @@ class AirPreviewActivity: ComponentActivity() {
         paired.setOnCheckedChangeListener {_,checked->
             if(!locked){pairPanel.visibility=if(checked&&pairedAllowed)View.VISIBLE else View.GONE;clearInvitation();controls()}
         }
+        touchOnly.setOnCheckedChangeListener {_,_->if(!locked){clearInvitation();controls()}}
         modePick.onItemSelectedListener=object:AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent:AdapterView<*>?) {controls()}
             override fun onItemSelected(parent:AdapterView<*>?,view:View?,position:Int,id:Long){controls()}
@@ -349,14 +353,15 @@ class AirPreviewActivity: ComponentActivity() {
         modelButton.isEnabled=!b
         paired.isEnabled=!b&&pairedAllowed
         for(v in listOf(address,invitation,fingerprint,qrButton,rootButton,helperPick))v.isEnabled=!b&&wantsPair
-        helperPick.visibility=if(selectedMode()?.isHelper==true)View.VISIBLE else View.GONE
+        touchOnly.isEnabled=!b&&wantsPair
+        helperPick.visibility=if(!wantsTouchPair&&selectedMode()?.isHelper==true)View.VISIBLE else View.GONE
         connectButton.isEnabled=!b&&wantsPair
         disconnectButton.isEnabled=lan!=null
         pauseModeButton.isEnabled=lan?.status()?.phase==MobileLanSession.Phase.READY&&(pending||source!=null||depthSource!=null)
         start.text=if(wantsPair)"Start playing" else "Start sensors"
-        if(lan?.status()?.phase==MobileLanSession.Phase.READY&&!busy&&pairedProjection()==null)
+        if(!wantsTouchPair&&lan?.status()?.phase==MobileLanSession.Phase.READY&&!busy&&pairedProjection()==null)
             status.text="Mode incompatible with assignment: choose the same family or disconnect and pair again."
-        start.isEnabled=!busy&&!qrRequested&&(depth||r?.admits(zoom)==true)&&(!wantsPair||pairedProjection()!=null)
+        start.isEnabled=!wantsTouchPair&&!busy&&!qrRequested&&(depth||r?.admits(zoom)==true)&&(!wantsPair||pairedProjection()!=null)
         stopButton.isEnabled=pending||source!=null||depthSource!=null||lan!=null
     }
     private fun scanAddress() {
@@ -371,7 +376,7 @@ class AirPreviewActivity: ComponentActivity() {
     }
     private fun connectMac() {
         if(!wantsPair||locked||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
-        if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){
+        if(!wantsTouchPair&&ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){
             permission.launch(Manifest.permission.CAMERA);return
         }
         val endpoint=MobileLanEndpoint.parse(address.text.toString())
@@ -381,13 +386,13 @@ class AirPreviewActivity: ComponentActivity() {
         val root=rootDer
         val digest=fingerprint.text.toString()
         val mode=selectedMode()
-        if(endpoint==null||check==null||root==null||mode==null){
+        if(endpoint==null||check==null||root==null||(!wantsTouchPair&&mode==null)){
             connectionStatus.text="Enter the exact Mac address, invitation and verified DER root.";return
         }
-        if(mode==AirMode.CHORDS&&selectedRole()==HandRole.SINGLE){
+        if(!wantsTouchPair&&mode==AirMode.CHORDS&&selectedRole()==HandRole.SINGLE){
             connectionStatus.text="Choose a left or right performing hand for chords.";return
         }
-        val selection=if(mode.isHelper)MobileLanSession.Selection.Helper(helperPick.selectedItemPosition) else MobileLanSession.Selection.Keys
+        val selection=if(!wantsTouchPair&&mode?.isHelper==true)MobileLanSession.Selection.Helper(helperPick.selectedItemPosition) else MobileLanSession.Selection.Keys
         clearInvitation()
         val epoch=++ticket;importing=true;controls();connectionStatus.text="Verifying selected private root"
         importer.execute {
@@ -416,7 +421,7 @@ class AirPreviewActivity: ComponentActivity() {
         }
     }
     private fun begin() {
-        if(busy||qrRequested||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||wantsPair&&pairedProjection()==null)return
+        if(wantsTouchPair||busy||qrRequested||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||wantsPair&&pairedProjection()==null)return
         if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
             permission.launch(Manifest.permission.CAMERA);return
         }

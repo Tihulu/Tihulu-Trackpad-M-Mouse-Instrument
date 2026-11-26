@@ -7,6 +7,7 @@ import NoSpeakerCore
 @MainActor public struct MobileAirPreviewView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var useMac = false
+    @State private var touchOnlyPairing = false
     @State private var pageAddress = ""
     @State private var invitation = ""
     @State private var helperIndex = 0
@@ -46,6 +47,7 @@ import NoSpeakerCore
     private var instrumentLocked: Bool {busy || scanning || askingPermission || (socket != nil && assignment == nil)}
     private var playableAssignment: Bool {
         guard useMac else { return true }
+        guard !touchOnlyPairing else { return false }
         guard let assignment, mode.isHelper == (assignment.piano == 0) else { return false }
         return MobileAirCaptureProjection(mode: mode, keys: assignment.piano, role: role,
             orientation: musicalOrientation, mirrorX: mirror, near: near, far: far) != nil
@@ -140,8 +142,8 @@ import NoSpeakerCore
                             Slider(value:$far,in:0.2...3,step:0.05)
                         }
                     }
-                }.disabled(instrumentLocked)
-                if !valid {
+                }.disabled(instrumentLocked || (useMac && touchOnlyPairing))
+                if !valid && !(useMac && touchOnlyPairing) {
                     Text("Select a supported sensor, valid range and a distinct performing hand for chords.").foregroundStyle(.orange)
                 }
                 GeometryReader {geo in
@@ -212,6 +214,13 @@ import NoSpeakerCore
     }
     private var pairingPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Picker("Pair for",selection:$touchOnlyPairing) {
+                Text("Camera / Air").tag(false)
+                Text("Touch piano").tag(true)
+            }.pickerStyle(.segmented).disabled(configurationLocked)
+            if touchOnlyPairing {
+                Text("Manual touch pairing needs no camera access. QR scanning still uses the camera. Reconnect to use Air sensors.").font(.caption)
+            }
             TextField("Mac controller address", text: $pageAddress)
                 .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                 .textFieldStyle(.roundedBorder).disabled(configurationLocked)
@@ -222,14 +231,14 @@ import NoSpeakerCore
             SecureField("One-time invitation from Mac", text: $invitation)
                 .textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive()
                 .textFieldStyle(.roundedBorder).disabled(configurationLocked)
-            if mode.isHelper {
+            if !touchOnlyPairing && mode.isHelper {
                 Picker("Mac helper lane", selection: $helperIndex) {
                     ForEach(0..<3) { index in Text("Pedal " + String(index + 1)).tag(index) }
                 }.disabled(configurationLocked)
             }
             if socket == nil {
                 Button("Connect to Mac", action: connect)
-                    .disabled(configurationLocked || !valid || MobileLANEndpoint(pageAddress: pageAddress) == nil ||
+                    .disabled(configurationLocked || (!touchOnlyPairing && !valid) || MobileLANEndpoint(pageAddress: pageAddress) == nil ||
                               MobileLANEndpoint.invitationBytes(invitation) == nil || scenePhase != .active)
             } else {
                 Button("Disconnect and release") { stop("Disconnected") }
@@ -241,7 +250,7 @@ import NoSpeakerCore
                     let keys = (0..<25).filter { assignment.piano & (1 << $0) != 0 }
                     Text("Mac assigned keys " + keys.map { String($0 + 1) }.joined(separator: ", "))
                 }
-                if !playableAssignment {
+                if !touchOnlyPairing && !playableAssignment {
                     Text("Choose a compatible mode in the assigned family, or disconnect and pair again.")
                 }
             }
@@ -267,11 +276,11 @@ import NoSpeakerCore
     }
 
     private func connect() {
-        guard useMac, !configurationLocked, valid, scenePhase == .active,
+        guard useMac, !configurationLocked, (touchOnlyPairing || valid), scenePhase == .active,
               let endpoint = MobileLANEndpoint(pageAddress: pageAddress),
               MobileLANEndpoint.invitationBytes(invitation) != nil,
-              cameraPermissionForPairing() else { return }
-        let client = MobileLANSocket(endpoint: endpoint, selection: mode.isHelper ? .helper(helperIndex) : .keys)
+              (touchOnlyPairing || cameraPermissionForPairing()) else { return }
+        let client = MobileLANSocket(endpoint: endpoint, selection: !touchOnlyPairing && mode.isHelper ? .helper(helperIndex) : .keys)
         let secret = invitation
         invitation = ""
         guard client.connect(invitation: secret) else {
@@ -291,7 +300,7 @@ import NoSpeakerCore
         status="Assigned touch piano · press Arm to play"
     }
     private func start() {
-        guard !busy, !scanning, !askingPermission, valid, playableAssignment, scenePhase == .active else {return}
+        guard !busy, !scanning, !askingPermission, !(useMac && touchOnlyPairing), valid, playableAssignment, scenePhase == .active else {return}
         let ticket=UUID();generation=ticket;pending=true;status="Waiting for camera permission"
         Task { @MainActor in
             let granted=await MobileAirSensorSource.requestCameraPermission()
