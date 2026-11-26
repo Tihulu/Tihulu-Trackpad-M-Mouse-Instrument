@@ -914,7 +914,7 @@ struct PerformanceGroupEditorView: View {
                         }
                     }
                     Section("Switch modes on mobile") {
-                        ForEach([PerformanceGroupStarterPreset.dualPhoneSticks,.phoneAllSurfaces,.tabletAllSurfaces,.phoneXYKeys,.tabletKeysDrums,.phoneXYEffects]) { p in
+                        ForEach([PerformanceGroupStarterPreset.dualPhoneSticks,.phoneSynth,.tabletSynth,.phoneAllSurfaces,.tabletAllSurfaces,.phoneXYKeys,.tabletKeysDrums,.phoneXYEffects]) { p in
                             Text(p.title).tag(p)
                         }
                     }

@@ -156,3 +156,15 @@ import Testing
     #expect(!profile.reassignRemoteDrum(groupID:before.id,signal:.drumPad2,from:.phone2,to:.phone))
     #expect(profile == occupied)
 }
+
+
+@Test func mobileSynthPresetMapsThreeContinuousKnobsAndPianoSustain() throws {
+    for preset in [PerformanceGroupStarterPreset.phoneSynth,.tabletSynth] {
+        let profile=try #require(preset.makeProfile())
+        let source=try #require(preset.requiredSources.first)
+        let session=try PerformanceGroupGamepadSession(profile:profile,allowRemote:true)
+        let caps=try #require(session.remoteCapabilities(source))
+        #expect(caps.piano == RemotePiano.maximumMask && caps.pedals == 7)
+        #expect(Set(profile.groups[0].patch.routes.filter { RemotePedalboard.signals.contains($0.signal) }.map(\.destination.number)) == [74,71,73])
+    }
+}

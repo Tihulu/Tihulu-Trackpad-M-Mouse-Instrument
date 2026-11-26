@@ -66,10 +66,12 @@ public enum PerformanceGroupPartyJamPreset:String,CaseIterable,Identifiable,Send
 public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Sendable {
     case trackpadSolo,mouseSolo,desktopDuo,xboxSolo,xboxDuo,phoneSolo,pocketJam,mobileDuo,cameraLead,touchBarLead,lidLead,mobileQuartet,hybridBand
     case xboxDrums,tabletKeys,mousePedal,xboxHelper,phonePedals
-    case phoneXYKeys,tabletKeysDrums,phoneXYEffects,phoneAllSurfaces,tabletAllSurfaces,dualPhoneSticks
+    case phoneXYKeys,tabletKeysDrums,phoneXYEffects,phoneAllSurfaces,tabletAllSurfaces,dualPhoneSticks,phoneSynth,tabletSynth
     public var id:String { rawValue }
     public var title:String {
         switch self {
+        case .phoneSynth: "Phone · Synth keys"
+        case .tabletSynth: "Tablet · Synth keys"
         case .dualPhoneSticks: "Two phones · Air Drum sticks"
         case .phoneAllSurfaces: "Phone · four switchable surfaces"
         case .tabletAllSurfaces: "Tablet · four switchable surfaces"
@@ -98,6 +100,7 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
     }
     public var detail:String {
         switch self {
+        case .phoneSynth,.tabletSynth: "Piano, sustain and three optional continuous controls: cutoff CC74, resonance CC71, attack CC73. Assign these in your DAW synth."
         case .dualPhoneSticks: "Phone left: kick/snare/toms; phone2 right: hi-hat/cymbals. Shared drum port. Choose Air stick on each device."
         case .phoneAllSurfaces,.tabletAllSurfaces: "Switch between XY lead, piano, drum pads and pedalboard on the device. Dedicated drum port; at most two active surfaces."
         case .phoneXYKeys: "Switch on phone between XY lead and piano on the same instrument port."
@@ -126,8 +129,8 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
     public var requiredSources:[SensorSource] {
         switch self {
         case .dualPhoneSticks: [.phone,.phone2]
-        case .phoneXYKeys,.phoneXYEffects,.phoneAllSurfaces: [.phone]
-        case .tabletKeysDrums,.tabletAllSurfaces: [.tablet]
+        case .phoneXYKeys,.phoneXYEffects,.phoneAllSurfaces,.phoneSynth: [.phone]
+        case .tabletKeysDrums,.tabletAllSurfaces,.tabletSynth: [.tablet]
         case .xboxDrums: [.gamepad1]
         case .tabletKeys: [.tablet]
         case .mousePedal: [.trackpad,.magicMouse]
@@ -167,6 +170,20 @@ public enum PerformanceGroupStarterPreset:String,CaseIterable,Identifiable,Senda
         let drums=group("Phone drums",RemoteDrumPads.routes(source:.phone))
         let groups:[PerformanceInstrumentGroup]
         switch self {
+        case .phoneSynth,.tabletSynth:
+            let source:SensorSource=self == .phoneSynth ? .phone : .tablet
+            let controls:[SensorMapping]=[
+                .init(id:"synth-cutoff",source:source,signal:.pedalExpression,destination:.init(.controlChange,number:74)),
+                .init(id:"synth-resonance",source:source,signal:.pedalVolume,destination:.init(.controlChange,number:71)),
+                .init(id:"synth-attack",source:source,signal:.pedalWah,destination:.init(.controlChange,number:73))
+            ]
+            var synth=group("Mobile synth keys",RemotePiano.routes(source:source)+controls)
+            synth.patch.performanceLayout = .init(widgets:[
+                .init(source:source,signal:.pedalExpression,kind:.slider,label:"Cutoff"),
+                .init(source:source,signal:.pedalVolume,kind:.slider,label:"Resonance"),
+                .init(source:source,signal:.pedalWah,kind:.slider,label:"Attack")
+            ])
+            groups=[synth]
         case .dualPhoneSticks:
             let left=RemoteDrumPads.routes(source:.phone).filter { [.drumPad1,.drumPad2,.drumPad5,.drumPad6].contains($0.signal) }
             let right=RemoteDrumPads.routes(source:.phone).filter { [.drumPad3,.drumPad4,.drumPad7,.drumPad8].contains($0.signal) }.map { route -> SensorMapping in
