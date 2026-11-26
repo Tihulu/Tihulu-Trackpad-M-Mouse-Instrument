@@ -33,7 +33,7 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
     private val role:HandRole=HandRole.SINGLE, private val orientation:Orientation=Orientation.UP,
     private val mirror:Boolean=false, private val near:Double=.25,private val far:Double=.85,
     private val allowEstimatedDepth:Boolean=false) {
-    private val keyList=(0..24).filter {authorized and (1 shl it)!=0}
+    private val keyList=(0..24).filter {(authorized and (1 shl it))!=0}
     private val shapes=listOf(listOf(0,4,7),listOf(2,5,9),listOf(4,7,11),listOf(5,9,12),listOf(7,11,14))
     private val helper=mode in setOf(AirMode.HORIZONTAL,AirMode.VERTICAL,AirMode.APERTURE,AirMode.SPEED,AirMode.PINCH_HELPER,AirMode.TOGGLE_HELPER,AirMode.BEAM_HELPER)
     private val beam=mode==AirMode.BEAM_HELPER||mode==AirMode.BEAM_KEYS
@@ -91,7 +91,7 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
         last=t
         val observation=hand(frame,role) ?: run {reset();return AirOutput()}
         val selected=if(mode==AirMode.CHORDS) hand(frame,if(role==HandRole.LEFT)HandRole.RIGHT else HandRole.LEFT) else null
-        if(mode==AirMode.CHORDS && selected?.fingers !in 0..5) {reset();return AirOutput()}
+        if(mode==AirMode.CHORDS && (selected?.fingers ?: -1) !in 0..5) {reset();return AirOutput()}
         val measured=if(beam) depth?.takeIf {
             it.role==role&&it.rgbNs==t&&DepthPolicy.sameAcquisition(it.rgbNs,it.depthNs)&&
             it.meters.isFinite()&&it.meters in near..far&&
@@ -130,7 +130,7 @@ class AirProjection(private val mode:AirMode, private val authorized:Int,
                 if(chord!=selected!!.fingers) held=null
                 if(edge&&chord!=null&&chord==selected.fingers) held=chord
                 val mask=held?.let {slot->shapes[slot-1].fold(0){m,k->m or (1 shl k)}}?:0
-                AirOutput(keys=if(mask and authorized==mask)mask else 0)
+                AirOutput(keys=if((mask and authorized)==mask)mask else 0)
             }
             AirMode.STRINGS -> {
                 ringing.entries.removeAll {t>=it.value}
