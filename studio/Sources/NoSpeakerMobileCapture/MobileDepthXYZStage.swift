@@ -42,6 +42,7 @@ private struct XYZSceneProbe: UIViewRepresentable {
     @State private var keyboard: DepthXYZKeys?
     @State private var activeKey: Int?
     @State private var name = ""
+    @State private var deletion: DepthXYZCalibrationProfiles.Profile?
     @State private var paired = false
     @State private var address = ""
     @State private var invitation = ""
@@ -96,6 +97,16 @@ private struct XYZSceneProbe: UIViewRepresentable {
         .onReceive(tick) { _ in poll() }
         .onChange(of: scene) { _, phase in if phase != .active { stop("App inactive · restart required") } }
         .onDisappear { stop("Closed"); returnCapture(retiring) }
+        .confirmationDialog("Delete saved calibration?", isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }), presenting: deletion) { profile in
+            Button("Delete", role: .destructive) {
+                guard !locked, var current = library,
+                      current.profiles.contains(profile) else { return }
+                current.remove(id: profile.id)
+                do { stored = try JSONEncoder().encode(current); status = "Calibration deleted" }
+                catch { status = "Could not save calibration library" }
+                deletion = nil
+            }
+        }
     }
 
     private var performance: some View {
@@ -156,11 +167,17 @@ private struct XYZSceneProbe: UIViewRepresentable {
                     .disabled(!volume.isValid || (usesControls && axes == 0) || name.isEmpty || library == nil)
                 if let library {
                     ForEach(library.profiles) { profile in
-                        Button(profile.name) {
-                            volume = profile.volume; axes = profile.axisMask; name = profile.name
-                            role = profile.hybrid == true ? .hybrid : profile.pitchAxis == nil ? .helper : .instrument
-                            pitchAxis = profile.pitchAxis ?? .z
-                            status = "Loaded " + profile.name
+                        HStack {
+                            Button(profile.name) {
+                                volume = profile.volume; axes = profile.axisMask; name = profile.name
+                                role = profile.hybrid == true ? .hybrid : profile.pitchAxis == nil ? .helper : .instrument
+                                pitchAxis = profile.pitchAxis ?? .z
+                                status = "Loaded " + profile.name
+                            }
+                            Spacer()
+                            Button(role: .destructive) { deletion = profile } label: {
+                                Image(systemName: "trash")
+                            }.accessibilityLabel("Delete calibration " + profile.name)
                         }
                     }
                 } else { Text("Saved calibration data could not be read.") }

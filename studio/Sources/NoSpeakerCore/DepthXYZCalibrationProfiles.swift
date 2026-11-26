@@ -41,6 +41,7 @@ public struct DepthXYZCalibrationProfiles: Codable, Equatable, Sendable {
         while !list.isAtEnd {
             guard profiles.count < Self.capacity else { throw Failure.full }
             let profile = try list.decode(Profile.self)
+            guard profile.name == profile.name.trimmingCharacters(in: .whitespacesAndNewlines) else { throw Failure.invalidName }
             try save(name: profile.name, volume: profile.volume, axisMask: profile.axisMask, pitchAxis: profile.pitchAxis, hybrid: profile.hybrid == true)
         }
     }

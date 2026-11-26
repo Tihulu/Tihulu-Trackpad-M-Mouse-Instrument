@@ -115,6 +115,12 @@ class MeasuredXYZTracking(private val volume:XYZVolume,private val mask:Int) {
     }
 }
 
+/** Numeric validation for saved UI role/mask values. JSON getters
+ * may truncate fractional numbers; reject rather than reinterpret. */
+internal object XYZCalibrationRecord {
+    fun roleIndex(raw:Double):Int? = raw.toInt().takeIf { raw.isFinite() && raw==it.toDouble() && it in 0..6 }
+    fun axisMask(raw:Double):Int? = raw.toInt().takeIf { raw.isFinite() && raw==it.toDouble() && it in 1..7 }
+}
 internal class MeasuredXYZKeys(mask:Int, private val axis:Int) {
     private val keys=(0..24).filter { mask and (1 shl it)!=0 }
     private var zone:Int?=null

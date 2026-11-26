@@ -46,3 +46,27 @@ struct DepthXYZCalibrationProfilesTests {
         }
     }
 }
+
+extension DepthXYZCalibrationProfilesTests {
+    @Test func malformedHybridRoleCannotBeRestored() throws {
+        var library = DepthXYZCalibrationProfiles()
+        try library.save(name: "Hybrid", volume: .init(), axisMask: 5, pitchAxis: .z, hybrid: true)
+        let bytes = try JSONEncoder().encode(library)
+        #expect(try JSONDecoder().decode(DepthXYZCalibrationProfiles.self, from: bytes) == library)
+        var root = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        var records = try #require(root["profiles"] as? [[String: Any]])
+        records[0].removeValue(forKey: "pitchAxis")
+        root["profiles"] = records
+        let invalid = try JSONSerialization.data(withJSONObject: root)
+        #expect(throws: DepthXYZCalibrationProfiles.Failure.invalidSettings) {
+            _ = try JSONDecoder().decode(DepthXYZCalibrationProfiles.self, from: invalid)
+        }
+        records[0]["pitchAxis"] = "z"
+        records[0]["name"] = " Hybrid "
+        root["profiles"] = records
+        let noncanonical = try JSONSerialization.data(withJSONObject: root)
+        #expect(throws: DepthXYZCalibrationProfiles.Failure.invalidName) {
+            _ = try JSONDecoder().decode(DepthXYZCalibrationProfiles.self, from: noncanonical)
+        }
+    }
+}

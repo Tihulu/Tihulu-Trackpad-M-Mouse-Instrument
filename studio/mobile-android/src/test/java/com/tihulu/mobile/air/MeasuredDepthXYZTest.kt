@@ -53,6 +53,17 @@ class MeasuredDepthXYZTest {
         assertEquals(AirOutput(),t.observe(p,350*ms,350*ms))
         assertNotNull(t.observe(p,360*ms,360*ms).xyz)
     }
+    @Test fun calibrationRecordRejectsFractionalAndNonfiniteRoleValues() {
+        for (value in listOf(-1.0,0.5,1.9,6.5,7.0,Double.NaN,Double.POSITIVE_INFINITY)) {
+            assertNull(XYZCalibrationRecord.roleIndex(value))
+        }
+        for (value in listOf(0.0,1.5,7.5,8.0,Double.NaN,Double.NEGATIVE_INFINITY)) {
+            assertNull(XYZCalibrationRecord.axisMask(value))
+        }
+        assertEquals(0,XYZCalibrationRecord.roleIndex(0.0))
+        assertEquals(6,XYZCalibrationRecord.roleIndex(6.0))
+        assertEquals(5,XYZCalibrationRecord.axisMask(5.0))
+    }
     @Test fun pitchRolesSkipUnassignedKeysAndResetBoundaryOnLoss() {
         val keys=MeasuredXYZKeys((1 shl 2) or (1 shl 19),2)
         assertEquals(1 shl 2,keys.output(listOf(1.0,1.0,.1)).keys)
