@@ -162,4 +162,19 @@ class AirSendGateTest {
         h.offer(AirOutput(),ms(30),ms(30));h.requestNeutral(ms(100))
         assertTrue(h.poll(ms(180)) is AirSendGate.Action.Close)
     }
+
+    @Test fun neutralObservationCannotEraseIndependentStringExpiry() {
+        val g=AirSendGate(AirWireLane.Keys(1),0)
+        g.begin(0);g.acknowledge("accepted",ms(20))
+        g.offer(AirOutput(keys=1),ms(21),ms(21),mapOf(0 to ms(100)))
+        assertEquals(AirSendGate.Action.Wait,g.offer(AirOutput(),ms(22),ms(22)))
+        assertTrue(g.poll(ms(100)) is AirSendGate.Action.Close)
+    }
+    @Test fun transitionCannotEraseEarlierSourceExpiryWithPendingAttack() {
+        val g=AirSendGate(AirWireLane.Keys(1),0)
+        g.begin(0);g.acknowledge("accepted",ms(20))
+        g.offer(AirOutput(keys=1),ms(21),ms(21))
+        assertEquals(AirSendGate.Action.Wait,g.requestNeutral(ms(100)))
+        assertTrue(g.acknowledge("accepted",ms(171)) is AirSendGate.Action.Close)
+    }
 }

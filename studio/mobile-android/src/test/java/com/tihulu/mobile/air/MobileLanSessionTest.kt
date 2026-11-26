@@ -91,4 +91,28 @@ class MobileLanSessionTest {
         s.receive("accepted",ms(40))
         assertTrue(packet(s.poll(ms(100))).contains("\"mask\":0"))
     }
+
+    @Test fun modeTransitionHidesAssignmentAndRejectsNewFamilyUntilNeutralAck() {
+        val s=MobileLanSession(MobileLanSession.Selection.Keys)
+        s.begin(true,"tihulu-touch-v1",token,0);s.receive("admitted",ms(1));s.receive(host(7),ms(15));s.receive("accepted",ms(20))
+        s.offer(AirOutput(keys=1),ms(30),ms(30));s.receive("accepted",ms(40))
+        assertTrue(packet(s.pauseForModeChange(ms(45))).contains("\"mask\":0"))
+        assertEquals(MobileLanSession.Phase.RECONFIGURING,s.phase)
+        assertNull(s.readyManifest);assertNull(s.newProjection(AirMode.STRINGS))
+        assertEquals(MobileLanSession.Action.Wait,s.offer(AirOutput(keys=2),ms(46),ms(46)))
+        s.receive("accepted",ms(50))
+        assertEquals(MobileLanSession.Phase.READY,s.phase)
+        assertNotNull(s.newProjection(AirMode.STRINGS))
+        assertNull(s.newProjection(AirMode.HORIZONTAL))
+        assertEquals(MobileLanSession.Action.Wait,s.offer(AirOutput(keys=2),ms(49),ms(51)))
+        assertTrue(packet(s.offer(AirOutput(keys=2),ms(60),ms(60))).contains("\"mask\":2"))
+    }
+    @Test fun modeTransitionTimeoutCannotRestoreReady() {
+        val s=MobileLanSession(MobileLanSession.Selection.Helper(0))
+        s.begin(true,"tihulu-touch-v1",token,0);s.receive("admitted",ms(1));s.receive(host(0,1),ms(15));s.receive("accepted",ms(20))
+        s.pauseForModeChange(ms(30))
+        assertTrue(s.poll(ms(180)) is MobileLanSession.Action.Close)
+        assertNull(s.readyManifest)
+        assertTrue(s.receive("accepted",ms(181)) is MobileLanSession.Action.Close)
+    }
 }
