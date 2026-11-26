@@ -13,10 +13,10 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["webCameraSummary","webCameraDescription","webCameraPlayHost","webCameraConnectionHost","webCameraTarget","webCameraMotionStatus","webCameraPanel","webCameraFacing","webCameraDevice","webCameraStart","webCameraStop","webCameraVideo","webCameraZoom","webCameraStatus","synthCompact","synthChoices","synthChoiceGrid","pianoArp","pianoChord","pianoSynth","arpKeyboardTools","arpClear","arpDirection","arpRate","arpSwing","arpSelected","kitBoard","kitEdit","kitEditor","kitPart","kitAdd","kitRemove","kitX","kitY","kitSize","kitSave","kitReset","kitStatus","pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["webCameraMetric","webCameraSensitivity","webCameraRegion","webCameraLight","webCameraInvert","webCameraSummary","webCameraDescription","webCameraPlayHost","webCameraConnectionHost","webCameraTarget","webCameraMotionStatus","webCameraPanel","webCameraFacing","webCameraDevice","webCameraStart","webCameraStop","webCameraVideo","webCameraZoom","webCameraStatus","synthCompact","synthChoices","synthChoiceGrid","pianoArp","pianoChord","pianoSynth","arpKeyboardTools","arpClear","arpDirection","arpRate","arpSwing","arpSelected","kitBoard","kitEdit","kitEditor","kitPart","kitAdd","kitRemove","kitX","kitY","kitSize","kitSave","kitReset","kitStatus","pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   let videoCallback=null,videoId=0,pixel=0;
   elements.webCameraVideo.requestVideoFrameCallback=f=>{videoCallback=f;return ++videoId};elements.webCameraVideo.cancelVideoFrameCallback=()=>{videoCallback=null};
-  const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:tag=>tag==="canvas"?{getContext:()=>({drawImage(){},getImageData(){return {data:new Uint8Array(768).fill(pixel)}}})}:target()});
+  const document=Object.assign(target(),{hidden:false,getElementById:id=>elements[id],createElement:tag=>tag==="canvas"?{getContext:()=>({drawImage(){},getImageData(){return {data:typeof pixel==="number"?new Uint8Array(768).fill(pixel):pixel}}})}:target()});
   const window=Object.assign(target(),{isSecureContext:true,DeviceOrientationEvent:{requestPermission:async()=>permission},DeviceMotionEvent:{requestPermission:async()=>permission},screen:{orientation:target()},localStorage:{
     getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value),removeItem:key=>stored.delete(key)}});
   class WS{
@@ -1648,4 +1648,38 @@ test("camera mode switch waits for release ACK and stops video",async()=>{
   assert.equal(c.track.stops,1);assert.equal(a.socket.frames.at(-1).mask,0);
   assert.equal(a.elements.playMode.disabled,true);a.ack();
   assert.equal(a.elements.playMode.value,"piano");assert.equal(a.elements.pianoSection.hidden,false);
+});
+
+test("camera motion position X is region restricted and settings freeze during capture",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraMetric.value="x";a.elements.webCameraRegion.value="right";
+  await a.elements.webCameraStart.emit("click");
+  assert.equal(a.elements.webCameraMetric.disabled,true);
+  a.video(0,1);a.step(25);
+  const left=new Uint8Array(768);for(let i=0;i<192;i++)if(i%16<8)left.fill(255,i*4,i*4+3);
+  a.video(left,2);assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+  a.elements.webCameraRegion.value="left"; // scripted mutation must not affect frozen config
+  const right=left.slice();for(let i=0;i<192;i++)if(i%16>=12)right.fill(255,i*4,i*4+3);
+  a.step(25);a.video(right,3);
+  assert.equal(a.socket.frames.at(-1).kind,"pedalboard");
+  assert.equal(a.socket.frames.at(-1).levels[0],.88);
+});
+test("uniform brightness compensation suppresses whole-frame light changes",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  a.elements.webCameraLight.checked=true;
+  await a.elements.webCameraStart.emit("click");
+  a.video(0,1);a.step(25);a.video(180,2);
+  assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+  const patch=new Uint8Array(768).fill(180);for(let i=0;i<48;i++)patch.fill(0,i*4,i*4+3);
+  a.step(25);a.video(patch,3);
+  assert.equal(a.socket.frames.at(-1).mask,1);
+});
+test("inverted active zero remains distinct from neutral",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");a.elements.webCameraInvert.checked=true;
+  await a.elements.webCameraStart.emit("click");a.video(0,1);a.step(25);a.video(255,2);
+  assert.equal(a.socket.frames.at(-1).mask,1);assert.equal(a.socket.frames.at(-1).levels[0],0);
+  a.ack();a.step(25);a.video(255,3);a.step(25);a.video(255,4);assert.equal(a.socket.frames.at(-1).mask,0);
 });
