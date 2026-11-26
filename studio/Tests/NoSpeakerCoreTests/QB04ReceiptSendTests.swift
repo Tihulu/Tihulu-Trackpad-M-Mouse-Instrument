@@ -192,3 +192,49 @@ private func qbNote(_ pitch:Int,_ velocity:Int)->SensorCommand {
         fence:&fence,now:{now},send:{cmd in sent.append(cmd);now=10.25;return true})
     #expect(result == .expired && sent == [qbNote(60,90)])
 }
+
+private func qbPedal(_ channel:Int,_ value:Int)->SensorCommand {
+    .init(.init(.sustain,channel:channel),value:value)
+}
+
+@Test func qb04PedalSlowFirstOnsetDoesNotAcquireLaterChannel() {
+    var owners=LegacySustainOwners()
+    _=owners.replace(.touchBar,channels:[9])
+    var fence=PhysicalReceiptSendFence(receipt:10,maximumAge:0.150)
+    var now=10.01
+    var sent:[SensorCommand]=[]
+    let accepted=owners.replaceFrameAdmitted([.touch:[1,2],.helper:[2]],
+        permits:{fence.permits(now:now)},send:{command in
+            sent.append(command)
+            now=10.15
+        })
+    #expect(!accepted && sent == [qbPedal(1,127)])
+    #expect(owners.channels(for:.touch)==[1] && owners.channels(for:.helper).isEmpty)
+    let cleanup=owners.replaceFrame([.touch:[],.helper:[]])
+    #expect(cleanup == [qbPedal(1,0)] && owners.active == [9])
+}
+
+@Test func qb04PedalFreshHandoffAndReleaseBeforeExpiredAttack() {
+    var owners=LegacySustainOwners()
+    _=owners.replaceFrame([.touch:[1,2],.touchBar:[9]])
+    var sent:[SensorCommand]=[]
+    let handoff=owners.replaceFrameAdmitted([.touch:[2],.helper:[1]],
+        permits:{true},send:{sent.append($0)})
+    #expect(handoff && sent.isEmpty && owners.active == [1,2,9])
+    var now=1.01
+    var fence=PhysicalReceiptSendFence(receipt:1,maximumAge:0.150)
+    let accepted=owners.replaceFrameAdmitted([.touch:[3],.helper:[1]],
+        permits:{fence.permits(now:now)},send:{command in sent.append(command);now=1.15})
+    #expect(!accepted && sent == [qbPedal(2,0)])
+    #expect(owners.active == [1,9] && owners.channels(for:.touch).isEmpty)
+}
+
+@Test func qb04PedalExpiredSilentJoinNeverAcquiresOwnership() {
+    var owners=LegacySustainOwners()
+    _=owners.replace(.touchBar,channels:[4])
+    var sent:[SensorCommand]=[]
+    let accepted=owners.replaceFrameAdmitted([.helper:[4]],permits:{false},send:{sent.append($0)})
+    #expect(!accepted && sent.isEmpty && owners.channels(for:.helper).isEmpty)
+    let cleanup=owners.replace(.touchBar,channels:[])
+    #expect(cleanup == [qbPedal(4,0)])
+}

@@ -3635,7 +3635,7 @@ final class StudioController: ObservableObject {
         return TouchPublicationAdmission.dispatch(permits:admit,
             prepare:{
                 pedal = applyPhysicalPedalFrame(touchStates:instrumentStates,
-                    helperStates:pedalAdmitted ? helperStates : nil,freshFrame:true)
+                    helperStates:pedalAdmitted ? helperStates : nil,freshFrame:true,admitOnset:admit)
             },touch:{
                 if let instrumentStates { handleTouchStates(instrumentStates,pedal:pedal,admitOnset:admit) }
             },helper:{
@@ -4652,7 +4652,7 @@ final class StudioController: ObservableObject {
     @discardableResult
     private func applyPhysicalPedalFrame(touchStates:[TouchPerformanceState]?,
                                          helperStates:[HelperSurfaceContact]?,
-                                         freshFrame:Bool) -> MIDIHelperSustainSnapshot? {
+                                         freshFrame:Bool,admitOnset:(()->Bool)? = nil) -> MIDIHelperSustainSnapshot? {
         let touchPedal = touchRunning ? touchStates.flatMap { evaluateTouchSustain($0,freshFrame:freshFrame) } : nil
         let helperPedal = midiHelperRunning ? helperStates.flatMap { evaluateHelperSustain($0,freshFrame:freshFrame) } : nil
         let midiTouch = touchMIDIOutEnabled ? touchPedal : nil
@@ -4665,7 +4665,7 @@ final class StudioController: ObservableObject {
                 isMPE:touchMIDIMode == .mpe)
             midi?.setPhysicalSustainFrame(touch:midiTouch,separateChannels:touchSeparateChannels,
                 independent:touchIndependentDAWSustain,fixedTouchChannels:fixed,
-                helper:helperPedal,helperChannel:helperTargetChannel)
+                helper:helperPedal,helperChannel:helperTargetChannel,admitOnset:admitOnset)
         }
         return touchPedal
     }

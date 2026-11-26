@@ -633,6 +633,10 @@ public final class MIDIHapticService: @unchecked Sendable {
         for command in commands {
             sendControlChange(controller:64,value:command.value,channel:command.destination.channel)
         }
+        reconcileSustainReservations()
+    }
+
+    private func reconcileSustainReservations() {
         let before = mpeChannels.reserved
         _ = mpeChannels.pedalChanged(sustained:outgoingSustainChannels())
         let released = before.subtracting(mpeChannels.reserved)
@@ -656,7 +660,8 @@ public final class MIDIHapticService: @unchecked Sendable {
     public func setPhysicalSustainFrame(touch: MIDIHelperSustainSnapshot?,
                                         separateChannels: DAWSurfaceChannels?,
                                         independent:Bool,fixedTouchChannels:Set<Int>,
-                                        helper:Bool?,helperChannel:Int) {
+                                        helper:Bool?,helperChannel:Int,
+                                        admitOnset:(()->Bool)? = nil) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         var updates: [LegacySustainOwners.Owner:Set<Int>] = [:]
@@ -674,9 +679,23 @@ public final class MIDIHapticService: @unchecked Sendable {
         if let helper {
             updates[.helper] = helper && canSend ? [max(0,min(15,helperChannel))] : []
         }
-        let commands = sustainOwners.replaceFrame(updates)
-        lock.unlock()
-        if canSend { sendSustainTransitions(commands) }
+        if canSend,let admitOnset {
+            // Outgoing changes are serialized by Studio. Never hold the
+            // service lock across synchronous CoreMIDI calls.
+            var staged=sustainOwners
+            lock.unlock()
+            _=staged.replaceFrameAdmitted(updates,permits:admitOnset,send:{ command in
+                self.sendControlChange(controller:64,value:command.value,channel:command.destination.channel)
+            })
+            lock.lock()
+            sustainOwners=staged
+            lock.unlock()
+            reconcileSustainReservations()
+        } else {
+            let commands = sustainOwners.replaceFrame(updates)
+            lock.unlock()
+            if canSend { sendSustainTransitions(commands) }
+        }
     }
 
     private func extendTouchSustain(to channel:Int) {
