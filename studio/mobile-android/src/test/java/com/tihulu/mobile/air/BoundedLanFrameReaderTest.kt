@@ -64,4 +64,12 @@ class BoundedLanFrameReaderTest {
         rejects(r)
         rejects(reader(byteArrayOf(129.toByte(),3,97)))
     }
+
+    @Test fun rejectsInvalidCloseCodeAndUtf8() {
+        for(payload in listOf(byteArrayOf(3,237.toByte()),byteArrayOf(0,1),
+            byteArrayOf(3,232.toByte(),0xc0.toByte(),0xaf.toByte())))rejects(reader(frame(136,payload)))
+        val r=reader(frame(136,byteArrayOf(3,232.toByte())+"bye".toByteArray()))
+        assertEquals(BoundedLanFrameReader.Event.Close,r.next())
+        rejects(r)
+    }
 }

@@ -73,6 +73,13 @@ internal class BoundedLanFrameReader(private val input:InputStream) {
                     when(opcode) {
                         8 -> {
                             if(length==1)reject()
+                            if(length>=2) {
+                                val code=((payload[0].toInt() and 255) shl 8) or (payload[1].toInt() and 255)
+                                if(code !in 1000..4999||code in setOf(1004,1005,1006,1015)||code in 1016..2999)reject()
+                                try {
+                                    Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(payload,2,length-2))
+                                }catch(_:java.nio.charset.CharacterCodingException){reject()}
+                            }
                             terminal=true;message.fill(0);used=0;fragments=0
                             return Event.Close
                         }
