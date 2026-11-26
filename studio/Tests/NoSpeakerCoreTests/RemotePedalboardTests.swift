@@ -67,3 +67,29 @@ private let sustain = SensorDestination(.sustain)
     route.calibration.inverted = true
     #expect(!InstrumentPatch(routes:[route]).isValid)
 }
+
+
+@Test func remotePedalboardSharedContinuousSnapshotOnlyEmitsFinalWinner() throws {
+    let target=SensorDestination(.controlChange,number:74)
+    var runtime=PhysicalPatchRuntime()
+    let id=try pedalPair(&runtime,routes:[
+        .init(id:"lower",source:.phone,signal:.pedalExpression,destination:target,priority:0),
+        .init(id:"higher",source:.phone,signal:.pedalVolume,destination:target,priority:10)
+    ])
+    #expect(runtime.receiveRemote(id,bytes:pedals(1,3,[0.2,0.8,0,0,0,0]),now:1.1) == .accepted([.init(target,value:102)]))
+    #expect(runtime.receiveRemote(id,bytes:pedals(2,1,[0.4,0,0,0,0,0]),now:1.2) == .accepted([.init(target,value:51)]))
+    #expect(runtime.receiveRemote(id,bytes:pedals(3,3,[0.6,0.9,0,0,0,0]),now:1.3) == .accepted([.init(target,value:114)]))
+    #expect(runtime.receiveRemote(id,bytes:pedals(4,0,[0,0,0,0,0,0]),now:1.4) == .accepted([.init(target,value:0)]))
+}
+
+@Test func remotePedalboardSharedSwitchTransferNeverProducesOffEdge() throws {
+    let target=SensorDestination(.controlChange,number:80)
+    var runtime=PhysicalPatchRuntime()
+    let id=try pedalPair(&runtime,routes:[
+        .init(id:"one",source:.phone,signal:.pedalSwitch1,destination:target),
+        .init(id:"two",source:.phone,signal:.pedalSwitch2,destination:target)
+    ])
+    #expect(runtime.receiveRemote(id,bytes:pedals(1,16,[0,0,0,0,1,0]),now:1.1) == .accepted([.init(target,value:127)]))
+    #expect(runtime.receiveRemote(id,bytes:pedals(2,32,[0,0,0,0,0,1]),now:1.2) == .accepted([]))
+    #expect(runtime.receiveRemote(id,bytes:pedals(3,0,[0,0,0,0,0,0]),now:1.3) == .accepted([.init(target,value:0)]))
+}

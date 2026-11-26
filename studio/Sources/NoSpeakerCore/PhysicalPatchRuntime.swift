@@ -676,15 +676,20 @@ public struct PhysicalPatchRuntime: Sendable {
             }
             if peer.pedalSession == nil { peer.pedalSession = try? router.connect(peer.source, now: now) }
             guard let session = peer.pedalSession else { return .close(revokeRemote(id,now:processingTime)) }
-            var commands: [SensorCommand] = []
-            for (index, signal) in RemotePedalboard.signals.enumerated() where mask & (1 << index) != 0 {
-                sequence &+= 1
-                commands += router.ingest(.init(session: session, signal: signal, value: levels[index],
-                                                sequence: sequence, timestamp: now), now: now)
+            // A pedalboard snapshot is one logical state. Updating a
+            // departing winner after a new owner must not emit transient
+            // intermediate CC or a false shared-switch edge.
+            var events:[SensorEvent] = []
+            var releasing:Set<SensorSignal> = []
+            for (index,signal) in RemotePedalboard.signals.enumerated() {
+                if mask & (1 << index) != 0 {
+                    sequence &+= 1
+                    events.append(.init(session:session,signal:signal,value:levels[index],sequence:sequence,timestamp:now))
+                } else if peer.pedalMask & (1 << index) != 0 {
+                    releasing.insert(signal)
+                }
             }
-            for (index, signal) in RemotePedalboard.signals.enumerated() where mask & (1 << index) == 0 && peer.pedalMask & (1 << index) != 0 {
-                commands += router.releaseSignal(session: session, signal: signal)
-            }
+            let commands=router.ingestFrame(session:session,releasing:releasing,events:events,now:now,preserveToggles:false)
             peer.pedalMask = mask; peer.lastPedalReceipt = now
             remotePeers[id] = peer
             return .accepted(commands)

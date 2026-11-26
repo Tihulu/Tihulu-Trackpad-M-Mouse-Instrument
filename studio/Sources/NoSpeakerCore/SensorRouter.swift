@@ -321,7 +321,8 @@ public struct SensorRouter: Sendable {
 
     /// One camera frame reconciles after all releases and fresh values, so a
     /// pedal transferred between hands does not generate an intermediate off.
-    mutating func ingestFrame(session id:UUID,releasing signals:Set<SensorSignal>,events:[SensorEvent],now:Double) -> [SensorCommand] {
+    mutating func ingestFrame(session id:UUID,releasing signals:Set<SensorSignal>,events:[SensorEvent],now:Double,
+                              preserveToggles:Bool = true) -> [SensorCommand] {
         guard let session = sessions[id], now.isFinite, now >= session.lastSeen,
               events.allSatisfy({ $0.session == id && $0.timestamp == now && $0.value.isFinite && (0...1).contains($0.value) }) else { return [] }
         var prior = session.sequence
@@ -334,7 +335,7 @@ public struct SensorRouter: Sendable {
             for mapping in mappingsByInput[.init(source:session.source,signal:signal)] ?? [] {
                 let owner = Owner(session:id,mapping:mapping.id)
                 pedalPressed.remove(owner)
-                if mapping.pedalMode != .toggle { removeContribution(owner) }
+                if !preserveToggles || mapping.pedalMode != .toggle { removeContribution(owner) }
             }
         }
         for event in events { _ = accept(event,now:now) }
