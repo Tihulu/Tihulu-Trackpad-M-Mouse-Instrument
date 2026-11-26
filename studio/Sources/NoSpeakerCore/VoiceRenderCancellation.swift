@@ -29,6 +29,7 @@ public enum VoiceProcessError: Error, LocalizedError {
 
 /// The caller owns the process and its I/O. No busy loop or background
 /// process monitor: wait in bounded intervals on the worker thread.
+#if !os(iOS)
 public enum VoiceProcessRunner {
     public static func run(_ process: Process, cancellation: VoiceRenderCancellation,
                            timeout: Double = 90) throws {
@@ -65,3 +66,5 @@ public enum VoiceProcessRunner {
         }
     }
 }
+
+#endif
