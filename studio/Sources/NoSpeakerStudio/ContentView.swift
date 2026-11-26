@@ -2812,6 +2812,7 @@ private struct TouchBarModeView: View {
                     }.padding(8)
                 }
 
+                TouchBarSynthPanel()
                 GroupBox("Live performance strip · On-screen Touch Bar") {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(studio.touchBarProfile.zones) { zone in

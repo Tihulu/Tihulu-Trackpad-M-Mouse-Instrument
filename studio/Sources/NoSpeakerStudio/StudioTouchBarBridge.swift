@@ -18,6 +18,8 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
     private let prefix = "com.tihulu.instrument.touchbar."
 
     private var builderToken: UUID?
+    private var synthPrefix:String {prefix+"synth."}
+    private func synthID(_ id:UUID)->NSTouchBarItem.Identifier {.init(synthPrefix+id.uuidString)}
     private var builderID: NSTouchBarItem.Identifier { .init(prefix + "builderRibbon") }
 
     func install(profile: TouchBarProfile, builderToken: UUID? = nil, force: Bool = false) {
@@ -46,6 +48,9 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         bar.customizationIdentifier = NSTouchBar.CustomizationIdentifier(prefix + "layout")
         bar.defaultItemIdentifiers = self.profile.zones.map(identifier)
         bar.customizationAllowedItemIdentifiers = TouchBarZone.allCases.map(identifier)
+        let customIDs=self.profile.effectiveSynthBank.controls.map{synthID($0.id)}
+        bar.defaultItemIdentifiers.append(contentsOf:customIDs)
+        bar.customizationAllowedItemIdentifiers.append(contentsOf:customIDs)
         if builderToken != nil {
             bar.defaultItemIdentifiers.append(builderID)
             bar.customizationAllowedItemIdentifiers.append(builderID)
@@ -90,6 +95,39 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
             }
             slider.setAccessibilityLabel("Builder ribbon")
             item.view = slider
+            return item
+        }
+        if identifier.rawValue.hasPrefix(synthPrefix),
+           let id=UUID(uuidString:String(identifier.rawValue.dropFirst(synthPrefix.count))),
+           let control=profile.effectiveSynthBank.controls.first(where:{$0.id==id}) {
+            let item=NSCustomTouchBarItem(identifier:identifier)
+            item.customizationLabel=control.name
+            if control.style == .toggle {
+                let button=NSButton(checkboxWithTitle:control.name,target:self,action:#selector(synthToggleChanged(_:)))
+                button.identifier = .init(id.uuidString)
+                button.state=control.initialPosition>=0.5 ? .on:.off
+                profileControls.add(button)
+                item.view=button
+            } else {
+                let slider=PerformanceTouchSlider(value:control.initialPosition,minValue:0,maxValue:1,target:self,action:#selector(synthSliderChanged(_:)))
+                slider.identifier = .init(id.uuidString)
+                slider.sliderType=control.style == .knob ? .circular:.linear
+                slider.isContinuous=true
+                slider.setAccessibilityLabel(control.name)
+                profileControls.add(slider)
+                slider.onPress={ [weak self,weak slider] pressed in
+                    guard let slider else{return}
+                    if pressed,let self,self.profileEpoch.accepts(profileStamp),let controller=self.controller {
+                        slider.gesture=controller.touchBarGestureEpoch.revision
+                    } else {slider.gesture=nil}
+                }
+                let label=NSTextField(labelWithString:control.name)
+                let stack=NSStackView(views:[label,slider])
+                stack.orientation = .horizontal
+                stack.alignment = .centerY
+                slider.widthAnchor.constraint(greaterThanOrEqualToConstant:control.style == .knob ? 32:70).isActive=true
+                item.view=stack
+            }
             return item
         }
         guard let zone = zone(for: identifier) else { return nil }
@@ -244,6 +282,23 @@ final class StudioTouchBarBridge: NSObject, NSTouchBarDelegate {
         guard (0..<ChordBank.padCount).contains(slot) else { return }
         controller?.recordNativeTouchBarInput()
         controller?.triggerChordPad(slot)
+    }
+
+    @objc private func synthSliderChanged(_ sender:NSSlider){
+        guard profileControls.contains(sender),let controller,
+              let slider=sender as? PerformanceTouchSlider,
+              let id=sender.identifier.flatMap({UUID(uuidString:$0.rawValue)}) else{return}
+        if controller.touchBarSynthValue(id:id,normalized:sender.doubleValue,revision:slider.gesture) {
+            controller.recordNativeTouchBarInput()
+        }
+    }
+
+    @objc private func synthToggleChanged(_ sender:NSButton){
+        guard profileControls.contains(sender),let controller,
+              let id=sender.identifier.flatMap({UUID(uuidString:$0.rawValue)}) else{return}
+        if controller.touchBarSynthValue(id:id,normalized:sender.state == .on ? 1:0) {
+            controller.recordNativeTouchBarInput()
+        } else {sender.state=sender.state == .on ? .off:.on}
     }
 
     @objc private func sliderChanged(_ sender: NSSlider) {

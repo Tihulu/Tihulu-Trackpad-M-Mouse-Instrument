@@ -859,12 +859,12 @@ public final class MIDIHapticService: @unchecked Sendable {
         sendContinuousUpdates(continuousOwners.release(.helper))
     }
 
-    public func sendTouchBarControl(_ target: SensorDestination, value: Int, bendRange: Int? = nil) {
+    public func sendTouchBarControl(_ target: SensorDestination, value: Int, bendRange: Int? = nil, neutralOverride: Int? = nil) {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         lock.unlock()
         guard canSend else { return }
-        let neutral = target.kind == .pitchBend ? 8192 : ([7,11].contains(target.number) ? 127 : 0)
+        let neutral = target.kind == .pitchBend ? 8192 : (neutralOverride ?? ([7,11].contains(target.number) ? 127 : 0))
         sendContinuousUpdates(continuousOwners.set(.touchBar,target:target,
             value:.init(value,neutral:neutral,bendRange:bendRange)))
     }

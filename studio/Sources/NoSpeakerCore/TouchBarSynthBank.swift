@@ -86,17 +86,17 @@ public struct TouchBarSynthBank: Codable, Equatable, Sendable {
     }
     /// Conventional CC suggestions, not guarantees for an individual synth.
     public static let presets:[Preset] = [
-        .init(name:"Portamento time",cc:5,neutral:0),
-        .init(name:"Volume",cc:7,neutral:127),
-        .init(name:"Pan",cc:10,neutral:64),
-        .init(name:"Resonance",cc:71,neutral:0),
-        .init(name:"Release",cc:72,neutral:0),
-        .init(name:"Attack",cc:73,neutral:0),
-        .init(name:"Decay",cc:75,neutral:0),
-        .init(name:"Vibrato rate",cc:76,neutral:0),
-        .init(name:"Vibrato depth",cc:77,neutral:0),
-        .init(name:"Vibrato delay",cc:78,neutral:0),
-        .init(name:"Reverb send",cc:91,neutral:0),
-        .init(name:"Chorus send",cc:93,neutral:0)
+        Preset(name:"Portamento time",cc:5,neutral:0),
+        Preset(name:"Volume",cc:7,neutral:127),
+        Preset(name:"Pan",cc:10,neutral:64),
+        Preset(name:"Resonance",cc:71,neutral:0),
+        Preset(name:"Release",cc:72,neutral:0),
+        Preset(name:"Attack",cc:73,neutral:0),
+        Preset(name:"Decay",cc:75,neutral:0),
+        Preset(name:"Vibrato rate",cc:76,neutral:0),
+        Preset(name:"Vibrato depth",cc:77,neutral:0),
+        Preset(name:"Vibrato delay",cc:78,neutral:0),
+        Preset(name:"Reverb send",cc:91,neutral:0),
+        Preset(name:"Chorus send",cc:93,neutral:0)
     ].filter{permitsCC($0.cc)}
 }

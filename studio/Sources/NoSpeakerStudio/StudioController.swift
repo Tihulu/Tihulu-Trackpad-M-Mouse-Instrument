@@ -2756,6 +2756,22 @@ final class StudioController: ObservableObject {
         }
     }
 
+    /// Custom synth controls use the existing explicitly running MIDI source.
+    /// They never auto-start MIDI or enter the dedicated haptic/MPE path.
+    var touchBarSynthAvailable:Bool {
+        midiRunning && !groupGamepadsRunning && !touchBarProfile.effectiveOutput.sendsHaptics
+    }
+    @discardableResult
+    func touchBarSynthValue(id:UUID,normalized:Double,revision:UInt64?=nil)->Bool {
+        guard touchBarSynthAvailable,let midi,
+              touchBarGestureEpoch.permitsSample(captured:revision),
+              let control=touchBarProfile.effectiveSynthBank.controls.first(where:{$0.id==id}),
+              let value=control.value(normalized:normalized) else{return false}
+        midi.sendTouchBarControl(.init(.controlChange,channel:touchBarProfile.channel,number:control.cc),
+            value:value,neutralOverride:control.neutral)
+        return true
+    }
+
     func touchBarValue(_ zone: TouchBarZone, normalized value: Double, releaseOnly: Bool = false) {
         guard !groupGamepadsRunning else { return }
         guard value.isFinite, [.pitchBend, .fretless, .vibrato, .expression, .filter, .wah].contains(zone) else { return }

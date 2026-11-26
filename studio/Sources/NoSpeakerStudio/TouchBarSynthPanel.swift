@@ -1,0 +1,116 @@
+#if os(macOS)
+import SwiftUI
+import NoSpeakerCore
+
+struct TouchBarSynthPanel:View {
+    typealias Bank=TouchBarSynthBank
+    @EnvironmentObject private var studio:StudioController
+    @State private var expanded=false
+    @State private var name="Resonance"
+    @State private var cc=71
+    @State private var style:Bank.Style = .knob
+    @State private var low=0
+    @State private var high=127
+    @State private var neutral=0
+    @State private var editing:UUID?
+    @State private var feedback=""
+    var body:some View {
+        GroupBox("Synth controls · MIDI CC") {
+            VStack(alignment:.leading,spacing:8) {
+                let bank=studio.touchBarProfile.effectiveSynthBank
+                Text("Custom parameters use the profile MIDI channel. Start the MIDI bridge explicitly and assign the receiving synth or DAW parameter via MIDI Learn. The label is not a plugin parameter binding. Higher-priority existing owners may override a CC.").font(.caption).foregroundStyle(.secondary)
+                Text(studio.touchBarSynthAvailable ? "MIDI bridge running · custom controls available":"MIDI output unavailable · configure and start the standard MIDI bridge").font(.caption)
+                if !bank.controls.isEmpty {
+                    LazyVGrid(columns:[GridItem(.adaptive(minimum:132))],spacing:8) {
+                        ForEach(bank.controls){control in
+                            TouchBarSynthPerformanceControl(control:control)
+                                .id(control.id)
+                        }
+                    }
+                }
+                DisclosureGroup("Customize synth parameters",isExpanded:$expanded) {
+                    VStack(alignment:.leading,spacing:8) {
+                        Text("Up to eight controls. Native Touch Bar items follow the built-in zones by default; macOS customization can reorder them. Reserved selectors, pedals and existing Touch Bar CCs are excluded.").font(.caption).foregroundStyle(.secondary)
+                        ForEach(bank.controls){control in
+                            HStack{
+                                Text("\(control.name) · CC \(control.cc) · \(control.style.rawValue)")
+                                Spacer()
+                                Button{if let next=bank.moving(id:control.id,delta:-1){apply(next)}} label:{Image(systemName:"arrow.left")}.disabled(bank.controls.first?.id==control.id).accessibilityLabel("Move \(control.name) left")
+                                Button{if let next=bank.moving(id:control.id,delta:1){apply(next)}} label:{Image(systemName:"arrow.right")}.disabled(bank.controls.last?.id==control.id).accessibilityLabel("Move \(control.name) right")
+                                Button("Edit"){load(control)}
+                                Button("Remove",role:.destructive){if let next=bank.removing(id:control.id){apply(next);if editing==control.id {editing=nil}}}
+                            }
+                        }
+                        Menu("Suggested parameters") {
+                            ForEach(Bank.presets){preset in
+                                Button("\(preset.name) · CC \(preset.cc)"){name=preset.name;cc=preset.cc;neutral=preset.neutral;low=0;high=127}
+                            }
+                        }
+                        TextField("Parameter name",text:$name)
+                        Picker("Control",selection:$style){ForEach(Bank.Style.allCases){Text($0.rawValue).tag($0)}}
+                        Stepper("MIDI CC \(cc)",value:$cc,in:0...127)
+                        HStack {
+                            Stepper("Min \(low)",value:$low,in:0...127)
+                            Stepper("Max \(high)",value:$high,in:0...127)
+                        }
+                        Stepper("Reset on Stop \(neutral)",value:$neutral,in:0...127)
+                        HStack {
+                            Button(editing == nil ? "Add control":"Apply edit") {
+                                let control=Bank.Control(id:editing ?? UUID(),name:name,cc:cc,style:style,low:low,high:high,neutral:neutral)
+                                let next=editing == nil ? bank.adding(control):bank.replacing(control)
+                                if let next {apply(next);editing=nil}
+                                else {feedback="Invalid name/range, reserved or duplicate CC, or bank full."}
+                            }.disabled(studio.groupGamepadsRunning)
+                            if editing != nil {Button("Cancel edit"){editing=nil}}
+                        }
+                        if !feedback.isEmpty {Text(feedback).font(.caption)}
+                    }.padding(.vertical,6)
+                }
+            }.padding(6)
+        }
+    }
+    private func load(_ c:Bank.Control){
+        editing=c.id;name=c.name;cc=c.cc;style=c.style;low=c.low;high=c.high;neutral=c.neutral
+    }
+    private func apply(_ bank:Bank){
+        var profile=studio.touchBarProfile;profile.synthBank=bank
+        studio.setTouchBarProfile(profile)
+        feedback=studio.touchBarProfile.effectiveSynthBank==bank ? "Controls saved.":"Not applied; check session or cleanup status."
+    }
+}
+
+private struct TouchBarSynthPerformanceControl:View {
+    let control:TouchBarSynthBank.Control
+    @EnvironmentObject private var studio:StudioController
+    @State private var value:Double=0
+    @State private var revision:UInt64?
+    var body:some View {
+        VStack(alignment:.leading,spacing:4) {
+            Text(control.name).font(.caption.bold()).lineLimit(1)
+            if control.style == .toggle {
+                Toggle("CC \(control.cc)",isOn:Binding(get:{value>=0.5},set:{send($0 ? 1:0)}))
+                    .toggleStyle(.switch)
+            } else {
+                if control.style == .knob {
+                    ZStack {
+                        Circle().strokeBorder(Color.secondary.opacity(0.35),lineWidth:2)
+                        Circle().trim(from:0,to:value).stroke(Color.accentColor,lineWidth:4).rotationEffect(.degrees(-90))
+                        Text(String(control.value(normalized:value) ?? control.neutral)).font(.caption.monospacedDigit())
+                    }.frame(width:40,height:40)
+                    .accessibilityHidden(true)
+                }
+                Slider(value:Binding(get:{value},set:{send($0)}),in:0...1,onEditingChanged:{active in
+                    revision=active ? studio.touchBarGestureEpoch.revision:nil
+                }).accessibilityLabel(control.name)
+            }
+            Text("CC \(control.cc) · \(control.value(normalized:value) ?? control.neutral)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+        }.padding(6)
+         .disabled(!studio.touchBarSynthAvailable)
+         .onAppear{value=control.initialPosition}
+         .onChange(of:studio.touchBarGestureEpoch.revision){_ in value=control.initialPosition}
+    }
+    private func send(_ normalized:Double){
+        if studio.touchBarSynthValue(id:control.id,normalized:normalized,revision:revision){value=normalized}
+    }
+}
+#endif
