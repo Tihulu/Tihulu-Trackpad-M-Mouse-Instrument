@@ -21,14 +21,18 @@ import javax.net.ssl.SSLSocket
  * Caller must run an independent absolute five-second setup watchdog
  * and interrupt blocked reads/writes with close(). Not yet wired to UI.
  */
+internal interface LanChannel:Closeable {
+    fun open():LanChannelStreams
+}
+internal data class LanChannelStreams(val input:InputStream,val output:OutputStream)
+
 internal class BoundedLanTlsChannel(private val endpoint:MobileLanEndpoint,
-    private val privateRoot:MobileLanTrust?=null):Closeable {
+    private val privateRoot:MobileLanTrust?=null):LanChannel {
     init {require(privateRoot==null||privateRoot.host==endpoint.host)}
-    data class Streams(val input:InputStream,val output:OutputStream)
     private val owner=LanConnectionOwner()
     override fun close()=owner.close()
 
-    fun open():Streams {
+    override fun open():LanChannelStreams {
         if(!owner.begin())throw IOException("LAN channel is single use")
         try {
             val raw=Socket(Proxy.NO_PROXY)
@@ -61,7 +65,7 @@ internal class BoundedLanTlsChannel(private val endpoint:MobileLanEndpoint,
             owner.requireOpen()
             // In READY the independent owner watchdog is authoritative.
             secure.soTimeout=0
-            return Streams(input,output)
+            return LanChannelStreams(input,output)
         }catch(e:Exception){
             owner.close()
             throw e

@@ -85,3 +85,20 @@ receive materialized messages. A replacement transport must bind this reader to
 an exact authenticated TLS upgrade, bound HTTP headers, implement masked writes,
 validate control semantics, and independently interrupt blocking reads at the
 existing deadlines. No Android network permission or live MIDI is enabled.
+
+### Bounded native transport candidate (not enabled in the preview)
+
+The experimental alternative to OkHttp now includes direct numeric-IP TLS
+(standard trust-chain and HTTPS verification, exact IP SAN, TLS 1.2/1.3),
+bounded HTTP Upgrade, fixed-size masked client frames, bounded server reader,
+and a one-shot socket owner. Separate reader, writer and 25 ms watchdog
+workers do not hold the policy monitor across I/O. A single write lease has
+an independent conservative 50 ms deadline; there is no queue of attacks.
+One racing bounded response can be deferred until the exact write completes;
+it cannot refresh the write deadline. Socket retirement clears queued data,
+interrupts the raw connection first and prevents reconnection. All existing
+session deadlines remain unchanged. JVM fixtures cover blocked setup/write,
+late response, admission, ownership, and explicit stop; actual TLS/provider
+behavior, scheduling and physical Mac/Android MIDI still need validation.
+The existing preview deliberately has no INTERNET permission; neither the
+alternative transport nor the old OkHttp adapter is activated in the camera UI.
