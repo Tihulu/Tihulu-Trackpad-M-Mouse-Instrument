@@ -39,7 +39,7 @@ class TouchPianoPreviewActivity:ComponentActivity() {
             arm.isEnabled=!armed;release.isEnabled=armed
         }
         column.addView(piano,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,0,1f))
-        arm.setOnClickListener{piano.arm()}
+        arm.setOnClickListener{piano.arm()?.let{status.text=it}}
         release.setOnClickListener{piano.retire()}
         release.isEnabled=false
         column.addView(arm);column.addView(release)
@@ -79,12 +79,14 @@ internal class TouchPianoView(context:Context,
         isFocusable=true
         importantForAccessibility=IMPORTANT_FOR_ACCESSIBILITY_YES
     }
-    fun arm(){
-        if(!ownerActive()||owner!=null)return
+    fun arm():String? {
+        if(owner!=null)return "Already armed."
+        if(!ownerActive())return "Show the whole piano in the active window, then Arm."
         armedUptime=SystemClock.uptimeMillis()
         owner=MobileTouchLiveLease(authorized,SystemClock.elapsedRealtimeNanos())
         changed(AirOutput(),true);invalidate()
         postDelayed(pulse,50)
+        return null
     }
     fun retire(){
         val old=owner?:return

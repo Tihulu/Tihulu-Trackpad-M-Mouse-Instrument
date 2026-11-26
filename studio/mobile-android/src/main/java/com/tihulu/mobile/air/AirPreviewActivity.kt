@@ -503,19 +503,21 @@ class AirPreviewActivity: ComponentActivity() {
         touchPanel.addView(arm)
         touchPanel.addView(leave)
         arm.setOnClickListener{
-            if(lan===client&&client.status().assignment?.piano==assigned)piano.arm()
+            if(lan===client&&client.status().assignment?.piano==assigned)piano.arm()?.let{hint.text=it}
             else end("Assignment ended")
         }
         leave.setOnClickListener{end("Touch piano released")}
         touchPanel.visibility=View.VISIBLE
         controls()
     }
-    private fun retireCapture() {
+    private fun retireCapture(beforeWorkerStop:()->Unit={}) {
         touchStage=false
         livePiano?.retire();livePiano=null
         touchPanel.removeAllViews();touchPanel.visibility=View.GONE
         ticket++;pending=false;importing=false
         observationFence?.retire();observationFence=null
+        // No capture callback can renew the old session after this fence.
+        beforeWorkerStop()
         source?.let {it.stop();retiring=it};source=null;projection=null
         depthSource?.let {it.stop();depthRetiring=it};depthSource=null
         meter.text="All preview keys released"
@@ -525,17 +527,19 @@ class AirPreviewActivity: ComponentActivity() {
         if(client.status().phase!=MobileLanSession.Phase.READY)return
         // Old callbacks are invalidated before the explicit neutral fence.
         // No new sensor is opened until release ACK and worker retirement.
-        retireCapture()
-        // READY may be restored before the next UI poll; force refresh
-        // even when the intermediate RECONFIGURING phase was not sampled.
-        lastPhase=null
-        client.pauseForModeChange()
+        // Neutral request precedes potentially blocking sensor stop.
+        retireCapture {
+            lastPhase=null
+            client.pauseForModeChange()
+        }
         status.text="Waiting for neutral ACK; then select a compatible mode and press Start."
         controls()
     }
     private fun end(message:String) {
-        retireCapture()
-        lan?.let {it.stop();connectionStatus.text=message};lan=null;lastPhase=null
+        retireCapture {
+            val client=lan;lan=null;lastPhase=null
+            client?.let {it.stop();connectionStatus.text=message}
+        }
         clearInvitation()
         status.text=message;controls()
     }

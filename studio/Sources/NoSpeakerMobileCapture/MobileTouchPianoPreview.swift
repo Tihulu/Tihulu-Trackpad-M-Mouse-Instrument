@@ -42,7 +42,7 @@ import NoSpeakerCore
         status.minimumScaleFactor=0.6
         status.text="Stopped. Press Arm to begin."
         armButton.setTitle("Arm piano",for:.normal)
-        releaseButton.setTitle("Release all / stop",for:.normal)
+        releaseButton.setTitle(liveMode ? "Release / disconnect" : "Release all / stop",for:.normal)
         releaseButton.isEnabled=false
         armButton.addTarget(self,action:#selector(arm),for:.touchUpInside)
         releaseButton.addTarget(self,action:#selector(retire),for:.touchUpInside)
@@ -75,7 +75,7 @@ import NoSpeakerCore
         NotificationCenter.default.addObserver(self,selector:#selector(inactive(_:)),name:UIApplication.willResignActiveNotification,object:nil)
     }
     @objc private func inactive(_ notification:Notification){retire()}
-    @objc private func arm(){piano.arm()}
+    @objc private func arm(){if let reason=piano.arm(){status.text=reason}}
     @objc func retire(){piano.retire()}
     override func viewWillDisappear(_ animated:Bool){retire();super.viewWillDisappear(animated)}
 }
@@ -116,15 +116,17 @@ import NoSpeakerCore
         }
         return false
     }
-    func arm(){
-        guard owner==nil,ownerActive,
-              let lease=MobileTouchLiveLease(authorized:authorized,armedAt:MobileLANSocket.nowNS) else{return}
+    func arm()->String?{
+        guard owner==nil else{return "Already armed."}
+        guard ownerActive else{return "Show the whole piano in the active window, then Arm."}
+        guard let lease=MobileTouchLiveLease(authorized:authorized,armedAt:MobileLANSocket.nowNS) else{return "Invalid key assignment. Reconnect or reopen."}
         contacts.removeAll()
         armedUptime=ProcessInfo.processInfo.systemUptime
         owner=lease
         changed?(.init(),true);setNeedsDisplay()
         let timer=Timer(timeInterval:0.05,target:self,selector:#selector(pulse(_:)),userInfo:nil,repeats:true)
         pulseTimer=timer;RunLoop.main.add(timer,forMode:.common)
+        return nil
     }
     @objc private func pulse(_ timer:Timer){
         guard timer===pulseTimer,var current=owner else{return}
