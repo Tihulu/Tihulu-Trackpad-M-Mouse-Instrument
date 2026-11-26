@@ -288,6 +288,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         let expired = staleSources(now:now)
         var reports = reset(expired,refreshNow:refreshNow,send:send)
         if expired.contains(source) {
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         let receipt = hostTime ?? now
@@ -300,7 +301,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         guard receipt >= binding.boundAt,binding.lastSurfaceReceipt.map({ receipt >= $0 }) ?? true,
               let frame else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         if let lease = binding.lease, !delivery.hasLease(lease) {
@@ -339,7 +340,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         let stride = UInt64(SensorSignal.allCases.count+1)
         guard binding.sequence < (UInt64.max-stride)/stride else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         binding.sequence += 1
@@ -373,7 +374,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         guard hostTime >= binding.boundAt,
               PhysicalPatchRuntime.admitsPhysicalReceipt(hostTime,now:now),
               binding.lastSurfaceReceipt.map({ hostTime >= $0 }) ?? true else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         binding.lastSurfaceReceipt = hostTime
@@ -392,7 +393,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         guard let x, let y, let size,
               [x,y,size].allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         if let lease = binding.lease, !delivery.hasLease(lease) { binding.reset() }
@@ -411,7 +412,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         let stride = UInt64(SensorSignal.allCases.count+1)
         guard let lease = binding.lease, binding.sequence < (UInt64.max-stride)/stride else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         binding.sequence += 1
@@ -443,7 +444,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
         guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now, PhysicalPatchRuntime.admitsPhysicalReceipt(hostTime,now:now),
               binding.lastSurfaceReceipt.map({ hostTime >= $0 }) ?? true else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         binding.lastSurfaceReceipt = hostTime
@@ -457,10 +458,13 @@ public struct PerformanceGroupGamepadSession: Sendable {
                 }
                 bindings[source]?.armed = true
             }
+            if source == .lid {
+                reports += retireSources([source],refreshNow:refreshNow,send:send)
+            }
             return .init(status:source == .touchBar ? .ready : .lost,reports:reports)
         }
         guard value.isFinite, (0...1).contains(value) else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         if let lease = binding.lease, !delivery.hasLease(lease) { binding.reset() }
@@ -479,7 +483,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         }
         let stride = UInt64(SensorSignal.allCases.count+1)
         guard let lease = binding.lease, binding.sequence < (UInt64.max-stride)/stride else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         binding.sequence += 1
@@ -511,13 +515,13 @@ public struct PerformanceGroupGamepadSession: Sendable {
         guard var binding = bindings[source] else { return .init(status:.ignored,reports:reports) }
         guard hostTime.isFinite, hostTime >= binding.boundAt, hostTime <= now, PhysicalPatchRuntime.admitsPhysicalReceipt(hostTime,now:now),
               binding.lastSurfaceReceipt.map({ hostTime > $0 }) ?? true else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         binding.lastSurfaceReceipt = hostTime
         bindings[source] = binding
         guard let hand else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         guard let accepted = cameraTracking.accept(hand,at:hostTime,now:now) else {
@@ -542,13 +546,13 @@ public struct PerformanceGroupGamepadSession: Sendable {
         if binding.lease == nil {
             do { binding.lease = try delivery.connect(source,now:now) }
             catch {
-                reports += reset([source],refreshNow:refreshNow,send:send)
+                reports += retireSources([source],refreshNow:refreshNow,send:send)
                 return .init(status:.admissionRejected,reports:reports)
             }
         }
         let stride = UInt64(SensorSignal.allCases.count+1)
         guard let lease = binding.lease, binding.sequence < (UInt64.max-stride)/stride else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         binding.sequence += 1
@@ -596,29 +600,29 @@ public struct PerformanceGroupGamepadSession: Sendable {
         guard var binding = bindings[source] else { return .init(status:.lost,reports:reports) }
         guard binding.remoteLastReceipt.map({ hostTime >= $0 }) ?? false,
               let frame = binding.remoteFence.accept(validated,receipt:hostTime,now:now) else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         binding.remoteLastReceipt = hostTime
         if frame.kind == .heartbeat || frame.kind == .capabilities || frame.kind == .mapping || frame.kind == .mappingLabels {
             guard binding.lease == nil else {
-                reports += reset([source],refreshNow:refreshNow,send:send)
+                reports += retireSources([source],refreshNow:refreshNow,send:send)
                 return .init(status:.lost,reports:reports)
             }
             bindings[source] = binding
             return .init(status:binding.armed ? .ready : .waitingForNeutral,reports:reports)
         }
         guard let family = PerformanceGroupRemoteSurface.family(for:frame),modes.contains(family) else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         let signals = (mapped[source] ?? []).intersection(family.signals)
         guard let values = family.snapshot(frame,mapped:signals) else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         if let lease = binding.lease, !delivery.hasLease(lease) {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         if !binding.armed {
@@ -649,13 +653,13 @@ public struct PerformanceGroupGamepadSession: Sendable {
         if binding.lease == nil {
             do { binding.lease = try delivery.connect(source,now:now) }
             catch {
-                reports += reset([source],refreshNow:refreshNow,send:send)
+                reports += retireSources([source],refreshNow:refreshNow,send:send)
                 return .init(status:.admissionRejected,reports:reports)
             }
         }
         let stride = UInt64(SensorSignal.allCases.count+1)
         guard let lease = binding.lease, binding.sequence < (UInt64.max-stride)/stride else {
-            reports += reset([source],refreshNow:refreshNow,send:send)
+            reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         binding.sequence += 1
@@ -678,7 +682,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         let stale = staleSources(now:sampled)
         guard !reports.contains(where:{ $0.admissionExpired }),stale.isEmpty,
               MonotonicReceiptAdmission.permits(receipt:receipt,now:sampled,maximumAge:maximumAge) else {
-            reports += reset(stale.union([source]),refreshNow:refreshNow,send:send)
+            reports += retireSources(stale.union([source]),refreshNow:refreshNow,send:send)
             return nil
         }
         return sampled
@@ -711,7 +715,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         if report.admissionExpired {
             if validClock {
                 clock = admissionNow
-                reports += reset(staleSources(now:admissionNow).union([source]),refreshNow:refreshNow,send:send)
+                reports += retireSources(staleSources(now:admissionNow).union([source]),refreshNow:refreshNow,send:send)
             } else {
                 reports += reset(Set(bindings.keys),refreshNow:refreshNow,send:send)
             }
@@ -720,7 +724,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
         clock = admissionNow
         if !delivery.hasLease(lease) {
             if remoteModes[source] != nil {
-                reports += reset([source],refreshNow:refreshNow,send:send)
+                reports += retireSources([source],refreshNow:refreshNow,send:send)
                 return .init(status:.lost,reports:reports)
             }
             bindings[source]?.reset()
@@ -745,7 +749,8 @@ public struct PerformanceGroupGamepadSession: Sendable {
         let departing = Set(tokens.compactMap { source,token in
             matchesRemoteBinding(source,token:token) ? source : nil
         })
-        return retireSources(staleSources(now:now).union(departing),refreshNow:refreshNow,send:send)
+        return retireSources(staleSources(now:now).union(departing),refreshNow:refreshNow,
+                             observeEvenWhenEmpty:true,send:send)
     }
 
     /// Actual unplug or deliberate detach retires the binding token; a new
@@ -825,11 +830,14 @@ public struct PerformanceGroupGamepadSession: Sendable {
         return reports
     }
 
-    /// Standalone expiry and explicit unbind lack a following input frame.
-    /// Drain newly expired leases in rounds bounded by the binding count.
+    /// Terminal rejection, explicit unbind and expiry must finish their
+    /// own cleanup; do not leave newly expired notes for the next tick.
+    /// Drain in rounds bounded by the binding count. Only an authorized
+    /// watchdog tick may observe the clock with no matched departure.
     private mutating func retireSources(_ sources:Set<SensorSource>,refreshNow:(()->Double)?,
+                                        observeEvenWhenEmpty:Bool = false,
                                         send:(PerformanceGroupCommand)->Bool) -> [PerformanceGroupDelivery.Report] {
-        guard !sources.isEmpty else { return [] }
+        guard !sources.isEmpty || observeEvenWhenEmpty else { return [] }
         var departing = sources
         var reports:[PerformanceGroupDelivery.Report] = []
         if let refreshNow {

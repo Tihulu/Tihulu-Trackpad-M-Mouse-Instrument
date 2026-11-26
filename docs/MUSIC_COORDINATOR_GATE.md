@@ -97,3 +97,8 @@ Switch native playback's wait from cross-clock Swift suspension to a one-shot st
 ## Group haptic retirement reconciliation
 
 A receipt fault can retire a Group after successful local MIDI sends and successful cleanup. The haptic wire observer previously inferred retirement only from failed sends or explicit Stop, so its active group inventory could remain stale. Reconcile authoritative failedGroups reports before native host publishes further snapshots, covering physical/remote input, expiry/unbind, and direct standard Group calls. Retired projection cannot revive from later observations; unrelated held voices remain intact and unrendered transients follow existing conservative invalidation. One integrated regression uses actual receipt expiry with all wire calls succeeding. No hardware or timing acceptance claim.
+
+
+## Terminal Group expiry drain
+
+Rejecting malformed/stale input or failed frame admission can itself perform blocking neutral cleanup. Terminal input rejection now uses the same bounded stale-source drain as explicit retirement, rather than leaving other newly expired notes until the next watchdog tick. Ordinary surface/Touch Bar lift retains its post-cleanup receipt gate; Lid loss drains survivors. An authorized empty watchdog tick also samples the refreshed clock even when its initial expiry set is empty; unmatched unbind remains a no-op. Two tests cover invalid-input cleanup stalling an independent note and empty watchdog vs mismatched token. Existing deadlines and endpoint identity unchanged.

@@ -215,3 +215,47 @@ private func scalarGroupProfile() -> PerformanceGroupProfile {
     #expect(state.sourceStates[.lid] == .leased && state.sourceStates[.trackpad] == .waitingForNeutral)
     #expect(state.activeSessions==1 && state.pendingCleanup.isEmpty)
 }
+
+
+@Test func groupRejectedInputDrainsIndependentLeaseExpiredDuringNoteOff() throws {
+    let a=PerformanceInstrumentGroup(name:"Trackpad",patch:.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:.init(.note,number:60))
+    ]))
+    let b=PerformanceInstrumentGroup(name:"Mouse",patch:.init(routes:[
+        .init(id:"b",source:.magicMouse,signal:.contact,destination:.init(.note,number:64))
+    ]))
+    var state=try PerformanceGroupGamepadSession(profile:.init(groups:[a,b]),allowSurfaces:true)
+    let x=try state.bind(.trackpad,now:1),y=try state.bind(.magicMouse,now:1)
+    _=state.receiveSurface(.trackpad,token:x,x:nil,y:nil,size:nil,hostTime:1,now:1,send:{_ in true})
+    _=state.receiveSurface(.magicMouse,token:y,x:nil,y:nil,size:nil,hostTime:1,now:1,send:{_ in true})
+    _=state.receiveSurface(.trackpad,token:x,x:0.5,y:0.5,size:0.5,hostTime:1.01,now:1.01,send:{_ in true})
+    _=state.receiveSurface(.magicMouse,token:y,x:0.5,y:0.5,size:0.5,hostTime:1.1,now:1.1,send:{_ in true})
+    var now=1.3
+    var sent:[PerformanceGroupCommand]=[]
+    let result=state.receiveSurface(.trackpad,token:x,x:Double.nan,y:0.5,size:0.5,hostTime:now,now:now,
+                                     refreshNow:{now},send:{
+        sent.append($0)
+        if $0.groupID==a.id { now=1.46 }
+        return true
+    })
+    #expect(result.status == .lost && sent.map(\.groupID)==[a.id,b.id])
+    #expect(sent.allSatisfy { $0.command.value==0 })
+    #expect(state.activeSessions==0 && state.pendingCleanup.isEmpty)
+}
+
+@Test func groupEmptyWatchdogUsesFreshClockButUnmatchedUnbindDoesNot() throws {
+    let group=PerformanceInstrumentGroup(name:"Trackpad",patch:.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:.init(.note,number:60))
+    ]))
+    var state=try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowSurfaces:true)
+    let token=try state.bind(.trackpad,now:1)
+    _=state.receiveSurface(.trackpad,token:token,x:nil,y:nil,size:nil,hostTime:1,now:1,send:{_ in true})
+    _=state.receiveSurface(.trackpad,token:token,x:0.5,y:0.5,size:0.5,hostTime:1.01,now:1.01,send:{_ in true})
+    var sent:[PerformanceGroupCommand]=[]
+    let sink:(PerformanceGroupCommand)->Bool={sent.append($0);return true}
+    let wrong=state.unbind(.trackpad,token:UUID(),refreshNow:{1.37},send:sink)
+    #expect(wrong.isEmpty && sent.isEmpty && state.activeSessions==1)
+    _=state.expire(now:1.3,refreshNow:{1.37},send:sink)
+    #expect(sent == [.init(groupID:group.id,command:.init(.init(.note,number:60),value:0))])
+    #expect(state.activeSessions==0 && state.pendingCleanup.isEmpty)
+}
