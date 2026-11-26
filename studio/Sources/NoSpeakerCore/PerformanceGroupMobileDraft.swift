@@ -265,7 +265,7 @@ extension PerformanceGroupMobileDraft {
               let group = profile.groups.first(where: { $0.id == groupID }),
               !profile.groups.contains(where: { $0.id != groupID && $0.patch.routes.contains { $0.source == source } }),
               !routes.isEmpty else { return false }
-        return routes.allSatisfy { $0.measuredXYZHelper == true } &&
+        return routes.allSatisfy { $0.measuredXYZHelper == true && RemotePedalboard.signals.prefix(3).contains($0.signal) } &&
             RemotePedalboard.permitsXYZHelpers(in: group.patch.routes)
     }
 
@@ -303,6 +303,26 @@ extension PerformanceGroupMobileDraft {
               !group.patch.routes.contains(where: { $0.destination.kind == .pitchBend && $0.destination.channel == channel })
         else { return false }
         self = next
+        return true
+    }
+}
+
+extension PerformanceGroupMobileDraft {
+    /// Prevent ordinary key/pedal surfaces from sharing this opt-in atomic
+    /// hybrid owner. Both sets of targets must fit before changing the draft.
+    public mutating func addXYZHybrid(_ helper: DepthXYZHelperPreset, helperChannel: Int,
+                                      scale: MobileExpressionPreset, root: Int, noteChannel: Int,
+                                      custom: String = "") -> Bool {
+        var keys = self
+        var mixed = self
+        guard keys.addXYZInstrument(scale,root:root,channel:noteChannel,custom:custom),
+              mixed.addXYZHelper(helper,channel:helperChannel) else { return false }
+        for var key in keys.routes {
+            key.measuredXYZHelper = true
+            mixed.routes.append(key)
+        }
+        guard (try? mixed.applying(to: baseline)) != nil else { return false }
+        self = mixed
         return true
     }
 }

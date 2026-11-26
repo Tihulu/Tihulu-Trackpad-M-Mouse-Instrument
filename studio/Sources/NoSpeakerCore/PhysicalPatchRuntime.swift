@@ -663,6 +663,8 @@ public struct PhysicalPatchRuntime: Sendable {
             peer.motionFreshness.disarm()
             remotePeers[id] = peer
             return .accepted(expire(now:processingTime,removingRemote:[],removingSessions:Set([departing].compactMap { $0 })))
+        case .xyzHybrid:
+            return .close(revokeRemote(id,now:processingTime))
         case .pedalboard:
             guard let mask = frame.mask, let levels = frame.levels,
                   let allowed = pedalMasks[peer.source], mask & ~allowed == 0

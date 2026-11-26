@@ -9,12 +9,13 @@ public struct RemoteTouchFrame: Decodable, Equatable, Sendable {
     public enum Kind: String, Decodable, Sendable {
         case touch, release, heartbeat, orientationArm, orientation, motionRelease
         case accelerationArm, acceleration, accelerationRelease, rotationArm, rotation, rotationRelease
-        case drumPads, pianoKeys, pedalboard, capabilities, mapping, mappingLabels
+        case drumPads, pianoKeys, pedalboard, capabilities, mapping, mappingLabels, xyzHybrid
     }
     public let version: Int
     public let sequence: UInt64
     public let kind: Kind
     public let page: Int?
+    public let keys: Int?
     public let mask: Int?
     public let levels: [Double]?
     public let x: Double?
@@ -73,6 +74,12 @@ public struct RemoteTouchFrame: Decodable, Equatable, Sendable {
         case .mapping, .mappingLabels:
             guard frame.version == 8, bytes.allSatisfy({ $0 < 128 }), keys == common.union(["page"]),
                   let page = frame.page, (0..<(frame.kind == .mapping ? 8 : 49)).contains(page) else { throw RemoteTouchError.invalidFrame }
+        case .xyzHybrid:
+            guard frame.version == 9, keys == common.union(["keys","mask","levels"]),
+                  let pitch = frame.keys, (0..<(1 << 25)).contains(pitch), pitch.nonzeroBitCount <= 1,
+                  let mask = frame.mask, (0...7).contains(mask), (pitch == 0) == (mask == 0),
+                  let levels = frame.levels, RemotePedalboard.validSnapshot(mask: mask, levels: levels)
+            else { throw RemoteTouchError.invalidFrame }
         case .pedalboard:
             guard frame.version == 6, keys == common.union(["mask","levels"]),
                   let mask = frame.mask, let levels = frame.levels,

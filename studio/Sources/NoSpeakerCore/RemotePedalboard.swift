@@ -35,13 +35,19 @@ public enum RemotePedalboard {
         for source in sources {
             let own = routes.filter { $0.source == source }
             let targets = Set(own.map(\.destination))
-            guard source.isGroupRemote, own.count <= 3,
-                  own.allSatisfy({ $0.measuredXYZHelper == true && signals.prefix(3).contains($0.signal) &&
-                                   ContinuousResponse.isContinuous($0.destination) }),
+            let controls = own.filter { signals.prefix(3).contains($0.signal) }
+            let notes = own.filter { RemotePiano.keySignals.contains($0.signal) }
+            guard source.isGroupRemote, !controls.isEmpty, controls.count <= 3,
+                  controls.count + notes.count == own.count,
+                  own.allSatisfy({ $0.measuredXYZHelper == true }),
+                  controls.allSatisfy({ ContinuousResponse.isContinuous($0.destination) }),
+                  notes.allSatisfy({ RemotePiano.permits($0) }),
                   Set(own.map(\.signal)).count == own.count, targets.count == own.count else { return false }
-            let bends = Set(targets.filter { $0.kind == .pitchBend }.map(\.channel))
-            if routes.contains(where: { $0.source != source && (targets.contains($0.destination) ||
-                ($0.destination.kind == .note && bends.contains($0.destination.channel))) }) { return false }
+            let bends = Set(controls.filter { $0.destination.kind == .pitchBend }.map(\.destination.channel))
+            if routes.contains(where: {
+                ($0.source != source && targets.contains($0.destination)) ||
+                ($0.destination.kind == .note && bends.contains($0.destination.channel))
+            }) { return false }
         }
         return true
     }

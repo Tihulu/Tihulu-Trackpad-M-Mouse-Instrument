@@ -106,6 +106,7 @@ public struct PerformanceGroupGamepadSession: Sendable {
     // Frozen logical destination membership; no translated MIDI address is used.
     private let restorationSources:[UUID:[SensorDestination:Set<SensorSource>]]
     private let smoothed: Set<SensorSource>
+    private let hybridXYZSlots: Set<SensorSource>
     private let remoteModes: [SensorSource:Set<PerformanceGroupRemoteSurface>]
     private let remoteLabels: [SensorSource:[RemoteMappingLabel]]
     private var bindings: [SensorSource:Binding] = [:]
@@ -215,6 +216,9 @@ public struct PerformanceGroupGamepadSession: Sendable {
             throw AdmissionError.unsupportedProfile
         }
         let routes = profile.groups.flatMap { $0.patch.routes }
+        hybridXYZSlots = Set(routes.filter {
+            $0.measuredXYZHelper == true && RemotePiano.keySignals.contains($0.signal)
+        }.map(\.source))
         mapped = Dictionary(grouping:routes,by:{ $0.source }).mapValues { Set($0.map(\.signal)) }
         restorationSources = Dictionary(uniqueKeysWithValues:profile.groups.map { group in
             (group.id,Dictionary(grouping:group.patch.routes,by:{ $0.destination }).mapValues { Set($0.map(\.source)) })
@@ -614,36 +618,35 @@ public struct PerformanceGroupGamepadSession: Sendable {
             bindings[source] = binding
             return .init(status:binding.armed ? .ready : .waitingForNeutral,reports:reports)
         }
-        guard let family = PerformanceGroupRemoteSurface.family(for:frame),modes.contains(family) else {
+        guard let snapshot = GroupRemoteSnapshot(frame: frame, modes: modes, mapped: mapped[source] ?? [],
+                                                  hybrid: hybridXYZSlots.contains(source)) else {
             reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
-        let signals = (mapped[source] ?? []).intersection(family.signals)
-        guard let values = family.snapshot(frame,mapped:signals) else {
-            reports += retireSources([source],refreshNow:refreshNow,send:send)
-            return .init(status:.lost,reports:reports)
-        }
+        let values = snapshot.values
+        let signals = snapshot.signals
         if let lease = binding.lease, !delivery.hasLease(lease) {
             reports += retireSources([source],refreshNow:refreshNow,send:send)
             return .init(status:.lost,reports:reports)
         }
         if !binding.armed {
-            if values.isEmpty { binding.remoteNeutral.insert(family) }
-            else { binding.remoteNeutral.remove(family) }
+            if values.isEmpty { binding.remoteNeutral.formUnion(snapshot.families) }
+            else { binding.remoteNeutral.subtract(snapshot.families) }
             binding.armed = binding.remoteNeutral == modes
             bindings[source] = binding
             return .init(status:binding.armed ? .ready : .waitingForNeutral,reports:reports)
         }
-        if values.isEmpty { binding.remoteActive.removeValue(forKey:family) }
+        if values.isEmpty {
+            for family in snapshot.families { binding.remoteActive.removeValue(forKey:family) }
+        }
         else {
             // Assigning more modes must not enlarge the previously supported
             // concurrent workload. A third onset is rejected before routing.
-            guard binding.remoteActive[family] != nil ||
-                  binding.remoteActive.count < PerformanceGroupRemoteSurface.maximumActiveFamilies else {
+            guard Set(binding.remoteActive.keys).union(snapshot.families).count <= PerformanceGroupRemoteSurface.maximumActiveFamilies else {
                 reports += retireSources([source],refreshNow:refreshNow,send:send)
                 return .init(status:.lost,reports:reports)
             }
-            binding.remoteActive[family] = hostTime
+            for family in snapshot.families { binding.remoteActive[family] = hostTime }
         }
         if binding.remoteActive.isEmpty {
             let lease = binding.lease
