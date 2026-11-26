@@ -7,7 +7,7 @@ import NoSpeakerCore
 struct PhysicalKeyboardScalePreview: View {
     let scale:CustomScale
     private enum Layout:String,CaseIterable,Identifiable {
-        case scale="Selected scale", white="White keys only", edo="EDO · all keys"
+        case lock="Scale Lock · 12-TET", scale="Selected scale · retune", white="White keys only", edo="EDO · all keys"
         var id:String{rawValue}
     }
     @State private var expanded=false
@@ -17,6 +17,7 @@ struct PhysicalKeyboardScalePreview: View {
     @State private var selected:Int?
     private var plan:PhysicalKeyboardScaleMap? {
         switch layout {
+        case .lock:return .standardLock(intervals:scale.intervals,root:root)
         case .scale:return .legacy(scale,inputRoot:60,outputRoot:root)
         case .white:
             guard let t=MicrotonalKeyboardTuning(degrees:scale.degreeCents.map(Double.init),rootMIDI:root) else{return nil}
@@ -36,7 +37,10 @@ struct PhysicalKeyboardScalePreview: View {
                 Picker("Key mapping",selection:$layout){
                     ForEach(Layout.allCases){Text($0.rawValue).tag($0)}
                 }
-                Stepper("Output root MIDI \(root)",value:$root,in:36...84)
+                Stepper(layout == .lock ? "Scale tonic \(label(root))" : "Output root MIDI \(root)",value:$root,in:36...84)
+                if layout == .lock {
+                    Text("In-scale keys keep their original MIDI pitch. Other keys are muted in the proposed map. Standard 12-TET only; custom cent offsets do not apply.").font(.caption).foregroundStyle(.secondary)
+                }
                 if layout == .edo {
                     Picker("Equal octave divisions",selection:$edo){
                         ForEach([12,19,24,31,53],id:\.self){Text("\($0)-EDO").tag($0)}
@@ -88,7 +92,10 @@ struct PhysicalKeyboardScalePreview: View {
                     .fill(mapped ? Color.blue.opacity(black ? 0.75:0.4) : black ? Color(white:0.17):Color(white:0.78))
                 RoundedRectangle(cornerRadius:4)
                     .strokeBorder(selected==note ? Color.accentColor:Color.secondary.opacity(0.5),lineWidth:selected==note ? 2:1)
-                Text(names[note%12]).font(.caption2.bold())
+                VStack(spacing:2){
+                    Text(mapped ? "✓" : "–").font(.caption2)
+                    Text(names[note%12]).font(.caption2.bold())
+                }
                     .foregroundStyle(black ? Color.white:Color.black)
                     .padding(.bottom,5)
             }
