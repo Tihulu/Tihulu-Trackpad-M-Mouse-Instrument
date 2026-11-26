@@ -162,3 +162,31 @@ import Testing
     #expect(runtime.activeSources.isEmpty)
     #expect(runtime.receiveGamepad(source:.gamepad1,frame:high,now:1.38).isEmpty)
 }
+
+
+@Test func physicalGamepadBatchDisconnectPreservesSurvivorWithoutRestoringDepartures() throws {
+    let target=SensorDestination(.controlChange,number:74)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"high",source:.gamepad1,signal:.padLT,destination:target,priority:10),
+        .init(id:"mid",source:.gamepad2,signal:.padLT,destination:target,priority:5),
+        .init(id:"low",source:.gamepad3,signal:.padLT,destination:target,priority:0)
+    ]))
+    func snapshot(_ trigger:Double) throws -> GamepadFrame {
+        try #require(GamepadFrame(buttons:Array(repeating:0.0,count:12),triggers:[trigger,0],sticks:[0,0,0,0]))
+    }
+    let neutral=try snapshot(0), high=try snapshot(0.8), mid=try snapshot(0.6), low=try snapshot(0.3)
+    for source in [SensorSource.gamepad1,.gamepad2,.gamepad3] {
+        _=runtime.receiveGamepad(source:source,frame:neutral,now:1)
+    }
+    _=runtime.receiveGamepad(source:.gamepad3,frame:low,now:1.01)
+    _=runtime.receiveGamepad(source:.gamepad2,frame:mid,now:1.02)
+    _=runtime.receiveGamepad(source:.gamepad1,frame:high,now:1.03)
+    #expect(runtime.activeSources==[.gamepad1,.gamepad2,.gamepad3])
+    let released=runtime.releaseGamepads([.gamepad1,.gamepad2],now:1.04)
+    #expect(released.count==1 && released.first?.destination==target)
+    #expect(released.first?.value==38)
+    #expect(runtime.activeSources==[.gamepad3])
+    #expect(runtime.receiveGamepad(source:.gamepad1,frame:high,now:1.05).isEmpty)
+    #expect(runtime.receiveGamepad(source:.gamepad2,frame:mid,now:1.05).isEmpty)
+}

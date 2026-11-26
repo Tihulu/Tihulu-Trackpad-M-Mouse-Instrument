@@ -1539,10 +1539,7 @@ final class StudioController: ObservableObject {
                 // Arm from a real initial snapshot, then process native value
                 // changes without waiting for the 20 ms watchdog.
                 if let token = patchNativeToken {
-                    for source in patchGamepadPollSources {
-                        let receipt=ProcessInfo.processInfo.systemUptime
-                        receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token,hostTime:receipt)
-                    }
+                    pollBuilderGamepads(token:token)
                     if patchRunning {
                         builderGamepads.beginEventsWithReceipt { [weak self] source,frame,receipt in
                             self?.receiveBuilderGamepad(source:source,frame:frame,token:token,hostTime:receipt)
@@ -1814,6 +1811,26 @@ final class StudioController: ObservableObject {
         recordPatchCommands(commands,receipt:receipt)
     }
 
+    /// Capture all known losses before reconciling shared MIDI targets.
+    /// Every surviving sample retains its original read-start receipt.
+    private func pollBuilderGamepads(token:UUID) {
+        guard patchRunning,patchPhysical,patchNativeToken==token else { return }
+        var snapshots:[(SensorSource,GamepadFrame,Double)] = []
+        var departing:Set<SensorSource> = []
+        for source in patchGamepadPollSources {
+            let receipt=ProcessInfo.processInfo.systemUptime
+            if let frame=builderGamepads.read(source) { snapshots.append((source,frame,receipt)) }
+            else { departing.insert(source) }
+        }
+        if !departing.isEmpty {
+            recordPatchCommands(patchPhysicalRuntime.releaseGamepads(departing,now:ProcessInfo.processInfo.systemUptime))
+        }
+        for (source,frame,receipt) in snapshots {
+            guard patchRunning,patchNativeToken==token else { return }
+            receiveBuilderGamepad(source:source,frame:frame,token:token,hostTime:receipt)
+        }
+    }
+
     private func startPatchWatchdog() {
         guard let mailbox = patchMailbox else { return }
         patchWatchdog = Task { [weak self] in
@@ -1874,12 +1891,8 @@ final class StudioController: ObservableObject {
         guard patchRunning else { return }
         drainBuilderRemote(now: ProcessInfo.processInfo.systemUptime)
         guard patchRunning else { return }
-        for source in patchGamepadPollSources {
-            guard let token = patchNativeToken else { return }
-            let receipt=ProcessInfo.processInfo.systemUptime
-            receiveBuilderGamepad(source:source,frame:builderGamepads.read(source),token:token,hostTime:receipt)
-            guard patchRunning else { return }
-        }
+        if let token=patchNativeToken { pollBuilderGamepads(token:token) }
+        guard patchRunning else { return }
         let expired = patchPhysicalRuntime.expire(now: ProcessInfo.processInfo.systemUptime)
         recordPatchCommands(expired)
         guard patchRunning else { return }
@@ -1917,7 +1930,7 @@ final class StudioController: ObservableObject {
         patchCamera = nil
         airTracking.reset()
         patchCameraHand = nil
-        recordPatchCommands(patchPhysicalRuntime.releaseCamera())
+        recordPatchCommands(patchPhysicalRuntime.releaseCamera(now:ProcessInfo.processInfo.systemUptime))
         patchCameraStatus = reason
     }
 

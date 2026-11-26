@@ -323,9 +323,15 @@ public struct PhysicalPatchRuntime: Sendable {
 
     private mutating func releaseGamepad(_ source:SensorSource,now:Double) -> [SensorCommand] {
         guard now.isFinite,now>=0 else { return releaseGamepad(source) }
-        gamepadArmed.remove(source)
-        lastGamepadActive.removeValue(forKey:source)
-        return expire(now:now,removingRemote:[],removingPhysical:[source])
+        return releaseGamepads([source],now:now)
+    }
+
+    /// The native poller knows all missing slots before any wire send.
+    /// Reconcile them together instead of restoring another missing slot.
+    public mutating func releaseGamepads(_ sources:Set<SensorSource>,now:Double) -> [SensorCommand] {
+        let departing = sources.intersection(GamepadFrame.sources).intersection(supported)
+        guard !departing.isEmpty,now.isFinite,now>=0 else { return [] }
+        return expire(now:now,removingRemote:[],removingPhysical:departing)
     }
 
     /// Scalar adapters share the same router and ownership as touch surfaces.
@@ -823,7 +829,7 @@ public struct PhysicalPatchRuntime: Sendable {
         return disconnect(.camera)
     }
 
-    private mutating func releaseCamera(now:Double) -> [SensorCommand] {
+    public mutating func releaseCamera(now:Double) -> [SensorCommand] {
         guard now.isFinite,now>=0 else { return releaseCamera() }
         cameraHands.reset()
         airStrum?.reset()
