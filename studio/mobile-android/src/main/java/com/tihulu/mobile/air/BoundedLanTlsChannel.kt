@@ -44,6 +44,18 @@ internal class BoundedLanTlsChannel(private val endpoint:MobileLanEndpoint,
             owner.requireOpen()
             val factory=privateRoot?.socketFactory()
                 ?:SSLContext.getInstance("TLS").apply {init(null,null,null)}.socketFactory
+            return upgradeConnected(raw,endpoint,factory,owner)
+        }catch(e:Exception){
+            owner.close()
+            throw e
+        }
+    }
+    companion object {
+        /** Internal seam for real TLS loopback fixtures. Production caller
+         * connects the raw socket to numericAddress(endpoint):9443 first;
+         * the endpoint identity, trust, and upgrade checks are identical. */
+        internal fun upgradeConnected(raw:Socket,endpoint:MobileLanEndpoint,
+            factory:javax.net.ssl.SSLSocketFactory,owner:LanConnectionOwner):LanChannelStreams {
             val secure=factory.createSocket(raw,endpoint.host,9443,true)
             if(secure !is SSLSocket) {
                 secure.close()
@@ -66,12 +78,7 @@ internal class BoundedLanTlsChannel(private val endpoint:MobileLanEndpoint,
             // In READY the independent owner watchdog is authoritative.
             secure.soTimeout=0
             return LanChannelStreams(input,output)
-        }catch(e:Exception){
-            owner.close()
-            throw e
         }
-    }
-    companion object {
         internal fun numericAddress(endpoint:MobileLanEndpoint):InetAddress =
             InetAddress.getByAddress(endpoint.host.split('.').map{it.toInt().toByte()}.toByteArray())
         internal fun configure(socket:SSLSocket) {
