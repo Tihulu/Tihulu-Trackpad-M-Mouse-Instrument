@@ -84,21 +84,49 @@ private struct TouchBarSynthPerformanceControl:View {
     @EnvironmentObject private var studio:StudioController
     @State private var value:Double=0
     @State private var revision:UInt64?
+    @State private var knobStart:Double?
+    @GestureState private var knobDragging=false
     var body:some View {
         VStack(alignment:.leading,spacing:4) {
             Text(control.name).font(.caption.bold()).lineLimit(1)
             if control.style == .toggle {
                 Toggle("CC \(control.cc)",isOn:Binding(get:{value>=0.5},set:{send($0 ? 1:0)}))
                     .toggleStyle(.switch)
-            } else {
-                if control.style == .knob {
-                    ZStack {
-                        Circle().strokeBorder(Color.secondary.opacity(0.35),lineWidth:2)
-                        Circle().trim(from:0,to:value).stroke(Color.accentColor,lineWidth:4).rotationEffect(.degrees(-90))
-                        Text(String(control.value(normalized:value) ?? control.neutral)).font(.caption.monospacedDigit())
-                    }.frame(width:40,height:40)
-                    .accessibilityHidden(true)
+            } else if control.style == .knob {
+                ZStack {
+                    Circle().strokeBorder(Color.secondary.opacity(0.35),lineWidth:2)
+                    Circle().trim(from:0,to:value).stroke(Color.accentColor,lineWidth:4).rotationEffect(.degrees(-90))
+                    Text(String(control.value(normalized:value) ?? control.neutral)).font(.caption.monospacedDigit())
+                }.frame(width:44,height:44)
+                .contentShape(Circle())
+                .gesture(DragGesture(minimumDistance:0)
+                    .updating($knobDragging){_,state,_ in state=true}
+                    .onChanged{drag in
+                        if knobStart == nil {
+                            knobStart=value
+                            revision=studio.touchBarGestureEpoch.revision
+                        }
+                        guard let start=knobStart else{return}
+                        let delta=Double(drag.translation.width-drag.translation.height)/150
+                        send(min(1,max(0,start+delta)))
+                    }
+                    .onEnded{_ in knobStart=nil;revision=nil})
+                .onChange(of:knobDragging){active in
+                    if !active {knobStart=nil;revision=nil}
                 }
+                .accessibilityElement(children:.ignore)
+                .accessibilityLabel(control.name)
+                .accessibilityValue(String(control.value(normalized:value) ?? control.neutral))
+                .accessibilityAdjustableAction{direction in
+                    guard !knobDragging else{return}
+                    switch direction {
+                    case .increment:send(min(1,value+1/Double(control.high-control.low)))
+                    case .decrement:send(max(0,value-1/Double(control.high-control.low)))
+                    @unknown default:break
+                    }
+                }
+                .help("Drag up or right to increase; drag down or left to decrease.")
+            } else {
                 Slider(value:Binding(get:{value},set:{send($0)}),in:0...1,onEditingChanged:{active in
                     revision=active ? studio.touchBarGestureEpoch.revision:nil
                 }).accessibilityLabel(control.name)

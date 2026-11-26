@@ -32,3 +32,17 @@ import Testing
     profile.synthBank=bank
     #expect(try JSONDecoder().decode(TouchBarProfile.self,from:JSONEncoder().encode(profile)).effectiveSynthBank==bank)
 }
+
+@Test func touchBarSynthResetUsesScopedOwnerArbitration() throws {
+    let control=TouchBarSynthBank.Control(name:"Pan",cc:10,neutral:64)
+    let target=SensorDestination(.controlChange,channel:2,number:control.cc)
+    var owners=LegacyContinuousOwners()
+    let attack=owners.set(.touchBar,target:target,value:.init(90,neutral:control.neutral))
+    #expect(attack.map(\.value)==[90])
+    let higher=owners.set(.touch,target:target,value:.init(30,neutral:64))
+    #expect(higher.map(\.value)==[30])
+    let restore=owners.release(.touch)
+    #expect(restore.map(\.value)==[90])
+    let reset=owners.release(.touchBar)
+    #expect(reset.map(\.value)==[64])
+}
