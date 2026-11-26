@@ -20,6 +20,11 @@ import javax.net.ssl.X509TrustManager
  */
 class MobileLanTrust private constructor(val host:String, internal val manager:X509TrustManager) {
     internal fun socketFactory():javax.net.ssl.SSLSocketFactory {
+        // A root can expire between import and connection. Trust anchors
+        // are not necessarily validity-checked by the platform PKIX path.
+        val roots=manager.acceptedIssuers
+        require(roots.size==1)
+        roots.single().checkValidity()
         val context=SSLContext.getInstance("TLS")
         context.init(null,arrayOf(manager),null)
         return context.socketFactory

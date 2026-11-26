@@ -52,4 +52,11 @@ class MobileLanTrustTest {
         trust.configure(builder)
         assertSame(verifier,builder.build().hostnameVerifier)
     }
+
+    @Test fun exactIpSanRejectsOtherHostAndRootWithoutSan() {
+        val different=MobileLanEndpoint.parse("https://192.168.1.26:9444/")!!
+        assertTrue(BoundedLanTlsChannel.hasExactIpSan(certificate(leaf),endpoint))
+        assertFalse(BoundedLanTlsChannel.hasExactIpSan(certificate(leaf),different))
+        assertFalse(BoundedLanTlsChannel.hasExactIpSan(certificate(root),endpoint))
+    }
 }
