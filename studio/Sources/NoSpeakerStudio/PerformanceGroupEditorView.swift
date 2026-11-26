@@ -56,13 +56,14 @@ struct PerformanceGroupEditorView: View {
         storedData = data
     }
 
-    private func save() {
-        guard didLoad, !readFailed, !editingLocked else { return }
+    @discardableResult
+    private func save() -> Bool {
+        guard didLoad, !readFailed, !editingLocked,!studio.patchRunning else { return false }
         let current = UserDefaults.standard.object(forKey:key)
         guard (current == nil && storedData == nil) ||
               (current is Data && (current as? Data) == storedData) else {
             message = "Saved profile changed elsewhere. Reopen this editor before saving. Your draft was not written."
-            return
+            return false
         }
         do {
             let data = try profile.archive()
@@ -72,8 +73,10 @@ struct PerformanceGroupEditorView: View {
             allowLayering = false
             hapticSelection = []
             message = "Group configuration saved. No new MIDI endpoints created."
+            return true
         } catch {
             message = error.localizedDescription
+            return false
         }
     }
 
@@ -628,6 +631,11 @@ struct PerformanceGroupEditorView: View {
 
     private func loadStarter(_ preset:PerformanceGroupStarterPreset,append:Bool) {
         guard didLoad,!readFailed,!editingLocked,!studio.patchRunning else { return }
+        guard !tuningDraft.isDirty else {
+            message="Apply or discard pending tuning edits before loading a preset."
+            groupsExpanded=true
+            return
+        }
         let next=append ? preset.appending(to:profile) : preset.makeProfile()
         guard let next else {
             message="Preset unavailable or conflicts with existing inputs/capacity. Existing draft retained."
@@ -723,9 +731,81 @@ struct PerformanceGroupEditorView: View {
         }
     }
 
+    private var draftControllerSources:Set<SensorSource> {
+        Set(profile.groups.flatMap { $0.patch.routes.map(\.source) }).intersection(GamepadFrame.sources)
+    }
+
+    private var quickAssignment:[SensorSource:UUID]? {
+        GamepadQuickAssignment.suggest(required:draftControllerSources,selected:studio.gamepadBindings,
+                                      available:Set(studio.gamepadChoices.map(\.id)))
+    }
+
+    private var draftControllersReady:Bool {
+        let ids=draftControllerSources.compactMap { studio.gamepadChoice(for:$0) }
+        return ids.count==draftControllerSources.count && Set(ids).count==ids.count &&
+            Set(ids).isSubset(of:Set(studio.gamepadChoices.map(\.id)))
+    }
+
+    private var quickSaveAndStart:Bool {
+        didLoad && !readFailed && !editingLocked && !studio.patchRunning &&
+        !tuningDraft.isDirty && tuningPreview == nil && hapticSelection.isEmpty &&
+        profile != saved && profile.layeredInputs.isEmpty && draftControllersReady &&
+        PerformanceGroupGamepadSession.supports(profile,allowSurfaces:true,allowScalars:true,allowCamera:true)
+    }
+
+    private var quickPlayPanel:some View {
+        GroupBox("Play / setup") {
+            VStack(alignment:.leading,spacing:6) {
+                Text(studio.groupGamepadStatus).font(.caption)
+                if !draftControllerSources.isEmpty && !studio.groupGamepadsRunning {
+                    HStack {
+                        Button("Refresh controllers") { studio.refreshBuilderGamepads() }
+                        Button("Use available controller") {
+                            guard let next=quickAssignment else { return }
+                            for source in draftControllerSources {
+                                studio.setGamepadChoice(next[source],for:source)
+                            }
+                            message="Controller selected. Review or change the assignment before Start."
+                        }.disabled(quickAssignment == nil)
+                    }.disabled(studio.patchRunning || editingLocked)
+                    if !draftControllersReady {
+                        Text("Select distinct controllers in Manual / custom setup. No ambiguous assignment is made.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                HStack {
+                    Button("Save groups") { save() }
+                        .disabled(!didLoad || readFailed || editingLocked || studio.patchRunning || !profile.isValid || profile==saved)
+                    if quickSaveAndStart {
+                        Button("Save & Start standard MIDI") {
+                            guard quickSaveAndStart,save() else { return }
+                            startSavedGroups()
+                        }.buttonStyle(.borderedProminent)
+                    } else {
+                        Button("Start standard MIDI") { startSavedGroups() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!canStartGroups || studio.patchRunning || tuningPreview != nil || !hapticSelection.isEmpty)
+                    }
+                    Button("Stop / Release All") { studio.stopGroupGamepads() }
+                        .disabled(!studio.groupGamepadsRunning)
+                    Button("Device setup / advanced") { groupsExpanded=true }
+                }
+                if profile.groups.contains(where:{ $0.patch.routes.contains(where:{ $0.source.isGroupRemote }) }) {
+                    Button("Mobile pairing and Start") { groupsExpanded=true }
+                    Text("Save first, then use the mobile connection controls. Network consent remains explicit.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !groupsExpanded && !message.isEmpty { Text(message).font(.caption) }
+                Text("Standard MIDI needs a DAW instrument on each group port. This is not an automatic audio or Trackpad-output mode.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(6)
+        }
+    }
+
     var body: some View {
         VStack(alignment:.leading,spacing:10) {
             starterPanel
+            quickPlayPanel
             DisclosureGroup("Performance Studio - Instrument Groups (experimental)",isExpanded:$groupsExpanded) {
             VStack(alignment:.leading,spacing:10) {
                 Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox, Trackpad, Magic Mouse, Touch Bar ribbon, lid and single-hand camera Helper profiles. Mobile groups and MPE require their separate experimental build gates.")

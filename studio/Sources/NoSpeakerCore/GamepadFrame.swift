@@ -51,3 +51,23 @@ public struct GamepadFrame: Sendable {
         }
     }
 }
+
+
+/// A setup suggestion, not a device binding. Never guess among multiple
+/// controllers or overwrite a valid existing assignment. Only the sole
+/// missing required slot and sole unused available controller can match.
+public enum GamepadQuickAssignment {
+    public static func suggest(required:Set<SensorSource>,selected:[SensorSource:UUID],
+                               available:Set<UUID>) -> [SensorSource:UUID]? {
+        guard !required.isEmpty,required.isSubset(of:GamepadFrame.sources) else { return nil }
+        let existing=selected.filter { required.contains($0.key) && available.contains($0.value) }
+        guard Set(existing.values).count==existing.count else { return nil }
+        let missing=required.subtracting(existing.keys)
+        let unused=available.subtracting(selected.values)
+        guard missing.count==1,unused.count==1,
+              let slot=missing.first,let id=unused.first else { return nil }
+        var next=selected
+        next[slot]=id
+        return next
+    }
+}

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import NoSpeakerCore
 
@@ -37,4 +38,17 @@ private func frame(a:Bool = false,rt:Double = 0) throws -> GamepadFrame {
     #expect(GamepadFrame(buttons:Array(repeating:0,count:12),triggers:[0,.nan],sticks:[0,0,0,0]) == nil)
     #expect(!GamepadFrame.permits(.init(id:"bad",source:.phone,signal:.padA,destination:.init(.note,number:60))))
     #expect(!GamepadFrame.permits(.init(id:"bad",source:.gamepad1,signal:.padLSX,destination:.init(.note,number:60))))
+}
+
+
+@Test func gamepadQuickAssignmentOnlyFillsUnambiguousMissingSlot() {
+    let a=UUID(),b=UUID(),c=UUID()
+    #expect(GamepadQuickAssignment.suggest(required:[.gamepad1],selected:[:],available:[a]) == [.gamepad1:a])
+    #expect(GamepadQuickAssignment.suggest(required:[.gamepad1],selected:[:],available:[a,b]) == nil)
+    #expect(GamepadQuickAssignment.suggest(required:[.gamepad1,.gamepad2],selected:[:],available:[a,b]) == nil)
+    #expect(GamepadQuickAssignment.suggest(required:[.gamepad1,.gamepad2],selected:[.gamepad1:a],available:[a,b]) == [.gamepad1:a,.gamepad2:b])
+    #expect(GamepadQuickAssignment.suggest(required:[.gamepad1,.gamepad2],selected:[.gamepad1:a],available:[a,b,c]) == nil)
+    #expect(GamepadQuickAssignment.suggest(required:[.gamepad1,.gamepad2],selected:[.gamepad1:a,.gamepad2:a],available:[a,b]) == nil)
+    #expect(GamepadQuickAssignment.suggest(required:[.gamepad1],selected:[.gamepad3:a],available:[a]) == nil)
+    #expect(GamepadQuickAssignment.suggest(required:[.gamepad1],selected:[.gamepad1:c],available:[a]) == [.gamepad1:a])
 }
