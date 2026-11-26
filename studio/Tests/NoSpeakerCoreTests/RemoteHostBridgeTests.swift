@@ -159,3 +159,35 @@ private func bridgeRuntime() throws -> PhysicalPatchRuntime {
     #expect(result.commands == [.init(target,value:0)])
     #expect(result.actions == [.revoke(a)] && bridge.connectionIDs.isEmpty)
 }
+
+
+@Test func builderRemoteLeaseUsesOriginalReceiptEvenForSilentRenewal() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    let played=bridge.process([.frame(id,bridgeTouch,1.01)],now:1.09,runtime:&runtime)
+    #expect(played.commands == [.init(bridgeNote,value:100)])
+    let same=Data("{\"version\":1,\"sequence\":2,\"kind\":\"touch\",\"x\":0.2,\"y\":0.8}".utf8)
+    let renewed=bridge.process([.frame(id,same,1.1)],now:1.18,runtime:&runtime)
+    #expect(renewed.commands.isEmpty && renewed.actions == [.acknowledge(id,true)])
+    let expired=bridge.process([],now:1.46,runtime:&runtime)
+    #expect(expired.commands == [.init(bridgeNote,value:0)] && expired.actions == [.revoke(id)])
+    #expect(bridge.connectionIDs.isEmpty)
+}
+
+@Test func builderRemoteReorderedReceiptCannotRenewLiveNote() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+    _=bridge.process([.frame(id,bridgeTouch,1.05)],now:1.06,runtime:&runtime)
+    let same=Data("{\"version\":1,\"sequence\":2,\"kind\":\"touch\",\"x\":0.2,\"y\":0.8}".utf8)
+    let rejected=bridge.process([.frame(id,same,1.04)],now:1.07,runtime:&runtime)
+    #expect(rejected.commands == [.init(bridgeNote,value:0)] && rejected.actions == [.acknowledge(id,false)])
+    #expect(bridge.connectionIDs.isEmpty)
+}

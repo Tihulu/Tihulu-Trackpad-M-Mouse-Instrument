@@ -428,7 +428,12 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     public mutating func admitRemote(secret: Data, now: Double) throws -> UUID {
-        guard remoteEnabled else { throw RemoteTouchError.unavailable }
+        try admitRemote(secret:secret,receipt:now,now:now)
+    }
+
+    mutating func admitRemote(secret:Data,receipt:Double,now:Double) throws -> UUID {
+        guard remoteEnabled,MonotonicReceiptAdmission.permits(receipt:receipt,now:now,maximumAge:0.1)
+        else { throw RemoteTouchError.unavailable }
         // A valid one-time invitation is consumed even when capacity is full.
         // A wrong secret does not consume a still-valid invitation.
         let invitation = try pairing.consumeWithConsent(secret:secret,now:now)
@@ -441,7 +446,7 @@ public struct PhysicalPatchRuntime: Sendable {
         guard cost > 0 else { throw RemoteTouchError.unavailable }
         guard reservedRemoteSessions + cost <= remoteSessionLimit else { throw RemoteTouchError.capacity }
         let id = UUID()
-        remotePeers[id] = RemoteTouchPeer(source: source, now: now, mappingDetails: invitation.mappingDetails, mappingLabels: invitation.mappingLabels)
+        remotePeers[id] = RemoteTouchPeer(source: source, now: receipt, mappingDetails: invitation.mappingDetails, mappingLabels: invitation.mappingLabels)
         return id
     }
 
@@ -473,7 +478,16 @@ public struct PhysicalPatchRuntime: Sendable {
     }
 
     public mutating func receiveRemote(_ id: UUID, bytes: Data, now: Double) -> RemoteTouchResult {
+        receiveRemote(id,bytes:bytes,receipt:now,now:now)
+    }
+
+    // Check expiry at the processing instant, but never renew stream
+    // ownership or rate windows using a newer timestamp than receipt.
+    mutating func receiveRemote(_ id:UUID,bytes:Data,receipt:Double,now processingTime:Double) -> RemoteTouchResult {
         guard var peer = remotePeers[id], remoteEnabled else { return .close([]) }
+        guard MonotonicReceiptAdmission.permits(receipt:receipt,now:processingTime,maximumAge:0.1),
+              !peer.expired(now:processingTime) else { return .close(revokeRemote(id)) }
+        let now = receipt
         guard let frame = try? RemoteTouchFrame.read(bytes), peer.accept(frame, now: now)
         else { return .close(revokeRemote(id)) }
         // Legacy clients may omit v8 entirely. Once metadata begins, only the

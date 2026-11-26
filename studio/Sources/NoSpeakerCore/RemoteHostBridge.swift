@@ -100,7 +100,7 @@ public struct RemoteHostBridge: Sendable {
             case .invitation(let connection, let secret, let time):
                 guard ready, !rejected.contains(connection), bindings[connection] == nil,
                       fresh(time, now: now),let issued = invitationIssuedAt,time >= issued,
-                      let peer = try? runtime.admitRemote(secret: secret, now: now)
+                      let peer = try? runtime.admitRemote(secret: secret, receipt:time,now:now)
                 else {
                     if let peer = bindings.removeValue(forKey: connection) { result.commands += runtime.revokeRemote(peer) }
                     rejected.insert(connection)
@@ -118,7 +118,7 @@ public struct RemoteHostBridge: Sendable {
                     result.actions.append(.acknowledge(connection, false))
                     continue
                 }
-                switch runtime.receiveRemote(peer, bytes: bytes, now: now) {
+                switch runtime.receiveRemote(peer, bytes: bytes, receipt:time,now:now) {
                 case .accepted(let commands):
                     result.appendFrameCommands(commands,receipt:time)
                     let frame = try? RemoteTouchFrame.read(bytes)
