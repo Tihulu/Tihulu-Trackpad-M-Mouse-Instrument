@@ -12,9 +12,7 @@ Use one source per session; stop before switching camera/lens/zoom. Actual
 CameraX zoom state and successful zoom ACK control admission. RGB frames yield
 normalized hand samples; handedness and geometry must be physically validated.
 Caller must enforce exclusive capture ownership, consumer timeout <150 ms,
-release/rearm and authenticated host lane admission. No musical engine or
-network sender yet. Do not retain camera frames. Callback is worker-thread;
-consumer must remain bounded and reject stale events.
+release/rearm and authenticated host lane admission. A local 11-mode logical projection is included; no network sender yet. Do not retain camera frames. Drain the bounded 16-frame mailbox independently. The timestamp is local analyzer receipt, not verified sensor exposure time; camera-to-MIDI latency is not yet measured.
 
 DEPTH16 inventory and confidence decoder do not constitute a running depth
 camera pipeline. Camera2 hardware depth must be aligned with RGB, capture
@@ -22,3 +20,5 @@ timestamp and calibration before use. ARCore Depth is estimated or fused,
 not necessarily hardware ToF. Never silently substitute it for measured depth.
 ARCore integration, live depth acquisition, native UI, signing and hardware
 acceptance remain pending.
+
+AirProjection is an initial Kotlin counterpart of the Swift projection, not a certified parity claim. Strings use a basic crossing detector; physical hand identity, confidence, and calibration need device validation. Depth modes require separately aligned observations with explicit provenance, role and matching timestamps. They cannot yet run from RgbHandSource alone.

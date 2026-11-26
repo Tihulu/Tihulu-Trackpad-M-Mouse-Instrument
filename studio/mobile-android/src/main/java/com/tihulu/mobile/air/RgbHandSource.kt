@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 @OptIn(ExperimentalCamera2Interop::class)
 class RgbHandSource(private val context: Context, private val owner: LifecycleOwner,
     private val provider: ProcessCameraProvider, private val modelAsset: String,
-    private val emit: (Frame) -> Unit, private val fault: (String) -> Unit): DefaultLifecycleObserver {
+    private val fault: (String) -> Unit): DefaultLifecycleObserver {
     private val worker = Executors.newSingleThreadExecutor()
     private val closed = AtomicBoolean(false)
     private val started = AtomicBoolean(false)
@@ -38,6 +38,18 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
     private var analysis: ImageAnalysis? = null
     private var detector: HandLandmarker? = null // worker confined
     private var last = -1L
+    private val mailbox=ArrayDeque<Frame>()
+    private val mailboxLock=Any()
+    fun drain():List<Frame> = synchronized(mailboxLock) {
+        val batch=mailbox.toList();mailbox.clear();batch
+    }
+    private fun emit(frame:Frame) {
+        val overflow=synchronized(mailboxLock) {
+            if (closed.get()) return
+            if (mailbox.size>=16) { mailbox.clear();true } else {mailbox.addLast(frame);false}
+        }
+        if (overflow) fail("Sensor backlog; restart explicitly")
+    }
     private val main = ContextCompat.getMainExecutor(context)
     // Main-thread only. The requested camera ID must be exposed by CameraX.
     fun start(id: String, zoom: Float) {
@@ -77,6 +89,7 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
     fun stop() {
         if (!closed.compareAndSet(false,true)) return
         ready.set(false)
+        synchronized(mailboxLock) {mailbox.clear()}
         main.execute {
             analysis?.let { it.clearAnalyzer(); provider.unbind(it) }
             analysis = null
@@ -131,7 +144,7 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
                 val category=result.handedness().getOrNull(i)?.firstOrNull()
                 val score=category?.score() ?: 0f
                 val side=category?.categoryName()?.lowercase()?.takeIf { it in listOf("left","right") && score>=0.75f }
-                Observation(hand,side,score)
+                Observation(hand,side,score,FingerGeometry.count(listOf(Triple(point(1),point(2),point(4)),Triple(point(5),point(6),point(8)),Triple(point(9),point(10),point(12)),Triple(point(13),point(14),point(16)),Triple(point(17),point(18),point(20)))))
             }
             emit(Frame(hands,t))
         } catch (_: Exception) { if (!closed.get()) fail("Hand inference failed; verify local model asset") }
