@@ -11,17 +11,19 @@ RATE_LIMIT = re.compile(
     r"^\s*> Could not GET 'https://repo\.maven\.apache\.org/maven2/[^'\s]+'. "
     r"Received status code 429 from server: Too Many Requests\s*$"
 )
+DEPENDENCY = r"[\w.+-]+:[\w.+-]+:[\w.+-]+"
+REPOSITORY_URL = r"https://(?:repo\.maven\.apache\.org/maven2|plugins\.gradle\.org/m2)/[^'\s]+"
+WRAPPER = re.compile(
+    rf"> (?:Could not resolve {DEPENDENCY}\.|Could not get resource '{REPOSITORY_URL}'\."
+    rf"|Could not parse POM {REPOSITORY_URL})"
+)
 
 
 def retryable(output):
     # Accept only the known dependency-resolution failure shape, with every
     # HTTP leaf a Maven Central 429. Unknown leaves fail closed.
     tasks = re.findall(r"^> Task (\S+) FAILED\s*$", output, re.M)
-    if tasks != [FAILED_TASK]:
-        return False
     if output.count("FAILURE: Build failed with an exception.") != 1:
-        return False
-    if "Could not resolve all files for configuration" not in output:
         return False
     if re.search(r"(?mi)^\s*(?:e: |error:|[0-9]+ tests completed, [1-9]|> Task .*Test FAILED)", output):
         return False
@@ -31,17 +33,31 @@ def retryable(output):
         end = lines.index("* Try:", start + 1)
     except ValueError:
         return False
-    block = [line.strip() for line in lines[start + 1:end] if line.strip()]
-    if not block or block[0] != "Execution failed for task ':extractDebugAnnotations'.":
+    block = [line.rstrip() for line in lines[start + 1:end] if line.strip()]
+    annotation = (tasks == [FAILED_TASK]
+                  and block[:1] == ["Execution failed for task ':extractDebugAnnotations'."]
+                  and len(block) > 1
+                  and re.fullmatch(r"> Could not resolve all files for configuration ':detachedConfiguration\d+'\.", block[1]))
+    classpath = (not tasks and block[:2] == ["A problem occurred configuring root project 'TihuluMobileSensors'.",
+                                             "> Could not resolve all artifacts for configuration ':classpath'."])
+    if not (annotation or classpath):
         return False
+    # Required-by metadata names requesting components. Only an indented
+    # nested cause may explain a wrapper, including a plugin portal redirect.
+    causes = []
+    for line in block[2:]:
+        detail = line.lstrip()
+        if detail == "Required by:" or re.fullmatch(rf"project :(?: > {DEPENDENCY})*", detail):
+            continue
+        causes.append((len(line) - len(detail), detail))
     rates = 0
-    for line in block[1:]:
+    for index, (depth, line) in enumerate(causes):
         if RATE_LIMIT.fullmatch(line):
             rates += 1
-        elif (line.startswith("> Could not resolve ")
-              or line.startswith("> Could not get resource 'https://repo.maven.apache.org/maven2/")
-              or line == "Required by:"
-              or re.fullmatch(r"project : (?:> .+)+", line)):
+        elif WRAPPER.fullmatch(line) and index + 1 < len(causes) and causes[index + 1][0] > depth:
+            continue
+        elif (depth == 0 and index == len(causes) - 1 and rates > 0
+              and re.fullmatch(r"> There (?:is 1 more failure|are [1-9]\d* more failures) with identical causes\.", line)):
             continue
         else:
             return False

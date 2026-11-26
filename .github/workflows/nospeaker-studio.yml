@@ -319,6 +319,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+          # Reuse Gradle downloads between runs of the same first-party PR.
+          # GitHub scopes PR caches to the merge ref.
+          cache-read-only: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools'
