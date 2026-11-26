@@ -305,7 +305,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const cameraGains=[get("webCameraGain"),get("webCameraExtraGain1"),get("webCameraExtraGain2")],cameraExtraInvert=[get("webCameraExtraInvert1"),get("webCameraExtraInvert2")];
   const cameraSave=get("webCameraSave"),cameraLoad=get("webCameraLoad"),cameraReset=get("webCameraReset"),cameraProfileStatus=get("webCameraProfileStatus");
   const cameraProfileKey="tihulu.remote.camera-settings.v1";
-  let cameraConfig=null,cameraBaseline=0,cameraArmed=false,cameraSetupTimer=null;
+  let cameraConfig=null,cameraBaseline=0,cameraArmed=false,cameraSetupTimer=null,cameraGeometry=null,cameraTrackSettings=null;
   function clearCameraSetupTimer(){if(cameraSetupTimer!==null)clearTimeout(cameraSetupTimer);cameraSetupTimer=null;}
   let cameraHelper=false,cameraHost="connection",cameraTargetKey="",cameraLane=-1,cameraFrameId=null,cameraContext=null,cameraPrior=null,cameraAt=null,cameraStartedAt=0,cameraMediaTime=-Infinity,cameraQuiet=0,cameraReleaseAt=null;
   const cameraMedia=()=>window.isSecureContext===true&&typeof navigator!=="undefined"&&navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==="function"?navigator.mediaDevices:null;
@@ -348,7 +348,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function stopCamera(message="Camera off."){
     clearCameraSetupTimer();
     if(cameraFrameId!==null){try{cameraVideo.cancelVideoFrameCallback?.(cameraFrameId);}catch{}}cameraFrameId=null;
-    cameraHelper=false;cameraLane=-1;cameraConfig=null;cameraBaseline=0;cameraArmed=false;cameraContext=null;cameraPrior=null;cameraAt=null;cameraMediaTime=-Infinity;cameraQuiet=0;cameraMotionStatus.textContent="Off.";
+    cameraHelper=false;cameraLane=-1;cameraConfig=null;cameraBaseline=0;cameraArmed=false;cameraGeometry=null;cameraTrackSettings=null;cameraContext=null;cameraPrior=null;cameraAt=null;cameraMediaTime=-Infinity;cameraQuiet=0;cameraMotionStatus.textContent="Off.";
     cameraEpoch++;cameraPending=false;cameraZoomPending=false;cameraZoomRange=null;
     const previous=cameraStream;cameraStream=null;
     cameraVideo.srcObject=null;cameraVideo.hidden=true;disposeCamera(previous);
@@ -411,7 +411,9 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
         if(!Number.isFinite(actual)||actual<cameraZoomRange.min||actual>cameraZoomRange.max||Math.abs(actual-requested)>0.001)throw Error("Requested zoom not confirmed");
         cameraZoom.value=String(actual);
       }
-      cameraPending=false;const actualFacing=track.getSettings?.().facingMode;
+      const settings=track.getSettings?.()??{};
+      if(helper)cameraTrackSettings={zoom:Number.isFinite(settings.zoom)?settings.zoom:null,deviceId:typeof settings.deviceId==="string"?settings.deviceId:null,facingMode:typeof settings.facingMode==="string"?settings.facingMode:null};
+      cameraPending=false;const actualFacing=settings.facingMode;
       cameraStatus.textContent="Camera active locally"+(actualFacing==="user"?" · front":actualFacing==="environment"?" · rear":" · direction not reported")+(helper?". Motion helper · zoom locked while armed.":". Stop before pairing.");syncCamera();
       if(helper){const canvas=document.createElement("canvas");canvas.width=16;canvas.height=12;cameraContext=canvas.getContext("2d",{willReadFrequently:true});if(!cameraContext)throw Error("Canvas unavailable");cameraStartedAt=performance.now();cameraMotionStatus.textContent="Waiting for local video frames…";cameraFrameId=cameraVideo.requestVideoFrameCallback((now,meta)=>cameraFrame(epoch,now,meta));}
       if(typeof media.enumerateDevices==="function"){
@@ -431,6 +433,15 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if((cameraAt!==null&&now-cameraAt>=150)||(cameraAt===null&&now-cameraStartedAt>=3000)){close("Camera frames stopped. Reconnect explicitly.");return;}
     try{
       if(!Number.isFinite(callbackTime)||callbackTime>now||now-callbackTime>=150||!Number.isFinite(mediaTime)||mediaTime<0||mediaTime<cameraMediaTime)throw Error("Invalid video timing");
+      if(metadata.captureTime!==undefined&&(!Number.isFinite(metadata.captureTime)||metadata.captureTime<0||metadata.captureTime>now||now-metadata.captureTime>=150))throw Error("Stale capture timestamp");
+      const width=metadata.width,height=metadata.height;
+      if(width!==undefined||height!==undefined){
+        if(!Number.isInteger(width)||!Number.isInteger(height)||width<=0||height<=0||width>8192||height>8192)throw Error("Invalid frame geometry");
+        if(cameraGeometry&&(cameraGeometry[0]!==width||cameraGeometry[1]!==height))throw Error("Camera geometry changed");
+        cameraGeometry=[width,height];
+      }
+      const settings=track.getSettings?.()??{},locked=cameraTrackSettings;
+      if(locked&&((locked.zoom!==null&&(!Number.isFinite(settings.zoom)||Math.abs(settings.zoom-locked.zoom)>.001))||(locked.deviceId!==null&&settings.deviceId!==locked.deviceId)||(locked.facingMode!==null&&settings.facingMode!==locked.facingMode)))throw Error("Camera settings changed");
       if(mediaTime>cameraMediaTime){
         cameraContext.drawImage(cameraVideo,0,0,16,12);
         const bytes=cameraContext.getImageData(0,0,16,12).data;
@@ -2175,7 +2186,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   motionStart.addEventListener("click",startMotion);
   motionStop.addEventListener("click",stopMotion);
   for(const s of streams){s.start.addEventListener("click",()=>startInertial(s));s.stop.addEventListener("click",()=>stopInertial(s));}
-  function rotated(){if(ws&&(stickState!=="idle"||touchBusy()||pedalBusy()||pianoBusy()||drumDesired!==0||drumSent!==0||drumQueue.length||mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
+  function rotated(){if(ws&&(cameraHelper||stickState!=="idle"||touchBusy()||pedalBusy()||pianoBusy()||drumDesired!==0||drumSent!==0||drumQueue.length||mode!=="idle"||streams.some(s=>s.mode!=="idle")))close("Screen rotated. Reconnect and calibrate again.");}
   window.addEventListener("orientationchange",rotated);
   if(window.screen&&window.screen.orientation&&typeof window.screen.orientation.addEventListener==="function")window.screen.orientation.addEventListener("change",rotated);
   disconnect.addEventListener("click",()=>close("Disconnected. Host releases owned controls."));

@@ -37,7 +37,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
   function withheldLabels(){step(50);const q=socket.frames.at(-1);if(q?.kind==="mappingLabels"){socket.frames.pop();time+=13;socket.onmessage({data:JSON.stringify({kind:"mappingLabels",version:8,sequence:q.sequence,page:0,pages:1,total:0,rows:[]})});}}
   if(autoMapping&&!socket.closed&&manifest!==null){withheld();if(groupNeutral&&!socket.closed)withheldLabels();}
   if(experimental&&!socket.closed&&manifest!==null){elements.navSetup.emit("click");elements.workloadMode.emit("click");elements.navPlay.emit("click");}
-  return {query,elements,window,document,socket,step,withheld,video(v,mediaTime){pixel=v;const cb=videoCallback;videoCallback=null;cb?.(time,{mediaTime});},ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
+  return {query,elements,window,document,socket,step,withheld,video(v,mediaTime,metadata={}){pixel=v;const cb=videoCallback;videoCallback=null;cb?.(time,{mediaTime,...metadata});},ack(ms=13){time+=ms;socket.onmessage({data:"accepted"})},
     orientation(beta=0){window.emit("deviceorientation",{alpha:0,beta,gamma:0})}};
 }
 test("permission denial never attaches listener or sends motion",async()=>{
@@ -1859,4 +1859,28 @@ test("v1 camera profile migrates neutral response defaults and rejects corrupt v
   a.elements.webCameraGain.value="2";a.elements.webCameraLoad.emit("click");assert.equal(a.elements.webCameraGain.value,"1");assert.equal(a.elements.webCameraRegion.value,"center");
   stored.set("tihulu.remote.camera-settings.v1",JSON.stringify({...old,version:2,gains:[1,99,1],extraInvert:[false,false],extraMetric:["x","y"]}));
   a.elements.webCameraRegion.value="full";a.elements.webCameraLoad.emit("click");assert.equal(a.elements.webCameraRegion.value,"full");
+});
+
+test("camera rotation stops even a calibrated but neutral helper",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");
+  a.video(0,1);a.window.emit("orientationchange");
+  assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);
+});
+test("changed camera geometry or track zoom cannot reuse the prior motion baseline",async()=>{
+  for(const drift of ["geometry","zoom"]){
+    const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+    a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+    await a.elements.webCameraStart.emit("click");a.video(0,1,{width:640,height:480});a.step(25);
+    if(drift==="zoom")await c.track.applyConstraints({advanced:[{zoom:2}]});
+    a.video(255,2,drift==="geometry"?{width:480,height:640}:{width:640,height:480});
+    assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+  }
+});
+test("reported stale capture timestamp closes before motion activation",async()=>{
+  const c=mockCamera(),a=setup("granted",fullManifest,true,true,false,new Map(),false,{getUserMedia:async()=>c.stream});
+  a.elements.playMode.value="camera";a.elements.playMode.emit("change");
+  await a.elements.webCameraStart.emit("click");a.step(200);a.video(255,1,{captureTime:0});
+  assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
 });
