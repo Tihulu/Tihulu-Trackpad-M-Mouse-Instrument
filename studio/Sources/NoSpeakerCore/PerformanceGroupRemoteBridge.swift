@@ -319,11 +319,11 @@ public struct PerformanceGroupRemoteBridge: Sendable {
     }
 
     /// Actions are applied only after process returns. Never publish queued
-    /// metadata for a connection that was retired later in the same batch.
+    /// success or metadata for a connection retired later in the same batch.
     private func discardInvalidMetadata(in result:inout PerformanceGroupRemoteBatch) {
         result.actions.removeAll { action in
             switch action {
-            case .capabilities(let id,_),.mapping(let id,_),.mappingLabels(let id,_):
+            case .acknowledge(let id,true),.capabilities(let id,_),.mapping(let id,_),.mappingLabels(let id,_):
                 return bindings[id] == nil
             default: return false
             }

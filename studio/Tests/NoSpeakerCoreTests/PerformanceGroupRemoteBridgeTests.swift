@@ -760,3 +760,17 @@ private func groupRemoteFixture(_ source:SensorSource,_ signal:SensorSignal,_ no
     let result=bridge.process([.ready],now:1.9,session:&session,send:{_ in Issue.record("No live notes");return true})
     #expect(result.fault && result.actions==[.stop] && bridge.stopped && !bridge.ready)
 }
+
+
+@Test func groupRemoteSameBatchRejectionSuppressesEarlierPairingSuccess() throws {
+    let phone=groupRemoteFixture(.phone,.contact,60)
+    var session=try PerformanceGroupGamepadSession(profile:.init(groups:[phone]),allowRemote:true)
+    var bridge=PerformanceGroupRemoteBridge()
+    let id=UUID(),secret=Data(repeating:8,count:32)
+    let sink:(PerformanceGroupCommand)->Bool={_ in Issue.record("Unexpected MIDI");return true}
+    _=bridge.process([.ready],now:1,session:&session,send:sink)
+    try bridge.issue(secret:secret,source:.phone,now:1,session:session)
+    let result=bridge.process([.invitation(id,secret,1.01),.frame(id,Data([0xff]),1.02)],now:1.02,session:&session,send:sink)
+    #expect(result.actions==[.acknowledge(id,false)])
+    #expect(bridge.connectionIDs.isEmpty && session.boundSources.isEmpty)
+}

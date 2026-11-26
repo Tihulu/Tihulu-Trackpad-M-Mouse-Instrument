@@ -209,15 +209,9 @@ public struct RemoteHostBridge: Sendable {
                 }
             }
         }
-        // Metadata is published only after the batch returns. Do not
-        // disclose a queued response to a connection retired in this batch.
-        result.actions.removeAll { action in
-            switch action {
-            case .capabilities(let id,_),.mapping(let id,_),.mappingLabels(let id,_):
-                return bindings[id] == nil
-            default: return false
-            }
-        }
+        // Success acknowledgements and metadata are deferred until the
+        // batch returns. A later rejection invalidates all earlier success.
+        result.actions=actionsAfterDelivery(result.actions)
         return result
     }
 

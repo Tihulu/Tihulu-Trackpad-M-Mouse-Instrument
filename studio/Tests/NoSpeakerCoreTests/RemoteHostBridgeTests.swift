@@ -333,3 +333,15 @@ private func bridgeRuntime() throws -> PhysicalPatchRuntime {
         #expect(runtime.activeSources == (localExpired ? [] : [.trackpad]))
     }
 }
+
+
+@Test func builderRemoteSameBatchRejectionSuppressesEarlierPairingSuccess() throws {
+    var runtime=try bridgeRuntime()
+    var bridge=RemoteHostBridge()
+    let id=UUID()
+    _=bridge.process([.ready],now:1,runtime:&runtime)
+    try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+    let result=bridge.process([.invitation(id,bridgeSecret,1.01),.frame(id,Data([0xff]),1.02)],now:1.02,runtime:&runtime)
+    #expect(result.actions==[.acknowledge(id,false)])
+    #expect(result.commands.isEmpty && bridge.connectionIDs.isEmpty && runtime.remotePeerIDs.isEmpty)
+}
