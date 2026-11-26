@@ -73,17 +73,24 @@ public struct SurfaceTouchFrame: Sendable, Equatable {
     public var contacts: [SurfaceContact]
     public var timestamp: Double
     public var frameNumber: Int
+    /// Original callback receipt; nil for synthetic/legacy callers.
+    public let acquisitionNS: Int64?
+    public let validNativeEnvelope: Bool
 
     public init(
         surface: TouchSurfaceKind,
         contacts: [SurfaceContact],
         timestamp: Double,
-        frameNumber: Int
+        frameNumber: Int,
+        acquisitionNS: Int64? = nil,
+        validNativeEnvelope: Bool = false
     ) {
         self.surface = surface
         self.contacts = contacts
         self.timestamp = timestamp
         self.frameNumber = frameNumber
+        self.acquisitionNS = acquisitionNS
+        self.validNativeEnvelope = validNativeEnvelope
     }
 }
 
@@ -152,6 +159,7 @@ private final class TouchBridge: @unchecked Sendable {
         timestamp: Double,
         frame: Int32
     ) {
+        let acquisitionNS = Int64(clamping: DispatchTime.now().uptimeNanoseconds)
         os_unfair_lock_lock(&lock)
         let callback = handler
         let surface = device.flatMap { surfaceByDevice[UInt(bitPattern: $0)] }
@@ -187,7 +195,9 @@ private final class TouchBridge: @unchecked Sendable {
             surface: surface,
             contacts: contacts,
             timestamp: timestamp,
-            frameNumber: Int(frame)
+            frameNumber: Int(frame),
+            acquisitionNS: acquisitionNS,
+            validNativeEnvelope: count == 0 || (count > 0 && count <= NativeTouchFramePolicy.maximumContacts && data != nil)
         ))
     }
 }
