@@ -38,6 +38,12 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
         samples.removeAll(keepingCapacity: true)
         return true
     }
+    /// A producer-side fault may arrive while the consumer is delivering
+    /// an older drained batch. Check this gate before every live send.
+    public var admitsDelivery: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !closed && !faulted
+    }
     public func drain() -> (samples: [CustomSurfaceNativeFrame], faulted: Bool) {
         lock.lock(); defer { lock.unlock() }
         let result = (samples, faulted)

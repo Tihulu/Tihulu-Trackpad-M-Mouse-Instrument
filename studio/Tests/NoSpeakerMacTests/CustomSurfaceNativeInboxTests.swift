@@ -46,3 +46,20 @@ private func inboxFrame(_ n: Int, surface: TouchSurfaceKind = .trackpad, valid: 
     #expect(!inbox.begin(at: 5))
 }
 #endif
+
+#if os(macOS)
+@Test func customNativeInboxRevokesAlreadyDrainedBatchAdmissionOnProducerFault() {
+    let inbox = CustomSurfaceNativeInbox(surface: .trackpad, orientation: .horizontal, notBefore: 0)
+    inbox.submit(inboxFrame(1))
+    let batch = inbox.drain()
+    #expect(batch.samples.count == 1)
+    #expect(inbox.admitsDelivery)
+    inbox.submit(inboxFrame(2, valid: false))
+    #expect(!inbox.admitsDelivery)
+    #expect(!inbox.begin(at: 3))
+    let closed = CustomSurfaceNativeInbox(surface: .trackpad, orientation: .horizontal, notBefore: 0)
+    #expect(closed.admitsDelivery)
+    closed.close()
+    #expect(!closed.admitsDelivery)
+}
+#endif

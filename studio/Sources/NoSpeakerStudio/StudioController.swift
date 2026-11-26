@@ -3581,7 +3581,10 @@ final class StudioController: ObservableObject {
               !patchRunning, !groupGamepadsRunning, groupRegisteredIDs.isEmpty, groupCleanupIDs.isEmpty,
               groupDisposalCount == 0, !sequenceRunning, !chordArmed, !touchBarOutputArmed,
               !isPlaying, !speakerBusy, !liveHingeEnabled, !captureArmed, !captureHotkeyArmed,
-              !pointerCaptured, !keyboardAuditRunning else {
+              !pointerCaptured, !keyboardAuditRunning,
+              patchLedger.outstanding.isEmpty, airTunedSelectors.isEmpty, !ensembleClockStopDebt,
+              sequenceLedger.outstanding.isEmpty, sequenceSelectors.isEmpty,
+              chordOutstanding.isEmpty, chordMPESelectors.isEmpty, touchBarOutputLedger.isEmpty else {
             customPadStatus = "Stop existing performances and resolve MIDI recovery before arming."
             return
         }
@@ -3615,7 +3618,7 @@ final class StudioController: ObservableObject {
         guard let opened = customPadHost.open(plan: plan, permitsNeutralSilence: true, admitsLive: { [weak self, weak inbox] in
             guard let self, let inbox else { return false }
             return self.customPadInbox === inbox && self.engineGeneration == generation &&
-                self.captureMonitor?.customPadEmergencyOperational == true
+                inbox.admitsDelivery && self.captureMonitor?.customPadEmergencyOperational == true
         }) else {
             stopCustomPad(reason: "Dedicated MIDI port could not be opened.")
             return
@@ -4773,6 +4776,10 @@ final class StudioController: ObservableObject {
                 guard let monitor=self.captureMonitor else { return }
                 let health=monitor.diagnosticSnapshot()
                 guard health.operational else { return }
+                if self.customPadRunID != nil && !monitor.customPadEmergencyOperational {
+                    self.stopCustomPad(reason: "Escape monitor was interrupted; restart explicitly")
+                    return
+                }
                 self.pointerCaptured = health.pointerCaptured
                 // This callback may arrive after a fresh capture shortcut.
                 // Show the current state, not the historical timeout state.
@@ -4796,6 +4803,7 @@ final class StudioController: ObservableObject {
                 self.trackpadClickPressure = nil
                 self.pointerCaptured = false
                 self.captureStatus = "macOS disabled input monitoring · cursor free · enable Global Capture again to retry"
+                if self.customPadRunID != nil { self.stopCustomPad(reason: "Escape monitor failed") }
                 // Preserve Voice/Touch/MIDI/Audio playback and the live driver.
             }
         }
