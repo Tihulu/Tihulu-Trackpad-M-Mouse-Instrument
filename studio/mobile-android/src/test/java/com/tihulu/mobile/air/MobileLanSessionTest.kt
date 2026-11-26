@@ -37,4 +37,11 @@ class MobileLanSessionTest {
         assertEquals(MobileLanSession.Phase.CLOSED,s.phase)
         assertEquals(MobileLanSession.Action.Close("Already closed"),s.poll(ms(235)))
     }
+
+    @Test fun lateActiveAckCannotEraseSourceExpiry(){
+        val s=MobileLanSession(MobileLanSession.Selection.Keys)
+        s.begin(true,"tihulu-touch-v1",token,0);s.receive("admitted",ms(1));s.receive(host(),ms(14));s.receive("accepted",ms(30))
+        s.offer(AirOutput(keys=1),ms(31),ms(31))
+        assertEquals(MobileLanSession.Action.Close("Source expired while active ACK outstanding"),s.receive("accepted",ms(181)))
+    }
 }

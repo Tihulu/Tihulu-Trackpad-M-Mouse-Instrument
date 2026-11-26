@@ -50,3 +50,53 @@ private func host(_ piano:Int=1,_ pedals:Int=0)throws->String {
     #expect(s.phase == .closed)
     #expect(s.poll(now:ns(235)) == .close("Already closed"))
 }
+
+@Test func mobileLANSessionLateActiveACKCannotEraseSourceExpiry() throws {
+    var s=MobileLANSession(selection:.keys)
+    _=s.begin(trustedTLS:true,subprotocol:"tihulu-touch-v1",invitation:invitation,now:0)
+    _=s.receive(text:"admitted",now:ns(1))
+    _=s.receive(text:try host(),now:ns(14))
+    _=s.receive(text:"accepted",now:ns(30))
+    _=s.offer(.init(keys:1),observedAt:ns(31),now:ns(31))
+    #expect(s.receive(text:"accepted",now:ns(181)) == .close("Source expired while active ACK outstanding"))
+}
+@Test func mobileLANSessionInteroperatesWithActualGroupBridgeAndScopedCleanup() throws {
+    let phone=PerformanceInstrumentGroup(name:"Native phone",patch:.init(routes:[.init(id:"note",source:.phone,signal:.pianoKey0,destination:.init(.note,number:60))]))
+    let tablet=PerformanceInstrumentGroup(name:"Other player",patch:.init(routes:[.init(id:"other",source:.tablet,signal:.pianoKey0,destination:.init(.note,number:64))]))
+    var hostSession=try PerformanceGroupGamepadSession(profile:.init(groups:[phone,tablet]),allowRemote:true)
+    var bridge=PerformanceGroupRemoteBridge()
+    let peer=UUID(),other=UUID(),secret=Data(repeating:0xab,count:32),otherSecret=Data(repeating:2,count:32)
+    var sent:[PerformanceGroupCommand]=[]
+    let sink:(PerformanceGroupCommand)->Bool={sent.append($0);return true}
+    _=bridge.process([.ready],now:1,session:&hostSession,send:sink)
+    try bridge.issue(secret:otherSecret,source:.tablet,now:1,session:hostSession)
+    _=bridge.process([.invitation(other,otherSecret,1.01)],now:1.01,session:&hostSession,send:sink)
+    _=bridge.process([.frame(other,Data(#"{"kind":"pianoKeys","version":5,"sequence":1,"mask":0}"#.utf8),1.02)],now:1.02,session:&hostSession,send:sink)
+    _=bridge.process([.frame(other,Data(#"{"kind":"pianoKeys","version":5,"sequence":2,"mask":1}"#.utf8),1.03)],now:1.03,session:&hostSession,send:sink)
+    try bridge.issue(secret:secret,source:.phone,now:1.04,session:hostSession)
+    var client=MobileLANSession(selection:.keys)
+    let start=client.begin(trustedTLS:true,subprotocol:"tihulu-touch-v1",invitation:invitation,now:ns(40))
+    guard case .binary(let binary)=start else{throw RemoteTouchError.invalidFrame}
+    let admit=bridge.process([.invitation(peer,binary,1.05)],now:1.05,session:&hostSession,send:sink)
+    #expect(admit.actions == [.acknowledge(peer,true)])
+    guard case .text(let cap)=client.receive(text:"admitted",now:ns(50)) else{throw RemoteTouchError.invalidFrame}
+    let capability=bridge.process([.frame(peer,cap,1.06)],now:1.06,session:&hostSession,send:sink)
+    guard case .capabilities(let id,let manifest)=capability.actions.first else{throw RemoteTouchError.invalidFrame}
+    #expect(id==peer)
+    let response=String(decoding:try manifest.encoded(),as:UTF8.self)
+    guard case .text(let neutral)=client.receive(text:response,now:ns(64)) else{throw RemoteTouchError.invalidFrame}
+    let neutralACK=bridge.process([.frame(peer,neutral,1.065)],now:1.065,session:&hostSession,send:sink)
+    #expect(neutralACK.actions == [.acknowledge(peer,true)])
+    #expect(client.receive(text:"accepted",now:ns(80)) == .wait)
+    guard case .text(let attack)=client.offer(.init(keys:1),observedAt:ns(81),now:ns(81)) else{throw RemoteTouchError.invalidFrame}
+    let attackACK=bridge.process([.frame(peer,attack,1.082)],now:1.082,session:&hostSession,send:sink)
+    #expect(attackACK.actions == [.acknowledge(peer,true)])
+    #expect(sent.last?.groupID==phone.id && sent.last?.command.value==127)
+    _=client.receive(text:"accepted",now:ns(90))
+    _=client.abort()
+    sent.removeAll()
+    _=bridge.process([.disconnected(peer)],now:1.1,session:&hostSession,send:sink)
+    #expect(sent.count==1 && sent.first?.groupID==phone.id && sent.first?.command.value==0)
+    #expect(bridge.connectionIDs == [other])
+    #expect(hostSession.boundSources == [.tablet])
+}

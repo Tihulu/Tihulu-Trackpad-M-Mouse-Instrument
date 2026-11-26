@@ -72,6 +72,8 @@ class AirSendGate(private val lane:AirWireLane,initialSequence:Long) {
     fun acknowledge(response:String,now:Long):Action {
         check(now)?.let {return it}
         if(!started||pendingAt==null||response!="accepted")return close("Unexpected ACK")
+        if(sampledAt?.let {now-it>=FRESH_NS}==true&&sent!=AirOutput()&&!pendingNeutral)
+            return close("Source expired while active ACK outstanding")
         pendingAt=null
         if(pendingNeutral) {
             admitted=true;neutralFence=false;releaseDebtAt=null;neutralConfirmedAt=now

@@ -69,6 +69,8 @@ public struct MobileAirSendGate: Sendable {
     public mutating func acknowledge(_ response:String,now:Int64)->Action {
         if let failure=check(now){return failure}
         guard started,pendingAt != nil,response=="accepted" else {return close("Unexpected ACK")}
+        // A late active ACK must not erase a source expiry that occurred while pending.
+        if sourceExpired(now),sent != .init(),!pendingNeutral {return close("Source expired while active ACK outstanding")}
         pendingAt=nil
         if pendingNeutral {
             admitted=true;neutralFence=false;releaseDebtAt=nil;neutralConfirmedAt=now
