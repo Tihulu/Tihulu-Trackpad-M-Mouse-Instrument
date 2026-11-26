@@ -21,15 +21,6 @@ private protocol LocalGroupOutput: Sendable {
     mutating func panic(send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
     mutating func retryCleanupReport(_ id:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report
 }
-private extension LocalGroupOutput {
-    // Dynamic MPE is explicitly local-only today. Do not silently fall
-    // back to its unfenced frame API if a remote path ever reaches it.
-    mutating func admittedFrame(lease:UUID,sequence:UInt64,now:Double,values:[SensorSignal:Double],
-                                releasing:Set<SensorSignal>,admit:()->Bool,
-                                send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
-        .rejectedReceipt
-    }
-}
 extension PerformanceGroupDelivery: LocalGroupOutput {
     fileprivate var ready: Bool { !retired }
     fileprivate mutating func prepare(send:(PerformanceGroupCommand)->Bool) -> Bool { !retired }
@@ -54,6 +45,12 @@ private struct DynamicLocalGroupOutput: LocalGroupOutput {
     mutating func frame(lease:UUID,sequence:UInt64,now:Double,values:[SensorSignal:Double],
                         releasing:Set<SensorSignal>,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
         .init(dynamic:engine.frame(lease:lease,sequence:sequence,now:now,values:values,releasing:releasing,send:send))
+    }
+    mutating func admittedFrame(lease:UUID,sequence:UInt64,now:Double,values:[SensorSignal:Double],
+                                releasing:Set<SensorSignal>,admit:()->Bool,
+                                send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        .init(dynamic:engine.admittedFrame(lease:lease,sequence:sequence,now:now,values:values,
+                                           releasing:releasing,admit:admit,send:send))
     }
     mutating func disconnect(_ lease:UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
         disconnectBatch([lease],send:send)

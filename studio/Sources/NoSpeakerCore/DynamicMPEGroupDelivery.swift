@@ -10,6 +10,7 @@ public struct DynamicMPEGroupDelivery: Sendable {
         public fileprivate(set) var capacityRefused = 0
         public fileprivate(set) var failedGroups:Set<UUID> = []
         public fileprivate(set) var pendingCleanup:Set<UUID> = []
+        public fileprivate(set) var admissionExpired = false
         public init() {}
     }
     public private(set) var state:State = .unprepared
@@ -64,6 +65,43 @@ public struct DynamicMPEGroupDelivery: Sendable {
         return deliver(commands,send:send)
     }
 
+    /// Each pool receive emits at most one ordinary wire command; its
+    /// internal failure cleanup is deliberately outside the receipt fence.
+    /// Roll back pure capacity/suppression changes for unattempted pools.
+    mutating func admittedFrame(lease:UUID,sequence:UInt64,now:Double,
+                                values:[SensorSignal:Double],releasing:Set<SensorSignal>,
+                                admit:()->Bool,send:(PerformanceGroupCommand)->Bool) -> Report {
+        guard state == .ready,admit() else {
+            var report = Report(pending:pendingCleanup)
+            report.admissionExpired = true
+            return report
+        }
+        let previous = router
+        let previousPools = pools
+        let commands = router.frame(lease:lease,sequence:sequence,now:now,values:values,releasing:releasing)
+        var attempted:Set<UUID> = []
+        var report = deliver(commands,admit:admit,onAttempt:{ attempted.insert($0) },send:send)
+        if report.admissionExpired || !admit() {
+            report.admissionExpired = true
+            router = previous
+            let affected = attempted.union(report.failedGroups)
+            for id in previousPools.keys where !affected.contains(id) {
+                pools[id] = previousPools[id]
+            }
+            // Refusals from a rejected logical frame are not committed.
+            report.capacityRefused = 0
+            for id in affected.sorted(by:{ $0.uuidString < $1.uuidString }) {
+                _ = router.stopGroup(id)
+                guard var pool = pools[id],pool.state != .retired else { continue }
+                report.failedGroups.insert(id)
+                _ = pool.stop { send(.init(groupID:id,command:$0)) }
+                pools[id] = pool
+            }
+            report.pendingCleanup = pendingCleanup
+        }
+        return report
+    }
+
     public mutating func disconnectBatch(_ leases:Set<UUID>,send:(PerformanceGroupCommand)->Bool) -> Report {
         guard state == .ready else { return Report(pending:pendingCleanup) }
         let commands = router.disconnectBatch(leases)
@@ -76,11 +114,17 @@ public struct DynamicMPEGroupDelivery: Sendable {
         return deliver(commands,send:send)
     }
 
-    private mutating func deliver(_ commands:[PerformanceGroupCommand],send:(PerformanceGroupCommand)->Bool) -> Report {
+    private mutating func deliver(_ commands:[PerformanceGroupCommand],
+                                  admit:()->Bool = { true },onAttempt:(UUID)->Void = { _ in },
+                                  send:(PerformanceGroupCommand)->Bool) -> Report {
         var report = Report()
         for item in commands {
             guard var pool = pools[item.groupID],pool.state == .ready else { continue }
-            let result = pool.receive(item.command) { send(.init(groupID:item.groupID,command:$0)) }
+            guard admit() else { report.admissionExpired = true; break }
+            let result = pool.receive(item.command) {
+                onAttempt(item.groupID)
+                return send(.init(groupID:item.groupID,command:$0))
+            }
             switch result {
             case .delivered: report.delivered += 1
             case .capacity: report.capacityRefused += 1

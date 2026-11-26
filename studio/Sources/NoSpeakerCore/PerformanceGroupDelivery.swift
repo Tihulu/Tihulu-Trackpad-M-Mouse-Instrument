@@ -21,6 +21,7 @@ public struct PerformanceGroupDelivery: Sendable {
         // transport failure. Accepted counts reconciled logical deliveries.
         init(dynamic:DynamicMPEGroupDelivery.Report) {
             accepted = dynamic.delivered
+            admissionExpired = dynamic.admissionExpired
             capacityRefused = dynamic.capacityRefused
             failedGroups = dynamic.failedGroups
             pendingCleanup = dynamic.pendingCleanup

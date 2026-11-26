@@ -48,3 +48,10 @@ Physical Touch channel-pressure updates now use the same incremental target admi
 ## Remote group wire receipt fence (candidate)
 
 Standard and fixed-member MPE remote frames now resample the existing 100 ms receipt fence before ledger mutation for each wire command and after the final command. On expiry, roll back the speculative logical router snapshot (including silent ownership joins), retain actual transport faults, retire only groups with attempted wire output and use their actual ledger for unfenced cleanup. The remote adapter rejects the input and batch-disconnects its source and newly expired leases. Other groups without an attempted command retain their previous state. An attempted group may lose other owners in the same endpoint, matching the existing conservative group fault boundary; no global panic or deadline relaxation. Dynamic MPE is local-only and rejects this remote-only API. Physical Group input paths and independent native scheduler acceptance remain open. Tests cover mid-chord expiry with failed cleanup debt and another live group, expired silent join rollback, and the remote adapter's multi-command and post-send receipt rejection. No physical acceptance or release claim.
+
+
+## Dynamic MPE receipt delivery candidate
+
+Remote receipt candidate 70f242ac passed run 45736285672: 743 portable, 792 macOS general, all mandatory timing trials. Max event lateness 32,486,708 ns; sampled wake lateness 155,033,917 ns. Historical failures remain open.
+
+Dynamic pool frame admission now checks before each pool receive (one ordinary wire command at most), then after the batch. Roll back speculative router and untouched pool snapshots, including silent ownership and capacity suppression; retain real wire attempts and retire affected pools with exact allocated-channel cleanup. No fence on failure cleanup, no remote Dynamic MPE activation, no setup policy or deadline change. Two tests cover exact member debt and silent ownership rollback. Native physical adapters still need clock wiring.
