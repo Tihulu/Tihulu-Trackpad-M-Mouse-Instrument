@@ -355,3 +355,15 @@ private func mobileDraftFixture() -> PerformanceGroupProfile {
     ])))
     #expect(!reloaded.isValid)
 }
+
+@Test func measuredXYZInstrumentUsesTheSelectedGroupScaleAndOneNativeFamily() throws {
+    let group = PerformanceInstrumentGroup(name: "Air lead")
+    var draft = try PerformanceGroupMobileDraft(profile: .init(groups:[group]), groupID: group.id, source: .phone)
+    let outside = draft.addXYZInstrument(.major, root: 120, channel: 2)
+    #expect(!outside && draft.routes.isEmpty)
+    let added = draft.addXYZInstrument(.pentatonic, root: 62, channel: 2)
+    #expect(added)
+    #expect(draft.routes.map(\.destination.number) == [62,64,66,69,71,74])
+    #expect(draft.routes.map(\.signal) == Array(RemotePiano.keySignals.prefix(6)))
+    #expect(draft.routes.allSatisfy { $0.destination.channel == 2 })
+}

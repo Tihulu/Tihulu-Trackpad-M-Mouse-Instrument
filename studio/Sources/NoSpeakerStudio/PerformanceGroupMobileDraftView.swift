@@ -10,6 +10,9 @@ struct PerformanceGroupMobileDraftView: View {
     @State private var widgetSignal:SensorSignal = .contact
     @State private var message = ""
     @State private var family:PerformanceGroupRemoteSurface = .xy
+    @State private var xyzScale = MobileExpressionPreset.major
+    @State private var xyzRoot = 60
+    @State private var xyzCustom = ""
     @State private var xyzPreset = DepthXYZHelperPreset.expression
     @State private var familyChannel=0
     @State private var familyTranspose=12
@@ -31,6 +34,18 @@ struct PerformanceGroupMobileDraftView: View {
                 .font(.caption).foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment:.leading,spacing:8) {
+                    DisclosureGroup("LiDAR / measured XYZ instrument") {
+                        Picker("Key mapping", selection: $xyzScale) {
+                            ForEach(MobileExpressionPreset.allCases) { Text($0.title).tag($0) }
+                        }
+                        if xyzScale == .custom { TextField("MIDI note numbers", text: $xyzCustom) }
+                        else { Stepper("Root MIDI note \(xyzRoot)", value: $xyzRoot, in: 0...127) }
+                        Stepper("MIDI channel \(familyChannel + 1)", value: $familyChannel, in: 0...15)
+                        Button("Add assigned keys to empty mobile slot") {
+                            let added = draft.addXYZInstrument(xyzScale, root: xyzRoot, channel: familyChannel, custom: xyzCustom)
+                            message = added ? "Keys added. Select Instrument and a pitch axis on the device." : "Check note range, available slots and channel bend ownership."
+                        }.disabled(!draft.routes.isEmpty)
+                    }
                     DisclosureGroup("LiDAR / measured XYZ helper") {
                         Picker("XYZ preset", selection: $xyzPreset) {
                             ForEach(DepthXYZHelperPreset.allCases, id: \.self) { Text($0.rawValue).tag($0) }

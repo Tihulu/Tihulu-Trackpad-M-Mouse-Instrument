@@ -285,3 +285,24 @@ extension PerformanceGroupMobileDraft {
         return true
     }
 }
+
+extension PerformanceGroupMobileDraft {
+    /// Key-only assignments negotiate the existing native v5 lane. Keep all
+    /// pitches and routes in the destination group; no client-specified MIDI.
+    public mutating func addXYZInstrument(_ scale: MobileExpressionPreset, root: Int,
+                                          channel: Int, custom: String = "") -> Bool {
+        guard routes.isEmpty, (0...15).contains(channel), let notes = scale.notes(root: root, custom: custom),
+              Set(notes).count == notes.count, notes.count <= remainingRouteCapacity else { return false }
+        var next = self
+        next.routes = zip(RemotePiano.keySignals,notes).map { signal,note in
+            .init(id: UUID().uuidString, source: source, signal: signal, destination: .init(.note, channel: channel, number: note))
+        }
+        guard let profile = try? next.applying(to: baseline),
+              !profile.groups.contains(where: { $0.id != groupID && $0.patch.routes.contains { $0.source == source } }),
+              let group = profile.groups.first(where: { $0.id == groupID }),
+              !group.patch.routes.contains(where: { $0.destination.kind == .pitchBend && $0.destination.channel == channel })
+        else { return false }
+        self = next
+        return true
+    }
+}
