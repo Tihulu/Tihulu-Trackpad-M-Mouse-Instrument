@@ -252,7 +252,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <label for="kitSize">Element size</label><input id="kitSize" type="range" min="12" max="24" step="1">
 <button id="kitSave" type="button">Save layout on this browser</button><button id="kitReset" type="button">Reset kit</button><p id="kitStatus" role="status"></p>
 <small>Drag a visible element or adjust its position and size. Add/remove changes presentation only; the Mac owns MIDI assignments. Only assigned pads can be added.</small></div>
-<label for="airStickPad">Assigned strike pad</label><select id="airStickPad"></select><button id="airStickStart" type="button" disabled>Enable air stick</button><button id="airStickStop" type="button" disabled>Stop air stick</button><p id="airStickStatus" role="status">Off.</p><small>Gravity-free motion triggers a mapped pad at fixed velocity. Hold securely, use small movements and never hit a surface.</small></div></section>
+<label for="airStickPad">Assigned strike pad</label><select id="airStickPad"></select><button id="airStickStart" type="button" disabled>Enable air stick</button><button id="airStickStop" type="button" disabled>Stop air stick</button><p id="airStickStatus" role="status">Off.</p><small>Select a mapped pad between strikes, then hold still before striking it. Gravity-free motion triggers the selected pad at fixed velocity. Hold securely, use small movements and never hit a surface.</small></div></section>
 <section id="pianoSection" hidden aria-labelledby="piano-title"><h2 id="piano-title">Piano</h2>
 <p>Only keys and sustain mapped for this paired device are available. Key positions identify logical controls. Scale hints are available only for a verified default pitch mapping.</p>
 <div id="pianoTools"><button id="pianoArp" type="button" aria-pressed="false" disabled>Arp</button><button id="pianoChord" type="button" aria-pressed="false" disabled>Chord</button><button id="pianoSynth" type="button" aria-pressed="false" disabled>Show synth controls</button><button id="synthCompact" type="button" aria-pressed="false" hidden>Compact knobs</button></div><div id="synthChoices" hidden><small>Visible controls (edit while pedals are off)</small><div id="synthChoiceGrid"></div></div>
@@ -1138,7 +1138,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const kitNodes=kitNames.map((name,i)=>{
     const b=document.createElement("button");b.type="button";b.textContent=name;b.setAttribute("data-cymbal",String([2,3,6,7].includes(i)));
     get("kitBoard").appendChild(b);
-    b.addEventListener("click",()=>{if(!kitIdle()||!has("drums",i)||!kit[i].visible)return;if(kitEditing){kitPart=i;}else{stickPad=i;get("airStickPad").value=String(i);}syncStick();});
+    b.addEventListener("click",()=>{
+      if(!has("drums",i)||!kit[i].visible)return;
+      if(kitEditing&&kitIdle()){kitPart=i;syncStick();}
+      else chooseStrikePad(i);
+    });
     b.addEventListener("pointerdown",e=>{
       if(kitDrag||!kitEditing||!kitIdle()||!has("drums",i)||!kit[i].visible||e.button!==0)return;
       e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{return;}
@@ -1155,6 +1159,21 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     return b;
   });
   function kitIdle(){return currentView==="play"&&playMode==="stick"&&admitted&&stickState==="idle"&&!releasingAll&&!drumBusy();}
+  function canChooseStrikePad(){
+    return currentView==="play"&&playMode==="stick"&&admitted&&!releasingAll&&
+      stickState!=="requesting"&&stickPulseAt===null&&!drumBusy();
+  }
+  function chooseStrikePad(index){
+    if(canChooseStrikePad()&&within(index,0,7)&&has("drums",index)&&index!==stickPad){
+      stickPad=index;
+      if(stickState!=="idle"){
+        stickReady=false;
+        get("airStickStatus").textContent="New pad selected. Hold still before the next strike.";
+      }
+    }
+    get("airStickPad").value=String(stickPad);
+    syncKit();
+  }
   function syncKit(){
     const key=String(caps?.drums??0),idle=kitIdle();
     if(key!==kitOptionsKey){
@@ -1170,12 +1189,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("kitX").value=String(kit[kitPart].x);get("kitY").value=String(kit[kitPart].y);
     get("kitSize").value=String(kit[kitPart].size);
     kitNodes.forEach((b,i)=>{
-      b.hidden=!has("drums",i)||!kit[i].visible;b.disabled=!idle;
+      b.hidden=!has("drums",i)||!kit[i].visible;b.disabled=!canChooseStrikePad();
       b.style.left=kit[i].x+"%";b.style.top=kit[i].y+"%";
       b.style.width="clamp(44px, "+kit[i].size+"%, "+Math.round(100*kit[i].size/18)+"px)";
       b.setAttribute("data-selected",String(i===(kitEditing?kitPart:stickPad)));
       b.setAttribute("data-hit",String(Boolean(drumDesired&(1<<i))));
-      b.textContent=kitNames[i];b.setAttribute("aria-label",kitNames[i]+" · "+labelFor(9+i));
+      b.textContent=mappingLabels.get(9+i)||kitNames[i];b.setAttribute("aria-label",b.textContent+" · "+labelFor(9+i));
     });
   }
   function editKit(action){
@@ -1203,7 +1222,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       stickPad=Array.from({length:8},(_,i)=>i).find(i=>has("drums",i))??0;select.value=String(stickPad);stickKey=key;
     }
     get("airStickSection").hidden=playMode!=="stick";
-    select.disabled=stickState!=="idle"||!admitted||!caps?.drums;
+    select.disabled=!canChooseStrikePad()||!caps?.drums;
     get("airStickStart").disabled=playMode!=="stick"||!admitted||!caps?.drums||releasingAll||stickState!=="idle"||drumBusy();
     get("airStickStop").disabled=stickState==="idle";syncKit();
   }
@@ -1931,7 +1950,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("layoutReset").addEventListener("click",resetLayout);
   for(const v of viewNames)get(navId(v)).addEventListener("click",()=>chooseView(v));
   get("playMode").addEventListener("change",choosePlayMode);
-  get("airStickPad").addEventListener("change",()=>{const i=Number(get("airStickPad").value);if(kitIdle()&&get("airStickPad").value===String(i)&&within(i,0,7)&&has("drums",i))stickPad=i;get("airStickPad").value=String(stickPad);syncKit();});
+  get("airStickPad").addEventListener("change",()=>{const i=Number(get("airStickPad").value);chooseStrikePad(get("airStickPad").value===String(i)?i:-1);});
   get("kitEdit").addEventListener("click",()=>{if(kitIdle()){kitEditing=!kitEditing;kitDrag=null;syncStick();}});
   get("kitPart").addEventListener("change",()=>{const i=Number(get("kitPart").value);if(kitIdle()&&kitEditing&&get("kitPart").value===String(i)&&within(i,0,7)&&has("drums",i))kitPart=i;syncStick();});
   for(const [id,action] of [["kitAdd","add"],["kitRemove","remove"],["kitSave","save"],["kitReset","reset"]])get(id).addEventListener("click",()=>editKit(action));

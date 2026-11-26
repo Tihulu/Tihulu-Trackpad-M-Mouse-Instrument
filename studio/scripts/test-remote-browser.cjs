@@ -1486,3 +1486,21 @@ test("swing alternates across a one-note arp and absorbs ordinary timer jitter",
   assert.deepEqual(a.socket.sendTimes.slice(-5).map((time,i,times)=>time-times[0]),[0,65,120,160,200]);
   a.ack(13);e.phraseStop.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);
 });
+
+test("armed stick retargets between acknowledged strikes and requires fresh neutral motion",async()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:130},false),e=a.elements;
+  e.playMode.value="stick";e.playMode.emit("change");await e.airStickStart.emit("click");
+  const motion=x=>a.window.emit("devicemotion",{acceleration:{x,y:0,z:0}});
+  motion(0);e.kitBoard.children[7].emit("click");
+  motion(10);assert.equal(a.socket.frames.length,0);assert.equal(e.airStickPad.value,"7");
+  motion(0);motion(10);a.step(25);assert.equal(a.socket.frames.at(-1).mask,128);
+  const attempt=()=>{e.airStickPad.value="1";e.airStickPad.emit("change");};
+  attempt();assert.equal(e.airStickPad.value,"7");
+  a.ack();a.step(80);assert.equal(a.socket.frames.at(-1).mask,0);
+  attempt();assert.equal(e.airStickPad.value,"7");
+  a.ack();assert.equal(e.airStickPad.disabled,false);assert.equal(e.kitBoard.children[1].disabled,false);
+  attempt();assert.equal(e.airStickPad.value,"1");
+  a.step(40);motion(10);assert.equal(a.socket.frames.at(-1).mask,0);
+  motion(0);motion(10);a.step(25);assert.equal(a.socket.frames.at(-1).mask,2);
+  assert.equal(e.kitEdit.disabled,true);assert.equal(a.socket.closed,undefined);
+});
