@@ -131,3 +131,23 @@ private func groupRoute(_ id: String, _ source: SensorSource, _ signal: SensorSi
     let stopped = router.panic()
     #expect(stopped.isEmpty && router.sessionCount == 0)
 }
+
+
+@Test func groupSnapshotSustainEdgesFollowSameOrderingAsBuilder() throws {
+    let note=SensorDestination(.note,number:60)
+    let pedal=SensorDestination(.sustain)
+    let group=PerformanceInstrumentGroup(name:"Lead",patch:.init(routes:[
+        groupRoute("note",.gamepad1,.padA,note),
+        groupRoute("pedal",.gamepad1,.padRT,pedal)
+    ]))
+    var router=try PerformanceGroupRouter(profile:.init(groups:[group]))
+    let lease=try router.connect(.gamepad1,now:1)
+    let attack=router.frame(lease:lease,sequence:1,now:1,values:[.padA:1])
+    #expect(attack.map(\.command)==[.init(note,value:100)])
+    let engage=router.frame(lease:lease,sequence:2,now:1.1,values:[.padRT:1],releasing:[.padA])
+    #expect(engage.map(\.command)==[.init(pedal,value:127),.init(note,value:0)])
+    let release=router.frame(lease:lease,sequence:3,now:1.2,values:[.padA:1],releasing:[.padRT])
+    #expect(release.map(\.command)==[.init(note,value:100),.init(pedal,value:0)])
+    let stop=router.panic()
+    #expect(stop.map(\.command)==[.init(note,value:0)])
+}
