@@ -135,3 +135,24 @@ public enum TouchPublicationAdmission {
         return permits()
     }
 }
+
+/// Batch-level output admission for the single-owner Builder. Rejection
+/// happens before handing a command to the transport/debt ledger. The
+/// caller retires its entire Builder session using the actual output
+/// ledger, not the router's speculative command list.
+public enum PhysicalReceiptCommandBatch {
+    public enum Outcome: Equatable, Sendable {
+        case completed, expired, transportFailed
+    }
+    public static func dispatch<Command>(_ commands:[Command],
+                                         fence:inout PhysicalReceiptSendFence?,
+                                         now:()->Double,
+                                         send:(Command)->Bool)->Outcome {
+        for command in commands {
+            if fence != nil, fence?.permits(now:now()) != true { return .expired }
+            guard send(command) else { return .transportFailed }
+        }
+        if fence != nil, fence?.permits(now:now()) != true { return .expired }
+        return .completed
+    }
+}

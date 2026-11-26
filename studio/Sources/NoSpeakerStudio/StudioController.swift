@@ -1636,7 +1636,7 @@ final class StudioController: ObservableObject {
         guard patchRunning, patchPhysical else { return }
         let now = ProcessInfo.processInfo.systemUptime
         let commands = patchPhysicalRuntime.receiveScalar(source: source, value: value, hostTime: now, now: now)
-        recordPatchCommands(commands)
+        recordPatchCommands(commands,receipt:now)
     }
 
     var builderBarToken: UUID? { groupNativeBar ? groupRunToken : (patchNativeBar ? patchNativeToken : nil) }
@@ -1774,8 +1774,9 @@ final class StudioController: ObservableObject {
 
     private func receiveBuilderGamepad(source:SensorSource,frame:GamepadFrame?,token:UUID) {
         guard patchRunning, patchPhysical, patchNativeToken == token else { return }
-        let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:ProcessInfo.processInfo.systemUptime)
-        recordPatchCommands(commands)
+        let now=ProcessInfo.processInfo.systemUptime
+        let commands = patchPhysicalRuntime.receiveGamepad(source:source,frame:frame,now:now)
+        recordPatchCommands(commands,receipt:now)
     }
 
     private func startPatchWatchdog() {
@@ -1831,7 +1832,7 @@ final class StudioController: ObservableObject {
             }
             let commands = patchPhysicalRuntime.receive(source: source, x: x, y: y, size: size,
                                                         hostTime: sample.time, now: admissionNow)
-            recordPatchCommands(commands)
+            recordPatchCommands(commands,receipt:sample.time)
         }
         guard patchRunning else { return }
         drainBuilderCamera(now: ProcessInfo.processInfo.systemUptime)
@@ -1995,7 +1996,7 @@ final class StudioController: ObservableObject {
     private func deliverPatchInput(_ input: PatchSimulation.Input, value: Double) {
         let now = ProcessInfo.processInfo.systemUptime
         let commands = patchPhysical ? patchPhysicalRuntime.sendHybrid(input,value:value,now:now) : patchSimulation.send(input,value:value,now:now)
-        recordPatchCommands(commands)
+        recordPatchCommands(commands,receipt:patchPhysical ? now : nil)
     }
 
     func releasePatchInput(_ input: PatchSimulation.Input) {
@@ -2055,7 +2056,7 @@ final class StudioController: ObservableObject {
         if !patchSimulation.running { stopInstrumentPatch() }
     }
 
-    private func recordPatchCommands(_ commands: [SensorCommand]) {
+    private func recordPatchCommands(_ commands: [SensorCommand],receipt:Double? = nil) {
         guard !commands.isEmpty else { return }
         var attempted: [SensorCommand] = []
         var hapticAttack = false
@@ -2066,7 +2067,9 @@ final class StudioController: ObservableObject {
             builderPerformanceMetrics.recordBatch(start:batchStart,end:ProcessInfo.processInfo.systemUptime,
                 commands:attempted.count,attempts:midiAttempts,failures:midiFailures)
         }
-        for command in commands {
+        var fence=receipt.map { PhysicalReceiptSendFence(receipt:$0,maximumAge:PhysicalPatchRuntime.timeout) }
+        let outcome=PhysicalReceiptCommandBatch.dispatch(commands,fence:&fence,
+            now:{ ProcessInfo.processInfo.systemUptime }) { command in
             attempted.append(command)
             let plan = airTunedPlan
             if patchMIDIEnabled && (gamepadOutputPlan?.sendsMIDI(command.destination) ?? true) &&
@@ -2079,13 +2082,7 @@ final class StudioController: ObservableObject {
                 return patchMIDI.send(command)
             }) {
                 midiFailures += 1
-                if ensembleRecording {
-                    ensembleTake?.interrupt(now:ProcessInfo.processInfo.systemUptime)
-                    updateEnsembleTakeState()
-                }
-                stopInstrumentPatch()
-                patchStatus = "MIDI delivery failed. Check DAW and retry Stop."
-                break
+                return false
             }
             if patchHapticEnabled && (gamepadOutputPlan?.sendsHaptics(command.destination) ?? true) {
                 gamepadHapticVoices.apply(command)
@@ -2094,6 +2091,19 @@ final class StudioController: ObservableObject {
             if ensembleRecording {
                 if ensembleTake?.append(command,now:ProcessInfo.processInfo.systemUptime) != true { updateEnsembleTakeState() }
             }
+            return true
+        }
+        if outcome != .completed {
+            // The router may have computed commands that never reached
+            // the sink. Retire Builder only, through its actual output
+            // ledger; do not invent debt for unattempted commands.
+            if ensembleRecording {
+                ensembleTake?.interrupt(now:ProcessInfo.processInfo.systemUptime)
+                updateEnsembleTakeState()
+            }
+            stopInstrumentPatch()
+            let reason=outcome == .expired ? "Physical receipt expired during delivery. Restart Builder explicitly." : "MIDI delivery failed. Check DAW."
+            patchStatus = reason + " " + patchStatus
         }
         // Deliver synchronously in the original order, publish the bounded
         // monitor only once. A failure still includes the attempted command.

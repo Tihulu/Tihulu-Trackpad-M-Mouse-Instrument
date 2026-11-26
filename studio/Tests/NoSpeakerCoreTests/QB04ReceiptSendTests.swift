@@ -129,3 +129,57 @@ private func qbNote(_ pitch:Int,_ velocity:Int)->SensorCommand {
         }
     }
 }
+
+@Test func builderReceiptExpiryNeverCreatesUnattemptedOutputDebt() {
+    for stall in [false,true] {
+        var ledger=PatchOutputLedger()
+        var fence:PhysicalReceiptSendFence? = .init(receipt:10,maximumAge:0.35)
+        var now=10.01
+        var sent:[SensorCommand]=[]
+        let outcome=PhysicalReceiptCommandBatch.dispatch([qbNote(60,90),qbNote(64,90)],
+            fence:&fence,now:{now},send:{command in
+                ledger.deliver(command,send:{wire in
+                    sent.append(wire)
+                    if stall { now=10.35 }
+                    return true
+                })
+            })
+        #expect(outcome == (stall ? .expired : .completed))
+        #expect(sent == (stall ? [qbNote(60,90)] : [qbNote(60,90),qbNote(64,90)]))
+        var cleanup:[SensorCommand]=[]
+        let cleaned=ledger.releaseAll(send:{cleanup.append($0);return true})
+        #expect(cleaned && ledger.outstanding.isEmpty)
+        #expect(cleanup == (stall ? [qbNote(60,0)] : [qbNote(60,0),qbNote(64,0)]))
+    }
+}
+
+@Test func builderReceiptTransportFailureRetainsOnlyAttemptedDebt() {
+    var ledger=PatchOutputLedger()
+    var fence:PhysicalReceiptSendFence? = .init(receipt:1,maximumAge:0.35)
+    var sent:[SensorCommand]=[]
+    let outcome=PhysicalReceiptCommandBatch.dispatch([qbNote(60,90),qbNote(64,90)],
+        fence:&fence,now:{1.01},send:{command in
+            ledger.deliver(command,send:{sent.append($0);return false})
+        })
+    #expect(outcome == .transportFailed && sent == [qbNote(60,90)])
+    #expect(ledger.outstanding == [qbNote(60,90).destination])
+    let failed=ledger.releaseAll(send:{_ in false})
+    #expect(!failed && ledger.outstanding == [qbNote(60,90).destination])
+    let cleaned=ledger.releaseAll(send:{_ in true})
+    #expect(cleaned && ledger.outstanding.isEmpty)
+}
+
+@Test func builderReceiptRejectsFinalSlowSendAndBackwardClock() {
+    for end in [0.99,1.35] {
+        var fence:PhysicalReceiptSendFence? = .init(receipt:1,maximumAge:0.35)
+        var now=1.01
+        let result=PhysicalReceiptCommandBatch.dispatch([qbNote(60,90)],fence:&fence,
+            now:{now},send:{_ in now=end;return true})
+        #expect(result == .expired)
+    }
+    var unfenced:PhysicalReceiptSendFence?
+    var sent:[SensorCommand]=[]
+    let result=PhysicalReceiptCommandBatch.dispatch([qbNote(60,90)],fence:&unfenced,
+        now:{ .nan },send:{sent.append($0);return true})
+    #expect(result == .completed && sent == [qbNote(60,90)])
+}
