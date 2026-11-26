@@ -308,10 +308,12 @@ public struct PhysicalPatchRuntime: Sendable {
         }
         if sessions[source] == nil {
             guard !frame.active.isEmpty else { return [] }
-            sessions[source] = try? router.connect(source,now:now)
+            sessions[source] = try? router.connect(source,now:receipt)
         }
         guard let session = sessions[source] else { return [] }
-        router.heartbeat(session,now:now)
+        // Use the original capture receipt for smoothing and router time.
+        // Processing time remains authoritative for admission and expiry.
+        router.heartbeat(session,now:receipt)
         // Duplicate callback/poll snapshots must still renew the lease.
         // Smoothing is time-based and must continue receiving held samples.
         if !gamepadSmoothedSources.contains(source), lastGamepadActive[source] == frame.active {
@@ -327,10 +329,10 @@ public struct PhysicalPatchRuntime: Sendable {
                 continue
             }
             sequence &+= 1
-            events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:now))
+            events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:receipt))
         }
         gamepadSnapshotMetrics.record(skipped:false,events:events.count)
-        return router.ingestFrame(session:session,releasing:releasing,events:events,now:now)
+        return router.ingestFrame(session:session,releasing:releasing,events:events,now:receipt)
     }
     /// Host preflight uses the same retirement fence before rejecting
     /// an expired callback. Old-generation input is ignored, not a fault

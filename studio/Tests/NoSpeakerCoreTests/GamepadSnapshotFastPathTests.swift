@@ -104,3 +104,27 @@ private func snapshot(a:Bool = false,b:Bool = false,stick:Double = 0) throws -> 
     #expect(metrics.skippedDuplicates == 1)
     #expect(metrics.mappedEvents == Int.max)
 }
+
+
+@Test func gamepadSmoothingUsesCaptureIntervalRatherThanDispatchDelay() throws {
+    let target=SensorDestination(.controlChange,number:74)
+    let response=ContinuousResponse(smoothingMS:100)
+    let patch=InstrumentPatch(routes:[
+        .init(id:"filter",source:.gamepad1,signal:.padLSX,destination:target,response:response)
+    ])
+    var immediate=PhysicalPatchRuntime(),delayed=PhysicalPatchRuntime()
+    try immediate.configure(patch)
+    try delayed.configure(patch)
+    let idle=try snapshot(),low=try snapshot(a:true,stick:-1),high=try snapshot(a:true,stick:1)
+    _=immediate.receiveGamepad(source:.gamepad1,frame:idle,now:1)
+    _=delayed.receiveGamepad(source:.gamepad1,frame:idle,now:1.01,hostTime:1)
+    #expect(immediate.receiveGamepad(source:.gamepad1,frame:low,now:1.02)==[.init(target,value:0)])
+    #expect(delayed.receiveGamepad(source:.gamepad1,frame:low,now:1.04,hostTime:1.02)==[.init(target,value:0)])
+    for (receipt,delivery) in [(1.05,1.15),(1.08,1.16),(1.11,1.20),(1.14,1.21)] {
+        let expected=immediate.receiveGamepad(source:.gamepad1,frame:high,now:receipt)
+        let actual=delayed.receiveGamepad(source:.gamepad1,frame:high,now:delivery,hostTime:receipt)
+        #expect(actual==expected)
+    }
+    #expect(immediate.expire(now:1.50)==[.init(target,value:0)])
+    #expect(delayed.expire(now:1.50)==[.init(target,value:0)])
+}
