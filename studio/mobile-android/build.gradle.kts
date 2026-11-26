@@ -18,5 +18,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.mediapipe:tasks-vision:0.10.26")
+    // Optional in the embedding app; RGB-only clients need no ARCore runtime.
+    compileOnly("com.google.ar:core:1.48.0")
     testImplementation("junit:junit:4.13.2")
 }
