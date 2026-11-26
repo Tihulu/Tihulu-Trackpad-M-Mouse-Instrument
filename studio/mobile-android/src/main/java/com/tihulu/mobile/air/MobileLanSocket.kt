@@ -16,18 +16,22 @@ import java.util.concurrent.TimeUnit
  * Opt-in native LAN adapter prototype, not wired to the RGB/ARCore preview.
  * A single instance owns a single socket and sender policy. All state and
  * sends are serialized; the independent watchdog does not rely on sensor UI.
- * Uses OkHttp's ordinary TLS trust and hostname checks, no custom trust
- * manager, no redirect, no proxy, no retry, no credential in request URL.
+ * Uses ordinary TLS chain and hostname verification, optionally anchored
+ * to an explicitly fingerprint-verified private root for this exact host.
+ * No redirect, proxy, retry, global trust change or credential in URL.
  * Caller must explicitly stop on lifecycle/permission loss. The current
  * diagnostic APK intentionally has no INTERNET permission.
  */
-class MobileLanSocket(private val endpoint:MobileLanEndpoint, selection:MobileLanSession.Selection) {
+class MobileLanSocket(private val endpoint:MobileLanEndpoint, selection:MobileLanSession.Selection,
+                      privateRoot:MobileLanTrust?=null) {
+    init { require(privateRoot==null||privateRoot.host==endpoint.host) }
     private val policy=MobileLanSession(selection)
     private val lock=Any()
     private val scheduler=Executors.newSingleThreadScheduledExecutor {r->Thread(r,"TIHULU-LAN-watchdog").apply{isDaemon=true}}
     private val client=OkHttpClient.Builder()
         .proxy(Proxy.NO_PROXY).followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).connectTimeout(5,TimeUnit.SECONDS)
+        .apply { privateRoot?.configure(this) }
         .build()
     private var socket:WebSocket?=null
     private var token:String?=null

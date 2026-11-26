@@ -60,3 +60,16 @@ closes when a timely release is blocked by ACK or pacing. The local preview
 is unchanged. Before live pairing: bound incoming WebSocket message assembly,
 provision trust for a verified local CA without weakening TLS, connect the
 camera UI to the admitted lane, and validate on physical Android devices.
+
+### Private-root provisioning policy (offline, experimental)
+
+A new in-memory helper accepts exactly one bounded DER self-signed CA after
+matching a separately authenticated SHA-256 fingerprint. It checks validity,
+CA constraints and signature, builds a private trust store containing only
+that root, and binds use to the chosen numeric LAN host. The socket keeps
+OkHttp's standard IP hostname/SAN verification. No root is installed globally,
+no secret or CA is stored, and no trust-all fallback exists. The phone UI
+must obtain the expected fingerprint independently (e.g. verified on the Mac
+screen), never derive it from the selected file as implicit consent. The APK
+still has no network permission; bounded inbound WebSocket reassembly and
+physical TLS tests remain prerequisites for pairing UI activation.
