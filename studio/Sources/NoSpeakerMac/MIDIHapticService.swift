@@ -1479,7 +1479,7 @@ public final class PerformanceGroupMIDIHost {
     public func revokeRemoteGroupConnection(run:UUID,connection:UUID) -> PerformanceGroupRemoteBatch {
         guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else { return .init() }
         discardGroupHapticAttacks()
-        let result = bridge.revoke(connection,session:&state,send:send)
+        let result = bridge.revoke(connection,session:&state,refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
         remoteBridge = bridge
         gamepads = state
         return result
@@ -1488,7 +1488,7 @@ public final class PerformanceGroupMIDIHost {
     public func stopRemoteGroupBridge(run:UUID) -> PerformanceGroupRemoteBatch {
         guard run == remoteRunID,var bridge = remoteBridge,var state = gamepads else { return .init() }
         discardGroupHapticAttacks()
-        let result = bridge.stop(session:&state,send:send)
+        let result = bridge.stop(session:&state,refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
         gamepads = state
         remoteBridge = nil
         remoteRunID = nil
@@ -1547,7 +1547,7 @@ public final class PerformanceGroupMIDIHost {
     public func expireGamepads(now: Double) -> [PerformanceGroupDelivery.Report] {
         guard var state = gamepads else { return [] }
         let before = state.sourceStates
-        let result = state.expire(now:now,send:send)
+        let result = state.expire(now:now,refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
         if before != state.sourceStates { discardGroupHapticAttacks() }
         gamepads = state
         return result
@@ -1560,7 +1560,7 @@ public final class PerformanceGroupMIDIHost {
     public func unbindGroupSources(_ tokens:[SensorSource:UUID]) -> [PerformanceGroupDelivery.Report] {
         guard var state = gamepads else { return [] }
         discardGroupHapticAttacks()
-        let result = state.unbindBatch(tokens,send:send)
+        let result = state.unbindBatch(tokens,refreshNow:{ ProcessInfo.processInfo.systemUptime },send:send)
         gamepads = state
         return result
     }

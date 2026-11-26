@@ -152,14 +152,14 @@ private func dynamicSpec(_ cents:Int) -> PerformanceGroupTuningPlan.Specificatio
     let bend = SensorDestination(.pitchBend,channel:3)
     let group = PerformanceInstrumentGroup(name:"Shared bend",patch:.init(routes:[
         .init(id:"note",source:.gamepad1,signal:.padA,destination:.init(.note,channel:3,number:62)),
-        .init(id:"low",source:.gamepad1,signal:.padLX,destination:bend,priority:0),
-        .init(id:"high",source:.gamepad2,signal:.padLX,destination:bend,priority:10)
+        .init(id:"low",source:.gamepad1,signal:.padLSX,destination:bend,priority:0),
+        .init(id:"high",source:.gamepad2,signal:.padLSX,destination:bend,priority:10)
     ]))
     var state = try DynamicMPEGroupDelivery(profile:.init(groups:[group]),tuning:[group.id:dynamicSpec(20)])
     #expect(state.prepare { _ in true })
     let low = try state.connect(.gamepad1,now:1), high = try state.connect(.gamepad2,now:1)
-    _ = state.frame(lease:low,sequence:1,now:1,values:[.padLX:0.2]) { _ in true }
-    _ = state.frame(lease:high,sequence:1,now:1,values:[.padLX:0.8]) { _ in true }
+    _ = state.frame(lease:low,sequence:1,now:1,values:[.padLSX:0.2]) { _ in true }
+    _ = state.frame(lease:high,sequence:1,now:1,values:[.padLSX:0.8]) { _ in true }
     var wire:[PerformanceGroupCommand] = []
     let report = state.disconnectBatch([high],admitRestoration:{false}) { wire.append($0);return true }
     #expect(report.admissionExpired && report.failedGroups == [group.id] && report.pendingCleanup.isEmpty)

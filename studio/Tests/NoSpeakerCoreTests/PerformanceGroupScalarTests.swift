@@ -101,3 +101,55 @@ private func scalarGroupProfile() -> PerformanceGroupProfile {
     #expect(sent.first?.command.value == 102 && sent.last?.command.value == 0)
     #expect(state.sourceStates[.touchBar] == .waitingForNeutral)
 }
+
+
+@Test func groupScalarStalledReleaseCannotRestoreExpiredLowerPriorityOwner() throws {
+    let cc1=SensorDestination(.controlChange,number:71)
+    let cc2=SensorDestination(.controlChange,number:74)
+    let group=PerformanceInstrumentGroup(name:"Two effects",patch:.init(routes:[
+        .init(id:"low1",source:.lid,signal:.angle,destination:cc1,priority:0),
+        .init(id:"low2",source:.lid,signal:.angle,destination:cc2,priority:0),
+        .init(id:"high1",source:.touchBar,signal:.x,destination:cc1,priority:10),
+        .init(id:"high2",source:.touchBar,signal:.x,destination:cc2,priority:10)
+    ]))
+    var state=try PerformanceGroupGamepadSession(profile:.init(groups:[group]),allowScalars:true)
+    let low=try state.bind(.lid,now:1),high=try state.bind(.touchBar,now:1)
+    _=state.receiveScalar(.lid,token:low,value:0.2,hostTime:1.01,now:1.01,send:{_ in true})
+    _=state.receiveScalar(.touchBar,token:high,value:0.8,hostTime:1.2,now:1.2,send:{_ in true})
+    var now=1.3
+    var sent:[PerformanceGroupCommand]=[]
+    let result=state.receiveScalar(.touchBar,token:high,value:nil,hostTime:now,now:now,
+                                    refreshNow:{now},send:{
+        sent.append($0)
+        if $0.command.value==25 { now=1.37 }
+        return true
+    })
+    #expect(result.status == .lost && result.reports.contains(where:{ $0.admissionExpired }))
+    #expect(sent.filter { $0.command.value==25 }.count==1)
+    #expect(Set(sent.filter { $0.command.value==0 }.map(\.command.destination)) == [cc1,cc2])
+    #expect(state.activeSessions==0 && state.pendingCleanup.isEmpty)
+}
+
+@Test func groupWatchdogDrainsNewlyExpiredSourcesAfterBlockingNeutralCleanup() throws {
+    let a=PerformanceInstrumentGroup(name:"A",patch:.init(routes:[
+        .init(id:"a",source:.trackpad,signal:.contact,destination:.init(.note,number:60))
+    ]))
+    let b=PerformanceInstrumentGroup(name:"B",patch:.init(routes:[
+        .init(id:"b",source:.magicMouse,signal:.contact,destination:.init(.note,number:64))
+    ]))
+    var state=try PerformanceGroupGamepadSession(profile:.init(groups:[a,b]),allowSurfaces:true)
+    let x=try state.bind(.trackpad,now:1),y=try state.bind(.magicMouse,now:1)
+    _=state.receiveSurface(.trackpad,token:x,x:nil,y:nil,size:nil,hostTime:1,now:1,send:{_ in true})
+    _=state.receiveSurface(.magicMouse,token:y,x:nil,y:nil,size:nil,hostTime:1,now:1,send:{_ in true})
+    _=state.receiveSurface(.trackpad,token:x,x:0.5,y:0.5,size:0.5,hostTime:1.01,now:1.01,send:{_ in true})
+    _=state.receiveSurface(.magicMouse,token:y,x:0.5,y:0.5,size:0.5,hostTime:1.2,now:1.2,send:{_ in true})
+    var now=1.37
+    var sent:[PerformanceGroupCommand]=[]
+    _=state.expire(now:now,refreshNow:{now},send:{
+        sent.append($0)
+        if $0.groupID==a.id { now=1.56 }
+        return true
+    })
+    #expect(sent.map(\.groupID)==[a.id,b.id] && sent.allSatisfy { $0.command.value==0 })
+    #expect(state.activeSessions==0 && state.pendingCleanup.isEmpty)
+}

@@ -58,21 +58,21 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         invitationSharesLabels = false
     }
 
-    public mutating func revoke(_ connection:UUID,session:inout PerformanceGroupGamepadSession,
+    public mutating func revoke(_ connection:UUID,session:inout PerformanceGroupGamepadSession,refreshNow:(()->Double)? = nil,
                                 send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupRemoteBatch {
         var result = PerformanceGroupRemoteBatch()
-        result.reports = remove([connection],session:&session,send:send)
+        result.reports = remove([connection],session:&session,refreshNow:refreshNow,send:send)
         result.actions = [.revoke(connection)]
         return result
     }
 
-    public mutating func stop(session:inout PerformanceGroupGamepadSession,
+    public mutating func stop(session:inout PerformanceGroupGamepadSession,refreshNow:(()->Double)? = nil,
                               send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupRemoteBatch {
         stopped = true
         ready = false
         cancelInvitation()
         var result = PerformanceGroupRemoteBatch()
-        result.reports = remove(Set(bindings.keys),session:&session,send:send)
+        result.reports = remove(Set(bindings.keys),session:&session,refreshNow:refreshNow,send:send)
         result.actions = [.stop]
         return result
     }
@@ -84,11 +84,11 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         guard !stopped else { return .init() }
         guard now.isFinite,now >= 0,events.count <= 32,
               !events.contains(where:{ if case .fault = $0 { return true }; return false }) else {
-            var result = stop(session:&session,send:send)
+            var result = stop(session:&session,refreshNow:refreshNow,send:send)
             result.fault = true
             return result
         }
-        if session.retired { return stop(session:&session,send:send) }
+        if session.retired { return stop(session:&session,refreshNow:refreshNow,send:send) }
         var result = PerformanceGroupRemoteBatch()
         let disconnected = Set(events.compactMap { event -> UUID? in
             if case .disconnected(let id) = event { return id }; return nil
@@ -102,7 +102,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
         for id in disconnected.union(metadataExpired) {
             if let binding = bindings.removeValue(forKey:id) { departing[binding.source] = binding.token }
         }
-        result.reports += session.expire(now:now,removingRemote:departing,send:send)
+        result.reports += session.expire(now:now,removingRemote:departing,refreshNow:refreshNow,send:send)
         let expired = Set(bindings.compactMap { id,binding in
             session.matchesRemoteBinding(binding.source,token:binding.token) ? nil : id
         })
@@ -118,7 +118,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
             // invoke the sink. Never reuse the batch-start receipt budget.
             let eventNow=refreshNow?() ?? now
             guard eventNow.isFinite,eventNow>=lastProcessingTime else {
-                let retirement=stop(session:&session,send:send)
+                let retirement=stop(session:&session,refreshNow:refreshNow,send:send)
                 result.reports += retirement.reports
                 result.actions += retirement.actions
                 result.fault=true
@@ -134,7 +134,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                       fresh(receipt,now:now),
                       let issued = invitationIssuedAt,receipt >= issued,
                       let source = try? pairing.consume(secret:secret,now:now) else {
-                    result.reports += remove([id],session:&session,send:send)
+                    result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
                     continue
@@ -152,7 +152,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
             case .frame(let id,let bytes,let receipt):
                 guard !rejected.contains(id),var binding = bindings[id],
                       fresh(receipt,now:now),let validated = try? ValidatedGroupRemoteFrame(bytes:bytes) else {
-                    result.reports += remove([id],session:&session,send:send)
+                    result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
                     continue
@@ -177,7 +177,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                     metadataAllowed = binding.nextLabelPage == 0 || binding.labelsComplete
                 }
                 guard metadataAllowed else {
-                    result.reports += remove([id],session:&session,send:send)
+                    result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
                     continue
@@ -186,7 +186,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                                                               hostTime:receipt,now:now,refreshNow:refreshNow,send:send)
                 result.reports += received.reports
                 guard received.status == .ready || received.status == .waitingForNeutral || received.status == .delivered else {
-                    result.reports += remove([id],session:&session,send:send)
+                    result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
                     rejected.insert(id)
                     result.actions.append(.acknowledge(id,false))
                     continue
@@ -194,7 +194,7 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                 switch frame.kind {
                 case .capabilities:
                     guard let capabilities = session.remoteCapabilities(binding.source) else {
-                        result.reports += remove([id],session:&session,send:send)
+                        result.reports += remove([id],session:&session,refreshNow:refreshNow,send:send)
                         rejected.insert(id)
                         result.actions.append(.acknowledge(id,false))
                         continue
@@ -233,16 +233,25 @@ public struct PerformanceGroupRemoteBridge: Sendable {
                 bindings[id] = binding
             }
         }
+        // Another peer's cleanup can expire an authenticated slot.
+        let newlyRevoked=bindings.keys.filter { id in
+            guard let binding=bindings[id] else { return false }
+            return !session.matchesRemoteBinding(binding.source,token:binding.token)
+        }
+        for id in newlyRevoked.sorted(by:{ $0.uuidString < $1.uuidString }) {
+            bindings.removeValue(forKey:id)
+            result.actions.append(.revoke(id))
+        }
         return result
     }
 
-    private mutating func remove(_ ids:Set<UUID>,session:inout PerformanceGroupGamepadSession,
+    private mutating func remove(_ ids:Set<UUID>,session:inout PerformanceGroupGamepadSession,refreshNow:(()->Double)? = nil,
                                  send:(PerformanceGroupCommand)->Bool) -> [PerformanceGroupDelivery.Report] {
         var tokens:[SensorSource:UUID] = [:]
         for id in ids {
             if let binding = bindings.removeValue(forKey:id) { tokens[binding.source] = binding.token }
         }
-        return session.unbindRemoteBatch(tokens,send:send)
+        return session.unbindRemoteBatch(tokens,refreshNow:refreshNow,send:send)
     }
 
     private func fresh(_ receipt:Double,now:Double) -> Bool {
