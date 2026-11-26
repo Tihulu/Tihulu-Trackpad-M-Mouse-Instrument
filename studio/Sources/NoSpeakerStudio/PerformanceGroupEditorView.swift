@@ -303,14 +303,14 @@ struct PerformanceGroupEditorView: View {
     }
 
     private var canStartGroups: Bool {
-        didLoad && !readFailed && !tuningDraft.isDirty && profile == saved && supportedLocalProfile &&
+        didLoad && !readFailed && !studio.patchRunning && !tuningDraft.isDirty && profile == saved && supportedLocalProfile &&
         selectedControllersValid && !studio.groupGamepadsRunning && !studio.groupRetainsTuning &&
         studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
         (saved.layeredInputs.isEmpty || allowLayering)
     }
 
     private var canStartRemoteGroups:Bool {
-        StudioController.groupRemoteStartEnabled && didLoad && !readFailed && !tuningDraft.isDirty &&
+        StudioController.groupRemoteStartEnabled && didLoad && !readFailed && !studio.patchRunning && !tuningDraft.isDirty &&
         profile == saved && supportedRemoteProfile && selectedControllersValid &&
         !studio.groupGamepadsRunning && !studio.groupRetainsTuning &&
         studio.groupCleanupIDs.isEmpty && studio.groupDisposalCount == 0 &&
@@ -524,16 +524,7 @@ struct PerformanceGroupEditorView: View {
                     Text("Mobile group Start is disabled in this build.").font(.caption).foregroundStyle(.orange)
                 }
                 groupHapticControls
-                if supportedRemoteProfile && StudioController.groupRemoteStartEnabled {
-                    PerformanceGroupRemotePanel(sources:remoteSources,canStart:canStartRemoteGroups,
-                        tuning:tuningPreview,canStartTuned:canStartTunedRemoteGroups,tunedConsent:currentTunedConsent) { transport,page,confirmed,tuning,consent in
-                        guard tuning == nil || (consent != nil && consent == currentTunedConsent && hapticSelection.isEmpty) else {
-                            message = "Remote MPE confirmation expired. Review profile and device settings."
-                            return
-                        }
-                        startSavedGroups(tuning:tuning,remoteTransport:transport,remotePage:page,confirmedLAN:confirmed)
-                    }
-                }
+
                 if localSources.contains(.lid) {
                     Text("Lid input needs a compatible sensor. Start may fail on unsupported Macs; the actual sensor is opened only on Start.").font(.caption)
                 }
@@ -1080,9 +1071,8 @@ struct PerformanceGroupEditorView: View {
                     Text("Advanced tuning or Trackpad output selected. Review in Device setup / advanced before Start.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if profile.groups.contains(where:{ $0.patch.routes.contains(where:{ $0.source.isGroupRemote }) }) {
-                    Button("Mobile pairing and Start") { groupsExpanded=true }
-                    Text("Save first, then use the mobile connection controls. Network consent remains explicit.")
+                if profile.groups.contains(where:{ $0.patch.routes.contains(where:{ $0.source.isGroupRemote }) }) && profile != saved {
+                    Text("Save the layout to show its mobile pairing controls. Network consent remains explicit.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if !groupsExpanded && !message.isEmpty { Text(message).font(.caption) }
@@ -1097,6 +1087,18 @@ struct PerformanceGroupEditorView: View {
             starterPanel
             userPresetPanel
             quickPlayPanel
+            // Keep pairing state independent of the advanced disclosure.
+            // Collapsing manual controls must not retire a pending invitation.
+            if supportedRemoteProfile && StudioController.groupRemoteStartEnabled {
+                PerformanceGroupRemotePanel(sources:remoteSources,canStart:canStartRemoteGroups,
+                    tuning:tuningPreview,canStartTuned:canStartTunedRemoteGroups,tunedConsent:currentTunedConsent) { transport,page,confirmed,tuning,consent in
+                    guard tuning == nil || (consent != nil && consent == currentTunedConsent && hapticSelection.isEmpty) else {
+                        message = "Remote MPE confirmation expired. Review profile and device settings."
+                        return
+                    }
+                    startSavedGroups(tuning:tuning,remoteTransport:transport,remotePage:page,confirmedLAN:confirmed)
+                }
+            }
             DisclosureGroup("Performance Studio - Instrument Groups (experimental)",isExpanded:$groupsExpanded) {
             VStack(alignment:.leading,spacing:10) {
                 Text("Organize note and Helper mappings into named groups. Experimental live group MIDI supports saved Xbox, Trackpad, Magic Mouse, Touch Bar ribbon, lid and single-hand camera Helper profiles. Mobile groups and MPE require their separate experimental build gates.")

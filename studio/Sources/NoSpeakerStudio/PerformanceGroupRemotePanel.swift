@@ -218,6 +218,15 @@ struct PerformanceGroupRemotePanel: View {
             }.padding(4)
         }
         .onAppear { if !sources.contains(source),let first = sources.first { source = first } }
+        .onChange(of:sources) { updated in
+            // Profile replacement may remove a selected slot while the
+            // panel remains mounted. Never keep consent for the old slot.
+            clearInvitation()
+            shareLabels=false
+            pendingStart=nil
+            confirmStart=false
+            if !updated.contains(source),let first=updated.first { source=first }
+        }
         .onChange(of:studio.groupRemoteSlots) { slots in
             if let invitationSource,slots.values.contains(invitationSource) { clearInvitation(); shareLabels = false }
         }
