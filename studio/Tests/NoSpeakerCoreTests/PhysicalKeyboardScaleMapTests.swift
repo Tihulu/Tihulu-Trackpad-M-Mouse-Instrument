@@ -1,0 +1,50 @@
+import Testing
+@testable import NoSpeakerCore
+
+@Test func physicalKeyboardLegacyScaleKeepsBlackKeyMembershipAndTuning() throws {
+    var scale = CustomScale()
+    scale.intervals = [0,2,3,5,7,8,10]
+    scale.centOffsets = [3:-25,8:15]
+    let map = try #require(PhysicalKeyboardScaleMap.legacy(scale,inputRoot:60,outputRoot:60))
+    let keys = try #require(map.keyboard(low:60,high:72))
+    #expect(keys.filter(\.isMapped).map(\.inputNote) == [60,62,63,65,67,68,70,72])
+    #expect(map.key(63)?.pitch?.centsFromRoot == 275)
+    #expect(map.key(68)?.pitch?.centsFromRoot == 815)
+    #expect(map.key(61)?.pitch == nil)
+    #expect(map.key(58)?.pitch?.centsFromRoot == -200)
+}
+@Test func physicalKeyboard24EDOAcrossAllKeysKeepsQuarterTonesDistinct() throws {
+    let t = try #require(MicrotonalKeyboardTuning.edo(24,rootMIDI:60))
+    let map = try #require(PhysicalKeyboardScaleMap(tuning:t,inputRoot:60,layout:.allKeys))
+    #expect(map.key(60)?.pitch?.centsFromRoot == 0)
+    #expect(map.key(61)?.pitch?.centsFromRoot == 50)
+    #expect(map.key(62)?.pitch?.centsFromRoot == 100)
+    #expect(map.key(72)?.pitch?.centsFromRoot == 600)
+    #expect(map.key(84)?.pitch?.centsFromRoot == 1200)
+    #expect(map.key(59)?.pitch?.centsFromRoot == -50)
+}
+@Test func physicalKeyboardWhiteKeysOnlyAndSeparateOutputRoot() throws {
+    let t = try #require(MicrotonalKeyboardTuning(degrees:[0,190,350,500,700,850,1050],rootMIDI:62))
+    let map = try #require(PhysicalKeyboardScaleMap(tuning:t,inputRoot:60,layout:.whiteKeys))
+    #expect(map.key(60)?.pitch?.frequency == t.pitch(step:0)?.frequency)
+    #expect(map.key(61)?.pitch == nil)
+    #expect(map.key(62)?.pitch?.centsFromRoot == 190)
+    #expect(map.key(72)?.pitch?.centsFromRoot == 1200)
+    #expect(map.key(59)?.pitch?.centsFromRoot == -150)
+    #expect(PhysicalKeyboardScaleMap(tuning:t,inputRoot:61,layout:.whiteKeys) == nil)
+}
+@Test func physicalKeyboardExplicitQuarterToneSlotsAndInvalidMapping() throws {
+    let t = try #require(MicrotonalKeyboardTuning.edo(24,rootMIDI:60))
+    let slots:[Int?] = [0,nil,3,nil,7,10,nil,14,nil,17,nil,22]
+    let map = try #require(PhysicalKeyboardScaleMap(tuning:t,inputRoot:60,layout:.chromatic(slots)))
+    #expect(map.key(62)?.pitch?.centsFromRoot == 150)
+    #expect(map.key(64)?.pitch?.centsFromRoot == 350)
+    #expect(map.key(72)?.pitch?.centsFromRoot == 1200)
+    #expect(map.key(-1) == nil)
+    #expect(map.keyboard(low:72,high:60) == nil)
+    #expect(PhysicalKeyboardScaleMap(tuning:t,inputRoot:60,layout:.chromatic([0])) == nil)
+    var invalid = slots; invalid[2] = 24
+    #expect(PhysicalKeyboardScaleMap(tuning:t,inputRoot:60,layout:.chromatic(invalid)) == nil)
+    invalid = slots; invalid[4] = 3
+    #expect(PhysicalKeyboardScaleMap(tuning:t,inputRoot:60,layout:.chromatic(invalid)) == nil)
+}
