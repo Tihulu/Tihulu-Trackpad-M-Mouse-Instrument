@@ -44,10 +44,13 @@ final class StudioController: ObservableObject {
     @Published private(set) var customPadRunID: UUID?
     @Published private(set) var customPadStatus = "Custom Pad idle"
     @Published private(set) var customPadPorts: [NativeCustomSurfaceMIDIHost.Status] = []
+    @Published private(set) var customPadDiagnosticRunning = false
+    @Published private(set) var customPadEvidenceReport = ""
+    private var customPadEvidenceSurface: CustomSurfacePadLayout.Surface?
     private var customPadInbox: CustomSurfaceNativeInbox?
     private var customPadTask: Task<Void, Never>?
     private var customPadHost: NativeCustomSurfaceMIDIHost { .shared }
-    private var customPadBlocksOtherStarts: Bool { customPadRunID != nil || !customPadHost.statuses.isEmpty }
+    private var customPadBlocksOtherStarts: Bool { customPadInbox != nil || customPadRunID != nil || !customPadHost.statuses.isEmpty }
     @Published private(set) var patchRunning = false
     @Published private(set) var patchInputs: [PatchSimulation.Input] = []
     @Published private(set) var patchMessages: [String] = []
@@ -3572,19 +3575,64 @@ final class StudioController: ObservableObject {
     /// and Helper consumers, filtered by surface assignment.
     /// Experimental single-device Standard MIDI performance. The shared
     /// monitor remains the sole owner of private callback registration.
+    private var customPadCanStart: Bool {
+        !customPadBlocksOtherStarts && !touchRunning && !midiHelperRunning && !midiRunning && !patchRunning && !groupGamepadsRunning && groupRegisteredIDs.isEmpty && groupCleanupIDs.isEmpty && groupDisposalCount == 0 && !sequenceRunning && !chordArmed && !touchBarOutputArmed && !isPlaying && !speakerBusy && !liveHingeEnabled && !captureArmed && !captureHotkeyArmed && !pointerCaptured && !keyboardAuditRunning && patchLedger.outstanding.isEmpty && airTunedSelectors.isEmpty && !ensembleClockStopDebt && sequenceLedger.outstanding.isEmpty && sequenceSelectors.isEmpty && chordOutstanding.isEmpty && chordMPESelectors.isEmpty && touchBarOutputLedger.isEmpty
+    }
+
+    /// Explicit bounded input-only probe; no MIDI endpoint, no global key
+    /// monitoring and no cursor capture. It can observe otherwise rejected
+    /// native state transitions without loosening the live safety policy.
+    func startCustomPadDiagnostic(_ surface: CustomSurfacePadLayout.Surface) {
+        guard surface == .trackpad || surface == .magicMouse, customPadCanStart else {
+            customPadStatus = "Stop existing performances before starting native input diagnostics."
+            return
+        }
+        cancelStartupGreeting()
+        guard requireEngine(), let touch, midi?.hasUnconfirmedOutgoingCleanup != true else {
+            customPadStatus = "Native engine unavailable or MIDI cleanup unresolved."
+            return
+        }
+        customPadEvidenceReport = ""
+        customPadEvidenceSurface = surface
+        let source: TouchSurfaceKind = surface == .trackpad ? .trackpad : .magicMouse
+        let generation = engineGeneration
+        let inbox = CustomSurfaceNativeInbox(surface: source, orientation: magicMouseOrientation,
+            notBefore: NativeCustomSurfaceMIDIHost.monotonicNow(), diagnosticOnly: true)
+        customPadInbox = inbox
+        customPadDiagnosticRunning = true
+        touch.setCustomSurfaceInbox(inbox)
+        refreshSharedSurfaceMonitoring()
+        guard touchPreviewRunning, missingNativeSurfaceMessage([source]) == nil,
+              inbox.begin(at: NativeCustomSurfaceMIDIHost.monotonicNow()) else {
+            stopCustomPad(reason: "Diagnostic surface unavailable.")
+            return
+        }
+        customPadStatus = "Input-only diagnostic · 20 seconds · lift, hold, release"
+        let started = NativeCustomSurfaceMIDIHost.monotonicNow()
+        customPadTask = Task { [weak self, weak inbox] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                guard let self, let inbox, self.customPadInbox === inbox,
+                      self.customPadDiagnosticRunning, self.engineGeneration == generation else { return }
+                self.updateCustomPadEvidence(inbox)
+                if NativeCustomSurfaceMIDIHost.monotonicNow() - started >= 20_000_000_000 {
+                    self.stopCustomPad(reason: "Input-only diagnostic complete")
+                    return
+                }
+            }
+        }
+    }
+    private func updateCustomPadEvidence(_ inbox: CustomSurfaceNativeInbox) {
+        let report = (customPadEvidenceSurface?.rawValue ?? "Unknown surface") + "\n" + inbox.captureEvidence().report
+        if customPadEvidenceReport != report { customPadEvidenceReport = report }
+    }
+
     func startCustomPad(_ layout: CustomSurfacePadLayout, channel: Int) {
         guard layout.surface == .trackpad || layout.surface == .magicMouse else {
             customPadStatus = "Only Trackpad and Magic Mouse have native adapters."
             return
         }
-        guard !customPadBlocksOtherStarts, !touchRunning, !midiHelperRunning, !midiRunning,
-              !patchRunning, !groupGamepadsRunning, groupRegisteredIDs.isEmpty, groupCleanupIDs.isEmpty,
-              groupDisposalCount == 0, !sequenceRunning, !chordArmed, !touchBarOutputArmed,
-              !isPlaying, !speakerBusy, !liveHingeEnabled, !captureArmed, !captureHotkeyArmed,
-              !pointerCaptured, !keyboardAuditRunning,
-              patchLedger.outstanding.isEmpty, airTunedSelectors.isEmpty, !ensembleClockStopDebt,
-              sequenceLedger.outstanding.isEmpty, sequenceSelectors.isEmpty,
-              chordOutstanding.isEmpty, chordMPESelectors.isEmpty, touchBarOutputLedger.isEmpty else {
+        guard customPadCanStart else {
             customPadStatus = "Stop existing performances and resolve MIDI recovery before arming."
             return
         }
@@ -3596,6 +3644,8 @@ final class StudioController: ObservableObject {
             customPadStatus = "Native engine unavailable or previous MIDI cleanup unresolved."
             return
         }
+        customPadEvidenceReport = ""
+        customPadEvidenceSurface = layout.surface
         let surface: TouchSurfaceKind = layout.surface == .trackpad ? .trackpad : .magicMouse
         let generation = engineGeneration
         let inbox = CustomSurfaceNativeInbox(surface: surface, orientation: magicMouseOrientation,
@@ -3637,6 +3687,7 @@ final class StudioController: ObservableObject {
         customPadStatus = "Waiting for a fresh physical lift · cursor free · Esc stops"
         let started = NativeCustomSurfaceMIDIHost.monotonicNow()
         customPadTask = Task { [weak self, weak inbox] in
+            var lastEvidenceAt: Int64 = 0
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(12)) } catch { return }
                 guard let self, let inbox, self.customPadInbox === inbox,
@@ -3651,6 +3702,11 @@ final class StudioController: ObservableObject {
                    NativeCustomSurfaceMIDIHost.monotonicNow() - started >= 10_000_000_000 {
                     self.stopCustomPad(reason: "No confirmed physical lift within 10 seconds. Restart explicitly.")
                     return
+                }
+                let evidenceNow = NativeCustomSurfaceMIDIHost.monotonicNow()
+                if evidenceNow - lastEvidenceAt >= 250_000_000 {
+                    self.updateCustomPadEvidence(inbox)
+                    lastEvidenceAt = evidenceNow
                 }
                 let batch = inbox.drain()
                 guard !batch.faulted else {
@@ -3680,7 +3736,12 @@ final class StudioController: ObservableObject {
     func stopCustomPad(reason: String = "Custom Pad stopped", refresh: Bool = true) {
         captureMonitor?.setCustomPadEmergencyArmed(false)
         customPadTask?.cancel(); customPadTask = nil
-        customPadInbox?.close(); customPadInbox = nil
+        if let inbox = customPadInbox {
+            inbox.close()
+            updateCustomPadEvidence(inbox)
+        }
+        customPadInbox = nil
+        customPadDiagnosticRunning = false
         touch?.setCustomSurfaceInbox(nil)
         let id = customPadRunID
         customPadRunID = nil
@@ -3693,7 +3754,7 @@ final class StudioController: ObservableObject {
         }
     }
     func retryCustomPadRecovery() {
-        guard customPadRunID == nil else { return }
+        guard customPadInbox == nil, customPadRunID == nil else { return }
         _ = customPadHost.closeAll()
         customPadPorts = customPadHost.statuses
         customPadStatus = customPadPorts.isEmpty ? "Custom Pad recovery complete" :

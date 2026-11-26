@@ -226,7 +226,10 @@ struct CustomSurfacePadEditor:View {
                 Text("Trackpad and Magic Mouse only. Standard MIDI on a dedicated virtual source. The layout is frozen when armed; editing a draft cannot reroute active notes. Touch Bar, phone, tablet and tuned layouts remain offline.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(studio.customPadStatus).font(.caption).textSelection(.enabled)
-                if studio.customPadRunID != nil {
+                if studio.customPadDiagnosticRunning {
+                    Button("Stop input diagnostic") { studio.stopCustomPad(reason: "Input diagnostic stopped") }
+                    Text("No MIDI, haptics or keyboard monitoring. Lift all fingers, hold a finger still for 5 seconds, then release.").font(.caption)
+                } else if studio.customPadRunID != nil {
                     Button("Stop Custom Pad",role:.destructive) { studio.stopCustomPad() }
                     Text("Esc stops this performance even outside Studio; the foreground app still receives Escape. Cursor remains free.")
                         .font(.caption)
@@ -242,6 +245,15 @@ struct CustomSurfacePadEditor:View {
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     Text("Create or load a compatible Trackpad or Magic Mouse draft first.").font(.caption)
+                }
+                if studio.customPadRunID == nil && !studio.customPadDiagnosticRunning && studio.customPadPorts.isEmpty && (surface == .trackpad || surface == .magicMouse) {
+                    Button("Run 20-second input diagnostic") { studio.startCustomPadDiagnostic(surface) }
+                    Text("Collects only aggregate native state and timing counts. No MIDI is sent.").font(.caption).foregroundStyle(.secondary)
+                }
+                if !studio.customPadEvidenceReport.isEmpty {
+                    DisclosureGroup("Native input evidence") {
+                        Text(studio.customPadEvidenceReport).font(.caption.monospaced()).textSelection(.enabled)
+                    }
                 }
                 ForEach(studio.customPadPorts) { port in
                     VStack(alignment:.leading,spacing:2) {
