@@ -231,3 +231,20 @@ import Testing
     #expect(runtime.activeSources==[.gamepad1])
     #expect(runtime.releaseGamepads([.gamepad1],now:1.43)==[.init(note,value:0)])
 }
+
+
+@Test func physicalSurfaceSnapshotPreservesSharedGateAndSendsPitchBeforeAttack() throws {
+    for source in [SensorSource.trackpad,.magicMouse] {
+        let note=SensorDestination(.note,number:60)
+        let bend=SensorDestination(.pitchBend)
+        var runtime=PhysicalPatchRuntime()
+        try runtime.configure(.init(routes:[
+            .init(id:"x",source:source,signal:.x,destination:note),
+            .init(id:"y",source:source,signal:.y,destination:note),
+            .init(id:"bend",source:source,signal:.contactSize,destination:bend)
+        ]))
+        #expect(runtime.receive(source:source,x:1,y:0,size:1,hostTime:1,now:1)==[.init(bend,value:16383),.init(note,value:100)])
+        #expect(runtime.receive(source:source,x:0,y:1,size:1,hostTime:1.1,now:1.1).isEmpty)
+        #expect(runtime.receive(source:source,x:0,y:0,size:1,hostTime:1.2,now:1.2)==[.init(note,value:0)])
+    }
+}

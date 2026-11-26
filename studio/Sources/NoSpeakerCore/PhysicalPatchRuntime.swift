@@ -262,14 +262,12 @@ public struct PhysicalPatchRuntime: Sendable {
             sessions[source] = try? router.connect(source, now: hostTime)
         }
         guard let session = sessions[source] else { return [] }
-        var result: [SensorCommand] = []
-        // Position/control updates precede contact-gated Note On.
-        for (signal, value): (SensorSignal, Double) in [(.x,x),(.y,y),(.contactSize,size),(.contact,1)] {
+        var events:[SensorEvent] = []
+        for (signal,value):(SensorSignal,Double) in [(.x,x),(.y,y),(.contactSize,size),(.contact,1)] {
             sequence &+= 1
-            result += router.ingest(.init(session: session, signal: signal, value: value,
-                                          sequence: sequence, timestamp: hostTime), now: hostTime)
+            events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:hostTime))
         }
-        return result
+        return router.ingestFrame(session:session,releasing:[],events:events,now:hostTime,controlsBeforeAttack:true)
     }
 
     /// Lid degrees are normalized over the documented valid sensor range.
@@ -396,13 +394,12 @@ public struct PhysicalPatchRuntime: Sendable {
         guard let hand else { return expire(now:now,removingRemote:[],removingPhysical:[source]) }
         if sessions[source] == nil { sessions[source] = try? router.connect(source, now: hostTime) }
         guard let session = sessions[source] else { return [] }
-        var result: [SensorCommand] = []
-        for (signal, value): (SensorSignal, Double) in [(.x,hand.x),(.y,hand.y),(.gesture,hand.aperture),(.contact,1)] {
+        var events:[SensorEvent] = []
+        for (signal,value):(SensorSignal,Double) in [(.x,hand.x),(.y,hand.y),(.gesture,hand.aperture),(.contact,1)] {
             sequence &+= 1
-            result += router.ingest(.init(session: session, signal: signal, value: value,
-                                          sequence: sequence, timestamp: hostTime), now: hostTime)
+            events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:hostTime))
         }
-        return result
+        return router.ingestFrame(session:session,releasing:[],events:events,now:hostTime,controlsBeforeAttack:true)
     }
 
     public mutating func receiveHelperHands(left:AirHandSample?,right:AirHandSample?,
@@ -622,13 +619,12 @@ public struct PhysicalPatchRuntime: Sendable {
             else { return .close(revokeRemote(id,now:processingTime)) }
             peer.lastTouch = now
             remotePeers[id] = peer
-            var commands: [SensorCommand] = []
-            for (signal, value): (SensorSignal, Double) in [(.x,x),(.y,y),(.contact,1)] {
+            var events:[SensorEvent] = []
+            for (signal,value):(SensorSignal,Double) in [(.x,x),(.y,y),(.contact,1)] {
                 sequence &+= 1
-                commands += router.ingest(.init(session: session, signal: signal, value: value,
-                                                sequence: sequence, timestamp: now), now: now)
+                events.append(.init(session:session,signal:signal,value:value,sequence:sequence,timestamp:now))
             }
-            return .accepted(commands)
+            return .accepted(router.ingestFrame(session:session,releasing:[],events:events,now:now,controlsBeforeAttack:true))
         case .orientationArm:
             guard motionSources.contains(peer.source),
                   peer.tilt == nil, let angles = frame.angles,

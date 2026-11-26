@@ -322,7 +322,7 @@ public struct SensorRouter: Sendable {
     /// One camera frame reconciles after all releases and fresh values, so a
     /// pedal transferred between hands does not generate an intermediate off.
     mutating func ingestFrame(session id:UUID,releasing signals:Set<SensorSignal>,events:[SensorEvent],now:Double,
-                              preserveToggles:Bool = true) -> [SensorCommand] {
+                              preserveToggles:Bool = true,controlsBeforeAttack:Bool = false) -> [SensorCommand] {
         guard let session = sessions[id], now.isFinite, now >= session.lastSeen,
               events.allSatisfy({ $0.session == id && $0.timestamp == now && $0.value.isFinite && (0...1).contains($0.value) }) else { return [] }
         var prior = session.sequence
@@ -339,7 +339,12 @@ public struct SensorRouter: Sendable {
             }
         }
         for event in events { _ = accept(event,now:now) }
-        return reconcile()
+        let commands=reconcile()
+        guard controlsBeforeAttack else { return commands }
+        // Stable partition: position, pitch and sustain updates must reach
+        // the instrument before a new attack. No intermediate owner state.
+        return commands.filter { $0.destination.kind != .note || $0.value==0 } +
+            commands.filter { $0.destination.kind == .note && $0.value>0 }
     }
 
     /// Release an on-screen control without disconnecting its sibling axes.

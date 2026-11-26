@@ -68,3 +68,18 @@ private func point(_ x: Double, _ y: Double, confidence: Double = 0.9) -> AirHan
     #expect(runtime.receiveHand(hand,hostTime:1.35,now:1.37).isEmpty)
     #expect(runtime.receiveHand(hand,hostTime:1.38,now:1.38)==[.init(note,value:100)])
 }
+
+
+@Test func physicalSingleHandSnapshotUsesFinalSharedControlWinner() throws {
+    let cc=SensorDestination(.controlChange,number:74)
+    let note=SensorDestination(.note,number:60)
+    var runtime=PhysicalPatchRuntime()
+    try runtime.configure(.init(routes:[
+        .init(id:"x",source:.camera,signal:.x,destination:cc,priority:0),
+        .init(id:"y",source:.camera,signal:.y,destination:cc,priority:10),
+        .init(id:"contact",source:.camera,signal:.contact,destination:note)
+    ]))
+    let hand=AirHandSample.debugSample(x:0.2,y:0.8,aperture:0.5)
+    #expect(runtime.receiveHand(hand,hostTime:1,now:1)==[.init(cc,value:102),.init(note,value:100)])
+    #expect(runtime.receiveHand(hand,hostTime:1.1,now:1.1).isEmpty)
+}
