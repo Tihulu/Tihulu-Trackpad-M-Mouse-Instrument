@@ -24,6 +24,10 @@ import com.google.ar.core.ArCoreApk
 class AirPreviewActivity: ComponentActivity() {
     private val handler=Handler(Looper.getMainLooper())
     private lateinit var touchPreview:Button
+    private lateinit var touchLive:Button
+    private lateinit var touchPanel:LinearLayout
+    private var livePiano:TouchPianoView?=null
+    private var touchStage=false
     private lateinit var cameraPick:Spinner
     private lateinit var modePick:Spinner
     private lateinit var rolePick:Spinner
@@ -144,7 +148,7 @@ class AirPreviewActivity: ComponentActivity() {
         }
     }
     private val modes=AirMode.entries.filter {it!=AirMode.BEAM_KEYS&&it!=AirMode.BEAM_HELPER}
-    private val busy get()=pending||source!=null||retiring!=null||importing||depthSource!=null||depthRetiring!=null
+    private val busy get()=touchStage||pending||source!=null||retiring!=null||importing||depthSource!=null||depthRetiring!=null
     private val modelPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null&&!locked&&!destroyed) {
             val epoch=++ticket;importing=true;controls();modelStatus.text="Reading selected local model…"
@@ -250,6 +254,9 @@ class AirPreviewActivity: ComponentActivity() {
         disconnectButton=pairButton("Disconnect / release"){end("Disconnected")}
         pauseModeButton=pairButton("Pause / change instrument"){pauseInstrument()}
         connectionStatus=TextView(this).also{it.text="Not connected";pairPanel.addView(it)}
+        touchLive=pairButton("Open assigned touch piano"){openTouchPiano()}
+        touchPanel=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;visibility=View.GONE}
+        column.addView(touchPanel)
 
         modelButton=button("Choose trusted local hand_landmarker.task") {if(!locked)modelPicker.launch(arrayOf("application/octet-stream","application/zip","*/*"))}
         modelStatus=label("No imported model. Select a trusted local .task file; its hash will be displayed.")
@@ -338,6 +345,7 @@ class AirPreviewActivity: ComponentActivity() {
         flip.isEnabled=canEditInstrument&&!depth&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_FRONT}&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_BACK}
         for(v in listOf(zoomBar,minus,plus,reset))v.isEnabled=canEditInstrument&&!depth&&r!=null&&r.max>r.min
         touchPreview.isEnabled=!b
+        touchLive.isEnabled=!busy&&!qrRequested&&lan?.status()?.assignment?.piano?.let{it!=0}==true
         modelButton.isEnabled=!b
         paired.isEnabled=!b&&pairedAllowed
         for(v in listOf(address,invitation,fingerprint,qrButton,rootButton,helperPick))v.isEnabled=!b&&wantsPair
@@ -463,7 +471,44 @@ class AirPreviewActivity: ComponentActivity() {
         }catch(_:Exception){end("ARCore unavailable, unsupported or install declined")}
         catch(_:LinkageError){end("ARCore runtime not included by embedding app")}
     }
+    private fun openTouchPiano(){
+        val client=lan?:return
+        val assigned=client.status().assignment?.piano?:return
+        if(busy||assigned==0||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
+        touchStage=true
+        val hint=TextView(this).apply{text="Assigned touch piano · press Arm to play through Mac"}
+        val arm=Button(this).apply{text="Arm touch piano"}
+        val leave=Button(this).apply{text="Release / disconnect"}
+        val piano=TouchPianoView(this,assigned,live={sample->
+            if(lan!==client||!touchStage||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||
+                client.status().assignment?.piano!=assigned)false
+            else {
+                client.offer(sample.output,sample.ownerAt)
+                client.status().phase==MobileLanSession.Phase.READY
+            }
+        }) {out,armed->
+            if(touchStage){
+                if(!armed)end("Touch piano released · disconnected")
+                else {showOutput(out);arm.isEnabled=false}
+            }
+        }
+        livePiano=piano
+        touchPanel.addView(hint)
+        touchPanel.addView(piano,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,(240*resources.displayMetrics.density).toInt()))
+        touchPanel.addView(arm)
+        touchPanel.addView(leave)
+        arm.setOnClickListener{
+            if(lan===client&&client.status().assignment?.piano==assigned)piano.arm()
+            else end("Assignment ended")
+        }
+        leave.setOnClickListener{end("Touch piano released")}
+        touchPanel.visibility=View.VISIBLE
+        controls()
+    }
     private fun retireCapture() {
+        touchStage=false
+        livePiano?.retire();livePiano=null
+        touchPanel.removeAllViews();touchPanel.visibility=View.GONE
         ticket++;pending=false;importing=false
         observationFence?.retire();observationFence=null
         source?.let {it.stop();retiring=it};source=null;projection=null

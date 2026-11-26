@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
@@ -50,24 +51,37 @@ class TouchPianoPreviewActivity:ComponentActivity() {
 
 /** Full current MotionEvent pointer set, not a queue of individual attacks. */
 internal class TouchPianoView(context:Context,
+    private val authorized:Int=(1 shl 13)-1,
+    private val live:((MobileTouchLiveLease.Snapshot)->Boolean)?=null,
     private val changed:(AirOutput,Boolean)->Unit):View(context) {
-    private val authorized=(1 shl 13)-1
     private val keyList=MobileTouchKeys(authorized).keys
-    private var owner:MobileTouchOwnership?=null
+    private var owner:MobileTouchLiveLease?=null
+    private var armedUptime=0L
+    private fun ownerActive()=isAttachedToWindow&&isShown&&hasWindowFocus()&&windowVisibility==VISIBLE&&width>0&&height>0
+    private val pulse=object:Runnable {
+        override fun run(){
+            val current=owner?:return
+            val sample=current.pulse(SystemClock.elapsedRealtimeNanos(),ownerActive())
+            if(sample==null||live?.invoke(sample)==false){retire();return}
+            if(owner===current)postDelayed(this,50)
+        }
+    }
     private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
     init {
-        contentDescription="Thirteen logical piano zones; use multiple fingers. Visual preview only."
+        contentDescription="${keyList.size} assigned logical piano zones; use multiple fingers."
         isFocusable=true
         importantForAccessibility=IMPORTANT_FOR_ACCESSIBILITY_YES
     }
     fun arm(){
-        if(!isAttachedToWindow||!hasWindowFocus()||width<=0||height<=0||owner!=null)return
-        owner=MobileTouchOwnership(authorized)
+        if(!ownerActive()||owner!=null)return
+        armedUptime=SystemClock.uptimeMillis()
+        owner=MobileTouchLiveLease(authorized,SystemClock.elapsedRealtimeNanos())
         changed(AirOutput(),true);invalidate()
+        postDelayed(pulse,50)
     }
     fun retire(){
         val old=owner?:return
-        owner=null;old.retire()
+        owner=null;removeCallbacks(pulse);old.retire()
         parent?.requestDisallowInterceptTouchEvent(false)
         changed(AirOutput(),false);invalidate()
     }
@@ -88,7 +102,10 @@ internal class TouchPianoView(context:Context,
     }
     override fun onTouchEvent(event:MotionEvent):Boolean {
         val current=owner?:return true
-        if(!hasWindowFocus()||width<=0||height<=0||event.pointerCount !in 1..MobileTouchKeys.MAX_CONTACTS){
+        val uptime=SystemClock.uptimeMillis()
+        if(!ownerActive()||event.eventTime<armedUptime||event.eventTime>uptime||
+            uptime-event.eventTime>=150||event.flags and (MotionEvent.FLAG_WINDOW_IS_OBSCURED or MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED)!=0||
+            event.pointerCount !in 1..MobileTouchKeys.MAX_CONTACTS){
             retire();return true
         }
         val change=when(event.actionMasked){
@@ -109,10 +126,11 @@ internal class TouchPianoView(context:Context,
             contacts.add(MobileTouchKeys.Contact(event.getPointerId(i),event.getX(i).toDouble()/width))
         }
         val changedID=if(change==MobileTouchOwnership.Change.MOVED)null else event.getPointerId(event.actionIndex)
-        val output=current.pointerTransition(change,contacts,changedID)
-        if(output==null){retire();return true}
+        val sample=current.pointerEvent(change,contacts,changedID,SystemClock.elapsedRealtimeNanos(),ownerActive())
+        if(sample==null||live?.invoke(sample)==false){retire();return true}
+        if(owner!==current)return true
         if(current.activeIDs.isEmpty())parent?.requestDisallowInterceptTouchEvent(false)
-        changed(output,true);invalidate()
+        changed(sample.output,true);invalidate()
         return true
     }
     override fun onWindowFocusChanged(hasWindowFocus:Boolean){

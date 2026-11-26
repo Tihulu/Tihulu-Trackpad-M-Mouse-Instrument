@@ -11,6 +11,7 @@ internal class MobileTouchLiveLease(authorized:Int,armedAt:Long) {
     init {require(armedAt>=0)}
     val retired get()=ownership.retired
     val output get()=ownership.output
+    val activeIDs get()=ownership.activeIDs
     fun retire(){ownership.retire()}
     private fun check(now:Long,ownerActive:Boolean):Boolean {
         if(retired||!ownerActive||now<=last||now-last>=AirSendGate.FRESH_NS){
