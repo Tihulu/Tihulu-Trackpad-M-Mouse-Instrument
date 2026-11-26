@@ -96,3 +96,19 @@ class MeasuredXYZTracking(private val volume:XYZVolume,private val mask:Int) {
         return if(last!=null && at-last<AirSendGate.FRESH_NS)AirOutput(xyz=axes) else AirOutput()
     }
 }
+
+internal class MeasuredXYZKeys(mask:Int, private val axis:Int) {
+    private val keys=(0..24).filter { mask and (1 shl it)!=0 }
+    private var zone:Int?=null
+    init { require(mask in 1 until (1 shl 25) && axis in 0..2) }
+    fun output(levels: List<Double?>?):AirOutput {
+        val value=levels?.getOrNull(axis)
+        if(value==null || value !in 0.0..1.0){zone=null;return AirOutput()}
+        val position=value*keys.size
+        val previous=zone
+        val selected=if(previous!=null && position>=previous-.12 && position<previous+1.12)previous
+            else minOf(keys.lastIndex,position.toInt())
+        zone=selected
+        return AirOutput(keys=1 shl keys[selected])
+    }
+}

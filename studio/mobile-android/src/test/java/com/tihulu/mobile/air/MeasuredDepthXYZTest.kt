@@ -36,4 +36,11 @@ class MeasuredDepthXYZTest {
         assertNotNull(t.observe(p,6,6).xyz)
         assertEquals(AirOutput(),t.observe(p,7,7+AirSendGate.FRESH_NS))
     }
+    @Test fun pitchRolesSkipUnassignedKeysAndResetBoundaryOnLoss() {
+        val keys=MeasuredXYZKeys((1 shl 2) or (1 shl 19),2)
+        assertEquals(1 shl 2,keys.output(listOf(1.0,1.0,.1)).keys)
+        assertEquals(1 shl 2,keys.output(listOf(1.0,1.0,.53)).keys)
+        assertEquals(0,keys.output(null).keys)
+        assertEquals(1 shl 19,keys.output(listOf(0.0,0.0,.53)).keys)
+    }
 }

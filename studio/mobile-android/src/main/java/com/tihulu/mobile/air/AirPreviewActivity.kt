@@ -55,6 +55,7 @@ class AirPreviewActivity: ComponentActivity() {
     private var xyzVolume:XYZVolume?=null
     private var xyzTracking:MeasuredXYZTracking?=null
     private var xyzStage:XYZStageView?=null
+    private var xyzKeys:MeasuredXYZKeys?=null
     private var xyzRotation=0
     private var xyzLastAt:Long?=null
     @Suppress("DEPRECATION")
@@ -63,7 +64,10 @@ class AirPreviewActivity: ComponentActivity() {
     private fun measuredCamera()=choices.getOrNull(cameraPick.selectedItemPosition)?.takeIf {
         it.depth16Advertised && it.facing==CameraCharacteristics.LENS_FACING_BACK
     }
-    private fun xyzAssigned() = lan?.status()?.assignment?.xyzLane(xyzSettings.mask)!=null
+    private fun xyzAssigned():Boolean {
+        val manifest=lan?.status()?.assignment?:return false
+        return if(xyzSettings.pitchAxis!=null)manifest.keysLane()!=null else manifest.xyzLane(xyzSettings.mask)!=null
+    }
     private var installRequested=false
     private val depthModes=listOf(AirMode.BEAM_KEYS,AirMode.BEAM_HELPER)
     private val depthRanges=listOf(.25 to .85,.15 to .55,.4 to 1.2)
@@ -218,13 +222,14 @@ class AirPreviewActivity: ComponentActivity() {
                     end(failure?:"Display rotation changed · restart required")
                 } else {
                     for(frame in source.drain()) {
-                        val output=tracker.observe(frame.point,frame.at,SystemClock.elapsedRealtimeNanos())
+                        val axes=tracker.observe(frame.point,frame.at,SystemClock.elapsedRealtimeNanos())
+                        val output=xyzKeys?.output(axes.xyz)?:axes
                         if(!submit(output,frame.at,emptyMap(),false))break
                         xyzLastAt=frame.at
-                        xyzStage?.update(frame.point.takeIf {output.xyz!=null},volume)
+                        xyzStage?.update(frame.point.takeIf {axes.xyz!=null},volume,output.keys)
                     }
                     if(xyzLastAt?.let {SystemClock.elapsedRealtimeNanos()-it>=AirSendGate.FRESH_NS}==true){
-                        xyzLastAt=null;xyzStage?.update(null,volume)
+                        xyzLastAt=null;xyzKeys?.output(null);xyzStage?.update(null,volume)
                     }
                 }
             }
@@ -451,7 +456,7 @@ class AirPreviewActivity: ComponentActivity() {
         if(measuredMode && (measuredCamera()==null || xyzSettings.volume()==null || xyzSettings.mask==0)){
             connectionStatus.text="Select a rear DEPTH16 camera, enabled axes and valid volume";return
         }
-        val selection=if(measuredMode)MobileLanSession.Selection.XYZ(xyzSettings.mask) else if(!wantsTouchPair&&mode?.isHelper==true)MobileLanSession.Selection.Helper(helperPick.selectedItemPosition) else MobileLanSession.Selection.Keys
+        val selection=if(measuredMode){if(xyzSettings.pitchAxis!=null)MobileLanSession.Selection.Keys else MobileLanSession.Selection.XYZ(xyzSettings.mask)} else if(!wantsTouchPair&&mode?.isHelper==true)MobileLanSession.Selection.Helper(helperPick.selectedItemPosition) else MobileLanSession.Selection.Keys
         clearInvitation()
         val epoch=++ticket;importing=true;controls();connectionStatus.text="Verifying selected private root"
         importer.execute {
@@ -489,11 +494,16 @@ class AirPreviewActivity: ComponentActivity() {
             val volume=xyzSettings.volume()
             val mask=xyzSettings.mask
             if(volume==null || mask !in 1..7){status.text="Set valid bounds and enable at least one axis";return}
+            xyzKeys=xyzSettings.pitchAxis?.let { axis->
+                val allowed=if(wantsPair)lan?.status()?.assignment?.piano?:0 else (1 shl 25)-1
+                if(allowed !in 1 until (1 shl 25)){end("No assigned keys");return}
+                MeasuredXYZKeys(allowed,axis)
+            }
             xyzRotation=displayDegrees();xyzVolume=volume;xyzLastAt=null
             xyzTracking=MeasuredXYZTracking(volume,mask)
             observationFence=if(wantsPair)PairedObservationFence(SystemClock.elapsedRealtimeNanos()) else null
             val measured=Camera2XYZSource(applicationContext,camera,xyzRotation,volume)
-            xyzSource=measured;xyzStage=XYZStageView(this,mask,::end)
+            xyzSource=measured;xyzStage=XYZStageView(this,mask,xyzSettings.pitchAxis,::end)
             measured.start();controls();return
         }
         if(depthToggle.isChecked){beginDepth();return}
@@ -590,7 +600,7 @@ class AirPreviewActivity: ComponentActivity() {
         // No capture callback can renew the old session after this fence.
         beforeWorkerStop()
         xyzSource?.let {it.stop();xyzRetiring=it};xyzSource=null
-        xyzStage?.close();xyzStage=null;xyzTracking=null;xyzVolume=null;xyzLastAt=null
+        xyzStage?.close();xyzStage=null;xyzKeys=null;xyzTracking=null;xyzVolume=null;xyzLastAt=null
         source?.let {it.stop();retiring=it};source=null;projection=null
         depthSource?.let {it.stop();depthRetiring=it};depthSource=null
         meter.text="All preview keys released"
