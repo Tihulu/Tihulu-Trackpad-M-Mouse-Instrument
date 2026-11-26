@@ -2,8 +2,9 @@
 import SwiftUI
 import NoSpeakerCore
 
-/// Offline editor. No controller, MIDI or capture callbacks.
+/// Offline drafts remain separate from a frozen experimental native run.
 struct CustomSurfacePadEditor:View {
+    @EnvironmentObject private var studio: StudioController
     typealias Layout=CustomSurfacePadLayout
     @State private var expanded=false
     @State private var surface:Layout.Surface = .trackpad
@@ -11,15 +12,16 @@ struct CustomSurfacePadEditor:View {
     @AppStorage("TIHULU.customSurfaceLayouts.v1") private var storage=Data()
     @State private var pending:Pending?
     private struct Pending:Identifiable {
-        enum Action:String {case save,load,reset}
+        enum Action:String {case save,load,reset,arm}
         let action:Action
         let surface:Layout.Surface
         let draft:Layout?
         let saved:Layout?
+        let channel:Int
         var id: String {action.rawValue+surface.rawValue}
     }
     private func request(_ action:Pending.Action) {
-        pending=Pending(action:action,surface:surface,draft:layouts[surface],saved:library?.layout(for:surface))
+        pending=Pending(action:action,surface:surface,draft:layouts[surface],saved:library?.layout(for:surface),channel:previewChannel)
     }
     private var library:CustomSurfaceLayoutLibrary? {
         storage.isEmpty ? .init() : try? JSONDecoder().decode(CustomSurfaceLayoutLibrary.self,from:storage)
@@ -53,7 +55,9 @@ struct CustomSurfacePadEditor:View {
         var id:String{rawValue}
     }
     var body:some View {
-        DisclosureGroup("Custom pad designer · offline draft",isExpanded:$expanded) {
+        VStack(alignment:.leading,spacing:8) {
+            performancePanel
+            DisclosureGroup("Custom pad designer · offline draft",isExpanded:$expanded) {
             VStack(alignment:.leading,spacing:8) {
                 Text("Edit independent surface drafts, then explicitly save or load the selected surface. Saved layouts are offline designs, not active performance routes.").font(.caption).foregroundStyle(.secondary)
                 Picker("Surface",selection:$surface){
@@ -183,14 +187,20 @@ struct CustomSurfacePadEditor:View {
                 }
                 if !feedback.isEmpty {Text(feedback).font(.caption)}
             }.padding(.vertical,6)
+            }
         }.onChange(of:surface){value in select(layouts[value]?.pads.first);feedback=""}
-        .confirmationDialog("Confirm surface layout change",isPresented:Binding(get:{pending != nil},set:{if !$0 {pending=nil}}),titleVisibility:.visible,presenting:pending){operation in
-            Button(operation.action == .reset ? "Reset draft":operation.action == .save ? "Save layout":"Load layout",
+        .confirmationDialog("Confirm Custom Pad action",isPresented:Binding(get:{pending != nil},set:{if !$0 {pending=nil}}),titleVisibility:.visible,presenting:pending){operation in
+            Button(operation.action == .arm ? "Arm dedicated MIDI + Escape stop" : operation.action == .reset ? "Reset draft":operation.action == .save ? "Save layout":"Load layout",
                    role:operation.action == .reset ? .destructive:nil){
                 guard surface==operation.surface,layouts[surface]==operation.draft else{
                     feedback="Draft changed; repeat the operation.";return
                 }
                 switch operation.action {
+                case .arm:
+                    guard let layout=operation.draft,previewChannel==operation.channel else {
+                        feedback="Draft or channel changed; repeat Arm.";return
+                    }
+                    studio.startCustomPad(layout,channel:operation.channel)
                 case .reset:
                     layouts.removeValue(forKey:surface);selected=nil;feedback="Draft cleared."
                 case .save:
@@ -208,6 +218,40 @@ struct CustomSurfacePadEditor:View {
                     layouts[surface]=layout;select(layout.pads.first);feedback="Saved layout loaded."
                 }
             }
+        }
+    }
+    private var performancePanel: some View {
+        GroupBox("Custom Pad performance · experimental") {
+            VStack(alignment:.leading,spacing:8) {
+                Text("Trackpad and Magic Mouse only. Standard MIDI on a dedicated virtual source. The layout is frozen when armed; editing a draft cannot reroute active notes. Touch Bar, phone, tablet and tuned layouts remain offline.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(studio.customPadStatus).font(.caption).textSelection(.enabled)
+                if studio.customPadRunID != nil {
+                    Button("Stop Custom Pad",role:.destructive) { studio.stopCustomPad() }
+                        .keyboardShortcut(.escape,modifiers:[])
+                    Text("Esc stops this performance even outside Studio; the foreground app still receives Escape. Cursor remains free.")
+                        .font(.caption)
+                } else if !studio.customPadPorts.isEmpty {
+                    Button("Retry scoped MIDI recovery") { studio.retryCustomPadRecovery() }
+                    Text("Restart is blocked until cleanup and port disposal are confirmed. Identity loss may require resetting the receiving DAW and relaunching Studio.")
+                        .font(.caption).foregroundStyle(.orange)
+                } else if let layout=layouts[surface], surface == .trackpad || surface == .magicMouse {
+                    Stepper("Performance MIDI channel \(previewChannel+1)",value:$previewChannel,in:0...15)
+                    Button("Arm draft…") { request(.arm) }
+                        .disabled((try? CustomSurfaceMixedPlan(layout:layout,melodicChannel:previewChannel)) == nil)
+                    Text("Arming explicitly enables the global Escape emergency monitor without pointer capture. Existing Accessibility/Input Monitoring permissions and a fresh physical lift are required. No automatic restart.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Create or load a compatible Trackpad or Magic Mouse draft first.").font(.caption)
+                }
+                ForEach(studio.customPadPorts) { port in
+                    VStack(alignment:.leading,spacing:2) {
+                        Text(port.surface.rawValue + " · " + String(describing:port.phase)).font(.caption.bold())
+                        Text(port.name).font(.caption).textSelection(.enabled)
+                        Text("Tracked MIDI destinations: \(port.outstanding.count)").font(.caption.monospacedDigit())
+                    }
+                }
+            }.frame(maxWidth:.infinity,alignment:.leading)
         }
     }
     private func compatibility(_ layout:Layout)->String {
