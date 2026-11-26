@@ -8,6 +8,12 @@ struct CustomSurfacePadEditor:View {
     @State private var expanded=false
     @State private var surface:Layout.Surface = .trackpad
     @State private var layouts:[Layout.Surface:Layout]=[:]
+    @AppStorage("TIHULU.customSurfaceLayouts.v1") private var storage=Data()
+    @State private var confirmLoad=false
+    @State private var confirmSave=false
+    private var library:CustomSurfaceLayoutLibrary? {
+        storage.isEmpty ? .init() : try? JSONDecoder().decode(CustomSurfaceLayoutLibrary.self,from:storage)
+    }
     @State private var selected:String?
     @State private var columns=4
     @State private var rows=2
@@ -26,7 +32,7 @@ struct CustomSurfacePadEditor:View {
     var body:some View {
         DisclosureGroup("Custom pad designer · offline draft",isExpanded:$expanded) {
             VStack(alignment:.leading,spacing:8) {
-                Text("Edit independent surface drafts. No output, hardware capture or saved performance profile is changed. Drafts remain in this editor while it is open.").font(.caption).foregroundStyle(.secondary)
+                Text("Edit independent surface drafts, then explicitly save or load the selected surface. Saved layouts are offline designs, not active performance routes.").font(.caption).foregroundStyle(.secondary)
                 Picker("Surface",selection:$surface){
                     ForEach(Layout.Surface.allCases,id:\.self){Text($0.rawValue).tag($0)}
                 }
@@ -41,6 +47,17 @@ struct CustomSurfacePadEditor:View {
                     if layouts[surface] != nil {
                         Button("Reset draft"){layouts.removeValue(forKey:surface);selected=nil;feedback="Draft cleared."}
                     }
+                }
+                if let library {
+                    HStack {
+                        Button("Save layout"){confirmSave=true}
+                            .disabled(layouts[surface]==nil || layouts[surface]==library.layout(for:surface))
+                        Button("Load saved layout"){confirmLoad=true}
+                            .disabled(library.layout(for:surface)==nil)
+                        Text(library.layout(for:surface)==nil ? "No saved layout":"Saved layout available").font(.caption)
+                    }
+                } else {
+                    Text("Saved layouts could not be read. Original data is preserved; saving is disabled.").font(.caption).foregroundStyle(.orange)
                 }
                 if let layout=layouts[surface] {
                     GeometryReader{geo in
@@ -95,6 +112,20 @@ struct CustomSurfacePadEditor:View {
                 if !feedback.isEmpty {Text(feedback).font(.caption)}
             }.padding(.vertical,6)
         }.onChange(of:surface){value in select(layouts[value]?.pads.first);feedback=""}
+        .confirmationDialog("Save this offline surface layout?",isPresented:$confirmSave,titleVisibility:.visible){
+            Button("Save"){
+                guard var library,let layout=layouts[surface] else{return}
+                library.save(layout)
+                guard let data=try? JSONEncoder().encode(library) else{feedback="Could not encode layout.";return}
+                storage=data;feedback="Layout saved."
+            }
+        }
+        .confirmationDialog("Replace current draft with saved layout?",isPresented:$confirmLoad,titleVisibility:.visible){
+            Button("Load"){
+                guard let layout=library?.layout(for:surface) else{return}
+                layouts[surface]=layout;select(layout.pads.first);feedback="Saved layout loaded."
+            }
+        }
     }
     private var assignment:Layout.Assignment {
         switch kind {
