@@ -27,7 +27,13 @@ public struct CustomSurfaceContactProjection: Sendable {
         public let velocity:Int
     }
     public struct Snapshot: Equatable, Sendable {
+        public let layout:CustomSurfacePadLayout
         public let intents:[Intent]
+        public let retired:Bool
+        /// Original source observation, never the watchdog clock.
+        public let observedAt:Int64?
+    }
+    public struct Watchdog: Equatable, Sendable {
         public let retired:Bool
     }
     private struct Binding: Sendable {
@@ -41,7 +47,6 @@ public struct CustomSurfaceContactProjection: Sendable {
     private var lastSequence:UInt64?
     private var lastObservation:Int64?
     private var lastReceipt:Int64?
-    private var lastIntent:[Intent]=[]
     public init(layout:CustomSurfacePadLayout) {self.layout=layout}
     /// Initial neutral snapshot required; no note from a finger already
     /// down when a source is first armed.
@@ -58,7 +63,7 @@ public struct CustomSurfaceContactProjection: Sendable {
         lastReceipt=now;lastObservation=observedAt;lastSequence=sequence
         if !neutralSeen {
             neutralSeen=contacts.isEmpty
-            return .init(intents:[],retired:false)
+            return .init(layout:layout,intents:[],retired:false,observedAt:observedAt)
         }
         var next:[Int:Binding]=[:]
         var intents:[Intent]=[]
@@ -81,21 +86,25 @@ public struct CustomSurfaceContactProjection: Sendable {
             }
             next[contact.id]=binding
         }
-        down=next;lastIntent=intents
-        return .init(intents:intents,retired:false)
+        down=next
+        return .init(layout:layout,intents:intents,retired:false,observedAt:observedAt)
     }
 
     /// Independent watchdog. An expired or regressed clock retires the
     /// source permanently; callers must release its owners and explicitly
     /// create a fresh projection after neutral.
-    public mutating func poll(now:Int64)->Snapshot {
+    public mutating func poll(now:Int64)->Watchdog {
         guard !retired,now>=0,lastReceipt.map({now >= $0}) ?? true,
-              lastObservation.map({now-$0<MobileAirSendGate.freshNS}) ?? true else{return retire()}
+              lastObservation.map({now-$0<MobileAirSendGate.freshNS}) ?? true else{
+            _=retire()
+            return .init(retired:true)
+        }
         lastReceipt=now
-        return .init(intents:lastIntent,retired:false)
+        // No cached performance snapshot can be mistaken for a fresh frame.
+        return .init(retired:false)
     }
     public mutating func retire()->Snapshot {
-        retired=true;down.removeAll();lastIntent=[]
-        return .init(intents:[],retired:true)
+        retired=true;down.removeAll()
+        return .init(layout:layout,intents:[],retired:true,observedAt:nil)
     }
 }

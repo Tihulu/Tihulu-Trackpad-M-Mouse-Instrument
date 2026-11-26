@@ -52,3 +52,15 @@ private func mixedPadProjection() throws -> Projection {
     #expect(q.poll(now:150_000_001).retired)
     #expect(q.frame([],sequence:3,observedAt:150_000_002,now:150_000_002).retired)
 }
+
+@Test func customSurfaceSnapshotCarriesOriginalObservationAndFrozenLayout() throws {
+    var p=try mixedPadProjection()
+    let neutral=p.frame([],sequence:1,observedAt:10,now:20)
+    #expect(neutral.observedAt==10)
+    #expect(neutral.layout==p.layout)
+    let played=p.frame([.init(id:1,x:0.2,y:0.5)],sequence:2,observedAt:30,now:40)
+    #expect(played.observedAt==30)
+    #expect(!p.poll(now:100).retired)
+    let retired=p.retire()
+    #expect(retired.observedAt==nil && retired.intents.isEmpty && retired.retired)
+}

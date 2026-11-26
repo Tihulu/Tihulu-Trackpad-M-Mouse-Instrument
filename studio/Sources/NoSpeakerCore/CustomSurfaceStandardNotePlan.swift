@@ -26,7 +26,7 @@ public struct CustomSurfaceStandardNotePlan: Sendable {
     /// Only an entire supported layout can use this standard-note plan.
     /// No partial live activation, fallback to 12-TET or MIDI transmission.
     public func notes(for snapshot:CustomSurfaceContactProjection.Snapshot)->Notes? {
-        guard isComplete else{return nil}
+        guard isComplete,snapshot.layout==layout else{return nil}
         if snapshot.retired {return .init(desired:[:],velocities:[:])}
         var desired:[Int:Set<SensorDestination>]=[:]
         var velocities:[Int:Int]=[:]
