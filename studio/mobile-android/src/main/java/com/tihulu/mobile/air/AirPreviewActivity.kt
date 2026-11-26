@@ -206,7 +206,8 @@ class AirPreviewActivity: ComponentActivity() {
                 if(state.phase!=lastPhase) {
                     lastPhase=state.phase
                     connectionStatus.text=state.assignment?.let {assignment->
-                        if(assignment.piano!=0)"Assigned keys: "+(0..24).filter{assignment.piano and (1 shl it)!=0}.joinToString{(it+1).toString()}
+                        if(assignment.piano!=0 && assignment.pedals!=0) "Assigned XYZ Hybrid · keys and helper axes"
+                        else if(assignment.piano!=0)"Assigned keys: "+(0..24).filter{assignment.piano and (1 shl it)!=0}.joinToString{(it+1).toString()}
                         else "Assigned helper lane"
                     }?:state.message
                     controls()
@@ -415,7 +416,7 @@ class AirPreviewActivity: ComponentActivity() {
             cameraPick.isEnabled=!b
         }
         touchPreview.isEnabled=!b
-        touchLive.isEnabled=!busy&&!qrRequested&&lan?.status()?.assignment?.piano?.let{it!=0}==true
+        touchLive.isEnabled=!busy&&!qrRequested&&lan?.status()?.assignment?.touchPianoMask()!=null
         modelButton.isEnabled=!b
         paired.isEnabled=!b&&pairedAllowed
         for(v in listOf(address,invitation,fingerprint,qrButton,rootButton,helperPick))v.isEnabled=!b&&wantsPair
@@ -573,7 +574,7 @@ class AirPreviewActivity: ComponentActivity() {
     }
     private fun openTouchPiano(){
         val client=lan?:return
-        val assigned=client.status().assignment?.piano?:return
+        val assigned=client.status().assignment?.touchPianoMask()?:return
         if(busy||assigned==0||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
         touchStage=true
         val hint=TextView(this).apply{text="Assigned touch piano · press Arm to play through Mac"}
@@ -581,7 +582,7 @@ class AirPreviewActivity: ComponentActivity() {
         val leave=Button(this).apply{text="Release / disconnect"}
         val piano=TouchPianoView(this,assigned,live={sample->
             if(lan!==client||!touchStage||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||
-                client.status().assignment?.piano!=assigned)false
+                client.status().assignment?.touchPianoMask()!=assigned)false
             else {
                 client.offer(sample.output,sample.ownerAt)
                 client.status().phase==MobileLanSession.Phase.READY
@@ -598,7 +599,7 @@ class AirPreviewActivity: ComponentActivity() {
         touchPanel.addView(arm)
         touchPanel.addView(leave)
         arm.setOnClickListener{
-            if(lan===client&&client.status().assignment?.piano==assigned)piano.arm()?.let{hint.text=it}
+            if(lan===client&&client.status().assignment?.touchPianoMask()==assigned)piano.arm()?.let{hint.text=it}
             else end("Assignment ended")
         }
         leave.setOnClickListener{end("Touch piano released")}
