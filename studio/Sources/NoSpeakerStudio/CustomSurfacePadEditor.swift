@@ -24,9 +24,13 @@ struct CustomSurfacePadEditor:View {
     @State private var height=5000
     @State private var note=60
     @State private var kind:Kind = .note
+    @State private var changeAssignment=false
+    @State private var chordNotes="60, 64, 67"
+    @State private var cc=71
+    @State private var channel=0
     @State private var feedback=""
     private enum Kind:String,CaseIterable,Identifiable {
-        case note="Note",drum="Drum",degree="Tuning degree",sustain="Sustain",bend="Pitch bend",xy="XY (CC1 / CC11)"
+        case note="Note",drum="Drum",degree="Tuning degree",chord="Chord",sustain="Sustain",bend="Pitch bend",cc="Custom MIDI CC",xy="XY (CC1 / CC11)"
         var id:String{rawValue}
     }
     var body:some View {
@@ -93,14 +97,35 @@ struct CustomSurfacePadEditor:View {
                                 Stepper("Height \(height)",value:$height,in:100...10000,step:100)
                             }
                         }
-                        Picker("Assignment",selection:$kind){ForEach(Kind.allCases){Text($0.rawValue).tag($0)}}
-                        if kind == .note || kind == .drum || kind == .degree {
-                            Stepper("Note / degree \(note)",value:$note,in:0...127)
+                        if let pad=layout.pads.first(where:{$0.id==id}) {
+                            Text("Current assignment: "+String(describing:pad.assignment)).font(.caption).textSelection(.enabled)
+                        }
+                        Toggle("Replace musical assignment",isOn:$changeAssignment)
+                        if changeAssignment {
+                            Picker("Assignment",selection:$kind){ForEach(Kind.allCases){Text($0.rawValue).tag($0)}}
+                            if kind == .degree {
+                                Stepper("Tuning degree \(note)",value:$note,in:-1408...1408)
+                            } else if kind == .note || kind == .drum {
+                                Stepper("MIDI note \(note)",value:$note,in:0...127)
+                            } else if kind == .chord {
+                                TextField("Chord MIDI notes, comma separated",text:$chordNotes)
+                            } else if kind == .cc {
+                                Stepper("MIDI CC \(cc)",value:$cc,in:0...127)
+                            }
+                            if kind == .cc || kind == .sustain || kind == .bend || kind == .xy {
+                                Stepper("MIDI channel \(channel+1)",value:$channel,in:0...15)
+                            }
                         }
                         HStack {
                             Button("Apply pad edit"){
-                                let pad=Layout.Pad(id:id,label:label,x:x,y:surface == .touchBar ? 0:y,width:width,height:surface == .touchBar ? 10000:height,assignment:assignment)
-                                if let next=layout.replacing(pad){layouts[surface]=next;feedback="Draft updated."}
+                                guard let old=layout.pads.first(where:{$0.id==id}) else{return}
+                                let geometry=old.editingGeometry(label:label,x:x,y:surface == .touchBar ? 0:y,width:width,height:surface == .touchBar ? 10000:height)
+                                var pad=geometry
+                                if changeAssignment {
+                                    guard let assignment else{feedback="Invalid musical assignment.";return}
+                                    pad=Layout.Pad(id:id,label:label,x:geometry.x,y:geometry.y,width:geometry.width,height:geometry.height,assignment:assignment)
+                                }
+                                if let next=layout.replacing(pad){layouts[surface]=next;select(pad);feedback="Draft updated."}
                                 else {feedback="Edit rejected: overlap, boundary or invalid assignment."}
                             }
                             Button("Remove pad"){
@@ -127,27 +152,41 @@ struct CustomSurfacePadEditor:View {
             }
         }
     }
-    private var assignment:Layout.Assignment {
+    private var assignment:Layout.Assignment? {
+        let result:Layout.Assignment
         switch kind {
-        case .note:return .note(note)
-        case .drum:return .drum(note)
-        case .degree:return .degree(note)
-        case .sustain:return .helper(.init(.sustain))
-        case .bend:return .helper(.init(.pitchBend))
-        case .xy:return .xy(.init(.controlChange,number:1),.init(.controlChange,number:11))
+        case .note:result = .note(note)
+        case .drum:result = .drum(note)
+        case .degree:result = .degree(note)
+        case .chord:
+            let parts=chordNotes.split(separator:",",omittingEmptySubsequences:false)
+            let notes=parts.compactMap{Int($0.trimmingCharacters(in:.whitespaces))}
+            guard parts.count==notes.count else{return nil}
+            result = .chord(notes)
+        case .sustain:result = .helper(.init(.sustain,channel:channel))
+        case .bend:result = .helper(.init(.pitchBend,channel:channel))
+        case .cc:result = .helper(.init(.controlChange,channel:channel,number:cc))
+        case .xy:result = .xy(.init(.controlChange,channel:channel,number:1),.init(.controlChange,channel:channel,number:11))
         }
+        return result.isValid ? result:nil
     }
     private func select(_ pad:Layout.Pad?){
         selected=pad?.id
+        changeAssignment=false
         guard let pad else{return}
+        channel=0
         label=pad.label;x=pad.x;y=pad.y;width=pad.width;height=pad.height
         switch pad.assignment {
         case .note(let n):kind = .note;note=n
         case .drum(let n):kind = .drum;note=n
         case .degree(let n):kind = .degree;note=n
-        case .helper(let target):kind=target.kind == .sustain ? .sustain:.bend
-        case .xy:kind = .xy
-        case .chord:kind = .note
+        case .helper(let target):
+            channel=target.channel
+            if target.kind == .sustain {kind = .sustain}
+            else if target.kind == .controlChange {kind = .cc;cc=target.number}
+            else {kind = .bend}
+        case .xy(let x,_):kind = .xy;channel=x.channel
+        case .chord(let notes):kind = .chord;chordNotes=notes.map(String.init).joined(separator:", ")
         }
     }
 }

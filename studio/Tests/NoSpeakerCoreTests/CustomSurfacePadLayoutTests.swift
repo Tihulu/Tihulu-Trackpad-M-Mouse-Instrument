@@ -72,3 +72,17 @@ private func surfacePad(_ id:String,_ x:Int,_ y:Int,_ w:Int,_ h:Int,_ assignment
     #expect(!CustomSurfacePadLayout.Assignment.xy(.init(.controlChange,number:64),.init(.pitchBend)).isValid)
     #expect(CustomSurfacePadLayout.Assignment.helper(.init(.sustain)).isValid)
 }
+
+@Test func customPadGeometryEditPreservesExactChordAndHelperAssignments() throws {
+    let assignments:[CustomSurfacePadLayout.Assignment]=[
+        .chord([48,55,60]),.degree(-8),.helper(.init(.controlChange,channel:9,number:71)),
+        .xy(.init(.controlChange,channel:3,number:10),.init(.pitchBend,channel:5))]
+    for assignment in assignments {
+        let pad=surfacePad("one",0,0,10000,10000,assignment)
+        let layout=try #require(CustomSurfacePadLayout(surface:.trackpad,pads:[pad]))
+        let edit=pad.editingGeometry(label:"Renamed",x:100,y:200,width:3000,height:4000)
+        let updated=try #require(layout.replacing(edit))
+        #expect(updated.pads[0].assignment==assignment)
+        #expect(updated.pads[0].label=="Renamed")
+    }
+}

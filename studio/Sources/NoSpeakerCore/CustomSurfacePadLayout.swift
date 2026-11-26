@@ -49,6 +49,11 @@ public struct CustomSurfacePadLayout: Codable, Equatable, Sendable {
             (1...10000).contains(width) && (1...10000).contains(height) &&
             width<=10000-x && height<=10000-y && assignment.isValid
         }
+        /// A geometry-only edit must retain the exact assignment, including
+        /// a chord or a custom helper destination not exposed by an editor.
+        public func editingGeometry(label:String,x:Int,y:Int,width:Int,height:Int)->Self {
+            .init(id:id,label:label,x:x,y:y,width:width,height:height,assignment:assignment)
+        }
         fileprivate func overlaps(_ other:Self)->Bool {
             x<other.x+other.width && other.x<x+width && y<other.y+other.height && other.y<y+height
         }
