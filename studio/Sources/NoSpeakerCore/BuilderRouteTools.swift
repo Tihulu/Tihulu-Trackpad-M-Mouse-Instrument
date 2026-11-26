@@ -46,6 +46,26 @@ public enum BuilderRouteTools {
         }
     }
 
+    /// Descriptive role of configured routes, not a hardware capability
+    /// or activation permission. A source may play notes and helper controls.
+    public struct SourceRole: Equatable, Sendable, Identifiable {
+        public enum Role:String,Sendable {case instrument="Instrument",helper="Helper",hybrid="Hybrid"}
+        public let source:SensorSource
+        public let role:Role
+        public let noteRoutes:Int
+        public let helperRoutes:Int
+        public var id:SensorSource{source}
+    }
+    public static func sourceRoles(in patch:InstrumentPatch)->[SourceRole] {
+        SensorSource.allCases.compactMap { source in
+            let routes=patch.routes.filter{$0.source==source}
+            guard !routes.isEmpty else{return nil}
+            let notes=routes.filter{$0.destination.kind == .note}.count
+            let helpers=routes.count-notes
+            return SourceRole(source:source,role:notes==0 ? .helper : helpers==0 ? .instrument : .hybrid,noteRoutes:notes,helperRoutes:helpers)
+        }
+    }
+
     public static func summary(_ route: SensorMapping) -> String {
         let d = route.destination
         let target: String

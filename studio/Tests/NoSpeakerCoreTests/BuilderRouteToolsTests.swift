@@ -31,3 +31,15 @@ import Testing
     #expect(BuilderRouteTools.visibleIDs(in:patch,source:.tablet,query:"guitar").isEmpty)
     #expect(BuilderRouteTools.visibleIDs(in:patch,source:nil,query:"  ") == ["a","b","c"])
 }
+
+@Test func builderSourceRolesDescribeRoutesRatherThanDeviceType() {
+    let patch=InstrumentPatch.starter
+    let roles=BuilderRouteTools.sourceRoles(in:patch)
+    #expect(roles.count==2)
+    #expect(roles.first(where:{$0.source == .trackpad})?.role == .hybrid)
+    #expect(roles.first(where:{$0.source == .magicMouse})?.role == .helper)
+    let piano=InstrumentPatch(routes:[.init(id:"key",source:.phone,signal:.pianoKey0,destination:.init(.note,number:60))])
+    #expect(BuilderRouteTools.sourceRoles(in:piano).first?.role == .instrument)
+    #expect(BuilderRouteTools.sourceRoles(in:.init()).isEmpty)
+    #expect(patch == InstrumentPatch.starter)
+}
