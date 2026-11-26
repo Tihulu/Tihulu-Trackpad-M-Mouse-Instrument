@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.hardware.camera2.CameraCharacteristics
 import android.os.SystemClock
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
@@ -40,6 +41,8 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
     private var analysis: ImageAnalysis? = null
     private var detector: HandLandmarker? = null // worker confined
     private var last = -1L
+    private var lastSensor = -1L
+    private var realtimeClock = false
     private val mailbox=ArrayDeque<Frame>()
     private val mailboxLock=Any()
     fun drain():List<Frame> = synchronized(mailboxLock) {
@@ -71,6 +74,7 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
                 .setTargetResolution(android.util.Size(640,480)).build()
             analysis = useCase
             val camera: Camera = provider.bindToLifecycle(owner,selector,useCase)
+            realtimeClock=Camera2CameraInfo.from(camera.cameraInfo).getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE)==CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
             val state = camera.cameraInfo.zoomState.value ?: error("Zoom state unavailable")
             if (!ZoomRange(state.minZoomRatio,state.maxZoomRatio).admits(zoom)) error("Zoom unavailable")
             val applied = camera.cameraControl.setZoomRatio(zoom)
@@ -79,8 +83,8 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
                     try {
                         applied.get()
                         // Detector is allocated only after the zoom change was accepted.
-                        useCase.setAnalyzer(worker,::analyze)
                         ready.set(true)
+                        useCase.setAnalyzer(worker,::analyze)
                     } catch (_: Exception) { fail("Camera zoom or analyzer setup failed") }
                 }
             },main)
@@ -109,19 +113,20 @@ class RgbHandSource(private val context: Context, private val owner: LifecycleOw
         var upright: Bitmap? = null
         try {
             if (closed.get() || !ready.get()) return
-            val t = SystemClock.elapsedRealtimeNanos()
+            val receipt=SystemClock.elapsedRealtimeNanos()
+            val sensor=image.imageInfo.timestamp
+            if (sensor<=0 || sensor<=lastSensor) {emit(Frame(emptyList(),receipt));return}
+            lastSensor=sensor
+            val t=if(realtimeClock)sensor else receipt
+            if(t>receipt||receipt-t>=150_000_000L) {emit(Frame(emptyList(),receipt));return}
             if (last >= 0 && t-last < 66_666_667L) return
             last=t
-            val p=image.planes.single()
-            // Reject unverified crop/stride instead of misaligning landmarks.
-            if (p.pixelStride != 4 || p.rowStride != image.width*4 ||
-                p.buffer.remaining() < image.width*image.height*4 ||
-                image.cropRect.width()!=image.width || image.cropRect.height()!=image.height) {
-                emit(Frame(emptyList(),t)); return
-            }
-            val bitmap=Bitmap.createBitmap(image.width,image.height,Bitmap.Config.ARGB_8888)
+            val p=image.planes.firstOrNull() ?: run {emit(Frame(emptyList(),t));return}
+            val crop=image.cropRect
+            val pixels=RgbaPlane.toArgb(p.buffer,p.rowStride,p.pixelStride,image.width,image.height,crop.left,crop.top,crop.right,crop.bottom)
+                ?: run {emit(Frame(emptyList(),t));return}
+            val bitmap=Bitmap.createBitmap(pixels,crop.width(),crop.height(),Bitmap.Config.ARGB_8888)
             raw=bitmap
-            bitmap.copyPixelsFromBuffer(p.buffer.duplicate())
             val angle=image.imageInfo.rotationDegrees
             if (angle !in listOf(0,90,180,270)) { emit(Frame(emptyList(),t));return }
             val rotated=Bitmap.createBitmap(bitmap,0,0,bitmap.width,bitmap.height,
