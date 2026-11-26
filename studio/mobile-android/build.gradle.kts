@@ -14,6 +14,8 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies {
+    // Experimental native LAN adapter. No network permission in diagnostic APK.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.camera:camera-camera2:1.4.2")
     implementation("androidx.camera:camera-lifecycle:1.4.2")
     implementation("androidx.core:core-ktx:1.15.0")
