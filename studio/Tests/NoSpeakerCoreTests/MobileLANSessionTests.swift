@@ -61,7 +61,7 @@ private func host(_ piano:Int=1,_ pedals:Int=0)throws->String {
     #expect(s.receive(text:"accepted",now:ns(181)) == .close("Source expired while active ACK outstanding"))
 }
 @Test func mobileLANSessionInteroperatesWithActualGroupBridgeAndScopedCleanup() throws {
-    let phone=PerformanceInstrumentGroup(name:"Native phone",patch:.init(routes:[.init(id:"note",source:.phone,signal:.pianoKey0,destination:.init(.note,number:60))]))
+    let phone=PerformanceInstrumentGroup(name:"Native phone",patch:.init(routes:[.init(id:"note",source:.phone,signal:.pianoKey0,destination:.init(.note,number:60),velocity:93)]))
     let tablet=PerformanceInstrumentGroup(name:"Other player",patch:.init(routes:[.init(id:"other",source:.tablet,signal:.pianoKey0,destination:.init(.note,number:64))]))
     var hostSession=try PerformanceGroupGamepadSession(profile:.init(groups:[phone,tablet]),allowRemote:true)
     var bridge=PerformanceGroupRemoteBridge()
@@ -91,7 +91,7 @@ private func host(_ piano:Int=1,_ pedals:Int=0)throws->String {
     guard case .text(let attack)=client.offer(.init(keys:1),observedAt:ns(81),now:ns(81)) else{throw RemoteTouchError.invalidFrame}
     let attackACK=bridge.process([.frame(peer,attack,1.082)],now:1.082,session:&hostSession,send:sink)
     #expect(attackACK.actions == [.acknowledge(peer,true)])
-    #expect(sent.last?.groupID==phone.id && sent.last?.command.value==127)
+    #expect(sent.last?.groupID==phone.id && sent.last?.command.destination.number==60 && sent.last?.command.value==93)
     _=client.receive(text:"accepted",now:ns(90))
     _=client.abort()
     sent.removeAll()
