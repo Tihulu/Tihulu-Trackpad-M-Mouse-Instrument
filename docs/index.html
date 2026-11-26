@@ -565,4 +565,19 @@ ck("Continuous configured neutral release",()=>{fresh();applyPreset(1);connectId
 ck("New screen labels and renderers",()=>Object.keys(screens).length===33&&sections.flatMap(x=>x.slice(1)).every(x=>navTR[x[2]]&&navDE[x[2]])&&Object.values(screens).every(fn=>fn().length>0));
 }finally{S=s;modeSessions=new Set(m);choices=c;sliderValues=sv;toggles=tg;page=p;capture=cap;playing=pl;groupArmed=ga;status.textContent=st;events=ev;wire=w;consoleHeld=hc;consoleSustain=su;consoleLast=last;monoClock=clock;mix=oldMix;stepState=new Set(pattern);restoreV4(vis);restoreLayout5(lsnap);stageValues=stageSnap.values;stageFilter=stageSnap.filter;stageView=stageSnap.view;stageWidgets=stageSnap.widgets;stageSignature=stageSnap.sig;stageDevices=S.devices;momentOwners=mo}runChecks=checks;return checks};
 render();
-</script></body></html>
+</script><style>
+/* Final narrow-view compatibility: keep scrolling inside wide data tables. */
+@media(max-width:690px){
+  main>.layout,main>.wide,main>.card,.layout>div,.layout .card,.remotephone,.tablewrap{width:100%;min-width:0;max-width:100%}
+  .layout{grid-template-columns:minmax(0,1fr)}
+  .tablewrap{display:block;contain:inline-size;overflow-x:auto;overflow-y:hidden}
+  .tablewrap>.data{width:max-content;min-width:100%;max-width:none}
+  .remotephone .surface,.surface{grid-template-columns:repeat(8,minmax(0,1fr))}
+  .remotephone .zone,.keyboard .key{min-width:0;overflow-wrap:anywhere}
+  .remotephone .phonebar,.remotephone .line{flex-wrap:wrap;min-width:0}
+  .footer>*{min-width:0;max-width:100%;overflow-wrap:anywhere;white-space:normal}
+  .pairflow>div,.fields>label,.cardhead>*{min-width:0;overflow-wrap:anywhere}
+  .intro>div,.statgrid>*{min-width:0;max-width:100%}
+  .navfind{min-width:0}
+}
+</style></body></html>
