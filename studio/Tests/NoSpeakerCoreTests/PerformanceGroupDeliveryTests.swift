@@ -243,3 +243,17 @@ private func deliveryGroup(_ source: SensorSource, signal: SensorSignal = .conta
     #expect(PerformanceGroupDelivery.faultNotice([failed])?.contains("MIDI send or cleanup failed")==true)
     #expect(PerformanceGroupDelivery.faultNotice([silent,failed])?.contains("expired or MIDI delivery failed")==true)
 }
+
+
+@Test func groupManualCleanupNoticeRetainsNewFaultWithFinalDebtStatus() throws {
+    let group = deliveryGroup(.trackpad)
+    var output = try PerformanceGroupDelivery(profile:.init(groups:[group]))
+    let lease = try output.connect(.trackpad,now:1)
+    let failed = output.frame(lease:lease,sequence:1,now:1,values:[.contact:1]) { _ in false }
+    let recovered = output.retryCleanup(group.id,send:{_ in true})
+    #expect(PerformanceGroupDelivery.cleanupNotice([],hasPending:false) == "No pending group cleanup.")
+    let notice = PerformanceGroupDelivery.cleanupNotice([failed,recovered],hasPending:false)
+    #expect(notice.contains("MIDI send or cleanup failed") && notice.contains("No pending group cleanup."))
+    let pending = PerformanceGroupDelivery.cleanupNotice([failed],hasPending:true)
+    #expect(pending.contains("MIDI send or cleanup failed") && pending.contains("cleanup still pending"))
+}

@@ -773,7 +773,11 @@ public struct PerformanceGroupGamepadSession: Sendable {
         return reports
     }
 
-    public mutating func stopGroup(_ id: UUID,refreshNow:(()->Double)? = nil,
+    public mutating func stopGroup(_ id: UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        stopGroup(id,refreshNow:nil,send:send)
+    }
+
+    public mutating func stopGroup(_ id: UUID,refreshNow:(()->Double)?,
                                    send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
         let report = delivery.stopGroup(id,send:send)
         reconcileRetiredLeases()
@@ -784,7 +788,11 @@ public struct PerformanceGroupGamepadSession: Sendable {
         cameraTracking.reset()
         return delivery.panic(send:send)
     }
-    public mutating func retryCleanup(_ id: UUID,refreshNow:(()->Double)? = nil,
+    public mutating func retryCleanup(_ id: UUID,send:(PerformanceGroupCommand)->Bool) -> PerformanceGroupDelivery.Report {
+        retryCleanup(id,refreshNow:nil,send:send)
+    }
+
+    public mutating func retryCleanup(_ id: UUID,refreshNow:(()->Double)?,
                                       send: (PerformanceGroupCommand) -> Bool) -> PerformanceGroupDelivery.Report {
         let report = delivery.retryCleanupReport(id,send:send)
         return drainAfterManualCleanup(report,refreshNow:refreshNow,send:send)

@@ -235,3 +235,27 @@ private func gamepadGroup(_ source: SensorSource) -> PerformanceInstrumentGroup 
         #expect(engine.sourceStates[.gamepad3] == .leased && engine.activeSessions == 1)
     }
 }
+
+
+@Test func groupManualDrainPreservesNewFailureAndFinalCleanupDebt() throws {
+    let a = gamepadGroup(.gamepad1)
+    let b = gamepadGroup(.gamepad2)
+    var engine = try PerformanceGroupGamepadSession(profile:.init(groups:[a,b]))
+    let x = try engine.bind(.gamepad1,now:0)
+    let y = try engine.bind(.gamepad2,now:0)
+    let neutral = try gamepadSnapshot()
+    let held = try gamepadSnapshot(true)
+    for (source,token) in [(SensorSource.gamepad1,x),(.gamepad2,y)] {
+        _ = engine.receive(source,token:token,frame:neutral,now:0,send:{_ in true})
+        _ = engine.receive(source,token:token,frame:held,now:0.01,send:{_ in true})
+    }
+    let first = engine.stopGroup(a.id,send:{_ in false})
+    #expect(first.pendingCleanup == [a.id])
+    var now = 0.25
+    let report = engine.retryCleanup(a.id,refreshNow:{now}) { command in
+        if command.groupID == a.id { now = 0.37; return true }
+        return false
+    }
+    #expect(report.failedGroups == [b.id] && report.pendingCleanup == [b.id])
+    #expect(engine.pendingCleanup == [b.id] && engine.activeSessions == 0)
+}

@@ -65,6 +65,15 @@ public struct PerformanceGroupDelivery: Sendable {
         return "A group MIDI send or cleanup failed. Affected groups stopped; inspect cleanup status."
     }
 
+    /// A manual retry can also discover faults on other expired sources.
+    /// Keep that cause alongside the final, authoritative debt status.
+    public static func cleanupNotice(_ reports:[Report],hasPending:Bool) -> String {
+        let status = hasPending
+            ? "Group cleanup still pending. Check CoreMIDI and retry."
+            : "No pending group cleanup."
+        return faultNotice(reports).map { $0 + " " + status } ?? status
+    }
+
     private struct Output: Sendable {
         var ledger: PatchOutputLedger
         var retired = false

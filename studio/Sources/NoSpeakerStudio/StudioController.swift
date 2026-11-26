@@ -903,8 +903,14 @@ final class StudioController: ObservableObject {
     }
 
     func retryGroupCleanup() {
-        for id in groupHost.pendingCleanup {
-            if let report = groupHost.retryCleanup(id) { consumeGroupReports([report]) }
+        var reports:[PerformanceGroupDelivery.Report] = []
+        // Snapshot the pending IDs; a newly discovered fault is reported,
+        // not silently retried in the same user action.
+        for id in groupHost.pendingCleanup.sorted(by:{ $0.uuidString < $1.uuidString }) {
+            if let report = groupHost.retryCleanup(id) {
+                reports.append(report)
+                consumeGroupReports([report])
+            }
         }
         _ = groupHost.retryDisposal()
         refreshGroupOutputState()
@@ -912,8 +918,8 @@ final class StudioController: ObservableObject {
             groupTunedConfiguration = nil
             groupDynamicPreview = nil
         }
-        groupGamepadStatus = groupCleanupIDs.isEmpty && groupDisposalCount == 0
-            ? "No pending group cleanup." : "Group cleanup still pending. Check CoreMIDI and retry."
+        groupGamepadStatus = PerformanceGroupDelivery.cleanupNotice(reports,
+            hasPending:!groupCleanupIDs.isEmpty || groupDisposalCount != 0)
     }
 
     func closeGroupPorts() {
