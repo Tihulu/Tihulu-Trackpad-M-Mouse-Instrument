@@ -98,6 +98,21 @@ public struct RemoteHostBridge: Sendable {
         return result
     }
 
+    public mutating func stop(now:Double,runtime:inout PhysicalPatchRuntime) -> RemoteHostBatch {
+        guard now.isFinite,now>=observedHostClock else {
+            return retireClockFault(runtime:&runtime)
+        }
+        observedHostClock=now
+        stopped=true
+        ready=false
+        bindings.removeAll()
+        invitationIssuedAt=nil
+        var result=RemoteHostBatch()
+        result.commands=runtime.disableRemote(now:now)
+        result.actions=[.stop]
+        return result
+    }
+
     public mutating func process(_ events: [RemoteHostEvent], now: Double,
                                  runtime: inout PhysicalPatchRuntime) -> RemoteHostBatch {
         guard !stopped else { return RemoteHostBatch() }
@@ -108,7 +123,7 @@ public struct RemoteHostBridge: Sendable {
         guard events.count <= 32,
               !events.contains(where: { if case .fault = $0 { return true }; return false })
         else {
-            var result = stop(runtime: &runtime)
+            var result = stop(now:now,runtime:&runtime)
             result.fault = true
             return result
         }

@@ -812,6 +812,16 @@ public struct PhysicalPatchRuntime: Sendable {
         return router.disconnect(sessions:removed)
     }
 
+    /// The native bridge has a trusted processing timestamp. Combine
+    /// listener retirement with known expiry, retaining fresh local input.
+    public mutating func disableRemote(now:Double) -> [SensorCommand] {
+        guard now.isFinite,now>=0 else { return disableRemote() }
+        remoteEnabled=false
+        pairing.clear()
+        mappingProjections=[:]
+        return expire(now:now,removingRemote:Set(remotePeers.keys))
+    }
+
     public mutating func expire(now: Double) -> [SensorCommand] {
         expire(now:now,removingRemote:[])
     }

@@ -308,3 +308,28 @@ private func bridgeRuntime() throws -> PhysicalPatchRuntime {
         #expect(runtime.remotePeerIDs == (reject ? [] : [id]))
     }
 }
+
+
+@Test func builderRemoteTransportFaultDoesNotRestoreExpiredLocalContinuousOwner() throws {
+    for localExpired in [false,true] {
+        let cc=SensorDestination(.controlChange,number:74)
+        var runtime=PhysicalPatchRuntime()
+        try runtime.configure(.init(routes:[
+            .init(id:"local",source:.trackpad,signal:.x,destination:cc,priority:0),
+            .init(id:"remote",source:.phone,signal:.x,destination:cc,priority:10)
+        ]),allowRemote:true)
+        var bridge=RemoteHostBridge()
+        let id=UUID()
+        _=bridge.process([.ready],now:1,runtime:&runtime)
+        try bridge.issue(secret:bridgeSecret,source:.phone,now:1,runtime:&runtime)
+        _=bridge.process([.invitation(id,bridgeSecret,1)],now:1,runtime:&runtime)
+        let localTime=localExpired ? 1.01 : 1.15
+        _=runtime.receive(source:.trackpad,x:0.3,y:0.5,size:0.5,hostTime:localTime,now:localTime)
+        _=bridge.process([.frame(id,bridgeTouch,1.2)],now:1.2,runtime:&runtime)
+        let result=bridge.process([.fault],now:1.37,runtime:&runtime)
+        #expect(result.fault && result.actions==[.stop] && bridge.stopped)
+        #expect(result.commands==[.init(cc,value:localExpired ? 0 : 38)])
+        #expect(runtime.remotePeerIDs.isEmpty)
+        #expect(runtime.activeSources == (localExpired ? [] : [.trackpad]))
+    }
+}
