@@ -55,12 +55,16 @@ def validate_reuse_matrix(repo, previous, identity):
 
 
 def compare_lexical_profiles(repo, revision, index, scope, args, out, cases_file,
-                             candidate="file-first", prefix="", compare_cache=True):
+                             candidate="file-first", prefix="", compare_cache=True,
+                             baseline="legacy"):
     """Same corpus/cutoff for paired, explicitly separate development/evaluation."""
+    if baseline == candidate or any(p not in repo_index.LEXICAL_PROFILES for p in (baseline, candidate)):
+        raise ValueError("Invalid comparison profiles")
+    expected_digests = rag_benchmark.validate_case_groups(cases_file)
     comparison = {}
     for group in ("development", "evaluation"):
         comparison[group] = {}
-        for profile in ("legacy", candidate):
+        for profile in (baseline, candidate):
             report = rag_benchmark.run(SimpleNamespace(repo=repo, expect_ref=revision,
                 index=index, scope=scope, mode="lexical", k=args.k,
                 max_per_file=args.max_per_file, model_dir=None, cases_file=cases_file,
@@ -69,7 +73,8 @@ def compare_lexical_profiles(repo, revision, index, scope, args, out, cases_file
             if (report["commit"] != revision or report["scope"] != scope
                     or report["mode"] != "lexical" or not report["source_verified"]
                     or report["model_sha256"] is not None
-                    or report["lexical_profile"] != profile or report["case_group"] != group):
+                    or report["lexical_profile"] != profile or report["case_group"] != group
+                    or report["cases_sha256"] != expected_digests[group]):
                 raise ValueError("Ranking comparison identity mismatch")
             name = scope + "-lexical-" + prefix + group + "-" + profile + "-report.json"
             with (out / name).open("x", encoding="utf-8") as stream:
@@ -84,11 +89,11 @@ def compare_lexical_profiles(repo, revision, index, scope, args, out, cases_file
                 comparison[group][profile]["development_ranks"] = [
                     {"id": row["id"], "language": row["language"],
                      "first_file_rank": row["first_file_rank"]} for row in report["results"]]
-        if (comparison[group]["legacy"]["cases_sha256"]
+        if (comparison[group][baseline]["cases_sha256"]
                 != comparison[group][candidate]["cases_sha256"]):
             raise ValueError("Ranking comparison dataset changed")
-    if (comparison["development"]["legacy"]["cases_sha256"]
-            == comparison["evaluation"]["legacy"]["cases_sha256"]):
+    if (comparison["development"][baseline]["cases_sha256"]
+            == comparison["evaluation"][baseline]["cases_sha256"]):
         raise ValueError("Development and evaluation datasets must differ")
     return comparison
 
@@ -110,6 +115,7 @@ def run(args):
     heldout_cases = getattr(args, "heldout_cases", None)
     ranking_cases = getattr(args, "ranking_cases", None)
     multilingual_cases = getattr(args, "multilingual_cases", None)
+    contextual_cases = getattr(args, "contextual_cases", None)
     out = Path(args.out_dir).resolve()
     # A matrix contains source text and possibly vectors. Never overwrite
     # previous evidence or create a public/shared directory by default.
@@ -186,6 +192,14 @@ def run(args):
                 if any(result["missing_paths"] for group in cell["multilingual_comparison"].values()
                        for result in group.values()):
                     cell["status"] = "COVERAGE_FAIL"
+            if contextual_cases and mode == "lexical":
+                cell["contextual_comparison"] = compare_lexical_profiles(
+                    repo, revision, index, scope, args, out, contextual_cases,
+                    baseline="multilingual", candidate="multilingual-context",
+                    prefix="contextual-", compare_cache=False)
+                if any(result["missing_paths"] for group in cell["contextual_comparison"].values()
+                       for result in group.values()):
+                    cell["status"] = "COVERAGE_FAIL"
             cells.append(cell)
     if identity and repo_index.fingerprint(args.model_dir)[1] != identity:
         raise ValueError("Model changed during matrix")
@@ -214,6 +228,7 @@ def main():
     args.heldout_cases = None if args.curated_only else rag_benchmark.HELDOUT_CASES
     args.ranking_cases = None if args.curated_only else rag_benchmark.RANKING_CASES
     args.multilingual_cases = None if args.curated_only else rag_benchmark.MULTILINGUAL_CASES
+    args.contextual_cases = None if args.curated_only else rag_benchmark.CONTEXTUAL_CASES
     try:
         result = run(args)
         print(json.dumps(result, ensure_ascii=True, allow_nan=False))
