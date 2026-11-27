@@ -58,6 +58,19 @@ public struct NativeHelperRelativeSession: Sendable {
         }
     }
 
+    /// Impossible future/sentinel observations are not acquisition evidence.
+    /// Consume their publication sequence, but never poison the trusted
+    /// acquisition/receipt watermarks. Valid expired samples still consume them.
+    private func acquisitionPossible(_ acquired: Int64, now: Clock) -> Bool {
+        guard (0..<Int64.max).contains(acquired) else { return false }
+        switch now {
+        case .seconds(let seconds):
+            return seconds.isFinite && seconds >= Double(acquired) / 1_000_000_000
+        case .nanoseconds(let ns):
+            return (0..<Int64.max).contains(ns) && ns >= acquired
+        }
+    }
+
     private func matchesClock(_ now: Clock) -> Bool {
         switch now {
         case .seconds: maximumAgeNS == nil
@@ -119,6 +132,7 @@ public struct NativeHelperRelativeSession: Sendable {
             return fault(retire: retire)
         }
         guard let acquired = frame.acquisitionNS, acquired > afterAcquisitionNS,
+              acquisitionPossible(acquired, now: now),
               lastAcquisitionNS.map({ acquired > $0 }) ?? true else { return fault(retire: retire) }
         let previousAcquisition = lastAcquisitionNS
         lastAcquisitionNS = acquired
