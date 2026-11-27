@@ -4,6 +4,11 @@ import Foundation
 /// A malformed record must not silently replace a previously saved library.
 public struct CustomSurfaceLayoutLibrary: Codable, Equatable, Sendable {
     public private(set) var layouts:[CustomSurfacePadLayout]=[]
+    private struct ChannelRecord: Codable, Equatable, Sendable {
+        let surface: CustomSurfacePadLayout.Surface
+        let channel: Int
+    }
+    private var channels: [ChannelRecord] = []
     public init(){}
     public func layout(for surface:CustomSurfacePadLayout.Surface)->CustomSurfacePadLayout? {
         layouts.first{$0.surface==surface}
@@ -13,7 +18,20 @@ public struct CustomSurfaceLayoutLibrary: Codable, Equatable, Sendable {
             layouts[index]=layout
         } else {layouts.append(layout)}
     }
-    private enum CodingKeys:String,CodingKey {case layouts}
+    public func melodicChannel(for surface: CustomSurfacePadLayout.Surface) -> Int? {
+        channels.first { $0.surface == surface }?.channel
+    }
+    /// Persist a draft and its melodic channel as one explicit operation.
+    /// A channel change never remaps absolute helper/drum destinations.
+    @discardableResult
+    public mutating func save(_ layout: CustomSurfacePadLayout, melodicChannel: Int) -> Bool {
+        guard (0...15).contains(melodicChannel) else { return false }
+        save(layout)
+        channels.removeAll { $0.surface == layout.surface }
+        channels.append(.init(surface:layout.surface,channel:melodicChannel))
+        return true
+    }
+    private enum CodingKeys:String,CodingKey {case layouts,channels}
     public init(from decoder:Decoder)throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         var list=try c.nestedUnkeyedContainer(forKey:.layouts)
@@ -26,6 +44,22 @@ public struct CustomSurfaceLayoutLibrary: Codable, Equatable, Sendable {
                 throw DecodingError.dataCorruptedError(forKey:.layouts,in:c,debugDescription:"Duplicate surface layout")
             }
             save(layout)
+        }
+        // Old v1 libraries have no channels field. Preserve their layouts;
+        // the caller supplies a visible default until explicitly saved.
+        if c.contains(.channels) {
+            var records = try c.nestedUnkeyedContainer(forKey: .channels)
+            while !records.isAtEnd {
+                guard channels.count < CustomSurfacePadLayout.Surface.allCases.count else {
+                    throw DecodingError.dataCorruptedError(forKey:.channels,in:c,debugDescription:"Too many channel records")
+                }
+                let record = try records.decode(ChannelRecord.self)
+                guard layout(for:record.surface) != nil, melodicChannel(for:record.surface) == nil,
+                      (0...15).contains(record.channel) else {
+                    throw DecodingError.dataCorruptedError(forKey:.channels,in:c,debugDescription:"Invalid, orphan or duplicate channel record")
+                }
+                channels.append(record)
+            }
         }
     }
 }
