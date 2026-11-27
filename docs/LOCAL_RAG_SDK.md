@@ -202,3 +202,19 @@ The earlier 770cf9de record above remains a historical snapshot. The coordinator
 - [ContinuousResponsePanel.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/7e85ad90f5e63b66d088553ff6d53cbddf2667fe/studio/Sources/NoSpeakerStudio/ContinuousResponsePanel.swift) and [InstrumentBuilderView.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/7e85ad90f5e63b66d088553ff6d53cbddf2667fe/studio/Sources/NoSpeakerStudio/InstrumentBuilderView.swift): capability-aware editor, reference-range validation and accessibility candidate.
 
 No actual feedback provider, negotiated client transform, angular seam resolution or physical acceptance is inferred. New source-specific retrieval queries belong to a separate development-only suite and must run on a single verified source tree containing the successor. Candidate-only paths remain NOT_RUN on this RAG branch; do not manufacture a combined index. The 250 ms reference evidence limit is distinct from all existing live source freshness, neutral and cleanup deadlines.
+
+
+### Exact-revision development feature probe (REL-RAG-03)
+
+The local `tools/rag_feature_probe.py` utility builds only the scopes requested by an explicit development case list at a **full existing Git commit SHA**. It does not check out, merge, fetch, download models or combine source from the tool's working tree with the target corpus. It uses the existing source verification, limits and lexical profiles, binds all reports to one case-file digest and target commit, and refuses an existing output directory. A missing expected source path is COVERAGE_FAIL, not a successful retrieval; any interrupted or identity-mismatched run lacks the completed summary. The output directory is created with mode 0700. It contains private indices and per-case reports; do not upload it automatically.
+
+For the separate, nine-query reference evidence development suite, run from a trusted local checkout that contains the tool and the exact coordinator commit object:
+
+```sh
+python3 tools/rag_feature_probe.py --repo . \
+  --ref 7e85ad90f5e63b66d088553ff6d53cbddf2667fe \
+  --cases-file tools/rag_relative_reference_development_cases.json \
+  --out-dir /tmp/tihulu-relative-reference-probe
+```
+
+Use a new private path for each attempt. The target commit need not contain the tool or development fixture; the committed source tree is exclusively the specified revision. This fixture covers reference provenance/age, replay watermark, contention, capability gating, manual range correction, and the source contract in engine/app/docs scopes. The older six-query fixture remains separate. Neither is part of independent held-out evaluation. Feature measurement on the actual coordinator tree remains NOT_RUN until a trusted local Git object is available; the fixture tests verify mechanics, not feature/runtime or receiver acceptance. No vector measurement is provided by this lexical-only probe.

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import rag_benchmark
 import rag_matrix
+import rag_feature_probe
 import repo_index
 
 TOOL = Path(__file__).resolve().with_name("repo_index.py")
@@ -599,6 +600,86 @@ class RepositoryIndexTests(unittest.TestCase):
                          lexical_ranking(rows, "feedback", profile="multilingual-context"))
         self.assertEqual(lexical_ranking(rows, "geri", profile="legacy"), [])
         self.assertEqual(lexical_ranking(rows, "geri", profile="multilingual-context"), [])
+
+    def test_feature_probe_pins_source_and_reports_missing_feature(self):
+        engine = self.repo / "studio/Sources/NoSpeakerCore/RelativeProbe.swift"
+        engine.parent.mkdir(parents=True)
+        engine.write_text("// reference watermark")
+        doc = self.repo / "docs/RELATIVE_PROBE.md"
+        doc.parent.mkdir()
+        doc.write_text("# reference evidence")
+        (self.repo / "README.md").write_text("# general help")
+        self.git("add", str(engine.relative_to(self.repo)), str(doc.relative_to(self.repo)), "README.md")
+        self.git("commit", "-qm", "feature fixture")
+        feature = self.git("rev-parse", "HEAD").stdout.strip()
+        cases = [{"id": "engine", "scope": "engine", "language": "en", "query": "watermark",
+                  "expected_paths": [str(engine.relative_to(self.repo))]},
+                 {"id": "docs", "scope": "docs", "language": "en", "query": "reference evidence",
+                  "expected_paths": [str(doc.relative_to(self.repo))]}]
+        cases_file = self.root / "feature.json"
+        cases_file.write_text(json.dumps(cases))
+        self.git("rm", str(doc.relative_to(self.repo)))
+        self.git("commit", "-qm", "later tree without feature documentation")
+        later = self.git("rev-parse", "HEAD").stdout.strip()
+        engine.write_text("// dirty working copy")
+        args = SimpleNamespace(repo=self.repo, ref=feature, cases_file=cases_file,
+                               out_dir=self.root / "feature-old", lexical_profile="legacy",
+                               k=8, max_per_file=3)
+        result = rag_feature_probe.run(args)
+        self.assertEqual(result["commit"], feature)
+        self.assertEqual({cell["scope"] for cell in result["scopes"]}, {"engine", "docs"})
+        self.assertTrue(all(cell["status"] == "MEASURED" and cell["file_hit_rate"] == 1
+                            for cell in result["scopes"]))
+        self.assertNotIn("dirty working copy", (args.out_dir / "engine-lexical.json").read_text())
+        with self.assertRaises(FileExistsError):
+            rag_feature_probe.run(args)
+        args.ref = later
+        args.out_dir = self.root / "feature-new"
+        result = rag_feature_probe.run(args)
+        self.assertEqual(result["commit"], later)
+        docs = next(cell for cell in result["scopes"] if cell["scope"] == "docs")
+        self.assertEqual(docs["status"], "COVERAGE_FAIL")
+        self.assertEqual(docs["missing_paths"], 1)
+        self.assertEqual(docs["file_hit_rate"], 0)
+        result = subprocess.run([sys.executable, str(TOOL.with_name("rag_feature_probe.py")),
+            "--repo", str(self.repo), "--ref", later, "--cases-file", str(cases_file),
+            "--out-dir", str(self.root / "feature-cli")], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["commit"], later)
+
+    def test_feature_probe_rejects_symbolic_ref_and_dataset_change(self):
+        (self.repo / "README.md").write_text("# feature")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "probe source")
+        revision = self.git("rev-parse", "HEAD").stdout.strip()
+        cases_file = self.root / "feature.json"
+        cases_file.write_text(json.dumps([{"id": "docs", "scope": "docs", "language": "en",
+            "query": "feature", "expected_paths": ["README.md"]}]))
+        args = SimpleNamespace(repo=self.repo, ref="HEAD", cases_file=cases_file,
+            out_dir=self.root / "feature-probe", lexical_profile="legacy", k=8, max_per_file=3)
+        with self.assertRaisesRegex(ValueError, "full commit SHA"):
+            rag_feature_probe.run(args)
+        self.assertFalse(args.out_dir.exists())
+        args.ref = revision
+        actual_run = rag_benchmark.run
+        def wrong_digest(options):
+            report = actual_run(options)
+            report["cases_sha256"] = "0" * 64
+            return report
+        with patch.object(rag_benchmark, "run", side_effect=wrong_digest):
+            with self.assertRaisesRegex(ValueError, "report identity mismatch"):
+                rag_feature_probe.run(args)
+        self.assertFalse((args.out_dir / "feature-probe.json").exists())
+
+    def test_relative_reference_development_fixture_stays_out_of_index(self):
+        fixture = TOOL.with_name("rag_relative_reference_development_cases.json")
+        cases, digest = rag_benchmark.load_cases(fixture)
+        self.assertEqual(len(cases), 9)
+        self.assertEqual(len(digest), 64)
+        self.assertEqual(Counter(case["scope"] for case in cases),
+                         {"engine": 3, "app": 3, "docs": 3})
+        for scope in ("engine", "app", "docs"):
+            self.assertFalse(in_scope("tools/" + fixture.name, scope))
 
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
