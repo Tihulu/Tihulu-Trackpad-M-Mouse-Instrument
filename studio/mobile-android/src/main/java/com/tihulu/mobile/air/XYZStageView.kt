@@ -17,14 +17,16 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
     private val fields=ArrayList<EditText>()
     private val enabledAxes=ArrayList<CheckBox>()
     private val role=Spinner(context)
-    val hybrid:Boolean get()=role.selectedItemPosition in 4..6
-    val pitchAxis:Int? get()=role.selectedItemPosition.takeIf {it in 1..6}?.let {(it-1)%3}
+    val selection:XYZSetupSelection? get()=XYZSetupSelection.from(role.selectedItemPosition,
+        enabledAxes.foldIndexed(0){i,m,box->if(box.isChecked)m or (1 shl i) else m})
+    val hybrid:Boolean get()=selection?.hybrid==true
+    val pitchAxis:Int? get()=selection?.pitchAxis
     private val name=EditText(context)
     private val message=TextView(context)
     private val eligibility=TextView(context)
     private val response=TextView(context)
     var selectionChanged: (() -> Unit)? = null
-    val mask:Int get()=if(pitchAxis!=null&&!hybrid)7 else enabledAxes.foldIndexed(0){i,m,box->if(box.isChecked)m or (1 shl i) else m}
+    val mask:Int get()=selection?.mask?:0
     fun volume():XYZVolume? {
         val v=fields.map {it.text.toString().toDoubleOrNull()?:return null}
         return XYZVolume(v[0],v[1],v[2],v[3],v[4],v[5]).takeIf {it.valid}
@@ -39,7 +41,7 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
         addView(role)
         val axes=LinearLayout(context);addView(axes)
         role.onItemSelectedListener=object:AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent:AdapterView<*>?) {}
+            override fun onNothingSelected(parent:AdapterView<*>?) {selectionChanged?.invoke()}
             override fun onItemSelected(parent:AdapterView<*>?, view:View?, position:Int, id:Long){
                 axes.visibility=if(position==0||position>=4)View.VISIBLE else View.GONE
                 selectionChanged?.invoke()
@@ -78,9 +80,11 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
     }
     fun describeEligibility(reason:String?) {
         eligibility.text=reason ?: "Calibration and role valid."
-        val controls=pitchAxis==null || hybrid
+        val selected=selection
+        val controls=selected?.pitchAxis==null || selected.hybrid
         val enabled=(0..2).filter {mask and (1 shl it)!=0}.map {listOf("X","Y","Z")[it]}
         response.text=when {
+            selected==null -> "Select a valid role and enable required helper axes."
             !controls -> "Discrete pitch zones · no relative note displacement."
             enabled.isEmpty() -> "No helper axes enabled."
             else -> enabled.joinToString()+ " send normalized positions; Relative is not negotiated on mobile."+
@@ -91,11 +95,12 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
         val key=name.text.toString().trim()
         val prefs=store()
         val v=volume()
-        if(prefs==null || key.isEmpty() || key.toByteArray().size>64 || key.any {it.isISOControl()} ||
+        val selected=selection
+        if(prefs==null || selected==null || key.isEmpty() || key.toByteArray().size>64 || key.any {it.isISOControl()} ||
             v==null || mask==0 || prefs.all.keys.any { it.equals(key,ignoreCase=true) } || prefs.all.size>=32){
             message.text="Choose a new name, valid bounds and enabled axes (up to 32 profiles per camera).";return
         }
-        val json=JSONArray(listOf(v.left,v.right,v.bottom,v.top,v.near,v.far,mask,role.selectedItemPosition))
+        val json=JSONArray(listOf(v.left,v.right,v.bottom,v.top,v.near,v.far,selected.mask,selected.roleIndex))
         prefs.edit().putString(key,json.toString()).apply();message.text="Saved "+key
     }
     private fun restore(){
@@ -108,14 +113,13 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
             try{
                 val data=JSONArray(prefs.getString(key,""))
                 require(data.length() in 7..8)
-                val values=(0..5).map {data.getDouble(it)}
-                val v=XYZVolume(values[0],values[1],values[2],values[3],values[4],values[5])
-                val bits=checkNotNull(XYZCalibrationRecord.axisMask(data.getDouble(6)))
-                require(v.valid)
-                val roleIndex=if(data.length()==8)checkNotNull(XYZCalibrationRecord.roleIndex(data.getDouble(7))) else 0
-                role.setSelection(roleIndex)
+                val record=checkNotNull(XYZProfileFields.decode((0 until data.length()).map {data.get(it)}))
+                val v=record.volume
+                val values=listOf(v.left,v.right,v.bottom,v.top,v.near,v.far)
+                role.setSelection(record.selection.roleIndex)
                 fields.forEachIndexed {i,f->f.setText(values[i].toString())}
-                enabledAxes.forEachIndexed {i,box->box.isChecked=bits and (1 shl i)!=0}
+                enabledAxes.forEachIndexed {i,box->box.isChecked=record.selection.mask and (1 shl i)!=0}
+                selectionChanged?.invoke()
                 name.setText(key);message.text="Loaded "+key
             }catch(_:Exception){message.text="Invalid saved calibration"}
         }.show()
@@ -123,10 +127,9 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
     private fun update(){
         val prefs=store()?:return
         val v=volume()
-        val bits=mask
-        val roleIndex=role.selectedItemPosition
-        if(v==null || bits !in 1..7 || roleIndex !in 0..6){message.text="Set valid calibration and role first";return}
-        val replacement=JSONArray(listOf(v.left,v.right,v.bottom,v.top,v.near,v.far,bits,roleIndex)).toString()
+        val selected=selection
+        if(v==null || selected==null){message.text="Set valid calibration and role first";return}
+        val replacement=JSONArray(listOf(v.left,v.right,v.bottom,v.top,v.near,v.far,selected.mask,selected.roleIndex)).toString()
         val keys=prefs.all.keys.sorted()
         if(keys.isEmpty()){message.text="No calibrations for this camera";return}
         android.app.AlertDialog.Builder(context).setTitle("Update calibration with current settings").setItems(keys.toTypedArray()){_,position->
