@@ -120,3 +120,30 @@ private let groupContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5,
     group.retryRecovery()
     #expect(group.phase == .idle && wire[1]?.count == 3)
 }
+
+@Test func customSurfaceGroupAdmissionLossDuringSendCannotResumeOrAttackAnotherMember() throws {
+    var next: UInt32 = 1
+    var now: Int64 = 0
+    var allowed = true
+    var wire: [UInt32: [[UInt8]]] = [:]
+    let host = CustomSurfaceEndpointHost(backend:.init(create:{name in
+        defer { next += 1 }
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{_ in true},send:{e,b in
+        wire[e.handle,default:[]].append(b)
+        if b[0] == 0x92 { allowed=false }
+        return true
+    },dispose:{_ in true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    guard case .started(let run)=group.start(try [groupMember(.trackpad),groupMember(.magicMouse)],clock:{now},admitsLive:{allowed}) else {
+        Issue.record("Group did not start");return
+    }
+    for surface in [CustomSurfacePadLayout.Surface.trackpad,.magicMouse] {
+        group.frame(run:run,surface:surface,contacts:[],sequence:1,observedAt:0)
+    }
+    now=1
+    #expect(group.frame(run:run,surface:.trackpad,contacts:[groupContact],sequence:2,observedAt:now) == nil)
+    allowed=true
+    #expect(group.frame(run:run,surface:.magicMouse,contacts:[groupContact],sequence:2,observedAt:now) == nil)
+    #expect(group.phase == .idle && wire[1] == [[0x92,60,100],[0x82,60,0]] && wire[2] == nil)
+}

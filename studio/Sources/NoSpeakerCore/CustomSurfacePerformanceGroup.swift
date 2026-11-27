@@ -20,6 +20,13 @@ public final class CustomSurfacePerformanceGroup {
     }
     private final class Admission {
         var open = true
+        let external: () -> Bool
+        init(_ external: @escaping () -> Bool) { self.external = external }
+        func check() -> Bool {
+            guard open else { return false }
+            if !external() { open = false }
+            return open
+        }
     }
     private let host: CustomSurfaceEndpointHost
     private var admission: Admission?
@@ -49,21 +56,21 @@ public final class CustomSurfacePerformanceGroup {
         guard phase == .idle, host.statuses.isEmpty, !members.isEmpty,
               members.count <= CustomSurfaceEndpointHost.capacity,
               Set(surfaces).count == members.count, admitsLive() else { return .refused }
-        let gate = Admission()
+        let gate = Admission(admitsLive)
         admission = gate
         for member in members {
             guard let status = host.open(plan: member.plan, permitsNeutralSilence: member.permitsNeutralSilence,
-                                         clock: clock, admitsLive: { gate.open && admitsLive() }) else {
+                                         clock: clock, admitsLive: { gate.check() }) else {
                 stop()
                 return phase == .idle ? .rolledBack : .recoveryPending
             }
             ids[member.plan.layout.surface] = status.id
-            guard status.phase == .live, admitsLive() else {
+            guard status.phase == .live, gate.check() else {
                 stop()
                 return phase == .idle ? .rolledBack : .recoveryPending
             }
         }
-        guard statuses.count == members.count, statuses.allSatisfy({ $0.phase == .live }), admitsLive() else {
+        guard statuses.count == members.count, statuses.allSatisfy({ $0.phase == .live }), gate.check() else {
             stop()
             return phase == .idle ? .rolledBack : .recoveryPending
         }
@@ -95,13 +102,14 @@ public final class CustomSurfacePerformanceGroup {
         if !healthy() { stop() }
     }
     private func healthy() -> Bool {
-        guard let clock, let startedAt, let lastClock else { return false }
+        guard admission?.check() == true, let clock, let startedAt, let lastClock else { return false }
         let now = clock()
         guard now >= lastClock else { return false }
         self.lastClock = now
         let current = statuses
         return current.count == ids.count && current.allSatisfy { $0.phase == .live } &&
-            (current.allSatisfy { $0.hasNeutralHandshake } || now - startedAt < Self.neutralTimeoutNS)
+            (current.allSatisfy { $0.hasNeutralHandshake } || now - startedAt < Self.neutralTimeoutNS) &&
+            admission?.check() == true
     }
     /// Retire admission before any cleanup. Automatic stop must not retry
     /// an already failed cleanup; recovery requires a distinct explicit call.
