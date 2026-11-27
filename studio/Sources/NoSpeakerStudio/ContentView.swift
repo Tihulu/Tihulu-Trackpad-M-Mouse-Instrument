@@ -1731,6 +1731,34 @@ private struct TouchSurfaceMap: View {
     }
 }
 
+private struct SequencerTakeStatus: View {
+    @EnvironmentObject private var studio: StudioController
+    let kind: FrozenSequencerPattern.Kind
+
+    var body: some View {
+        if studio.sequencePresentation.take?.kind == kind {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    if studio.sequencePresentation.phase == .cleanupPending {
+                        Text("MIDI cleanup pending")
+                    } else if let position = studio.sequencePresentation.position {
+                        Text("Active MIDI take · last confirmed step \(position.gridStep + 1)")
+                    } else {
+                        Text("Active MIDI take · awaiting confirmed event")
+                    }
+                    Text("Grid edits affect the next take.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(studio.sequencePresentation.phase == .cleanupPending ? "Retry MIDI Stop" : "Stop Pattern") {
+                    studio.stopLiveSequence()
+                }
+            }
+            .font(.callout)
+        }
+    }
+}
+
 private struct NoteSequencerView: View {
     @EnvironmentObject private var studio: StudioController
     @Binding var notes: [Int?]
@@ -1747,6 +1775,7 @@ private struct NoteSequencerView: View {
             NoteComposerPanel(notes: $notes)
             GroovePanel(settings: $groove)
             SequencerOutputPanel(output: $output)
+            SequencerTakeStatus(kind: .notes)
             HStack {
                 Stepper("Selected note: \((try? MusicTheory.noteName(midi: selectedMIDI)) ?? "-")", value: $selectedMIDI, in: 48...95)
                 Slider(value: $velocity, in: 0.1...1) { Text("Velocity") }.frame(width: 180)
@@ -1808,7 +1837,11 @@ private struct NoteSequencerView: View {
     }
 
     private func play() {
-        if (output ?? .haptic).sendsMIDI { studio.startLiveSequence(output: output ?? .haptic, loop: loop, makeClip: makeClip) }
+        if (output ?? .haptic).sendsMIDI {
+            studio.startFrozenSequence(output: output ?? .haptic) {
+                try FrozenSequencerPattern(notes: .init(bpm: studio.bpm, steps: noteSteps), loop: loop, groove: groove)
+            }
+        }
         else if groove != nil { studio.playGrooveClip(loop: loop, makeClip: makeClip) }
         else { studio.playNotes(noteSteps, loop: loop) }
     }
@@ -1829,6 +1862,7 @@ private struct DrumSequencerView: View {
             DrumComposerPanel(active: $active)
             GroovePanel(settings: $groove)
             SequencerOutputPanel(output: $output)
+            SequencerTakeStatus(kind: .drums)
             HStack {
                 Toggle("Loop", isOn: $loop)
                 Spacer()
@@ -1898,7 +1932,11 @@ private struct DrumSequencerView: View {
     }
 
     private func play() {
-        if (output ?? .haptic).sendsMIDI { studio.startLiveSequence(output: output ?? .haptic, loop: loop, makeClip: makeClip) }
+        if (output ?? .haptic).sendsMIDI {
+            studio.startFrozenSequence(output: output ?? .haptic) {
+                try FrozenSequencerPattern(drums: .init(bpm: studio.bpm, hits: drumHits), loop: loop, groove: groove)
+            }
+        }
         else if groove != nil { studio.playGrooveClip(loop: loop, makeClip: makeClip) }
         else { studio.playDrums(drumHits, loop: loop) }
     }
