@@ -1,4 +1,6 @@
 import json
+import math
+from collections import Counter
 from pathlib import Path
 import subprocess
 import sys
@@ -328,6 +330,10 @@ class RepositoryIndexTests(unittest.TestCase):
             self.assertEqual(group["legacy"]["cases_sha256"], group["file-first"]["cases_sha256"])
             self.assertEqual(group["file-first"]["file_hit_rate"], 1)
             self.assertTrue((out / group["file-first"]["report"]).is_file())
+        self.assertEqual(result["development"]["legacy"]["cache_comparison"]["parity_cases"], 1)
+        self.assertEqual(result["development"]["legacy"]["development_ranks"],
+                         [{"id": "dev", "language": "en", "first_file_rank": 1}])
+        self.assertNotIn("cache_comparison", result["evaluation"]["legacy"])
         with self.assertRaises(ValueError):
             rag_benchmark.load_cases(dataset, "unknown")
 
@@ -385,6 +391,83 @@ class RepositoryIndexTests(unittest.TestCase):
         args.hybrid = True
         with self.assertRaisesRegex(ValueError, "genuine local"):
             search_prepared(prepared, args)
+
+    def test_lexical_cache_preserves_verified_responses_and_reuses_tokens(self):
+        self.build()
+        args = SimpleNamespace(repo=self.repo, expect_ref=self.commit, index=self.index,
+                               model_dir=None, hybrid=False, limit=5, query="sustain")
+        prepared = prepare_search(args)
+        cache = repo_index.prepare_lexical(prepared)
+        self.assertIsNotNone(cache)
+        self.assertEqual(cache.commit, self.commit)
+        self.assertGreater(cache.entries, 0)
+        self.assertGreater(cache.term_bytes, 0)
+        for profile in ("legacy", "file-first"):
+            args.lexical_profile = profile
+            for query in ("sustain cleanup", "Router", "line 75", "absentkeyword"):
+                args.query = query
+                cold = search_prepared(prepared, args)
+                with patch.object(repo_index, "tokens", wraps=repo_index.tokens) as calls:
+                    warm = search_prepared(prepared, args, lexical_cache=cache)
+                self.assertEqual(warm, cold)
+                self.assertEqual(calls.call_count, 1)
+
+    def test_lexical_cache_fails_closed_on_snapshot_changes_and_budget(self):
+        self.build()
+        args = SimpleNamespace(repo=self.repo, expect_ref=self.commit, index=self.index,
+                               model_dir=None, hybrid=False, limit=5, query="sustain")
+        prepared = prepare_search(args)
+        meta, rows, verified, model, identity = prepared
+        cache = repo_index.prepare_lexical(prepared)
+        self.assertIsNone(repo_index.prepare_lexical(prepared, max_entries=1))
+        self.assertIsNone(repo_index.prepare_lexical(prepared, max_term_bytes=1))
+        with self.assertRaisesRegex(ValueError, "budget"):
+            repo_index.prepare_lexical(prepared, max_entries=0)
+        unverified = (meta, rows, False, model, identity)
+        with self.assertRaisesRegex(ValueError, "verified lexical"):
+            repo_index.prepare_lexical(unverified)
+        with self.assertRaisesRegex(ValueError, "verified lexical"):
+            search_prepared(unverified, args, lexical_cache=cache)
+        for changed in (dict(meta, commit="f"*40), dict(meta, scope="docs")):
+            with self.assertRaisesRegex(ValueError, "revision or scope"):
+                search_prepared((changed, rows, verified, model, identity), args,
+                                lexical_cache=cache)
+        for altered in ([dict(rows[0], text="changed")] + rows[1:],
+                        [dict(rows[0], blob="f"*40)] + rows[1:],
+                        list(reversed(rows)), rows[:-1]):
+            with self.assertRaisesRegex(ValueError, "snapshot differs"):
+                search_prepared((meta, altered, verified, model, identity), args,
+                                lexical_cache=cache)
+
+    def test_lexical_refactor_preserves_reference_scoring(self):
+        rows = [{"path":"docs/NoteRouter.md","blob":"a"*40,"start":1,"end":1,
+                 "text":"note sustain sustain Müzik"},
+                {"path":"docs/Other.md","blob":"b"*40,"start":1,"end":1,
+                 "text":"note cleanup"},
+                {"path":"docs/Sustain.md","blob":"c"*40,"start":1,"end":1,
+                 "text":"Müzik"}]
+        def reference(query):
+            terms = set(tokens(query))
+            stats = [(row, Counter(tokens(row["text"])),
+                      set(tokens(Path(row["path"]).stem))) for row in rows]
+            average = max(1, sum(sum(body.values()) for _, body, _ in stats)/len(rows))
+            frequencies = Counter()
+            for _, body, name in stats:
+                frequencies.update(terms.intersection(body.keys() | name))
+            expected = []
+            for row, body, name in stats:
+                score = 0.0
+                for term in sorted(terms):
+                    count = body[term]
+                    weight = math.log1p((len(rows)-frequencies[term]+0.5) /
+                                        (frequencies[term]+0.5))
+                    denom = count + 1.2*(0.25+0.75*sum(body.values())/average)
+                    score += weight*(count*2.2/denom+(1.5 if term in name else 0))
+                if score > 0:
+                    expected.append((score, row))
+            return expected
+        for query in ("note note sustain", "Müzik", "Router", "cleanup missing", "absent"):
+            self.assertEqual(lexical_ranking(rows, query), reference(query))
 
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
