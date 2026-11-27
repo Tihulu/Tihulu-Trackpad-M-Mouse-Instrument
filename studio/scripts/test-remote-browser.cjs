@@ -2042,3 +2042,26 @@ test("MUSIC-WEB sparse arpeggio requires an explicit mapped note before starting
   a.elements.piano0.emit("pointerdown",drumEvent(1));a.elements.piano0.emit("pointerup",drumEvent(1));
   assert.equal(a.elements.phraseStart.disabled,false);assert.equal(a.socket.frames.length,0);
 });
+
+test("MUSIC-WEB incomplete chord assignment cannot select chord via menu or toolbar",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false),e=a.elements;
+  assert.equal(e.playMode.children.find(x=>x.value==="chord").disabled,true);
+  assert.equal(e.pianoChord.disabled,true);
+  e.playMode.value="chord";e.playMode.emit("change");e.pianoChord.emit("click");
+  assert.equal(e.playMode.value,"all");assert.equal(a.socket.frames.length,0);
+  assert.equal(e.playMode.children.find(x=>x.value==="arp").disabled,false);
+});
+test("MUSIC-WEB toolbar and menu use identical release and neutral ACK barriers",()=>{
+  for(const path of ["toolbar","menu"]){
+    const a=setup("granted",{...touchOnly,touch:false,piano:145},false),e=a.elements;
+    e.pianoEnable.emit("click");e.piano0.emit("pointerdown",drumEvent(1));
+    if(path==="toolbar")e.pianoChord.emit("click");else{e.playMode.value="chord";e.playMode.emit("change");}
+    assert.equal(e.playMode.disabled,true);assert.equal(e.chordGrid.hidden,true);
+    a.ack();a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);assert.equal(e.playMode.disabled,true);
+    a.ack();assert.equal(e.playMode.value,"chord");assert.equal(e.chordGrid.hidden,false);
+    assert.equal(e.chord0.disabled,true);const n=a.socket.frames.length;
+    e.chord0.emit("pointerdown",drumEvent(2));assert.equal(a.socket.frames.length,n);
+    e.pianoEnable.emit("click");e.chord0.emit("pointerdown",drumEvent(3));a.step();
+    assert.equal(a.socket.frames.at(-1).mask,145);
+  }
+});

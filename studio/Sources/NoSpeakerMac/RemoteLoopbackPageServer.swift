@@ -974,7 +974,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   ];
   function modeAvailable(id){
     const entry=playModes.find(p=>p[0]===id);
-    return Boolean(caps&&entry&&(["chord","arp","seq"].includes(id)?Boolean(caps.piano&33554431):id==="camera"?Boolean(caps.pedals&7):id==="all"||entry[2].some(kind=>Boolean(caps[kind]))));
+    return Boolean(caps&&entry&&(id==="chord"?chordShapes.some((_,i)=>chordAvailable(i)):["arp","seq"].includes(id)?Boolean(caps.piano&33554431):id==="camera"?Boolean(caps.pedals&7):id==="all"||entry[2].some(kind=>Boolean(caps[kind]))));
   }
   function modeAllows(kind){
     return playMode==="all"||(kind==="pedals"&&synthOpen&&["piano","arp","chord","seq"].includes(playMode))||Boolean(playModes.find(p=>p[0]===playMode)?.[2].includes(kind));
