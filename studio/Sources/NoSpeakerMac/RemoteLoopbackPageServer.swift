@@ -1716,6 +1716,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       const hold=isHoldPedal(i);
       const alias=localAlias("p"+i);
       b.textContent=(alias?alias+" · ":groupNeutralHandshake&&mappingLabels.has(43+i)?mappingLabels.get(43+i)+" · ":"")+(hold?(active?"Held":"Hold to activate"):i<3?(active?"Release":"Activate"):(active?"On":"Off"));
+      const action=hold?(active?"Held":"Hold to activate"):i<3?(active?"Release":"Activate"):(active?"On":"Off");
+      b.setAttribute("aria-label",(alias||labelFor(43+i))+" · "+action);
       b.setAttribute("data-hold",String(hold));
       b.setAttribute("aria-pressed",String(active));
     });

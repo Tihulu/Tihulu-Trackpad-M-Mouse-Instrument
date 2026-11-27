@@ -1931,3 +1931,13 @@ test("MUSIC-WEB cancellation of already delivered drum preserves other owners",(
   a.elements.drum0.emit("pointercancel",drumEvent(1));a.step();
   assert.equal(a.socket.frames.at(-1).mask,2);a.ack();assert.equal(a.socket.closed,undefined);
 });
+
+test("MUSIC-WEB pedal accessible names identify mapped control and action",()=>{
+  const a=setup();a.elements.pedalEnable.emit("click");
+  const p=a.elements.pedalToggle0;
+  assert.match(p.attributes["aria-label"],/Expression.*Activate/i);
+  p.emit("click");
+  assert.match(p.attributes["aria-label"],/Expression.*Release/i);
+  assert.equal(p.attributes["aria-pressed"],"true");
+  assert.match(a.elements.pedalToggle3.attributes["aria-label"],/Sustain/i);
+});
