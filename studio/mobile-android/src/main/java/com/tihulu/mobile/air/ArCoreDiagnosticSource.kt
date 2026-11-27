@@ -83,14 +83,15 @@ class ArCoreDiagnosticSource(private val context:Context,private val model:Local
         try {
             val s=checkNotNull(stage);val output=s.tick()
             if(!s.active){fail("ARCore stopped; restart explicitly");return}
-            publish(Reading(output,s.observationAt,"ARCore raw depth · estimated/fused"))
+            publish(Reading(output,s.observationAt,AirDepthReadout.RUNNING))
             handler?.postDelayed({loop()},16)
         }catch(_:Exception){fail("ARCore processing failed")}
     }
     fun read(now:Long=SystemClock.elapsedRealtimeNanos()):Reading {
         if(cancelled.get())return Reading()
         val r=state.get();val at=r.observedAt
-        return if(at==null||now<at||now-at>=150_000_000L)r.copy(output=AirOutput(),observedAt=null) else r
+        val fresh=if(at==null||now<at||now-at>=150_000_000L)r.copy(output=AirOutput(),observedAt=null) else r
+        return fresh.copy(status=AirDepthReadout.describe(fresh.status,fresh.observedAt,fresh.output))
     }
     @Synchronized fun stop(){
         if(!cancelled.compareAndSet(false,true))return
