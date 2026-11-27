@@ -51,6 +51,7 @@ class AirPreviewActivity: ComponentActivity() {
     private lateinit var customNear:EditText
     private lateinit var customFar:EditText
     private lateinit var modeGuide:TextView
+    private lateinit var responseGuide:TextView
     private var captureRotation:Int?=null
     private lateinit var imageRotation:Spinner
     private var depthSource:ArCoreDiagnosticSource?=null
@@ -365,6 +366,7 @@ class AirPreviewActivity: ComponentActivity() {
         orientationPick=spinner(Orientation.entries.map {it.name}).apply {contentDescription="Musical control orientation"}
         mirror=CheckBox(this).also {it.text="Mirror X";column.addView(it)}
         modeGuide=label("")
+        responseGuide=label("")
         xyz=CheckBox(this).apply {text="Measured XYZ · Camera2 DEPTH16";column.addView(this)}
         xyzSettings=XYZSettings(this){measuredCamera()?.id}
         column.addView(xyzSettings)
@@ -455,6 +457,8 @@ class AirPreviewActivity: ComponentActivity() {
             field.isEnabled=custom&&canEditInstrument
         }
         modeGuide.visibility=if(measuredMode||wantsTouchPair)View.GONE else View.VISIBLE
+        responseGuide.visibility=if(measuredMode||wantsTouchPair)View.GONE else View.VISIBLE
+        responseGuide.text=selectedMode()?.let { AirRelativeEligibility.forMode(it).explanation } ?: "Choose a source."
         feedback.visibility=if(measuredMode||wantsTouchPair||touchStage)View.GONE else View.VISIBLE
         if(!busy&&!measuredMode&&!wantsTouchPair&&!touchStage)showOutput(AirOutput())
         modeGuide.text=when {
