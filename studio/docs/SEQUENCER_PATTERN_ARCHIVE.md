@@ -43,3 +43,40 @@ scheduler-confirmed playhead, scoped Stop, and native/physical acceptance.
 The archive deliberately does not store tuning, output endpoint, capture,
 permission, or hardware settings. Unknown tuning metadata fails rather than
 silently degrading microtonal intent.
+
+## Composer preview and undo acceptance
+
+A generated preview is scoped to the current grid and the generation
+settings that produced it. The note panel captures the entire chord bank,
+slot, style, complexity and seed. The drum panel captures style, complexity,
+end-fill and seed. Changing the captured settings discards the preview,
+not the replacement undo history. Applying also checks the current context
+synchronously, so a delayed UI observation cannot apply a stale candidate.
+A variation captures the new seed before generation; the delayed observation
+of that same seed must not discard the new preview. Empty drum generation
+is reported as unavailable, not offered as a destructive replacement.
+
+The full-bank comparison is intentionally conservative: even a bank change
+that does not affect nominal composition invalidates the preview. Changing
+the bank does not rewrite existing cells or previously generated notes.
+Generation remains local symbolic data only, not playback or tuning activation.
+
+Native acceptance (not established by portable tests):
+
+1. Generate a preview, change each relevant control independently, and
+   verify that Replace cannot apply the old preview.
+2. Generate variation at seed 9999; the new seed 1 preview remains usable.
+3. Apply a pattern, change generation settings, then Undo restores the
+   preceding grid. No new MIDI or haptic output occurs on editor actions.
+4. Manually edit and revert a cell, then confirm earlier preview and undo
+   are invalidated. SwiftUI onChange is value observation and can coalesce
+   a mutation and reversal entirely between render passes. For a complete
+   guarantee, the root editor must deliver every external mutation at its
+   binding setter, including clear/import and manual per-cell editing.
+5. During playback, preview/apply/undo must edit only the next draft; the
+   actual running snapshot, output owner and cleanup remain host-controlled.
+   Neither preview status nor this archive can substitute for a real playhead
+   or scoped Stop. Those integration checks require coordinator-owned code.
+
+No independent acceptance of UX-039 through UX-042 is implied by these
+portable engine checks or the isolated panel changes.
