@@ -97,6 +97,12 @@ public enum LegacyRecoveryPolicy {
     public static func permitsControlEvent(running: Bool, releaseOnly: Bool) -> Bool {
         running || !releaseOnly
     }
+    /// Reusing an already-running endpoint must not report success while
+    /// its outgoing transport is faulted or requires explicit DAW recovery.
+    /// Ordinary live note/controller obligations are not a reason to refuse.
+    public static func permitsActiveStart(faulted: Bool, unknownFailure: Bool, cleaning: Bool) -> Bool {
+        !faulted && !unknownFailure && !cleaning
+    }
     public static func permitsSend(enabled: Bool, faulted: Bool, cleaning: Bool) -> Bool {
         cleaning || (enabled && !faulted)
     }

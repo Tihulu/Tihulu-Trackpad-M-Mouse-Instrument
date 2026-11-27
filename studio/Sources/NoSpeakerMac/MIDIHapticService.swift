@@ -202,6 +202,11 @@ public final class MIDIHapticService: @unchecked Sendable {
     public func start(masterLevel: Double, onFailure: (@Sendable (OSStatus) -> Void)? = nil, onMessage: (@Sendable (LiveMIDIMessage) -> Void)? = nil) throws {
         lock.lock()
         let alreadyActive = enabled && destination != 0 && virtualSource != 0 && inputPort != 0
+        if alreadyActive && !LegacyRecoveryPolicy.permitsActiveStart(faulted: outgoingFault != nil,
+            unknownFailure: controllerRecoveryRequired, cleaning: cleaningOutgoing) {
+            lock.unlock()
+            throw MIDIHapticError.outgoingRecoveryRequired
+        }
         self.masterLevel = masterLevel
         if alreadyActive {
             // Retain the current session and its input-haptics policy.
