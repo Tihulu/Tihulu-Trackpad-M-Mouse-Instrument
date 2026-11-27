@@ -67,6 +67,26 @@ public struct LegacyControllerReleaseDebt: Sendable {
 /// Keep cleanup submissions possible after input and normal output stop.
 /// Replacement must not discard unresolved receiver-state obligations.
 public enum LegacyRecoveryPolicy {
+    public struct LegacyBendRangeResult: Equatable, Sendable {
+        public let completed: Bool
+        public let dataAttempted: Bool
+        public var requiresManualRecovery: Bool { dataAttempted && !completed }
+    }
+
+    /// Unfenced legacy range write. Preserve the original stop-on-failure
+    /// sequence. Once data entry was attempted, an incomplete transaction
+    /// may have changed the receiver's range; null selectors cannot undo it.
+    public static func sendLegacyBendRange(semitones: Int, wire: (Int, Int) -> Bool) -> LegacyBendRangeResult {
+        let value = max(0, min(24, semitones))
+        let parts = [(101, 0), (100, 0), (6, value), (38, 0), (101, 127), (100, 127)]
+        var dataAttempted = false
+        for (cc, value) in parts {
+            if cc == 6 || cc == 38 { dataAttempted = true }
+            guard wire(cc, value) else { return .init(completed: false, dataAttempted: dataAttempted) }
+        }
+        return .init(completed: true, dataAttempted: dataAttempted)
+    }
+
     /// Full-source Stop only. Read each ledger at its original cleanup phase;
     /// the caller's wire callback records actual results in those ledgers.
     /// Always attempt both RPN null selectors, even if the first fails.
