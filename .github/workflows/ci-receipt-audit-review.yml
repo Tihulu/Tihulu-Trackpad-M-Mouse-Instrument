@@ -1,0 +1,43 @@
+name: Offline CI receipt audit review
+
+on:
+  pull_request:
+    paths:
+      - 'tools/ci_receipt_audit/**'
+      - '.github/workflows/ci-receipt-audit-review.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit-tests:
+    name: Offline receipt audit regressions (review only)
+    if: github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'agents/ci-receipt-audit-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exact review checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$EXPECTED_SHA"
+          printf 'Verified checkout: %s; tree: %s\n' "$actual" "$(git rev-parse HEAD^{tree})"
+          printf 'run_id=%s; run_attempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+      - name: Run offline audit regression tests
+        working-directory: tools/ci_receipt_audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 --version
+          python3 -m unittest -v
+          python3 -m py_compile ci_gate.py receipt_gate.py test_*.py
+      - name: Verify tracked source remains unchanged
+        shell: bash
+        run: git diff --exit-code HEAD -- tools/ci_receipt_audit
