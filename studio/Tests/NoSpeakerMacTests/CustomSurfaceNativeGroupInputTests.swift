@@ -49,3 +49,14 @@ private func groupNativeFrame(_ n: Int, surface: TouchSurfaceKind, valid: Bool =
     #expect(!group.begin(at:3))
 }
 #endif
+
+#if os(macOS)
+@Test func customNativeGroupInputRevokedBeforeDrainClosesHealthyPeer() throws {
+    let group=try #require(CustomSurfaceNativeGroupInput(surfaces:[.trackpad,.magicMouse],orientation:.horizontal,notBefore:0))
+    let mouse=try #require(group.inboxes.first { $0.surface == .magicMouse })
+    #expect(group.begin(at:1))
+    mouse.submit(groupNativeFrame(2,surface:.magicMouse,valid:false))
+    #expect(group.drain { _ in Issue.record("Unexpected delivery"); return true } == .revoked)
+    #expect(group.inboxes.allSatisfy { !$0.admitsDelivery })
+}
+#endif

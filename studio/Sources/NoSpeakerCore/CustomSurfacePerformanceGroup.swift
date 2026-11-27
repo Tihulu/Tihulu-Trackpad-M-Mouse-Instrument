@@ -75,7 +75,7 @@ public final class CustomSurfacePerformanceGroup {
             return phase == .idle ? .rolledBack : .recoveryPending
         }
         let now = clock()
-        guard now >= 0 else { stop(); return phase == .idle ? .rolledBack : .recoveryPending }
+        guard now >= 0, gate.check() else { stop(); return phase == .idle ? .rolledBack : .recoveryPending }
         self.clock = clock
         startedAt = now
         lastClock = now

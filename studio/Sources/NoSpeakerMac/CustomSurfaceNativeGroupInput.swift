@@ -45,7 +45,7 @@ public final class CustomSurfaceNativeGroupInput: @unchecked Sendable {
     /// by re-stamping cached contacts. No source can monopolize a whole
     /// drain ahead of older frames from the other source.
     public func drain(deliver: (CustomSurfaceNativeFrame) -> Bool) -> DrainResult {
-        guard admitsDelivery else { return .revoked }
+        guard admitsDelivery else { close(); return .revoked }
         let batches = inboxes.map { $0.drain() }
         guard batches.allSatisfy({ !$0.faulted }) else { close(); return .revoked }
         let frames = batches.enumerated().flatMap { index, batch in
@@ -63,7 +63,8 @@ public final class CustomSurfaceNativeGroupInput: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard !closed else { return }
         closed = true
-        for inbox in inboxes { inbox.close(at: receipt) }
+        let stoppedAt = receipt ?? Int64(clamping: DispatchTime.now().uptimeNanoseconds)
+        for inbox in inboxes { inbox.close(at: stoppedAt) }
     }
 }
 #endif

@@ -147,3 +147,18 @@ private let groupContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5,
     #expect(group.frame(run:run,surface:.magicMouse,contacts:[groupContact],sequence:2,observedAt:now) == nil)
     #expect(group.phase == .idle && wire[1] == [[0x92,60,100],[0x82,60,0]] && wire[2] == nil)
 }
+
+@Test func customSurfaceGroupAdmissionLossDuringFinalArmClockRollsBackAllPorts() throws {
+    var next: UInt32=1
+    var allowed=true
+    var disposed:Set<UInt32>=[]
+    let host=CustomSurfaceEndpointHost(backend:.init(create:{name in
+        defer {next+=1}
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{_ in true},send:{_,_ in Issue.record("Unexpected MIDI");return false},
+       dispose:{e in disposed.insert(e.handle);return true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    #expect(group.start(try [groupMember(.trackpad),groupMember(.magicMouse)],clock:{allowed=false;return 0},
+                        admitsLive:{allowed}) == .rolledBack)
+    #expect(disposed==Set([1,2]) && group.phase == .idle && host.statuses.isEmpty)
+}
