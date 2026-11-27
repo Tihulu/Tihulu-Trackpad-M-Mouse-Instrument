@@ -55,13 +55,18 @@ struct MobileCaptureSceneProbe: UIViewRepresentable {
     @State private var levels: DepthXYZLevels?
     @State private var palm: DepthXYZPoint?
     @State private var status = "Stopped"
-    @State private var requesting = false
+    @State private var permissionRequest = MobilePermissionRequestFence()
+    private var requesting: Bool { permissionRequest.pending }
     @State private var ready = false
     private let tick = Timer.publish(every: 0.035, on: .main, in: .common).autoconnect()
     let returnCapture: (MobileAirSensorSource?) -> Void
     let done: () -> Void
 
     private var locked: Bool { sensor != nil || retiring != nil || socket != nil || requesting }
+    private var setupIssue: MobileXYZSetupIssue? {
+        MobileXYZSetupIssue.check(hasDepth: MobileAirSensorSource.hasLiDAR, validVolume: volume.isValid,
+                                  usesControls: usesControls, axes: axes, foreground: scene == .active)
+    }
     private var library: DepthXYZCalibrationProfiles? {
         if stored.isEmpty { return .init() }
         return try? JSONDecoder().decode(DepthXYZCalibrationProfiles.self, from: stored)
@@ -86,8 +91,7 @@ struct MobileCaptureSceneProbe: UIViewRepresentable {
                 HStack {
                     if sensor == nil {
                         Button("Start", action: start)
-                            .disabled(scene != .active || !MobileAirSensorSource.hasLiDAR || !volume.isValid ||
-                                      (usesControls && axes == 0) || retiring != nil || requesting || (paired && !ready))
+                            .disabled(setupIssue != nil || retiring != nil || requesting || (paired && !ready))
                     }
                     Button("Stop") { stop("Stopped · outputs released") }.disabled(!locked)
                     Button("Panic", role: .destructive) { stop("Panic · this device disconnected") }.disabled(!locked)
@@ -209,7 +213,7 @@ struct MobileCaptureSceneProbe: UIViewRepresentable {
                     }
                 } else { Text("Saved calibration data could not be read.") }
             }.disabled(locked)
-            if !volume.isValid || (usesControls && axes == 0) { Text("Enable an axis and set ordered bounds with sufficient spacing.") }
+            if let issue = setupIssue { Text(issue.rawValue).foregroundStyle(.secondary) }
             Toggle("Send to paired Mac", isOn: $paired).disabled(locked)
             if paired {
                 Text(axesDescription)
@@ -217,7 +221,7 @@ struct MobileCaptureSceneProbe: UIViewRepresentable {
                 TextField("Mac controller address", text: $address).textInputAutocapitalization(.never)
                     .autocorrectionDisabled().keyboardType(.URL).disabled(locked)
                 SecureField("One-time invitation", text: $invitation).privacySensitive().disabled(locked)
-                Button("Connect", action: connect).disabled(locked || scene != .active || (usesControls && axes == 0) ||
+                Button("Connect", action: connect).disabled(locked || setupIssue != nil ||
                     MobileLANEndpoint(pageAddress: address) == nil || MobileLANEndpoint.invitationBytes(invitation) == nil)
             }
         }
@@ -234,8 +238,10 @@ struct MobileCaptureSceneProbe: UIViewRepresentable {
         } catch { status = "Choose a unique calibration name and valid volume (up to 32 profiles)." }
     }
     private func connect() {
-        guard !locked, scene == .active, (!usesControls || (1...7).contains(axes)),
-              let endpoint = MobileLANEndpoint(pageAddress: address) else { return }
+        guard paired, !locked, setupIssue == nil,
+              let endpoint = MobileLANEndpoint(pageAddress: address),
+              MobileLANEndpoint.invitationBytes(invitation) != nil,
+              ensureCameraPermission() else { return }
         let selection: MobileLANSession.Selection
         switch role {
         case .instrument: selection = .keys
@@ -249,20 +255,9 @@ struct MobileCaptureSceneProbe: UIViewRepresentable {
         socket = client; status = "Pairing"
     }
     private func start() {
-        guard sensor == nil, retiring == nil, !requesting, scene == .active, MobileAirSensorSource.hasLiDAR,
+        guard sensor == nil, retiring == nil, !requesting, setupIssue == nil,
               let pose = window.orientation, let tracker = DepthXYZTracking(volume: volume),
-              (!usesControls || (1...7).contains(axes)), !paired || assigned(socket?.status().assignment) else { return }
-        guard MobileAirSensorSource.authorization == .authorized else {
-            if MobileAirSensorSource.authorization == .notDetermined {
-                requesting = true
-                Task { @MainActor in
-                    let granted = await MobileAirSensorSource.requestCameraPermission()
-                    requesting = false
-                    status = granted ? "Camera permission granted · press Start" : "Camera permission denied"
-                }
-            } else { status = "Camera access unavailable · check Settings" }
-            return
-        }
+              !paired || assigned(socket?.status().assignment), ensureCameraPermission() else { return }
         if instrument {
             let mask = paired ? socket?.status().assignment?.piano ?? 0 : (1 << 25) - 1
             guard let keys = DepthXYZKeys(authorized: mask, axis: pitchAxis) else { return }
@@ -274,6 +269,20 @@ struct MobileCaptureSceneProbe: UIViewRepresentable {
         capture.start(backend: .lidar, orientation: pose)
         status = "Waiting for measured palm"
     }
+    private func ensureCameraPermission() -> Bool {
+        if MobileAirSensorSource.authorization == .authorized { return true }
+        guard MobileAirSensorSource.authorization == .notDetermined else {
+            status = "Camera access unavailable · check Settings"; return false
+        }
+        guard scene == .active, let ticket = permissionRequest.begin() else { return false }
+        status = "Waiting for camera permission"
+        Task { @MainActor in
+            let granted = await MobileAirSensorSource.requestCameraPermission()
+            guard permissionRequest.finish(ticket), scene == .active else { return }
+            status = granted ? "Camera permission granted · continue explicitly" : "Camera permission denied"
+        }
+        return false
+    }
     private func assigned(_ manifest: MobileLANCapabilities.Manifest?) -> Bool {
         switch role {
         case .helper: return manifest?.xyzLane(mask: axes) != nil
@@ -282,6 +291,7 @@ struct MobileCaptureSceneProbe: UIViewRepresentable {
         }
     }
     private func stop(_ reason: String) {
+        permissionRequest.retire()
         socket?.stop(); socket = nil; ready = false; invitation = ""
         if let sensor { sensor.stop(); retiring = sensor }
         sensor = nil; tracking = nil; keyboard = nil; activeKey = nil; levels = nil; palm = nil; orientation = nil; status = reason
@@ -289,6 +299,9 @@ struct MobileCaptureSceneProbe: UIViewRepresentable {
     private func poll() {
         if retiring?.isStopped == true { retiring = nil }
         if let socket {
+            guard MobileAirSensorSource.authorization == .authorized else {
+                stop("Camera permission lost · reconnect explicitly"); return
+            }
             let state = socket.status()
             if state.phase == .closed { stop(state.message); return }
             ready = assigned(state.assignment)
