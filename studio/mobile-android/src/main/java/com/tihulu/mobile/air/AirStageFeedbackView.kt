@@ -16,6 +16,8 @@ internal class AirStageFeedbackView(context: Context) : LinearLayout(context) {
     private val cells = mutableMapOf<Int, TextView>()
     private var shownMode: AirMode? = null
     private var shownSlots = emptyList<Int>()
+    private var shownState: AirStageFeedback? = null
+    private var shownColumns = 0
     private val density = resources.displayMetrics.density
     init {
         orientation = VERTICAL
@@ -27,10 +29,11 @@ internal class AirStageFeedbackView(context: Context) : LinearLayout(context) {
         visibility = View.GONE
     }
     fun render(mode: AirMode, state: AirStageFeedback) {
-        if (mode != shownMode || state.slots != shownSlots) {
-            shownMode = mode; shownSlots = state.slots
+        val columns = if (mode == AirMode.STRINGS) 3 else if (resources.configuration.screenWidthDp >= 600) 8 else 5
+        if (mode == shownMode && shownState == state && shownColumns == columns) return
+        if (mode != shownMode || state.slots != shownSlots || columns != shownColumns) {
+            shownMode = mode; shownSlots = state.slots; shownColumns = columns
             cells.clear(); grid.removeAllViews()
-            val columns = if (mode == AirMode.STRINGS) 3 else if (resources.configuration.screenWidthDp >= 600) 8 else 5
             for (keys in state.slots.chunked(columns)) {
                 val row = LinearLayout(context)
                 for (key in keys) {
@@ -44,6 +47,7 @@ internal class AirStageFeedbackView(context: Context) : LinearLayout(context) {
                 grid.addView(row)
             }
         }
+        shownState = state
         title.text = when (mode) {
             AirMode.STRINGS -> "Projected string pulses"
             AirMode.CHORDS -> "Projected chord keys"

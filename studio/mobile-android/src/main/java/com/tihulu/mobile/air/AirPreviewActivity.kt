@@ -431,8 +431,9 @@ class AirPreviewActivity: ComponentActivity() {
         val keys=if(wantsPair)lan?.status()?.assignment?.piano?:0 else (1 shl 25)-1
         val state=AirStageFeedback.from(mode,keys,out)
         feedback.render(mode,state)
-        meter.text=if(mode.isHelper)state.level?.let {"Projected helper: "+(it*100).toInt()+"%"} ?: "Helper released"
+        val description=if(mode.isHelper)state.level?.let {"Projected helper: "+(it*100).toInt()+"%"} ?: "Helper released"
             else if(state.active.isEmpty()) "All preview keys released" else "Projected logical keys: "+state.active.joinToString { (it+1).toString() }
+        if(meter.text.toString()!=description)meter.text=description
     }
     private fun showZoom(){zoomLabel.text="Lens-relative zoom: %.2f×".format(zoom)}
     private fun setZoom(value:Float) {

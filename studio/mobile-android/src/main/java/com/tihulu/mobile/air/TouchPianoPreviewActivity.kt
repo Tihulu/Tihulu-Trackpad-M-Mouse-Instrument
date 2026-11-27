@@ -83,7 +83,8 @@ internal class TouchPianoView(context:Context,
         val active=keyList.filter {mask and (1 shl it)!=0}
         val state=if(!armed)"Stopped; all keys released" else if(active.isEmpty())"Armed; no held keys"
             else "Held logical keys: "+active.joinToString{(it+1).toString()}
-        contentDescription="${keyList.size} assigned logical piano zones. $state. Direct touch performance surface; accessibility activation does not play notes."
+        val description="${keyList.size} assigned logical piano zones. $state. Direct touch performance surface; accessibility activation does not play notes."
+        if(contentDescription?.toString()!=description)contentDescription=description
     }
     fun arm():String? {
         if(owner!=null)return "Already armed."
