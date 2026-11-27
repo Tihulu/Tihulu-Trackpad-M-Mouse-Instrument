@@ -163,6 +163,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var sustainOwners = LegacySustainOwners()
     private var mpeChannels = LegacyMPEChannelPool()
     private var continuousOwners = LegacyContinuousOwners()
+    private var relativeHelperOutput: NativeHelperRelativeOutputTransaction?
     private var outgoingPressure = LegacyChannelPressure()
     // Outgoing state is serialized by the existing Studio caller.
     private var gateDebt = LegacyGateReleaseDebt()
@@ -297,6 +298,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         // suppressed after a fault. The actual-attempt ledgers are sufficient.
         noteOwners = LegacyNoteOwners<OutgoingNoteOwner>()
         continuousOwners = LegacyContinuousOwners()
+        relativeHelperOutput = nil // actual-attempt debt survives this logical reset
         outgoingPressure = LegacyChannelPressure()
         mpeChannels = LegacyMPEChannelPool()
         touchOutputNote = nil
@@ -502,6 +504,7 @@ public final class MIDIHapticService: @unchecked Sendable {
                 // channel even when drum and pitched surfaces run together.
                 let used = Set(outgoingTouches.values.map(\.channel))
                     .union(noteOwners.active.map(\.channel))
+                    .union(NativeHelperRelativeHostPolicy.reservedChannels(targets:continuousOwners.relativeReservedTargets))
                 guard let free = mpeChannels.next(occupied:used,sustained:outgoingSustainChannels()) else { continue }
                 channel = free
             } else {
@@ -810,6 +813,59 @@ public final class MIDIHapticService: @unchecked Sendable {
         return result
     }
 
+    /// Internal host entry points for the explicit relative helper adapter.
+    /// As with the legacy output methods, the Studio caller must serialize
+    /// them on MainActor. No UI or capture path calls begin in this candidate.
+    private var relativeUnavailableChannels: Set<Int> {
+        mpeChannels.reserved.union(outgoingTouches.values.filter { $0.mpe }.map(\.channel))
+    }
+
+    public func beginRelativeHelperOutput(plan: NativeHelperRelativeOutputPlan,
+                                          admitOnset: () -> Bool) -> Bool {
+        guard relativeHelperOutput == nil, virtualSource != 0, permitsOutgoingSend,
+              !controllerRecoveryRequired,
+              !NativeHelperRelativeHostPolicy.hasPendingCleanup(targets:plan.targetDestinations,debt:controllerDebt) else { return false }
+        var state = NativeHelperRelativeOutputTransaction(plan:plan)
+        var staged = continuousOwners
+        let result = state.anchor(owners:&staged,reservedChannels:relativeUnavailableChannels,
+                                  permits:{ admitOnset() && self.permitsOutgoingSend })
+        continuousOwners = staged
+        // Even a rejected clutch waits for an explicit neutral boundary.
+        relativeHelperOutput = state
+        return result == .anchored
+    }
+
+    public func applyRelativeHelperMovement(_ values: [NativeHelperRelativeClutch.Axis:Int],
+                                             admitOnset: () -> Bool) -> Bool {
+        guard var state = relativeHelperOutput else { return false }
+        var staged = continuousOwners
+        let result = state.movement(values,owners:&staged,reservedChannels:relativeUnavailableChannels,
+                                    permits:{ admitOnset() && self.permitsOutgoingSend && !self.controllerRecoveryRequired },
+                                    send:{ self.sendAdmittedContinuousUpdate($0,permits:admitOnset) })
+        continuousOwners = staged
+        relativeHelperOutput = state
+        if result == .releaseRequired { _ = retireRelativeHelperOutput(genuineNeutral:false) }
+        return result == .accepted
+    }
+
+    /// Cleanup is not a fresh onset. Release only the leased helper intent;
+    /// never manufacture neutral for a target now owned by another producer.
+    /// Failed/ambiguous sends remain in the existing Stop recovery ledger.
+    @discardableResult
+    public func retireRelativeHelperOutput(genuineNeutral: Bool) -> Bool {
+        guard var state = relativeHelperOutput else { return continuousOwners.relativeReservedTargets.isEmpty }
+        _ = state.retire()
+        let targets = continuousOwners.relativeReservedTargets
+        if !targets.isEmpty { sendContinuousUpdates(continuousOwners.release(.helper)) }
+        let clean = permitsOutgoingSend && !controllerRecoveryRequired &&
+            !NativeHelperRelativeHostPolicy.hasPendingCleanup(targets:targets,debt:controllerDebt)
+        var staged = continuousOwners
+        let finished = state.confirmCleanup(owners:&staged,genuineNeutral:genuineNeutral,transportClean:clean)
+        continuousOwners = staged
+        relativeHelperOutput = finished ? nil : state
+        return finished
+    }
+
     public func sendHelperControls(
         x: Double, y: Double, contactSize: Double, assignments: MIDIHelperAssignments,
         channel: Int, pitchBendRange: Int, vibratoCC: Int, expressionCC: Int,
@@ -888,6 +944,14 @@ public final class MIDIHapticService: @unchecked Sendable {
         let cc = max(0, min(127, controller))
         let safeValue = max(0, min(127, value))
         let safeChannel = max(0, min(15, channel))
+        if NativeHelperRelativeHostPolicy.conflictsWithDirectCC(channel:safeChannel,controller:cc,
+            targets:continuousOwners.relativeReservedTargets) {
+            _ = retireRelativeHelperOutput(genuineNeutral:false)
+            // Do not bypass a lease with a fresh routing/control write.
+            // Explicit emergency resets remain available under the existing
+            // transport gate; Stop also retains its separate cleanup path.
+            guard [120,121,123].contains(cc) else { return }
+        }
         sendMIDI1(status: 0xB0 | safeChannel, data1: cc, data2: safeValue)
     }
 
