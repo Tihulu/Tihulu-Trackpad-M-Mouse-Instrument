@@ -2331,3 +2331,11 @@ test("MUSIC-WEB global release retires local keyboard owner across mode transiti
   const n=a.socket.frames.length;e.piano0.emit("keydown",xyKey(" ",true));a.step(25);assert.equal(a.socket.frames.length,n);
   e.piano0.emit("keydown",xyKey("Enter"));a.step(25);assert.equal(a.socket.frames.at(-1).mask,1);
 });
+
+test("REL-WEB source labels do not claim relative capability from camera or gyro assignments",()=>{
+  const a=setup(),e=a.elements;
+  assert.match(e.responseModeStatus.textContent,/Some source modes are ineligible/);
+  e.playMode.value="camera";e.playMode.emit("change");
+  assert.match(e.webCameraDescription.textContent,/does not establish relative capability/);
+  assert.equal(a.socket.frames.length,0);
+});
