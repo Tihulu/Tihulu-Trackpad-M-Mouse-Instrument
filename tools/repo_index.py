@@ -424,8 +424,12 @@ def search_prepared(prepared, args, lexical_cache=None):
     meta, rows, verified, model, identity = prepared
     if not 1 <= args.limit <= 50 or not args.query.strip() or len(args.query) > 4096:
         raise ValueError("Invalid query or result limit")
-    if lexical_cache is not None and (model is not None or not verified):
-        raise ValueError("Lexical cache requires a verified lexical session")
+    if lexical_cache is not None:
+        if model is not None or not verified:
+            raise ValueError("Lexical cache requires a verified lexical session")
+        if (lexical_cache.commit != meta["commit"]
+                or lexical_cache.scope != meta.get("scope", "all")):
+            raise ValueError("Lexical cache revision or scope differs; prepare again")
     if args.hybrid and model is None:
         raise ValueError("Hybrid search requires a genuine local embedding model")
     if bool(args.model_dir) != (model is not None):
@@ -483,7 +487,9 @@ def _lexical_row(row):
 
 class LexicalCache:
     """Private, in-process statistics for one verified source snapshot."""
-    def __init__(self, rows, stats, entries, term_bytes):
+    def __init__(self, meta, rows, stats, entries, term_bytes):
+        self.commit = meta["commit"]
+        self.scope = meta.get("scope", "all")
         self._signatures = tuple(_lexical_signature(row) for row in rows)
         self._stats = tuple(stats)
         self.entries = entries
@@ -504,7 +510,7 @@ def prepare_lexical(prepared, max_entries=MAX_LEXICAL_ENTRIES,
     Never persist these counters, and never reuse them across source snapshots.
     The bounds count retained terms, not an exact Python RSS guarantee.
     """
-    _, rows, verified, model, _ = prepared
+    meta, rows, verified, model, _ = prepared
     if not verified or model is not None:
         raise ValueError("Lexical cache requires a verified lexical session")
     if (type(max_entries) is not int or not 1 <= max_entries <= MAX_LEXICAL_ENTRIES
@@ -520,7 +526,7 @@ def prepare_lexical(prepared, max_entries=MAX_LEXICAL_ENTRIES,
         if entries > max_entries or term_bytes > max_term_bytes:
             return None
         stats.append((body, name, length))
-    return LexicalCache(rows, stats, entries, term_bytes)
+    return LexicalCache(meta, rows, stats, entries, term_bytes)
 
 
 def lexical_ranking(rows, query, lexical_cache=None):
