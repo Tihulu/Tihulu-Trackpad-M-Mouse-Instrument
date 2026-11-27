@@ -1,8 +1,10 @@
+import Foundation
+
 /// Serialized host-side admission state for one relative helper clutch.
 /// This uses the production legacy arbiter's per-target admitted commit,
 /// but does not own transport cleanup or establish endpoint exclusivity.
-/// A host must prevent competing producers from restoring a stale helper
-/// value between calls and must supply real release/cleanup evidence.
+/// The arbiter retires its relative lease before competing owner writes.
+/// The host must still serialize all producers and supply real cleanup evidence.
 public struct NativeHelperRelativeOutputTransaction: Sendable {
     public enum Result: Equatable, Sendable {
         case anchored, accepted, releaseRequired, blocked
@@ -10,22 +12,26 @@ public struct NativeHelperRelativeOutputTransaction: Sendable {
     private enum Phase: Sendable { case ready, active, retired }
     private let plan: NativeHelperRelativeOutputPlan
     private var phase = Phase.ready
+    private var lease: UUID?
     private var expected: [SensorDestination: LegacyContinuousOwners.Value] = [:]
 
     public init(plan: NativeHelperRelativeOutputPlan) { self.plan = plan }
 
-    public mutating func anchor(owners: LegacyContinuousOwners, reservedChannels: Set<Int>,
+    public mutating func anchor(owners: inout LegacyContinuousOwners, reservedChannels: Set<Int>,
                                 permits: () -> Bool) -> Result {
         switch phase {
-        case .active: return retire()
+        case .active:
+            if let lease { owners.invalidateRelativeHelper(lease) }
+            return retire()
         case .retired: return .blocked
         case .ready: break
         }
-        guard permits(), plan.permitsAnchor(owners: owners, reservedChannels: reservedChannels) else {
+        guard permits(), plan.permitsAnchor(owners: owners, reservedChannels: reservedChannels),
+              let token = owners.reserveRelativeHelper(targets: plan.targetSet) else {
             phase = .retired
             return .blocked
         }
-        expected = [:]; phase = .active
+        lease = token; expected = [:]; phase = .active
         return .anchored
     }
 
@@ -36,11 +42,13 @@ public struct NativeHelperRelativeOutputTransaction: Sendable {
         owners: inout LegacyContinuousOwners, reservedChannels: Set<Int>,
         permits: () -> Bool, send: (LegacyContinuousOwners.Update) -> Bool) -> Result {
         guard case .active = phase else { return .blocked }
-        guard permits(), expected == owners.values(for: .helper),
+        guard let lease, owners.permitsRelativeHelper(lease), permits(),
+              expected == owners.values(for: .helper),
               let next = plan.prepare(movement: values, owners: owners, reservedChannels: reservedChannels) else {
+            if let lease { owners.invalidateRelativeHelper(lease) }
             return retire()
         }
-        let accepted = owners.replaceAdmitted(.helper, values: next, permits: permits, send: send)
+        let accepted = owners.replaceRelativeHelperAdmitted(lease, values: next, permits: permits, send: send)
         expected = owners.values(for: .helper)
         guard accepted else { return retire() }
         return .accepted
@@ -57,11 +65,15 @@ public struct NativeHelperRelativeOutputTransaction: Sendable {
     /// Called only by the serialized host after a genuine neutral frame and
     /// its existing debt-aware cleanup. Never infer either from MIDI intent.
     @discardableResult
-    public mutating func confirmCleanup(owners: LegacyContinuousOwners,
+    public mutating func confirmCleanup(owners: inout LegacyContinuousOwners,
         genuineNeutral: Bool, transportClean: Bool) -> Bool {
         guard case .retired = phase, genuineNeutral, transportClean,
               owners.values(for: .helper).isEmpty else { return false }
-        expected = [:]; phase = .ready
+        if let lease {
+            owners.invalidateRelativeHelper(lease)
+            guard owners.finishRelativeHelper(lease, transportClean: transportClean) else { return false }
+        }
+        lease = nil; expected = [:]; phase = .ready
         return true
     }
 }
