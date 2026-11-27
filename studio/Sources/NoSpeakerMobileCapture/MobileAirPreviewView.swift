@@ -59,11 +59,69 @@ import NoSpeakerCore
         cameraID=cameras.first?.id ?? ""
         zoom=selectedCamera?.zoom.defaultFactor ?? 1
     }
-    private var valid:Bool {
-        (backend == .lidar || selectedCamera?.zoom.contains(zoom) == true) &&
-        (!mode.usesDepth || backend == .lidar) &&
-        (backend != .lidar || MobileAirSensorSource.hasLiDAR) &&
-        (mode != .chords || role != .single) && far-near >= 0.1
+    private func sensorIssue(for candidate: MobileAirMode) -> String? {
+        if candidate.usesDepth && backend != .lidar { return "Requires rear LiDAR" }
+        if backend == .lidar && !MobileAirSensorSource.hasLiDAR { return "LiDAR unavailable" }
+        if backend != .lidar && selectedCamera?.zoom.contains(zoom) != true { return "Select a supported camera and zoom" }
+        if candidate == .chords && role == .single { return "Choose left or right performing hand" }
+        if !(near.isFinite && far.isFinite && far-near >= 0.1) { return "Near and far must differ by at least 0.10 m" }
+        return nil
+    }
+    private func assignmentIssue(for candidate: MobileAirMode) -> String? {
+        guard useMac else { return nil }
+        if touchOnlyPairing { return "Touch-only session; disconnect and pair for Air" }
+        guard let assignment else { return "Connect and wait for the Mac assignment" }
+        if candidate.isHelper != (assignment.piano == 0) { return "Different assigned family; disconnect and pair again" }
+        if candidate == .strings && assignment.piano.nonzeroBitCount < 3 { return "Requires at least three assigned keys" }
+        if candidate == .chords && !MobileAirInstrument.chordOffsets.contains(where: { notes in
+            notes.allSatisfy { assignment.piano & (1 << $0) != 0 }
+        }) { return "Requires an assigned complete chord shape" }
+        return nil
+    }
+    private var valid: Bool { sensorIssue(for: mode) == nil }
+    private var modeGuide: String {
+        switch mode {
+        case .pinchKeys: return "Move horizontally to choose a logical key; open then pinch to hold it. Open to release."
+        case .chords: return "Use the other hand to select a chord; open then pinch with the performing hand. Losing either hand releases."
+        case .strings: return "Cross the three vertical string regions; notes are short pulses, not sustained holds."
+        case .horizontal: return "Horizontal hand position controls the assigned helper."
+        case .vertical: return "Vertical hand position controls the assigned helper."
+        case .aperture: return "Thumb-to-index aperture controls the assigned helper."
+        case .speed: return "Hand motion speed controls the assigned helper."
+        case .pinchHelper: return "Open then pinch to engage; open to disengage."
+        case .toggleHelper: return "Open then pinch to toggle; tracking loss clears the latch."
+        case .depthKeys: return "Move within the calibrated near/far range to choose a depth zone."
+        case .depthControl: return "Near/far distance controls the assigned helper; invalid depth releases."
+        }
+    }
+
+    private var logicalSlots: [Int] {
+        let mask = useMac ? (assignment?.piano ?? 0) : (1 << 25) - 1
+        return (0..<25).filter { mask & (1 << $0) != 0 }
+    }
+    // Guides are in the same oriented control coordinates as the hand marker.
+    // They are explanatory regions, never a receiver or tracking confirmation.
+    private func guidePath(in size: CGSize) -> Path {
+        Path { p in
+            func vertical(_ fraction: CGFloat) {
+                p.move(to: CGPoint(x: size.width*fraction, y: 0))
+                p.addLine(to: CGPoint(x: size.width*fraction, y: size.height))
+            }
+            func horizontal(_ fraction: CGFloat) {
+                p.move(to: CGPoint(x: 0, y: size.height*fraction))
+                p.addLine(to: CGPoint(x: size.width, y: size.height*fraction))
+            }
+            switch mode {
+            case .pinchKeys:
+                let count = logicalSlots.count
+                if count > 1 { for i in 1..<count { vertical(CGFloat(i)/CGFloat(count)) } }
+            case .strings:
+                for i in 1...3 { vertical(CGFloat(i)/4) }
+            case .horizontal: horizontal(0.5)
+            case .vertical: vertical(0.5)
+            default: break
+            }
+        }
     }
 
     public var body:some View {
@@ -121,7 +179,10 @@ import NoSpeakerCore
                         }
                     } else {Text("LiDAR: native calibrated field of view · zoom locked").font(.caption)}
                     Picker("Instrument / helper",selection:$mode) {
-                        ForEach(MobileAirMode.allCases) {m in Text(m.rawValue).tag(m)}
+                        ForEach(MobileAirMode.allCases) { m in
+                            let reason = sensorIssue(for: m) ?? (assignment != nil ? assignmentIssue(for: m) : nil)
+                            Text(reason.map { m.rawValue + " · " + $0 } ?? m.rawValue).tag(m)
+                        }
                     }
                     Picker("Performing hand",selection:$role) {
                         ForEach(MobileAirHandRole.allCases) {r in Text(r.rawValue.capitalized).tag(r)}
@@ -145,25 +206,44 @@ import NoSpeakerCore
                         }
                     }
                 }.disabled(instrumentLocked || (useMac && touchOnlyPairing))
-                if !valid && !(useMac && touchOnlyPairing) {
-                    Text("Select a supported sensor, valid range and a distinct performing hand for chords.").foregroundStyle(.orange)
+                if !touchOnlyPairing || !useMac {
+                    if let issue = sensorIssue(for: mode) ?? assignmentIssue(for: mode) {
+                        Text(issue).foregroundStyle(.orange)
+                    }
+                    Text(modeGuide).font(.caption).foregroundStyle(.secondary)
                 }
                 GeometryReader {geo in
                     ZStack {
                         RoundedRectangle(cornerRadius:16).fill(Color.secondary.opacity(0.12))
-                        Path {p in
-                            p.move(to:CGPoint(x:geo.size.width/2,y:0));p.addLine(to:CGPoint(x:geo.size.width/2,y:geo.size.height))
-                            p.move(to:CGPoint(x:0,y:geo.size.height/2));p.addLine(to:CGPoint(x:geo.size.width,y:geo.size.height/2))
-                        }.stroke(.secondary.opacity(0.5),style:StrokeStyle(lineWidth:1,dash:[5,5]))
+                        guidePath(in: geo.size)
+                            .stroke(.secondary.opacity(0.5),style:StrokeStyle(lineWidth:1,dash:[5,5]))
                         if let sample {
                             Circle().fill(.cyan).frame(width:22,height:22)
                                 .position(x:sample.x*geo.size.width,y:(1-sample.y)*geo.size.height)
                         } else {Text("No reliable hand").foregroundStyle(.secondary)}
                     }
                 }.frame(height:210).accessibilityLabel("Derived hand position; no camera image")
+                if mode == .pinchKeys || mode == .strings {
+                    let slots = mode == .strings ? Array(logicalSlots.prefix(3)) : logicalSlots
+                    Text("Regions, left to right: " + (slots.isEmpty ? "No assigned keys" : slots.map { String($0 + 1) }.joined(separator: ", ")))
+                        .font(.caption)
+                }
+                if mode == .chords {
+                    let available = MobileAirInstrument.chordOffsets.enumerated().filter { _, notes in
+                        notes.allSatisfy { logicalSlots.contains($0) }
+                    }.map { String($0.offset + 1) }
+                    Text("Available chord selectors: " + (available.isEmpty ? "None" : available.joined(separator: ", "))).font(.caption)
+                }
                 if let depth {
                     Text("Measured palm depth: \(depth,format:.number.precision(.fractionLength(2))) m")
+                    if mode.usesDepth, valid, depth.isFinite, (near...far).contains(depth) {
+                        ProgressView(value: (far-depth)/(far-near)).accessibilityLabel("Depth within calibrated range")
+                        Text("Far → near · measured position, not receiver feedback").font(.caption)
+                    } else if mode.usesDepth { Text("Outside calibrated range · released").font(.caption) }
                 } else {Text("Depth: unavailable").foregroundStyle(.secondary)}
+                if let sample, mode == .aperture || mode == .pinchHelper || mode == .toggleHelper || mode == .pinchKeys {
+                    ProgressView(value: sample.aperture).accessibilityLabel("Observed hand aperture")
+                }
                 if let level=output.level {
                     ProgressView(value:level).accessibilityLabel("Projected helper level")
                     Text("Helper: \(Int(level*100))%")
@@ -346,6 +426,10 @@ import NoSpeakerCore
     }
     private func poll() {
         if retiring?.isStopped == true {retiring=nil}
+        if (source != nil || (socket != nil && !touchOnlyPairing)),
+           MobileAirSensorSource.authorization != .authorized {
+            stop("Camera permission lost"); return
+        }
         if let socket {
             let state = socket.status()
             if state.phase == .closed { stop(state.message); return }
