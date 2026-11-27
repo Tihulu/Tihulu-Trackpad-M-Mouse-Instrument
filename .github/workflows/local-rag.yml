@@ -3,6 +3,10 @@ name: Tihulu local RAG checks
 on:
   pull_request:
     paths:
+      - 'build.sh'
+      - 'play.sh'
+      - 'install-studio.sh'
+      - 'uninstall-studio.sh'
       - 'tools/**'
       - 'README.md'
       - 'AGENTS.md'
@@ -12,6 +16,10 @@ on:
   push:
     branches: [main]
     paths:
+      - 'build.sh'
+      - 'play.sh'
+      - 'install-studio.sh'
+      - 'uninstall-studio.sh'
       - 'tools/**'
       - 'README.md'
       - 'AGENTS.md'
