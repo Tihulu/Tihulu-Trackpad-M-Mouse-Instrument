@@ -77,7 +77,8 @@ struct OrderedTouchInboxLiveHandoffTests {
             #expect(producerTimeouts.value == 0)
             #expect(received == Array(0..<(waveSize * waves)))
             #expect(callbackCount == requested.value)
-            #expect(callback.wait(timeout: .now()) == .timedOut)
+            let noExtraCallback = await waitOffExecutor { callback.wait(timeout: .now()) == .timedOut }
+            #expect(noExtraCallback)
             #expect(inbox.take().samples.isEmpty)
             if let previous { #expect(inbox.permits(previous)) }
             inbox.close()
