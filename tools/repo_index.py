@@ -2,9 +2,11 @@
 """Commit-pinned, local-only repository retrieval index. No code execution."""
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
+import platform
 from pathlib import Path
 import re
 import subprocess
@@ -197,6 +199,38 @@ def normalized(vector):
     return [x / length for x in values]
 
 
+def embedding_recipe(model):
+    """Version the actual input/pooling backend contract for safe local reuse."""
+    versions = {}
+    for name in ("sentence-transformers", "transformers", "torch", "tokenizers", "numpy"):
+        versions[name] = importlib.metadata.version(name)
+    return {"version": 1, "input": "path-newline-text", "device": "cpu",
+            "normalization": "l2", "python": platform.python_version(),
+            "platform": platform.system(), "machine": platform.machine(),
+            "packages": versions, "max_seq_length": int(model.max_seq_length),
+            "dimension": int(model.get_sentence_embedding_dimension())}
+
+
+def reuse_vectors(repo, index, scope, identity, recipe):
+    """Explicitly trusted previous local index; Git proves text, not vectors."""
+    meta, rows = read_index(index)
+    if (meta["mode"] != "semantic" or meta.get("scope", "all") != scope
+            or meta["model_sha256"] != identity or meta.get("embedding_recipe") != recipe
+            or meta["dimension"] != recipe["dimension"]):
+        raise ValueError("Reuse index model, scope or embedding recipe differs; rebuild without reuse")
+    verify_sources(repo, meta, rows)
+    cached = {}
+    for row in rows:
+        key = (row["path"], row["text"])
+        vector = row["embedding"]
+        # Reject invalid norms before considering the cache usable. Keep the
+        # stored values exactly; a second normalization changes rounding.
+        if abs(math.sqrt(sum(v*v for v in vector)) - 1.0) > 1e-5:
+            raise ValueError("Reuse index has a non-unit embedding")
+        cached.setdefault(key, vector)
+    return cached
+
+
 def build(args):
     repo = Path(args.repo).resolve(strict=True)
     commit = git(repo, "rev-parse", "--verify", "--end-of-options", args.ref + "^{commit}").decode().strip()
@@ -207,36 +241,52 @@ def build(args):
         raise ValueError("No indexable content")
     metadata = {"schema": SCHEMA, "commit": commit, "mode": "lexical", "scope": args.scope,
                 "model_sha256": None, "dimension": None, "skipped": skipped}
+    reuse_index = getattr(args, "reuse_index", None)
+    reused = encoded = 0
+    if reuse_index and not args.model_dir:
+        raise ValueError("--reuse-index requires an explicit local embedding model")
     if args.model_dir:
         model, identity = model_for(args.model_dir)
+        recipe = embedding_recipe(model)
         rows = semantic_windows(rows, model, skipped)
-        dimension = None
-        for first in range(0, len(rows), 16):
-            batch = rows[first:first + 16]
+        dimension = recipe["dimension"]
+        if not 1 <= dimension <= 4096 or len(rows) * dimension > 8000000:
+            raise ValueError("Embedding budget exceeded; use a smaller model or source scope")
+        cached = reuse_vectors(repo, reuse_index, args.scope, identity, recipe) if reuse_index else {}
+        pending = []
+        for row in rows:
+            vector = cached.get((row["path"], row["text"]))
+            if vector is None:
+                pending.append(row)
+            else:
+                row["embedding"] = vector
+                reused += 1
+        for first in range(0, len(pending), 16):
+            batch = pending[first:first + 16]
             vectors = model.encode([r["path"] + "\n" + r["text"] for r in batch],
                                    show_progress_bar=False, convert_to_numpy=True)
             if len(vectors) != len(batch):
                 raise ValueError("Embedding count mismatch")
             for row, vector in zip(batch, vectors):
                 row["embedding"] = normalized(vector)
-                dimension = dimension or len(row["embedding"])
-                if len(rows) * dimension > 8000000:
-                    raise ValueError("Embedding budget exceeded; use a smaller model or source scope")
                 if len(row["embedding"]) != dimension:
                     raise ValueError("Embedding dimension mismatch")
+                encoded += 1
         # Detect a model directory edited during the build.
         if fingerprint(args.model_dir)[1] != identity:
             raise ValueError("Model changed during indexing")
-        metadata.update(mode="semantic", model_sha256=identity, dimension=dimension)
+        metadata.update(mode="semantic", model_sha256=identity, dimension=dimension,
+                        embedding_recipe=recipe)
     payload = json.dumps({"metadata": metadata, "chunks": rows}, ensure_ascii=True, allow_nan=False)
     if len(payload.encode("utf-8")) > MAX_INDEX:
         raise ValueError("Index budget exceeded")
     output = Path(args.out)
     # Exclusive creation; no existing user index is overwritten.
-    with output.open("x", encoding="utf-8") as stream:
+    with os.fdopen(os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as stream:
         stream.write(payload)
     return {"commit": commit, "chunks": len(rows), "mode": metadata["mode"],
-            "scope": args.scope, "skipped": len(skipped), "index": str(output)}
+            "scope": args.scope, "skipped": len(skipped), "index": str(output),
+            "reused_embeddings": reused, "encoded_embeddings": encoded}
 
 
 def tokens(text):
@@ -356,6 +406,8 @@ def prepare_search(args):
         model, identity = model_for(args.model_dir)
         if identity != meta["model_sha256"]:
             raise ValueError("Embedding model differs from index")
+        if "embedding_recipe" in meta and embedding_recipe(model) != meta["embedding_recipe"]:
+            raise ValueError("Embedding recipe differs from index; rebuild")
     return meta, rows, verified, model, identity
 
 
@@ -503,6 +555,7 @@ def main(argv=None):
     b.add_argument("--ref", default="HEAD")
     b.add_argument("--out", required=True)
     b.add_argument("--model-dir")
+    b.add_argument("--reuse-index", help="Trusted previous semantic index of the same scope and recipe")
     b.add_argument("--scope", choices=SCOPES, default="all")
     for command in ("search", "context"):
         q = sub.add_parser(command)

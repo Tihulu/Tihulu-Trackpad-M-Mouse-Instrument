@@ -24,6 +24,12 @@ def run(args):
     if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision):
         raise ValueError("Invalid resolved revision")
     identity = repo_index.fingerprint(args.model_dir)[1] if args.model_dir else None
+    reuse_dir = getattr(args, "reuse_dir", None)
+    if reuse_dir and identity is None:
+        raise ValueError("--reuse-dir requires an explicit local embedding model")
+    previous = Path(reuse_dir).resolve(strict=True) if reuse_dir else None
+    if previous and not (previous / "matrix.json").is_file():
+        raise ValueError("Reuse directory requires a completed local matrix")
     out = Path(args.out_dir).resolve()
     # A matrix contains source text and possibly vectors. Never overwrite
     # previous evidence or create a public/shared directory by default.
@@ -41,7 +47,9 @@ def run(args):
                 index = out / (scope + "-" + family + ".json")
                 info = repo_index.build(SimpleNamespace(repo=repo, ref=revision,
                     scope=scope, out=index,
-                    model_dir=args.model_dir if family == "semantic" else None))
+                    model_dir=args.model_dir if family == "semantic" else None,
+                    reuse_index=(previous / (scope + "-semantic.json"))
+                    if previous and family == "semantic" else None))
                 if info["commit"] != revision or info["mode"] != family:
                     raise ValueError("Build identity mismatch")
                 built[family] = (index, info)
@@ -60,6 +68,8 @@ def run(args):
             cells.append({"scope": scope, "mode": mode,
                           "status": "COVERAGE_FAIL" if report["missing_paths"] else "MEASURED",
                           "chunks": info["chunks"], "skipped": info["skipped"],
+                          "reused_embeddings": info["reused_embeddings"],
+                          "encoded_embeddings": info["encoded_embeddings"],
                           "cases": report["cases"], "file_hit_rate": report["file_hit_rate"],
                           "file_mrr": report["file_mrr"], "missing_paths": report["missing_paths"],
                           "median_query_ms": report["median_query_ms"],
@@ -83,6 +93,7 @@ def main():
     parser.add_argument("--ref", default="HEAD")
     parser.add_argument("--out-dir", required=True, help="New private directory, never overwritten")
     parser.add_argument("--model-dir", help="Explicit trusted local model; omitted means lexical only")
+    parser.add_argument("--reuse-dir", help="Trusted completed local semantic matrix; fresh output still required")
     parser.add_argument("--k", type=int, default=8)
     parser.add_argument("--max-per-file", type=int, default=3)
     args = parser.parse_args()

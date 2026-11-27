@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import rag_benchmark
 import rag_matrix
+import repo_index
 
 TOOL = Path(__file__).resolve().with_name("repo_index.py")
 
@@ -172,6 +173,60 @@ class RepositoryIndexTests(unittest.TestCase):
         result = self.cli("verify", "--repo", self.repo, "--index", self.index)
         self.assertEqual(result.returncode, 2)
         self.assertIn("Invalid source row", result.stderr)
+
+    def test_incremental_embeddings_reuse_only_identical_verified_inputs(self):
+        # Deterministic test double for cache mechanics only. Not model evidence.
+        class Tokenizer:
+            def encode(self, text, **kwargs):
+                return text.split()
+        class Model:
+            tokenizer = Tokenizer()
+            max_seq_length = 1024
+            def __init__(self):
+                self.inputs = []
+            def encode(self, texts, **kwargs):
+                self.inputs.extend(texts)
+                return [[3.0, 4.0] for _ in texts]
+        model = Model()
+        identity = "a" * 64
+        recipe = {"version": 1, "dimension": 2}
+        args = SimpleNamespace(repo=self.repo, ref=self.commit, scope="all",
+                               out=self.index, model_dir=self.root, reuse_index=None)
+        with patch.object(repo_index, "model_for", return_value=(model, identity)), \
+             patch.object(repo_index, "embedding_recipe", return_value=recipe), \
+             patch.object(repo_index, "fingerprint", return_value=(self.root, identity)):
+            first = repo_index.build(args)
+            self.assertEqual(first["encoded_embeddings"], 2)
+            self.assertEqual(first["reused_embeddings"], 0)
+            original = self.index.read_bytes()
+            relative = "studio/Sources/Router.swift"
+            old = self.git("show", self.commit + ":" + relative).stdout
+            (self.repo / relative).write_text(old.replace("Sustain ownership", "Updated ownership"))
+            self.git("add", relative)
+            self.git("commit", "-qm", "change first chunk only")
+            args.ref = "HEAD"
+            args.reuse_index = self.index
+            args.out = self.root / "next.json"
+            model.inputs.clear()
+            updated = repo_index.build(args)
+            self.assertEqual(updated["encoded_embeddings"], 1)
+            self.assertEqual(updated["reused_embeddings"], 1)
+            self.assertEqual(len(model.inputs), 1)
+            self.assertIn("Updated ownership", model.inputs[0])
+            self.assertEqual(self.index.read_bytes(), original)
+            metadata, rows = repo_index.read_index(args.out)
+            self.assertTrue(repo_index.verify_sources(self.repo, metadata, rows)["source_verified"])
+            # Changed recipe and forged old source cannot produce a new index.
+            args.out = self.root / "rejected.json"
+            with patch.object(repo_index, "embedding_recipe", return_value={"version": 2, "dimension": 2}):
+                with self.assertRaisesRegex(ValueError, "recipe differs"):
+                    repo_index.build(args)
+            forged = json.loads(original)
+            forged["chunks"][0]["text"] = forged["chunks"][0]["text"].replace("Sustain", "Forged")
+            self.index.write_text(json.dumps(forged))
+            with self.assertRaisesRegex(ValueError, "text/line mismatch"):
+                repo_index.build(args)
+            self.assertFalse(args.out.exists())
 
     def test_matrix_pins_revision_and_reports_unrun_vector_cells(self):
         cases = []
