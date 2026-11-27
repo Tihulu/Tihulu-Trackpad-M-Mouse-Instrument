@@ -41,11 +41,13 @@ struct CustomSurfacePadEditor:View {
         return .init(trackpad:trackpad,mouse:mouse,trackpadChannel:groupTrackpadChannel,mouseChannel:groupMouseChannel)
     }
     private func requestPair(_ action:PairConfirmation.Action) {
+        guard resolveStagedEditFirst() else { return }
         pending=nil;groupConfirmation=nil
         pairConfirmation = .init(action:action,trackpad:layouts[.trackpad],mouse:layouts[.magicMouse],
             trackpadChannel:groupTrackpadChannel,mouseChannel:groupMouseChannel,storedData:storage)
     }
     private func applyPair(_ operation:PairConfirmation) {
+        guard resolveStagedEditFirst() else { return }
         guard layouts[.trackpad]==operation.trackpad, layouts[.magicMouse]==operation.mouse,
               groupTrackpadChannel==operation.trackpadChannel, groupMouseChannel==operation.mouseChannel,
               storage==operation.storedData, var current=library else {
@@ -92,6 +94,7 @@ struct CustomSurfacePadEditor:View {
         return nil
     }
     private func request(_ action:Pending.Action) {
+        guard resolveStagedEditFirst() else { return }
         groupConfirmation=nil;pairConfirmation=nil
         pending=Pending(action:action,surface:surface,draft:layouts[surface],saved:library?.layout(for:surface),savedChannel:library?.melodicChannel(for:surface),channel:previewChannel)
     }
@@ -126,10 +129,50 @@ struct CustomSurfacePadEditor:View {
         case note="Note",drum="Drum",degree="Tuning degree",chord="Chord",sustain="Sustain",bend="Pitch bend",cc="Custom MIDI CC",xy="Custom XY"
         var id:String{rawValue}
     }
+    private var selectedPad:Layout.Pad? {
+        guard let selected else { return nil }
+        return layouts[surface]?.pads.first(where:{$0.id==selected})
+    }
+    private var hasStagedEdit:Bool {
+        selectedPad?.hasStagedEdit(label:label,x:x,y:surface == .touchBar ? 0:y,
+            width:width,height:surface == .touchBar ? 10000:height,replacingAssignment:changeAssignment) ?? false
+    }
+    /// Reject actions which would replace a staged edit or use an older layout.
+    /// Never block Stop, Panic or recovery on offline editing state.
+    private func resolveStagedEditFirst()->Bool {
+        guard !hasStagedEdit else {
+            expanded=true
+            feedback="Apply or discard the current pad edit first."
+            return false
+        }
+        return true
+    }
+    private func choosePad(_ id:String?) {
+        guard id != selected, resolveStagedEditFirst() else { return }
+        select(layouts[surface]?.pads.first(where:{$0.id==id}))
+    }
+    private var surfaceSelection:Binding<Layout.Surface> {
+        Binding(get:{surface},set:{value in
+            guard value != surface, resolveStagedEditFirst() else { return }
+            surface=value
+            select(layouts[value]?.pads.first)
+            feedback=""
+        })
+    }
+    private var padSelection:Binding<String?> {
+        Binding(get:{selected},set:{choosePad($0)})
+    }
     var body:some View {
         VStack(alignment:.leading,spacing:8) {
-            Picker("Custom Pad surface",selection:$surface){
+            Picker("Custom Pad surface",selection:surfaceSelection){
                 ForEach(Layout.Surface.allCases,id:\.self){Text($0.rawValue).tag($0)}
+            }
+            if hasStagedEdit {
+                HStack {
+                    Label("Unapplied pad edit",systemImage:"pencil.circle").foregroundStyle(.orange)
+                    Button("Show edit") { expanded=true }
+                    Button("Discard edit") { select(selectedPad);feedback="Unapplied edit discarded." }
+                }.font(.caption)
             }
             performancePanel
             DisclosureGroup("Custom pad designer · offline draft",isExpanded:$expanded) {
@@ -183,6 +226,7 @@ struct CustomSurfacePadEditor:View {
                         }
                     }
                     Button("Add pad in empty space"){
+                        guard resolveStagedEditFirst() else { return }
                         let id=UUID().uuidString
                         if let next=layout.addingInGap(id:id,label:"New pad",width:newWidth,
                             height:surface == .touchBar ? 10000:newHeight,assignment:.note(60)){
@@ -195,24 +239,24 @@ struct CustomSurfacePadEditor:View {
                         ZStack(alignment:.topLeading){
                             RoundedRectangle(cornerRadius:6).strokeBorder(Color.secondary)
                             ForEach(layout.pads){pad in
-                                Button{select(pad)} label:{
+                                Button{choosePad(pad.id)} label:{
                                     ZStack{
                                         RoundedRectangle(cornerRadius:3).fill(pad.id==selected ? Color.accentColor.opacity(0.45):Color.secondary.opacity(0.2))
                                         Text(pad.label).font(.caption2).lineLimit(1)
                                     }
                                 }.buttonStyle(.plain)
+                                .accessibilityLabel(pad.label)
+                                .accessibilityValue(pad.id==selected ? "Selected":"Not selected")
                                 .frame(width:max(0,geo.size.width*CGFloat(pad.width)/10000),height:max(0,geo.size.height*CGFloat(pad.height)/10000))
                                 .offset(x:geo.size.width*CGFloat(pad.x)/10000,y:geo.size.height*CGFloat(pad.y)/10000)
                             }
                         }.clipped()
                     }.frame(height:surface == .touchBar ? 44:160)
-                    Picker("Pad",selection:$selected){
+                    Picker("Pad",selection:padSelection){
                         Text("Choose pad").tag(String?.none)
                         ForEach(layout.pads){pad in Text(pad.label).tag(Optional(pad.id))}
-                    }.onChange(of:selected){id in
-                        if let pad=layout.pads.first(where:{$0.id==id}){select(pad)}
                     }
-                    if let id=selected {
+                    if let id=selected, layout.pads.contains(where:{$0.id==id}) {
                         TextField("Label",text:$label)
                         HStack {
                             Stepper("X \(x)",value:$x,in:0...9900,step:100)
@@ -253,7 +297,9 @@ struct CustomSurfacePadEditor:View {
                         }
                         HStack {
                             Button("Apply pad edit"){
-                                guard let old=layout.pads.first(where:{$0.id==id}) else{return}
+                                guard layouts[surface]==layout, let old=selectedPad, old.id==id else {
+                                    feedback="Pad selection changed; select the pad again.";return
+                                }
                                 let geometry=old.editingGeometry(label:label,x:x,y:surface == .touchBar ? 0:y,width:width,height:surface == .touchBar ? 10000:height)
                                 var pad=geometry
                                 if changeAssignment {
@@ -262,8 +308,9 @@ struct CustomSurfacePadEditor:View {
                                 }
                                 if let next=layout.replacing(pad){layouts[surface]=next;select(pad);feedback="Draft updated."}
                                 else {feedback="Edit rejected: overlap, boundary or invalid assignment."}
-                            }
+                            }.disabled(!hasStagedEdit)
                             Button("Remove pad"){
+                                guard resolveStagedEditFirst(), layouts[surface]==layout, selectedPad?.id==id else { return }
                                 if let next=layout.removing(id:id){layouts[surface]=next;select(next.pads.first);feedback="Pad removed."}
                             }.disabled(layout.pads.count<=1)
                         }
@@ -272,7 +319,7 @@ struct CustomSurfacePadEditor:View {
             }.padding(.vertical,6)
             }
             if !feedback.isEmpty {Text(feedback).font(.caption).textSelection(.enabled)}
-        }.onChange(of:surface){value in select(layouts[value]?.pads.first);feedback=""}
+        }
         .confirmationDialog("Confirm Custom Pad action",
             isPresented:Binding(get:{confirmation != nil},set:{if !$0 {pending=nil;groupConfirmation=nil;pairConfirmation=nil}}),
             titleVisibility:.visible,presenting:confirmation) { operation in
@@ -281,6 +328,7 @@ struct CustomSurfacePadEditor:View {
                 Button(request.action == .save ? "Save both layouts and channels" : "Replace both drafts from saved pair") { applyPair(request) }
             case .group(let request):
                 Button("Arm both · Esc stops group") {
+                    guard resolveStagedEditFirst() else { return }
                     guard layouts[.trackpad]==request.trackpad,layouts[.magicMouse]==request.mouse,
                           groupTrackpadChannel==request.trackpadChannel,groupMouseChannel==request.mouseChannel else {
                         feedback="Group drafts or channels changed; repeat Arm.";return
@@ -291,6 +339,7 @@ struct CustomSurfacePadEditor:View {
             case .single(let operation):
                 Button(operation.action == .arm ? "Arm dedicated MIDI + Escape stop" : operation.action == .reset ? "Reset draft":operation.action == .save ? "Save layout":"Load layout",
                        role:operation.action == .reset ? .destructive:nil){
+                    guard resolveStagedEditFirst() else { return }
                     guard surface==operation.surface,layouts[surface]==operation.draft else{
                         feedback="Draft changed; repeat the operation.";return
                     }
@@ -301,7 +350,7 @@ struct CustomSurfacePadEditor:View {
                         }
                         studio.startCustomPad(layout,channel:operation.channel)
                     case .reset:
-                        layouts.removeValue(forKey:surface);selected=nil;feedback="Draft cleared."
+                        layouts.removeValue(forKey:surface);select(nil);feedback="Draft cleared."
                     case .save:
                         guard var current=library,let layout=operation.draft,
                               current.layout(for:surface)==operation.saved,
@@ -383,6 +432,7 @@ struct CustomSurfacePadEditor:View {
                             Stepper("Magic Mouse MIDI channel \(groupMouseChannel+1)",value:channelBinding(.magicMouse),in:0...15)
                             groupRoutingAdvisory(trackpad:trackpad,mouse:mouse)
                             Button("Arm both drafts…") {
+                                guard resolveStagedEditFirst() else { return }
                                 pending=nil;pairConfirmation=nil
                                 groupConfirmation=GroupConfirmation(trackpad:trackpad,mouse:mouse,
                                     trackpadChannel:groupTrackpadChannel,mouseChannel:groupMouseChannel)
@@ -514,9 +564,10 @@ struct CustomSurfacePadEditor:View {
     private func select(_ pad:Layout.Pad?){
         selected=pad?.id
         changeAssignment=false
-        guard let pad else{return}
-        channel=0
+        label="";x=0;y=0;width=2500;height=5000
+        kind = .note;note=60;chordNotes="60, 64, 67";cc=71;channel=0
         xyXCC=1;xyYCC=11;xyXChannel=0;xyYChannel=0;xyXBend=false;xyYBend=false
+        guard let pad else{return}
         label=pad.label;x=pad.x;y=pad.y;width=pad.width;height=pad.height
         switch pad.assignment {
         case .note(let n):kind = .note;note=n

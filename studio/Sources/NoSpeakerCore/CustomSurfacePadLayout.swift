@@ -54,6 +54,12 @@ public struct CustomSurfacePadLayout: Codable, Equatable, Sendable {
         public func editingGeometry(label:String,x:Int,y:Int,width:Int,height:Int)->Self {
             .init(id:id,label:label,x:x,y:y,width:width,height:height,assignment:assignment)
         }
+        /// Field edits are staged until explicitly applied. An enabled
+        /// replacement toggle also requires a decision, even if its proposed
+        /// assignment is invalid or happens to equal the old assignment.
+        public func hasStagedEdit(label:String,x:Int,y:Int,width:Int,height:Int,replacingAssignment:Bool)->Bool {
+            replacingAssignment || self != editingGeometry(label:label,x:x,y:y,width:width,height:height)
+        }
         fileprivate func overlaps(_ other:Self)->Bool {
             x<other.x+other.width && other.x<x+width && y<other.y+other.height && other.y<y+height
         }

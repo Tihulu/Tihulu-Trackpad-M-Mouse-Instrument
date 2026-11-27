@@ -123,3 +123,14 @@ private func surfacePad(_ id:String,_ x:Int,_ y:Int,_ w:Int,_ h:Int,_ assignment
     #expect(vertical.pad(x:1,y:y.nextDown)?.id=="top")
     #expect(vertical.pad(x:1,y:1)?.id=="bottom")
 }
+
+@Test func customSurfaceStagedGeometryAndReplacementRequireExplicitDecision() {
+    let pad=surfacePad("one",0,0,5000,10000,.chord([60,64,67]))
+    #expect(!pad.hasStagedEdit(label:"one",x:0,y:0,width:5000,height:10000,replacingAssignment:false))
+    #expect(pad.hasStagedEdit(label:"New label",x:0,y:0,width:5000,height:10000,replacingAssignment:false))
+    #expect(pad.hasStagedEdit(label:"one",x:100,y:0,width:5000,height:10000,replacingAssignment:false))
+    #expect(pad.hasStagedEdit(label:"one",x:0,y:0,width:5000,height:10000,replacingAssignment:true))
+    let changed=pad.editingGeometry(label:"New label",x:100,y:0,width:5000,height:10000)
+    #expect(changed.assignment==pad.assignment)
+    #expect(!changed.hasStagedEdit(label:"New label",x:100,y:0,width:5000,height:10000,replacingAssignment:false))
+}
