@@ -178,144 +178,7 @@ struct CustomSurfacePadEditor:View {
                 }.font(.caption)
             }
             performancePanel
-            DisclosureGroup("Custom pad designer · offline draft",isExpanded:$expanded) {
-            VStack(alignment:.leading,spacing:8) {
-                Text("Edit independent surface drafts, then explicitly save or load the selected surface. Saved layouts are offline designs, not active performance routes.").font(.caption).foregroundStyle(.secondary)
-                if layouts[surface] == nil {
-                    Picker("Starter layout",selection:$preset) {
-                        ForEach(CustomSurfacePadPreset.allCases,id:\.self) { Text($0.rawValue).tag($0) }
-                    }
-                    Stepper("Melodic / starter helper channel "+String(previewChannel+1),value:channelBinding(surface),in:0...15)
-                    Button("Create starter draft") {
-                        if let layout=preset.layout(surface:surface,channel:previewChannel) {
-                            layouts[surface]=layout;select(layout.pads.first);feedback="Starter draft created."
-                        } else { feedback="Starter draft could not be validated." }
-                    }
-                    Text("GM drums use channel 10. Helper channels are fixed in their assignments; edit a pad to change its destination.").font(.caption).foregroundStyle(.secondary)
-                }
-                HStack {
-                    Stepper("Columns \(columns)",value:$columns,in:1...16)
-                    if surface != .touchBar {Stepper("Rows \(rows)",value:$rows,in:1...16)}
-                    Button("Create grid"){
-                        if let grid=Layout.grid(surface:surface,columns:columns,rows:surface == .touchBar ? 1:rows){
-                            layouts[surface]=grid;select(grid.pads.first);feedback="Grid draft created."
-                        } else {feedback="Invalid grid; maximum 64 pads."}
-                    }.disabled(layouts[surface] != nil)
-                    if layouts[surface] != nil {
-                        Button("Reset draft"){request(.reset)}
-                    }
-                }
-                if let library {
-                    HStack {
-                        Button("Save layout + channel"){request(.save)}
-                            .disabled(layouts[surface]==nil || (layouts[surface]==library.layout(for:surface) && previewChannel==library.melodicChannel(for:surface)))
-                        Button("Load saved layout + channel"){request(.load)}
-                            .disabled(library.layout(for:surface)==nil)
-                        Text(library.layout(for:surface)==nil ? "No saved layout":"Saved layout available").font(.caption)
-                    }
-                } else {
-                    Text("Saved layouts could not be read. Original data is preserved; saving is disabled.").font(.caption).foregroundStyle(.orange)
-                }
-                if let layout=layouts[surface] {
-                    DisclosureGroup("Standard MIDI compatibility check") {
-                        Stepper("Preview melodic channel \(previewChannel+1)",value:channelBinding(surface),in:0...15)
-                        Text(compatibility(layout)).font(.caption).textSelection(.enabled)
-                        Text("Offline check only. No endpoint reservation, MIDI send or MPE activation.").font(.caption).foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Stepper("New pad width \(newWidth)",value:$newWidth,in:100...10000,step:100)
-                        if surface != .touchBar {
-                            Stepper("Height \(newHeight)",value:$newHeight,in:100...10000,step:100)
-                        }
-                    }
-                    Button("Add pad in empty space"){
-                        guard resolveStagedEditFirst() else { return }
-                        let id=UUID().uuidString
-                        if let next=layout.addingInGap(id:id,label:"New pad",width:newWidth,
-                            height:surface == .touchBar ? 10000:newHeight,assignment:.note(60)){
-                            layouts[surface]=next
-                            select(next.pads.last)
-                            feedback="Pad added to a free region."
-                        } else {feedback="No matching free region. Resize or remove a pad, or choose a smaller new pad."}
-                    }.disabled(layout.pads.count>=64)
-                    GeometryReader{geo in
-                        ZStack(alignment:.topLeading){
-                            RoundedRectangle(cornerRadius:6).strokeBorder(Color.secondary)
-                            ForEach(layout.pads){pad in
-                                Button{choosePad(pad.id)} label:{
-                                    ZStack{
-                                        RoundedRectangle(cornerRadius:3).fill(pad.id==selected ? Color.accentColor.opacity(0.45):Color.secondary.opacity(0.2))
-                                        Text(pad.label).font(.caption2).lineLimit(1)
-                                    }
-                                }.buttonStyle(.plain)
-                                .accessibilityLabel(pad.label)
-                                .accessibilityValue(pad.id==selected ? "Selected":"Not selected")
-                                .frame(width:max(0,geo.size.width*CGFloat(pad.width)/10000),height:max(0,geo.size.height*CGFloat(pad.height)/10000))
-                                .offset(x:geo.size.width*CGFloat(pad.x)/10000,y:geo.size.height*CGFloat(pad.y)/10000)
-                            }
-                        }.clipped()
-                    }.frame(height:surface == .touchBar ? 44:160)
-                    Picker("Pad",selection:padSelection){
-                        Text("Choose pad").tag(String?.none)
-                        ForEach(layout.pads){pad in Text(pad.label).tag(Optional(pad.id))}
-                    }
-                    if let id=selected, layout.pads.contains(where:{$0.id==id}) {
-                        TextField("Label",text:$label)
-                        geometryEditor
-                        if let reason=editFailure(layout) {
-                            Label(reason,systemImage:"exclamationmark.triangle")
-                                .font(.caption).foregroundStyle(.orange)
-                                .accessibilityLabel(reason)
-                        }
-                        if let pad=layout.pads.first(where:{$0.id==id}) {
-                            Text("Current assignment: "+String(describing:pad.assignment)).font(.caption).textSelection(.enabled)
-                        }
-                        Toggle("Replace musical assignment",isOn:$changeAssignment)
-                        if changeAssignment {
-                            Picker("Assignment",selection:$kind){ForEach(Kind.allCases){Text($0.rawValue).tag($0)}}
-                            if kind == .degree {
-                                Stepper("Tuning degree \(tuningDegree)",value:$tuningDegree,in:-1408...1408)
-                            } else if kind == .note {
-                                Stepper("MIDI note \(note)",value:$note,in:0...127)
-                            } else if kind == .drum {
-                                Stepper("GM drum note \(drumNote)",value:$drumNote,in:0...127)
-                            } else if kind == .chord {
-                                TextField("Chord MIDI notes, comma separated",text:$chordNotes)
-                            } else if kind == .cc {
-                                Stepper("MIDI CC \(cc)",value:$cc,in:0...127)
-                            }
-                            if kind == .cc || kind == .sustain || kind == .bend {
-                                Stepper("MIDI channel \(channel+1)",value:$channel,in:0...15)
-                            }
-                            if kind == .xy {
-                                axisEditor("X",bend:$xyXBend,cc:$xyXCC,channel:$xyXChannel)
-                                axisEditor("Y",bend:$xyYBend,cc:$xyYCC,channel:$xyYChannel)
-                                Text("X increases right; Y increases upward. Targets must differ.").font(.caption)
-                            }
-                            if assignment == nil {
-                                Text("Invalid or conflicting axis/assignment values.").font(.caption).foregroundStyle(.orange)
-                            }
-                        }
-                        HStack {
-                            Button("Apply pad edit"){
-                                guard layouts[surface]==layout, let old=selectedPad, old.id==id else {
-                                    feedback="Pad selection changed; select the pad again.";return
-                                }
-                                guard let pad=proposedPad(old),editFailure(layout)==nil,
-                                      let next=layout.replacing(pad) else {
-                                    feedback=editFailure(layout) ?? "Edit could not be applied.";return
-                                }
-                                layouts[surface]=next;select(pad);feedback="Draft updated."
-                            }.disabled(!hasStagedEdit || editFailure(layout) != nil)
-                            Button("Remove pad"){
-                                guard resolveStagedEditFirst(), layouts[surface]==layout, selectedPad?.id==id else { return }
-                                if let next=layout.removing(id:id){layouts[surface]=next;select(next.pads.first);feedback="Pad removed."}
-                            }.disabled(layout.pads.count<=1)
-                        }
-                    }
-                }
-            }.padding(.vertical,6)
-            }
+            designerPanel
             if !feedback.isEmpty {Text(feedback).font(.caption).textSelection(.enabled)}
         }
         .confirmationDialog("Confirm Custom Pad action",
@@ -481,25 +344,34 @@ struct CustomSurfacePadEditor:View {
                 ZStack(alignment:.topLeading) {
                     RoundedRectangle(cornerRadius:6).strokeBorder(Color.secondary)
                     ForEach(layout.pads) { pad in
-                        let on=active.contains(pad.id)
-                        ZStack {
-                            RoundedRectangle(cornerRadius:3).fill(on ? Color.accentColor.opacity(0.5):Color.secondary.opacity(0.15))
-                            RoundedRectangle(cornerRadius:3).strokeBorder(on ? Color.accentColor:Color.secondary.opacity(0.5),lineWidth:on ? 2:1)
-                            HStack(spacing:2) {
-                                if on { Image(systemName:"circle.fill").font(.system(size:7)) }
-                                Text(pad.label).font(.caption2).lineLimit(1)
-                            }.padding(2)
-                        }
-                        .frame(width:max(0,geo.size.width*CGFloat(pad.width)/10000),height:max(0,geo.size.height*CGFloat(pad.height)/10000))
-                        .offset(x:geo.size.width*CGFloat(pad.x)/10000,y:geo.size.height*CGFloat(pad.y)/10000)
-                        .accessibilityLabel(pad.label)
-                        .accessibilityValue(on ? "Active":"Inactive")
+                        frozenPadCell(pad,active:active.contains(pad.id),size:geo.size)
                     }
                 }.clipped()
             }.frame(height:160)
             Text("Read-only frozen map. Highlight = locally reconciled pad, not DAW acknowledgement.").font(.caption).foregroundStyle(.secondary)
         }
     }
+    private func frozenPadCell(_ pad:Layout.Pad,active:Bool,size:CGSize)->some View {
+        let tint:Color=active ? Color.accentColor.opacity(0.5):Color.secondary.opacity(0.15)
+        let stroke:Color=active ? Color.accentColor:Color.secondary.opacity(0.5)
+        let cellWidth:CGFloat=max(0,size.width*CGFloat(pad.width)/10000)
+        let cellHeight:CGFloat=max(0,size.height*CGFloat(pad.height)/10000)
+        let offsetX:CGFloat=size.width*CGFloat(pad.x)/10000
+        let offsetY:CGFloat=size.height*CGFloat(pad.y)/10000
+        return ZStack {
+            RoundedRectangle(cornerRadius:3).fill(tint)
+            RoundedRectangle(cornerRadius:3).strokeBorder(stroke,lineWidth:active ? 2:1)
+            HStack(spacing:2) {
+                if active { Image(systemName:"circle.fill").font(.system(size:7)) }
+                Text(pad.label).font(.caption2).lineLimit(1)
+            }.padding(2)
+        }
+        .frame(width:cellWidth,height:cellHeight)
+        .offset(x:offsetX,y:offsetY)
+        .accessibilityLabel(Text(pad.label))
+        .accessibilityValue(Text(active ? "Active":"Inactive"))
+    }
+
     @ViewBuilder private func groupRoutingAdvisory(trackpad:Layout,mouse:Layout)->some View {
         if let a=try? CustomSurfaceMixedPlan(layout:trackpad,melodicChannel:groupTrackpadChannel),
            let b=try? CustomSurfaceMixedPlan(layout:mouse,melodicChannel:groupMouseChannel) {
@@ -528,6 +400,172 @@ struct CustomSurfacePadEditor:View {
             return "Duplicate continuous target: "+name+", channel "+String(target.channel+1)+"."
         } catch {return "Standard MIDI plan could not be validated."}
     }
+    private var designerPanel:some View {
+    DisclosureGroup("Custom pad designer · offline draft",isExpanded:$expanded) {
+    VStack(alignment:.leading,spacing:8) {
+        Text("Edit independent surface drafts, then explicitly save or load the selected surface. Saved layouts are offline designs, not active performance routes.").font(.caption).foregroundStyle(.secondary)
+        if layouts[surface] == nil {
+            Picker("Starter layout",selection:$preset) {
+                ForEach(CustomSurfacePadPreset.allCases,id:\.self) { Text($0.rawValue).tag($0) }
+            }
+            Stepper("Melodic / starter helper channel "+String(previewChannel+1),value:channelBinding(surface),in:0...15)
+            Button("Create starter draft") {
+                if let layout=preset.layout(surface:surface,channel:previewChannel) {
+                    layouts[surface]=layout;select(layout.pads.first);feedback="Starter draft created."
+                } else { feedback="Starter draft could not be validated." }
+            }
+            Text("GM drums use channel 10. Helper channels are fixed in their assignments; edit a pad to change its destination.").font(.caption).foregroundStyle(.secondary)
+        }
+        HStack {
+            Stepper("Columns \(columns)",value:$columns,in:1...16)
+            if surface != .touchBar {Stepper("Rows \(rows)",value:$rows,in:1...16)}
+            Button("Create grid"){
+                if let grid=Layout.grid(surface:surface,columns:columns,rows:surface == .touchBar ? 1:rows){
+                    layouts[surface]=grid;select(grid.pads.first);feedback="Grid draft created."
+                } else {feedback="Invalid grid; maximum 64 pads."}
+            }.disabled(layouts[surface] != nil)
+            if layouts[surface] != nil {
+                Button("Reset draft"){request(.reset)}
+            }
+        }
+        if let library {
+            HStack {
+                Button("Save layout + channel"){request(.save)}
+                    .disabled(layouts[surface]==nil || (layouts[surface]==library.layout(for:surface) && previewChannel==library.melodicChannel(for:surface)))
+                Button("Load saved layout + channel"){request(.load)}
+                    .disabled(library.layout(for:surface)==nil)
+                Text(library.layout(for:surface)==nil ? "No saved layout":"Saved layout available").font(.caption)
+            }
+        } else {
+            Text("Saved layouts could not be read. Original data is preserved; saving is disabled.").font(.caption).foregroundStyle(.orange)
+        }
+        if let layout=layouts[surface] {
+            DisclosureGroup("Standard MIDI compatibility check") {
+                Stepper("Preview melodic channel \(previewChannel+1)",value:channelBinding(surface),in:0...15)
+                Text(compatibility(layout)).font(.caption).textSelection(.enabled)
+                Text("Offline check only. No endpoint reservation, MIDI send or MPE activation.").font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Stepper("New pad width \(newWidth)",value:$newWidth,in:100...10000,step:100)
+                if surface != .touchBar {
+                    Stepper("Height \(newHeight)",value:$newHeight,in:100...10000,step:100)
+                }
+            }
+            Button("Add pad in empty space"){
+                guard resolveStagedEditFirst() else { return }
+                let id=UUID().uuidString
+                if let next=layout.addingInGap(id:id,label:"New pad",width:newWidth,
+                    height:surface == .touchBar ? 10000:newHeight,assignment:.note(60)){
+                    layouts[surface]=next
+                    select(next.pads.last)
+                    feedback="Pad added to a free region."
+                } else {feedback="No matching free region. Resize or remove a pad, or choose a smaller new pad."}
+            }.disabled(layout.pads.count>=64)
+            draftMap(layout)
+            Picker("Pad",selection:padSelection){
+                Text("Choose pad").tag(String?.none)
+                ForEach(layout.pads){pad in Text(pad.label).tag(Optional(pad.id))}
+            }
+            if let pad=selectedPad {
+                padFields(layout:layout,pad:pad)
+            }
+        }
+    }.padding(.vertical,6)
+    }
+    }
+
+    private func draftMap(_ layout:Layout)->some View {
+        GeometryReader { geo in
+            ZStack(alignment:.topLeading) {
+                RoundedRectangle(cornerRadius:6).strokeBorder(Color.secondary)
+                ForEach(layout.pads) { pad in
+                    draftPadButton(pad,size:geo.size)
+                }
+            }.clipped()
+        }.frame(height:layout.surface == .touchBar ? 44:160)
+    }
+
+    private func draftPadButton(_ pad:Layout.Pad,size:CGSize)->some View {
+        let isSelected:Bool = pad.id == selected
+        let tint:Color = isSelected ? Color.accentColor.opacity(0.45) : Color.secondary.opacity(0.2)
+        let cellWidth:CGFloat = max(0,size.width * CGFloat(pad.width) / 10000)
+        let cellHeight:CGFloat = max(0,size.height * CGFloat(pad.height) / 10000)
+        let offsetX:CGFloat = size.width * CGFloat(pad.x) / 10000
+        let offsetY:CGFloat = size.height * CGFloat(pad.y) / 10000
+        return Button(action:{choosePad(pad.id)}) {
+            ZStack {
+                RoundedRectangle(cornerRadius:3).fill(tint)
+                Text(pad.label).font(.caption2).lineLimit(1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(pad.label))
+        .accessibilityValue(Text(isSelected ? "Selected" : "Not selected"))
+        .frame(width:cellWidth,height:cellHeight)
+        .offset(x:offsetX,y:offsetY)
+    }
+
+    private func padFields(layout:Layout,pad:Layout.Pad)->some View {
+        let reason=editFailure(layout)
+        let canApply=hasStagedEdit && reason==nil
+        return VStack(alignment:.leading,spacing:8) {
+            TextField("Label",text:$label)
+            geometryEditor
+            if let reason {
+                Label(reason,systemImage:"exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            Text("Current assignment: "+String(describing:pad.assignment)).font(.caption).textSelection(.enabled)
+            Toggle("Replace musical assignment",isOn:$changeAssignment)
+            if changeAssignment { assignmentFields }
+            HStack {
+                Button("Apply pad edit") { applyEdit(layout:layout,id:pad.id) }.disabled(!canApply)
+                Button("Remove pad") { removePad(layout:layout,id:pad.id) }.disabled(layout.pads.count<=1)
+            }
+        }
+    }
+
+    private var assignmentFields:some View {
+        VStack(alignment:.leading,spacing:4) {
+            Picker("Assignment",selection:$kind) {
+                ForEach(Kind.allCases) { item in Text(item.rawValue).tag(item) }
+            }
+            switch kind {
+            case .degree: Stepper("Tuning degree \(tuningDegree)",value:$tuningDegree,in:-1408...1408)
+            case .note: Stepper("MIDI note \(note)",value:$note,in:0...127)
+            case .drum: Stepper("GM drum note \(drumNote)",value:$drumNote,in:0...127)
+            case .chord: TextField("Chord MIDI notes, comma separated",text:$chordNotes)
+            case .cc: Stepper("MIDI CC \(cc)",value:$cc,in:0...127)
+            case .sustain,.bend,.xy: EmptyView()
+            }
+            if kind == .cc || kind == .sustain || kind == .bend {
+                Stepper("MIDI channel \(channel+1)",value:$channel,in:0...15)
+            }
+            if kind == .xy {
+                axisEditor("X",bend:$xyXBend,cc:$xyXCC,channel:$xyXChannel)
+                axisEditor("Y",bend:$xyYBend,cc:$xyYCC,channel:$xyYChannel)
+                Text("X increases right; Y increases upward. Targets must differ.").font(.caption)
+            }
+        }
+    }
+
+    private func applyEdit(layout:Layout,id:String) {
+        guard layouts[surface]==layout,let old=selectedPad,old.id==id else {
+            feedback="Pad selection changed; select the pad again.";return
+        }
+        guard hasStagedEdit,let pad=proposedPad(old),editFailure(layout)==nil,
+              let next=layout.replacing(pad) else {
+            feedback=editFailure(layout) ?? "Edit could not be applied.";return
+        }
+        layouts[surface]=next;select(pad);feedback="Draft updated."
+    }
+
+    private func removePad(layout:Layout,id:String) {
+        guard resolveStagedEditFirst(),layouts[surface]==layout,selectedPad?.id==id,
+              layout.pads.count>1,let next=layout.removing(id:id) else{return}
+        layouts[surface]=next;select(next.pads.first);feedback="Pad removed."
+    }
+
     private var geometryEditor: some View {
         let step=fineGeometry ? 1:100
         return VStack(alignment:.leading,spacing:4) {
