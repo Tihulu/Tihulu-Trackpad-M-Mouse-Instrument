@@ -40,6 +40,8 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           echo "Verified checkout: $EXPECTED_SHA"
+      - name: Verify tracked script modes
+        run: python3 tools/check_entrypoint_modes.py
       - name: Portable RAG tests
         run: python3 tools/test_repo_index.py
       - name: Real repository lexical coverage and multilingual benchmark
