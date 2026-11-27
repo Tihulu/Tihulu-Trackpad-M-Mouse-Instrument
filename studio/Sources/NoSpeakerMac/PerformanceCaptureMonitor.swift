@@ -257,7 +257,7 @@ public struct PerformanceCaptureDiagnosticSnapshot: Sendable {
     public let dedicatedInputThread: Bool
     public let listening: Bool
     public let shortcutArmed: Bool
-    public let pointerCaptured: Bool
+    let captureLatched: Bool
     public let keyDownEvents: UInt64
     public let pointerEvents: UInt64
     public let shortcutMatches: UInt64
@@ -274,6 +274,10 @@ public struct PerformanceCaptureDiagnosticSnapshot: Sendable {
         accessibilityGranted && eventTapCreated && eventTapEnabled && dedicatedInputThread && listening
     }
     public var readyForGlobalCapture:Bool { operational && shortcutArmed }
+
+    /// macOS can disable the tap before its notification reaches the input
+    /// thread. A latched pointer state cannot imply active filtering then.
+    public var pointerCaptured: Bool { captureLatched && readyForGlobalCapture }
 }
 
 /// Optional event filtering for MIDI performance. Monitoring is OFF by default.
@@ -312,13 +316,21 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
 
     /// Read-only: inspecting system permissions does not request access.
     public func diagnosticSnapshot() -> PerformanceCaptureDiagnosticSnapshot {
+        let accessibilityGranted = AXIsProcessTrusted()
+        let inputMonitoringGranted = CGPreflightListenEventAccess()
         lock.lock()
-        let port = eventTap
-        let result = (
-            listening: listening,
+        defer { lock.unlock() }
+        // Sample the port beside its lifecycle state. Timeout recovery and
+        // retirement also change this state under the lock.
+        return PerformanceCaptureDiagnosticSnapshot(
+            accessibilityGranted: accessibilityGranted,
+            inputMonitoringGranted: inputMonitoringGranted,
+            eventTapCreated: eventTap != nil,
+            eventTapEnabled: eventTap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false,
             dedicatedInputThread: inputRunLoop != nil,
+            listening: listening,
             shortcutArmed: captureHotkeyEnabled,
-            pointerCaptured: captured,
+            captureLatched: captured,
             keyDownEvents: keyDownEvents,
             pointerEvents: pointerEvents,
             shortcutMatches: shortcutMatches,
@@ -327,25 +339,6 @@ public final class PerformanceCaptureMonitor: @unchecked Sendable {
             lastEventTapStatus: lastEventTapStatus,
             coalescedPressureSamples:physicalMailbox.coalesced,
             physicalMailboxOverflows:physicalMailbox.overflows
-        )
-        lock.unlock()
-        return PerformanceCaptureDiagnosticSnapshot(
-            accessibilityGranted: AXIsProcessTrusted(),
-            inputMonitoringGranted: CGPreflightListenEventAccess(),
-            eventTapCreated: port != nil,
-            eventTapEnabled: port.map { CGEvent.tapIsEnabled(tap: $0) } ?? false,
-            dedicatedInputThread: result.dedicatedInputThread,
-            listening: result.listening,
-            shortcutArmed: result.shortcutArmed,
-            pointerCaptured: result.pointerCaptured,
-            keyDownEvents: result.keyDownEvents,
-            pointerEvents: result.pointerEvents,
-            shortcutMatches: result.shortcutMatches,
-            tapTimeouts: result.tapTimeouts,
-            tapDisabledByUserInput: result.tapDisabledByUserInput,
-            lastEventTapStatus: result.lastEventTapStatus,
-            coalescedPressureSamples:result.coalescedPressureSamples,
-            physicalMailboxOverflows:result.physicalMailboxOverflows
         )
     }
 

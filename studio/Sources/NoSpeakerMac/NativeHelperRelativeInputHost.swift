@@ -39,6 +39,7 @@ public final class NativeHelperRelativeInputHost {
         let midi = self.midi
         let admitted = live() && HapticTrackpadDriver.matchesTouchRegistrations([surface: registration])
         return binding.poll(nowNS: Int64(clamping: DispatchTime.now().uptimeNanoseconds), live: admitted,
+            activeLeaseValid: { midi.hasActiveRelativeHelperLease },
             retire: { neutral, plan in midi.retireRelativeHelperOutput(genuineNeutral: neutral, initialPlan: plan) })
     }
 
