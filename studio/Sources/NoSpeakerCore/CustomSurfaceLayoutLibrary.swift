@@ -27,8 +27,9 @@ public struct CustomSurfaceLayoutLibrary: Codable, Equatable, Sendable {
     public mutating func save(_ layout: CustomSurfacePadLayout, melodicChannel: Int) -> Bool {
         guard (0...15).contains(melodicChannel) else { return false }
         save(layout)
-        channels.removeAll { $0.surface == layout.surface }
-        channels.append(.init(surface:layout.surface,channel:melodicChannel))
+        let record=ChannelRecord(surface:layout.surface,channel:melodicChannel)
+        if let index=channels.firstIndex(where:{$0.surface==layout.surface}) { channels[index]=record }
+        else { channels.append(record) }
         return true
     }
     /// Complete offline pair, not a live route. Explicit legacy defaults
@@ -50,6 +51,11 @@ public struct CustomSurfaceLayoutLibrary: Codable, Equatable, Sendable {
         guard let trackpad=layout(for:.trackpad), let mouse=layout(for:.magicMouse) else { return nil }
         return .init(trackpad:trackpad,mouse:mouse,trackpadChannel:melodicChannel(for:.trackpad) ?? 0,
                      mouseChannel:melodicChannel(for:.magicMouse) ?? 1)
+    }
+    /// Distinguish legacy implicit defaults from explicitly persisted values.
+    public func containsSavedNativePair(_ pair: NativePair) -> Bool {
+        layout(for:.trackpad)==pair.trackpad && layout(for:.magicMouse)==pair.mouse &&
+            melodicChannel(for:.trackpad)==pair.trackpadChannel && melodicChannel(for:.magicMouse)==pair.mouseChannel
     }
     public mutating func saveNativePair(_ pair: NativePair) {
         // The pair's initializer already validated both channels/surfaces.

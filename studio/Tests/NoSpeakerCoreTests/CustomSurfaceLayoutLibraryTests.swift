@@ -73,3 +73,19 @@ import Testing
     #expect(CustomSurfaceLayoutLibrary.NativePair(trackpad:mouse,mouse:trackpad,trackpadChannel:0,mouseChannel:1) == nil)
     #expect(CustomSurfaceLayoutLibrary.NativePair(trackpad:trackpad,mouse:mouse,trackpadChannel:16,mouseChannel:1) == nil)
 }
+
+@Test func savedSurfacePairRepeatedSaveIsStableAndLegacyDefaultsAreNotExplicit() throws {
+    let trackpad=try #require(CustomSurfacePadPreset.chromatic.layout(surface:.trackpad,channel:0))
+    let mouse=try #require(CustomSurfacePadPreset.sustain.layout(surface:.magicMouse,channel:1))
+    var library=CustomSurfaceLayoutLibrary()
+    library.save(trackpad);library.save(mouse)
+    let pair=try #require(library.nativePair)
+    #expect(!library.containsSavedNativePair(pair))
+    library.saveNativePair(pair)
+    #expect(library.containsSavedNativePair(pair))
+    let before=library
+    let saved=library.save(trackpad,melodicChannel:0)
+    #expect(saved && library==before)
+    library.saveNativePair(pair)
+    #expect(library==before)
+}

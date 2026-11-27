@@ -32,6 +32,10 @@ struct CustomSurfacePadEditor:View {
         let mouseChannel: Int
         let storedData: Data
     }
+    private var hasUnsavedPair: Bool {
+        guard let pair=draftPair,let library else { return false }
+        return !library.containsSavedNativePair(pair)
+    }
     private var draftPair: NativePair? {
         guard let trackpad=layouts[.trackpad], let mouse=layouts[.magicMouse] else { return nil }
         return .init(trackpad:trackpad,mouse:mouse,trackpadChannel:groupTrackpadChannel,mouseChannel:groupMouseChannel)
@@ -368,9 +372,12 @@ struct CustomSurfacePadEditor:View {
                             Button("Load saved pair…") { requestPair(.load) }
                                 .disabled(library?.nativePair == nil)
                             Button("Save both drafts…") { requestPair(.save) }
-                                .disabled(library == nil || draftPair == nil)
+                                .disabled(!hasUnsavedPair)
                         }
                         if library == nil {Text("Saved library is unreadable; original data preserved.").font(.caption).foregroundStyle(.orange)}
+                        else if draftPair != nil {
+                            Text(hasUnsavedPair ? "Pair has unsaved layout or channel changes." : "Both draft profiles match their saved records.").font(.caption)
+                        }
                         if let trackpad=layouts[.trackpad],let mouse=layouts[.magicMouse] {
                             Stepper("Trackpad MIDI channel \(groupTrackpadChannel+1)",value:channelBinding(.trackpad),in:0...15)
                             Stepper("Magic Mouse MIDI channel \(groupMouseChannel+1)",value:channelBinding(.magicMouse),in:0...15)
