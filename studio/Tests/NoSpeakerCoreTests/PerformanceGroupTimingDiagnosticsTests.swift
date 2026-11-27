@@ -26,3 +26,25 @@ import Testing
     #expect(metrics.gapsAtLeast350MS == 1)
     #expect(metrics.peakGapMS == 500)
 }
+
+@Test func groupTimingDiagnosticsIncludesNominalDeadlineBoundaries() {
+    var hundred = PerformanceGroupTimingDiagnostics()
+    hundred.record(start:1.1,end:1.1)
+    hundred.record(start:1.2,end:1.2)
+    #expect(hundred.gapsAtLeast100MS == 1)
+    var threeFifty = PerformanceGroupTimingDiagnostics()
+    threeFifty.record(start:1.1,end:1.1)
+    threeFifty.record(start:1.45,end:1.45)
+    #expect(threeFifty.gapsAtLeast350MS == 1)
+}
+
+@Test func groupTimingDiagnosticsDoesNotCountOneNanosecondEarlyGaps() {
+    var hundred = PerformanceGroupTimingDiagnostics()
+    hundred.record(start:1.1,end:1.1)
+    hundred.record(start:1.199999999,end:1.199999999)
+    #expect(hundred.gapsAtLeast100MS == 0)
+    var threeFifty = PerformanceGroupTimingDiagnostics()
+    threeFifty.record(start:1.1,end:1.1)
+    threeFifty.record(start:1.449999999,end:1.449999999)
+    #expect(threeFifty.gapsAtLeast350MS == 0)
+}
