@@ -17,6 +17,8 @@ public struct NativeHelperRelativeSession: Sendable {
     private var lastSequence: UInt64
     private var lastReceipt: Double?
     private var lastAcquisitionNS: Int64?
+    private var lastHostNow: Double?
+    private var neutralAdmitted = false
     private var active = false
     private var closed = false
 
@@ -33,8 +35,17 @@ public struct NativeHelperRelativeSession: Sendable {
         receipt.isFinite && receipt >= 0 && now.isFinite && now >= receipt && now - receipt < maximumAge
     }
 
+    /// A fresh receipt alone cannot prove that the trusted host clock has
+    /// advanced since a previous observation or watchdog tick. Keep the
+    /// high-water mark even after a fault; equal clock samples are valid.
+    private mutating func observeHostClock(_ now: Double) -> Bool {
+        guard now.isFinite, now >= 0, lastHostNow.map({ now >= $0 }) ?? true else { return false }
+        lastHostNow = now
+        return true
+    }
+
     private mutating func fault(retire: (Bool) -> Bool) -> Result {
-        _ = clutch.invalidate(); active = false
+        _ = clutch.invalidate(); active = false; neutralAdmitted = false
         _ = retire(false)
         return .retired
     }
@@ -49,6 +60,7 @@ public struct NativeHelperRelativeSession: Sendable {
         guard !closed, token == monitor, frame.surface == source else { return .ignored }
         guard sequence > lastSequence else { return .ignored }
         lastSequence = sequence
+        let clockValid = observeHostClock(now)
         // Same monitor but a changed native registration is a terminal
         // device-identity boundary, not an ordinary lift or new touch.
         guard frame.nativeRegistration == registration else {
@@ -62,7 +74,7 @@ public struct NativeHelperRelativeSession: Sendable {
         let previous = lastReceipt
         guard previous.map({ frame.receipt > $0 }) ?? true else { return fault(retire: retire) }
         lastReceipt = frame.receipt
-        guard fresh(frame.receipt, now: now), permits(), (!active || activeLeaseValid()) else { return fault(retire: retire) }
+        guard clockValid, fresh(frame.receipt, now: now), permits(), (!active || activeLeaseValid()) else { return fault(retire: retire) }
         // A new fresh sample cannot hide an expired active stream if the
         // watchdog was delayed. Even a neutral sample after a gap must be
         // processed on a later call, not on the expiry boundary itself.
@@ -70,19 +82,21 @@ public struct NativeHelperRelativeSession: Sendable {
         let result = clutch.frame(frame)
         switch result {
         case .blocked:
+            neutralAdmitted = false
             if active { return fault(retire: retire) }
             return .waiting
         case .releaseRequired, .idle:
             if frame.isGenuineNeutral {
                 active = false
                 guard retire(true), permits() else { return fault(retire: retire) }
+                neutralAdmitted = true
                 return .waiting
             }
             if result == .releaseRequired { return fault(retire: retire) }
             return .waiting
         case .anchored:
             guard permits(), begin(), permits(), activeLeaseValid() else { return fault(retire: retire) }
-            active = true
+            neutralAdmitted = false; active = true
             return .anchored
         case .movement(let values):
             guard active, permits(), activeLeaseValid(), move(values), permits(), activeLeaseValid() else { return fault(retire: retire) }
@@ -93,7 +107,14 @@ public struct NativeHelperRelativeSession: Sendable {
     /// The host schedules this on the same serialized execution context.
     /// Never use an absent or stale sample as neutral evidence.
     public mutating func expire(now: Double, retire: (Bool) -> Bool) -> Result {
-        guard !closed, active, let receipt = lastReceipt, !fresh(receipt, now: now) else { return .ignored }
+        guard !closed else { return .ignored }
+        guard observeHostClock(now) else {
+            // Revoke even a silent neutral admission, but do not retry
+            // cleanup on every subsequent bad idle watchdog sample.
+            guard active || neutralAdmitted else { return .ignored }
+            return fault(retire: retire)
+        }
+        guard active, let receipt = lastReceipt, !fresh(receipt, now: now) else { return .ignored }
         return fault(retire: retire)
     }
 
