@@ -1285,12 +1285,11 @@ public final class MIDIHapticService: @unchecked Sendable {
     private func sendPitchBendRange(semitones: Int, channel: Int) {
         guard permitsOutgoingSend else { return }
         controllerDebt.beginRange(channel:channel)
-        let value = max(0,min(24,semitones))
-        let parts = [(101,0),(100,0),(6,value),(38,0),(101,127),(100,127)]
-        for (cc,v) in parts {
-            guard sendMIDI1(status:0xb0|channel,data1:cc,data2:v,rangePart:true) else { return }
+        let result = LegacyRecoveryPolicy.sendLegacyBendRange(semitones: semitones) { cc, value in
+            self.sendMIDI1(status: 0xb0 | channel, data1: cc, data2: value, rangePart: true)
         }
-        controllerDebt.completeRange(channel:channel)
+        if result.completed { controllerDebt.completeRange(channel: channel) }
+        if result.requiresManualRecovery { controllerRecoveryRequired = true }
     }
 
     private func sendPitchBend(_ value: Int, channel: Int) {
