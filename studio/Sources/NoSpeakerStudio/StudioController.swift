@@ -3768,7 +3768,8 @@ final class StudioController: ObservableObject {
     func startCustomPadGroup(trackpad: CustomSurfacePadLayout, trackpadChannel: Int,
                              mouse: CustomSurfacePadLayout, mouseChannel: Int) {
         guard trackpad.surface == .trackpad, mouse.surface == .magicMouse, customPadCanStart else {
-            customPadStatus = "Stop performances and resolve MIDI recovery before group arm."\n            return
+            customPadStatus = "Stop performances and resolve MIDI recovery before group arm."
+            return
         }
         let members: [CustomSurfacePerformanceGroup.Member]
         do {
@@ -3782,9 +3783,11 @@ final class StudioController: ObservableObject {
         guard requireEngine(), let touch, midi?.hasUnconfirmedOutgoingCleanup != true,
               let input = CustomSurfaceNativeGroupInput(surfaces: required, orientation: magicMouseOrientation,
                   notBefore: NativeCustomSurfaceMIDIHost.monotonicNow()) else {
-            customPadStatus = "Native engine unavailable or MIDI cleanup unresolved."\n            return
+            customPadStatus = "Native engine unavailable or MIDI cleanup unresolved."
+            return
         }
-        customPadEvidenceReport = ""; customPadMIDITimingReport = ""\n        customPadEvidencePort = nil; customPadEvidenceSurface = nil
+        customPadEvidenceReport = ""; customPadMIDITimingReport = ""
+        customPadEvidencePort = nil; customPadEvidenceSurface = nil
         let generation = engineGeneration
         customPadGroupInput = input
         guard touch.setCustomSurfaceInboxes(input.inboxes) else {
@@ -3815,7 +3818,8 @@ final class StudioController: ObservableObject {
               captureMonitor?.customPadEmergencyOperational == true else {
             stopCustomPad(reason: "Group admission changed during arm."); return
         }
-        customPadStatus = "Group armed · lift fingers on both devices · Esc stops"\n        customPadTask = Task { [weak self, weak input] in
+        customPadStatus = "Group armed · lift fingers on both devices · Esc stops"
+        customPadTask = Task { [weak self, weak input] in
             var lastEvidenceAt: Int64 = 0
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(12)) } catch { return }
@@ -3838,7 +3842,8 @@ final class StudioController: ObservableObject {
                     self.stopCustomPad(reason: "Group source unavailable."); return
                 }
                 let ready = ports.filter { $0.hasNeutralHandshake }.count
-                let status = "Group ready: " + String(ready) + "/2 physical lifts · Esc stops"\n                if self.customPadStatus != status { self.customPadStatus = status }
+                let status = "Group ready: " + String(ready) + "/2 physical lifts · Esc stops"
+                if self.customPadStatus != status { self.customPadStatus = status }
                 let now = NativeCustomSurfaceMIDIHost.monotonicNow()
                 if now - lastEvidenceAt >= 250_000_000 {
                     self.updateCustomPadGroupEvidence(input)
