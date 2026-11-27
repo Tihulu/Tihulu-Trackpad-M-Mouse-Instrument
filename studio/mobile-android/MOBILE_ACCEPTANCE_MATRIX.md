@@ -26,7 +26,7 @@ Pinned integration base: `34361977e4ae8754790194e6a95a6088e8b4eefc`. This is a s
 |---|---|
 | Permission prompt, deny, grant, revoke while running | No implicit Android start; iOS existing explicit Start request generation; active capture/session retires on loss, touch-only unaffected |
 | Rotate with RGB/ARCore running or during Android RGB provider setup | Retire before further admitted frame, require explicit Start, no old-generation callbacks |
-| Rotate iOS while active | Verify manual image/control orientation remains consistent; release on inactive lifecycle; physical orientation behavior requires dedicated verification |
+| Rotate iOS while active or awaiting camera permission | Air stage and XYZ stage check the actual window-scene interface orientation, not a global device orientation; changed or unavailable orientation retires capture, manual raw sensor orientation remains separate. Physical execution NOT_RUN |
 | Background / lock / activity recreate | Stop capture and paired session, clear local output; no automatic rearm or replay on foreground |
 | Stale, future, duplicate, pre-start frame | Existing 150 ms freshness and source fence; duplicate ARCore snapshot cannot renew observation age |
 | Same-family pause/change | Neutral ACK and worker retirement before explicit new capture; no stale mode output |
@@ -37,3 +37,11 @@ Pinned integration base: `34361977e4ae8754790194e6a95a6088e8b4eefc`. This is a s
 ## Verification boundaries
 
 The standalone Kotlin/JVM calibration check compiled the exact helper blob `c5f567aaa62d674189347f927d7289ebd5c87174`: 18 targeted checks, 96,721 integer input pairs (29,675 accepted, 67,046 rejected). This is not Gradle/JUnit, Android UI, sensor or MIDI runtime evidence. Four new JUnit calibration/provenance tests are authored; exact-head platform execution and product/RAG CI are still required. No hardware opened. No safety thresholds, shared transport/wire, host receiver, CI, release or stable changes.
+
+## MOB-02 continuation — lifecycle candidate
+
+Android now checks foreground, permission and valid matching display rotation before pending RGB provider completion and before draining RGB, ARCore or measured XYZ observations. Permission is rechecked after asynchronous root verification for Air pairing; touch-only remains independent. Retire clears capture context; the existing ticket rejects obsolete callbacks. iOS Air now reuses the XYZ window-scene orientation probe; a pending permission result or running capture cannot survive observed interface rotation. No new clock or transport, no changes to freshness/ACK deadlines.
+
+Local Linux Kotlin 1.9.0/JRE 21 standalone tests: source and original test blob hashes verified for `AirCaptureLifecycle.kt` (42672cc319e2b96a26e8bb323961cf9e92cf1a4a), `AirCaptureLifecycleTest.kt` (c9ac8476fcb0c55ab310b84fbc9aa2b4a0c665c5), `PairedObservationFence.kt` (9a1bf0e7df62b73e9c2940d827e8e7ae982b844e), and `PairedObservationFenceTest.kt` (a1d24268f6d148a89d5d332e59524bb7eabec895). Replaced only JUnit imports/annotations for local kotlin.test runner; invoked each method directly. Four lifecycle methods / 25 assertions PASS; 224 exhaustive input combinations, exactly 4 admitted. Five fence methods / 19 assertions PASS (constant-only shim for AirSendGate.FRESH_NS = 150 ms, not transport execution). Five newly authored test methods included in these nine. No Android runtime or iOS compile/device results. No verified UI acceptance closures. Full Gradle/native tests still require coordinator's mobile-enabled CI because agent draft branch is excluded by existing workflow conditions.
+
+NEXT: accessible and responsive native touch and Air controls, Android mode-specific graphic feedback and independent verification of native lifecycle/camera/depth. Avoid source changes to the frozen review SHA when nominated by coordinator.
