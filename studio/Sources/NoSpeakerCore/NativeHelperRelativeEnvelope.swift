@@ -30,7 +30,7 @@ public enum NativeHelperRelativeEnvelope {
                 (3...5).contains($0.state) && $0.isDown == ($0.state != 5) &&
                 $0.contact.surface == surface && $0.contact.id >= 0 &&
                 [$0.contact.x, $0.contact.y, $0.contact.contactSize].allSatisfy { $0.isFinite && (0...1).contains($0) }
-            } && Set(down.map(\.id)).count == down.count && (count == 0 || !down.isEmpty)
+            } && Set(records.map { $0.contact.id }).count == records.count && (count == 0 || !down.isEmpty)
         return .init(surface: surface, rawDownCount: down.count, sourceConsistent: valid,
                      contacts: down, receipt: receipt, nativeRegistration: registration, acquisitionNS: acquisitionNS)
     }

@@ -12,6 +12,7 @@ public struct NativeHelperRelativeSession: Sendable {
     private let monitor: UUID
     private let registration: UUID
     private let maximumAge: Double
+    private let afterAcquisitionNS: Int64
     private var clutch: Clutch
     private var lastSequence: UInt64
     private var lastReceipt: Double?
@@ -20,11 +21,11 @@ public struct NativeHelperRelativeSession: Sendable {
     private var closed = false
 
     public init?(source: Clutch.Surface, monitor: UUID, registration: UUID, afterSequence: UInt64,
-                 maximumAge: Double, lanes: [Clutch.Axis: Clutch.Lane]) {
-        guard maximumAge.isFinite, maximumAge > 0,
+                 afterAcquisitionNS: Int64, maximumAge: Double, lanes: [Clutch.Axis: Clutch.Lane]) {
+        guard afterAcquisitionNS >= 0, maximumAge.isFinite, maximumAge > 0,
               let clutch = Clutch(surface: source, lanes: lanes) else { return nil }
         self.source = source; self.monitor = monitor; self.registration = registration
-        self.maximumAge = maximumAge
+        self.maximumAge = maximumAge; self.afterAcquisitionNS = afterAcquisitionNS
         self.clutch = clutch; lastSequence = afterSequence
     }
 
@@ -42,7 +43,7 @@ public struct NativeHelperRelativeSession: Sendable {
     /// combined preview) and the actual producer monitor/sequence identity.
     /// The admission callback must recheck the live receipt before each send.
     public mutating func receive(_ frame: Clutch.SourceFrame, monitor token: UUID,
-        sequence: UInt64, now: Double, permits: () -> Bool,
+        sequence: UInt64, now: Double, permits: () -> Bool, activeLeaseValid: () -> Bool,
         begin: () -> Bool, move: ([Clutch.Axis:Int]) -> Bool,
         retire: (Bool) -> Bool) -> Result {
         guard !closed, token == monitor, frame.surface == source else { return .ignored }
@@ -54,13 +55,14 @@ public struct NativeHelperRelativeSession: Sendable {
             closed = true
             return fault(retire: retire)
         }
-        guard let acquired = frame.acquisitionNS, acquired >= 0,
+        guard let acquired = frame.acquisitionNS, acquired > afterAcquisitionNS,
               lastAcquisitionNS.map({ acquired > $0 }) ?? true else { return fault(retire: retire) }
         lastAcquisitionNS = acquired
         guard frame.receipt == Double(acquired) / 1_000_000_000 else { return fault(retire: retire) }
         let previous = lastReceipt
+        guard previous.map({ frame.receipt > $0 }) ?? true else { return fault(retire: retire) }
         lastReceipt = frame.receipt
-        guard fresh(frame.receipt, now: now), permits() else { return fault(retire: retire) }
+        guard fresh(frame.receipt, now: now), permits(), (!active || activeLeaseValid()) else { return fault(retire: retire) }
         // A new fresh sample cannot hide an expired active stream if the
         // watchdog was delayed. Even a neutral sample after a gap must be
         // processed on a later call, not on the expiry boundary itself.
@@ -79,11 +81,11 @@ public struct NativeHelperRelativeSession: Sendable {
             if result == .releaseRequired { return fault(retire: retire) }
             return .waiting
         case .anchored:
-            guard permits(), begin(), permits() else { return fault(retire: retire) }
+            guard permits(), begin(), permits(), activeLeaseValid() else { return fault(retire: retire) }
             active = true
             return .anchored
         case .movement(let values):
-            guard active, permits(), move(values), permits() else { return fault(retire: retire) }
+            guard active, permits(), activeLeaseValid(), move(values), permits(), activeLeaseValid() else { return fault(retire: retire) }
             return .accepted
         }
     }
