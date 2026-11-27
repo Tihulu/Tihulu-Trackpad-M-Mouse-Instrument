@@ -88,7 +88,7 @@ class AirPreviewActivity: ComponentActivity() {
     private lateinit var modelStatus:TextView
     private val importer=Executors.newSingleThreadExecutor()
     private var localModel:LocalHandModel?=null
-    private var importing=false
+    private val importRunner=AirImportRunner(importer) { action -> handler.post { action() } }
     private var destroyed=false
     private var choices:List<CameraChoice> = emptyList()
     private var range:ZoomRange?=null
@@ -146,61 +146,57 @@ class AirPreviewActivity: ComponentActivity() {
             return@registerForActivityResult
         }
         val epoch=++ticket
-        importing=true;controls();connectionStatus.text="Reading QR locally"
-        importer.execute {
-            val result=try {
-                if(!AirAddressQr.admits(bitmap.width,bitmap.height))null else {
-                    val pixels=IntArray(bitmap.width*bitmap.height)
-                    bitmap.getPixels(pixels,0,bitmap.width,0,0,bitmap.width,bitmap.height)
-                    AirAddressQr.decode(pixels,bitmap.width,bitmap.height)
-                }
-            }catch(_:Exception){null}
-            finally{bitmap.recycle()}
-            handler.post {
-                if(!destroyed&&epoch==ticket&&importing){
-                    importing=false
-                    if(result!=null&&wantsPair) {
-                        address.setText(result);clearInvitation()
-                        connectionStatus.text="Mac address scanned. Enter the separate invitation and verify the root."
-                    }else connectionStatus.text="No valid private Mac address QR. Try again or type the address."
-                    controls()
-                }
+        connectionStatus.text="Reading QR locally"
+        val started=importRunner.start(AirImportLifecycle.Kind.QR, work={
+            if(!AirAddressQr.admits(bitmap.width,bitmap.height))null else {
+                val pixels=IntArray(bitmap.width*bitmap.height)
+                bitmap.getPixels(pixels,0,bitmap.width,0,0,bitmap.width,bitmap.height)
+                AirAddressQr.decode(pixels,bitmap.width,bitmap.height)
+            }
+        },releaseInput={bitmap.recycle()},retired={if(!destroyed)controls()}) { result ->
+            if(!destroyed&&epoch==ticket){
+                val decoded=result.getOrNull()
+                if(decoded!=null&&wantsPair) {
+                    address.setText(decoded);clearInvitation()
+                    connectionStatus.text="Mac address scanned. Enter the separate invitation and verify the root."
+                }else connectionStatus.text="No valid private Mac address QR. Try again or type the address."
+                controls()
             }
         }
+        if(started==AirImportRunner.Start.BUSY_OR_CLOSED)bitmap.recycle()
+        controls()
     }
     private val rootPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null&&pairedAllowed&&!locked&&!destroyed) {
             val epoch=++ticket
-            importing=true;rootDer=null;rootStatus.text="Reading bounded DER root…";controls()
-            importer.execute {
-                val result=runCatching {contentResolver.openInputStream(uri)?.use {MobileLanTrust.readDer(it)} ?: error("Cannot open certificate")}
-                handler.post {
-                    if(!destroyed&&epoch==ticket&&importing) {
-                        importing=false
-                        result.onSuccess {rootDer=it;rootStatus.text="Root loaded. Compare its fingerprint on your Mac before connecting."}
-                            .onFailure {rootDer=null;rootStatus.text="Root rejected: empty, unreadable or too large"}
-                        controls()
-                    }
-                }
+            rootDer=null;rootStatus.text="Reading bounded DER root…"
+            importRunner.start(AirImportLifecycle.Kind.ROOT, work={
+                contentResolver.openInputStream(uri)?.use {MobileLanTrust.readDer(it)} ?: error("Cannot open certificate")
+            },discard={it.fill(0)},retired={if(!destroyed)controls()}) { result ->
+                if(!destroyed&&epoch==ticket){
+                    result.onSuccess {rootDer=it;rootStatus.text="Root loaded. Compare its fingerprint on your Mac before connecting."}
+                        .onFailure {rootDer=null;rootStatus.text="Root rejected: empty, unreadable or too large"}
+                    controls()
+                }else result.onSuccess {it.fill(0)}
             }
+            controls()
         }
     }
     private val modes=AirMode.entries.filter {it!=AirMode.BEAM_KEYS&&it!=AirMode.BEAM_HELPER}
-    private val busy get()=xyzSource!=null||xyzRetiring!=null||touchStage||pending||source!=null||retiring!=null||importing||depthSource!=null||depthRetiring!=null
+    private val busy get()=xyzSource!=null||xyzRetiring!=null||touchStage||pending||source!=null||retiring!=null||importRunner.busy||depthSource!=null||depthRetiring!=null
     private val modelPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null&&!locked&&!destroyed) {
-            val epoch=++ticket;importing=true;controls();modelStatus.text="Reading selected local model…"
-            importer.execute {
-                val result=runCatching {contentResolver.openInputStream(uri)?.use {LocalHandModel.read(it)} ?: error("Cannot open model")}
-                handler.post {
-                    if(!destroyed&&epoch==ticket&&importing) {
-                        importing=false
-                        result.onSuccess {localModel=it;modelStatus.text="Selected model SHA-256: "+it.sha256}
-                            .onFailure {localModel=null;modelStatus.text="Model rejected: unreadable, empty or too large"}
-                        controls()
-                    }
+            val epoch=++ticket;modelStatus.text="Reading selected local model…"
+            importRunner.start(AirImportLifecycle.Kind.MODEL, work={
+                contentResolver.openInputStream(uri)?.use {LocalHandModel.read(it)} ?: error("Cannot open model")
+            },retired={if(!destroyed)controls()}) { result ->
+                if(!destroyed&&epoch==ticket){
+                    result.onSuccess {localModel=it;modelStatus.text="Selected model SHA-256: "+it.sha256}
+                        .onFailure {localModel=null;modelStatus.text="Model rejected: unreadable, empty or too large"}
+                    controls()
                 }
             }
+            controls()
         }
     }
     private val permission=registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -529,7 +525,12 @@ class AirPreviewActivity: ComponentActivity() {
             })
             modelButton.isEnabled=false
         }
-        stopButton.isEnabled=xyzSource!=null||pending||source!=null||depthSource!=null||lan!=null
+        stopButton.text=when {
+            importRunner.cancellable -> "Cancel background operation"
+            importRunner.busy -> "Waiting for background operation"
+            else -> "Stop / release"
+        }
+        stopButton.isEnabled=importRunner.cancellable||xyzSource!=null||pending||source!=null||depthSource!=null||lan!=null
     }
     private fun scanAddress() {
         if(!wantsPair||locked||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
@@ -543,7 +544,9 @@ class AirPreviewActivity: ComponentActivity() {
     }
     private fun connectMac() {
         if(!wantsPair||locked||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
-        val ordinaryAir=!measuredMode&&!wantsTouchPair
+        val touchPair=wantsTouchPair
+        val measuredPair=measuredMode
+        val ordinaryAir=!measuredPair&&!touchPair
         val setup=if(ordinaryAir)airSetup(newPairing=true) else null
         if(ordinaryAir&&setup==null){
             connectionStatus.text="Choose a valid instrument, hand, orientation, range and helper lane.";return
@@ -570,25 +573,28 @@ class AirPreviewActivity: ComponentActivity() {
             else -> MobileLanSession.Selection.Keys
         }
         clearInvitation()
-        val epoch=++ticket;importing=true;controls();connectionStatus.text="Verifying selected private root"
-        importer.execute {
-            val trust=MobileLanTrust.verifiedRoot(endpoint,root,digest)
-            handler.post {
-                if(destroyed||epoch!=ticket||!importing)return@post
-                importing=false
+        val epoch=++ticket;connectionStatus.text="Verifying selected private root"
+        importRunner.start(AirImportLifecycle.Kind.TRUST, work={
+            MobileLanTrust.verifiedRoot(endpoint,root,digest)
+        },retired={if(!destroyed)controls()}) { result ->
+            if(!destroyed&&epoch==ticket){
+                val trust=result.getOrNull()
                 if(trust==null||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||
                     (!wantsTouchPair&&!cameraPermitted())){
-                    connectionStatus.text="Root fingerprint or certificate invalid, app inactive or camera permission lost";controls();return@post
+                    connectionStatus.text="Root fingerprint or certificate invalid, app inactive or camera permission lost"
+                }else if(!wantsPair||wantsTouchPair!=touchPair||measuredMode!=measuredPair||
+                    (ordinaryAir&&airSetup(newPairing=true)!=setup)){
+                    connectionStatus.text="Setup changed; choose a valid setup and connect again."
+                }else {
+                    val client=BoundedMobileLanSocket(endpoint,selection,trust)
+                    lan=client;lastPhase=null
+                    if(!client.connect(secret))end("Connection setup failed")
+                    else connectionStatus.text="Connecting securely to selected Mac"
                 }
-                if(ordinaryAir&&(!wantsPair||measuredMode||wantsTouchPair||airSetup(newPairing=true)!=setup)){
-                    connectionStatus.text="Air setup changed; choose a valid setup and connect again.";controls();return@post
-                }
-                val client=BoundedMobileLanSocket(endpoint,selection,trust)
-                lan=client;lastPhase=null
-                if(!client.connect(secret)){end("Connection setup failed");return@post}
-                connectionStatus.text="Connecting securely to selected Mac";controls()
+                controls()
             }
         }
+        controls()
     }
     private fun submit(out:AirOutput,at:Long,deadlines:Map<Int,Long>,latest:Boolean):Boolean {
         val client=lan?:return !wantsPair
@@ -724,7 +730,14 @@ class AirPreviewActivity: ComponentActivity() {
         touchStage=false
         livePiano?.retire();livePiano=null
         touchPanel.removeAllViews();touchPanel.visibility=View.GONE
-        ticket++;pending=false;importing=false;captureRotation=null
+        ticket++;pending=false;captureRotation=null
+        when(importRunner.cancel()){
+            AirImportLifecycle.Kind.QR -> connectionStatus.text="QR read cancelled"
+            AirImportLifecycle.Kind.ROOT -> rootStatus.text="Root read cancelled; choose the verified root again."
+            AirImportLifecycle.Kind.MODEL -> modelStatus.text=localModel?.let{"Retained model SHA-256: "+it.sha256} ?: "Model read cancelled; no imported model."
+            AirImportLifecycle.Kind.TRUST -> connectionStatus.text="Root verification cancelled; connect explicitly again."
+            null -> Unit
+        }
         observationFence?.retire();observationFence=null
         // No capture callback can renew the old session after this fence.
         beforeWorkerStop()
@@ -758,5 +771,5 @@ class AirPreviewActivity: ComponentActivity() {
     }
     override fun onResume(){super.onResume();handler.removeCallbacks(pulse);handler.post(pulse)}
     override fun onPause(){end("App inactive · stopped");handler.removeCallbacks(pulse);super.onPause()}
-    override fun onDestroy(){destroyed=true;qrRequested=false;end("View closed");importer.shutdownNow();localModel=null;rootDer=null;handler.removeCallbacks(pulse);super.onDestroy()}
+    override fun onDestroy(){destroyed=true;qrRequested=false;importRunner.close();end("View closed");importer.shutdown();localModel=null;rootDer=null;handler.removeCallbacks(pulse);super.onDestroy()}
 }
