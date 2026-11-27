@@ -538,6 +538,68 @@ class RepositoryIndexTests(unittest.TestCase):
         self.assertNotEqual(comparison["development"]["legacy"]["cases_sha256"],
                             comparison["evaluation"]["legacy"]["cases_sha256"])
 
+    def test_contextual_aliases_require_phrase_and_preserve_prior_profile(self):
+        old = repo_index.query_weights("geri", "multilingual")
+        self.assertIn("feedback", old)
+        for query in ("geri", "geri dönüş", "geri yükleme", "geri başka bildirim",
+                      "bildirimi", "yeniden", "çubuk"):
+            weights = repo_index.query_weights(query, "multilingual-context")
+            self.assertNotIn("feedback", weights, query)
+            self.assertNotIn("retry", weights, query)
+            self.assertNotIn("bar", weights, query)
+        for query, alias in (("GERİ BİLDİRİM", "feedback"), ("geri bildirimi", "feedback"),
+                             ("geri yükleme", "restore"), ("geri dönüş", "return"),
+                             ("yeniden deneme", "retry"), ("yeniden başlatma", "restart"),
+                             ("dokunmatik çubuk", "bar"), ("letzte Zustellung", "delivered")):
+            self.assertEqual(repo_index.query_weights(query, "multilingual-context")[alias],
+                             repo_index.QUERY_ALIAS_WEIGHT, query)
+        self.assertEqual(repo_index.query_weights("geri bildirim feedback",
+                            "multilingual-context")["feedback"], 1.0)
+        self.assertEqual(repo_index.query_weights("kalibrasyon", "multilingual-context"),
+                         repo_index.query_weights("kalibrasyon", "multilingual"))
+
+    def test_case_group_leakage_and_changed_snapshot_are_rejected(self):
+        case = {"id": "dev", "scope": "docs", "language": "en", "query": "MIDI sustain",
+                "expected_paths": ["README.md"]}
+        dataset = self.root / "groups.json"
+        def write(dev, evaluation):
+            dataset.write_text(json.dumps({"development": dev, "evaluation": evaluation}))
+        for other in (dict(case, id="eval", query="  ＭＩＤＩ   SUSTAIN "),
+                      dict(case, query="different")):
+            write([case], [other])
+            with self.assertRaisesRegex(ValueError, "case overlap"):
+                rag_benchmark.validate_case_groups(dataset)
+        write([case, dict(case, id="duplicate", query="midi SUSTAIN")],
+              [dict(case, id="eval", query="other")])
+        with self.assertRaisesRegex(ValueError, "Duplicate normalized query"):
+            rag_benchmark.validate_case_groups(dataset)
+        write([case], [dict(case, id="eval", query="other")])
+        digests = rag_benchmark.validate_case_groups(dataset)
+        self.assertNotEqual(digests["development"], digests["evaluation"])
+        fake_report = {"commit": self.commit, "scope": "docs", "mode": "lexical",
+                       "source_verified": True, "model_sha256": None,
+                       "lexical_profile": "legacy", "case_group": "development",
+                       "cases_sha256": "0"*64}
+        with patch.object(rag_benchmark, "run", return_value=fake_report):
+            with self.assertRaisesRegex(ValueError, "identity mismatch"):
+                rag_matrix.compare_lexical_profiles(self.repo, self.commit, self.index, "docs",
+                    SimpleNamespace(k=8, max_per_file=3), self.root, dataset)
+        self.assertFalse(list(self.root.glob("*-report.json")))
+
+    def test_contextual_rankings_differ_only_for_ambiguous_expansion(self):
+        rows = [{"path":"docs/Receiver.md", "blob":"a"*40, "start":1,"end":1,
+                 "text":"feedback confirmed"},
+                {"path":"docs/Restore.md", "blob":"b"*40, "start":1,"end":1,
+                 "text":"restore previous setting"}]
+        legacy = lexical_ranking(rows, "geri yükleme", profile="multilingual")
+        contextual = lexical_ranking(rows, "geri yükleme", profile="multilingual-context")
+        self.assertEqual([row["path"] for _, row in legacy], ["docs/Receiver.md"])
+        self.assertEqual([row["path"] for _, row in contextual], ["docs/Restore.md"])
+        self.assertEqual(lexical_ranking(rows, "feedback", profile="multilingual"),
+                         lexical_ranking(rows, "feedback", profile="multilingual-context"))
+        self.assertEqual(lexical_ranking(rows, "geri", profile="legacy"), [])
+        self.assertEqual(lexical_ranking(rows, "geri", profile="multilingual-context"), [])
+
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
         document = json.loads(self.index.read_text())
