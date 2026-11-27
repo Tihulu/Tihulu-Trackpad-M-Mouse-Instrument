@@ -147,10 +147,11 @@ class AirPreviewActivity: ComponentActivity() {
         }
         val epoch=++ticket
         connectionStatus.text="Reading QR locally"
-        val started=importRunner.start(AirImportLifecycle.Kind.QR, work={
+        val started=importRunner.start(AirImportLifecycle.Kind.QR, work={token->
             if(!AirAddressQr.admits(bitmap.width,bitmap.height))null else {
                 val pixels=IntArray(bitmap.width*bitmap.height)
                 bitmap.getPixels(pixels,0,bitmap.width,0,0,bitmap.width,bitmap.height)
+                token.checkActive()
                 AirAddressQr.decode(pixels,bitmap.width,bitmap.height)
             }
         },releaseInput={bitmap.recycle()},retired={if(!destroyed)controls()}) { result ->
@@ -170,8 +171,8 @@ class AirPreviewActivity: ComponentActivity() {
         if(uri!=null&&pairedAllowed&&!locked&&!destroyed) {
             val epoch=++ticket
             rootDer=null;rootStatus.text="Reading bounded DER root…"
-            importRunner.start(AirImportLifecycle.Kind.ROOT, work={
-                contentResolver.openInputStream(uri)?.use {MobileLanTrust.readDer(it)} ?: error("Cannot open certificate")
+            importRunner.start(AirImportLifecycle.Kind.ROOT, work={token->
+                contentResolver.openInputStream(uri)?.use {MobileLanTrust.readDer(token.checkedInput(it))} ?: error("Cannot open certificate")
             },discard={it.fill(0)},retired={if(!destroyed)controls()}) { result ->
                 if(!destroyed&&epoch==ticket){
                     result.onSuccess {rootDer=it;rootStatus.text="Root loaded. Compare its fingerprint on your Mac before connecting."}
@@ -187,8 +188,8 @@ class AirPreviewActivity: ComponentActivity() {
     private val modelPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null&&!locked&&!destroyed) {
             val epoch=++ticket;modelStatus.text="Reading selected local model…"
-            importRunner.start(AirImportLifecycle.Kind.MODEL, work={
-                contentResolver.openInputStream(uri)?.use {LocalHandModel.read(it)} ?: error("Cannot open model")
+            importRunner.start(AirImportLifecycle.Kind.MODEL, work={token->
+                contentResolver.openInputStream(uri)?.use {LocalHandModel.read(token.checkedInput(it))} ?: error("Cannot open model")
             },retired={if(!destroyed)controls()}) { result ->
                 if(!destroyed&&epoch==ticket){
                     result.onSuccess {localModel=it;modelStatus.text="Selected model SHA-256: "+it.sha256}
