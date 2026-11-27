@@ -81,6 +81,9 @@ private let groupContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5,
     now=CustomSurfacePerformanceGroup.neutralTimeoutNS
     group.poll(run:run)
     #expect(group.phase == .idle && host.statuses.isEmpty)
+    #expect(group.stopReason == .neutralTimeout)
+    group.stop()
+    #expect(group.stopReason == .neutralTimeout)
     #expect(wire[1] == [[0x92,60,100],[0x82,60,0]] && wire[2] == nil)
     #expect(group.frame(run:run,surface:.trackpad,contacts:[groupContact],sequence:3,observedAt:now) == nil)
 }
@@ -111,6 +114,7 @@ private let groupContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5,
     now=2
     #expect(group.frame(run:run,surface:.trackpad,contacts:[],sequence:2,observedAt:now) == nil)
     #expect(group.phase == .recoveryPending && group.runID == nil)
+    #expect(group.stopReason == .memberFault(.trackpad, .expiredOrInvalid))
     #expect(group.statuses.count == 1 && group.statuses.first?.phase == .cleanupPending)
     #expect(wire[1] == [[0x92,60,100],[0x82,60,0]])
     #expect(wire[2] == [[0x92,60,100],[0x82,60,0]])
@@ -119,6 +123,7 @@ private let groupContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5,
     failOff=false
     group.retryRecovery()
     #expect(group.phase == .idle && wire[1]?.count == 3)
+    #expect(group.stopReason == .memberFault(.trackpad, .expiredOrInvalid))
 }
 
 @Test func customSurfaceGroupAdmissionLossDuringSendCannotResumeOrAttackAnotherMember() throws {
@@ -197,4 +202,29 @@ private let groupContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5,
     }
     #expect(group.timingEvidence.values.allSatisfy { $0.sendAttempts == 0 })
     group.stop()
+}
+
+@Test func customSurfaceGroupClockRegressionPreservesFirstStopReason() throws {
+    var now:Int64=10
+    var next:UInt32=1
+    let host=CustomSurfaceEndpointHost(backend:.init(create:{name in
+        defer {next+=1}
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{_ in true},send:{_,_ in true},dispose:{_ in true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    let members=try [groupMember(.trackpad),groupMember(.magicMouse)]
+    guard case .started(let run)=group.start(members,clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not start");return
+    }
+    now=9
+    group.poll(run:run)
+    group.stop()
+    group.retryRecovery()
+    #expect(group.phase == .idle && group.stopReason == .clockInvalid)
+    guard case .started = group.start(members,clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not restart");return
+    }
+    #expect(group.stopReason == nil)
+    group.stop()
+    #expect(group.stopReason == .requested)
 }

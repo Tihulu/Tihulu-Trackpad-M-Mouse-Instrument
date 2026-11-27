@@ -30,6 +30,10 @@ public final class CustomSurfacePerformanceGroup {
     }
     private let host: CustomSurfaceEndpointHost
     private var admission: Admission?
+    public enum StopReason: Equatable, Sendable {
+        case requested, admissionLost, clockInvalid, neutralTimeout, portCreation, memberUnavailable(Surface), memberFault(Surface, CustomSurfaceExclusiveDelivery.Retirement?), identityLost(Surface)
+    }
+    public private(set) var stopReason: StopReason?
     private var clock: (() -> Int64)?
     private var startedAt: Int64?
     private var lastClock: Int64?
@@ -63,26 +67,27 @@ public final class CustomSurfacePerformanceGroup {
               members.count <= CustomSurfaceEndpointHost.capacity,
               Set(surfaces).count == members.count, admitsLive() else { return .refused }
         closedEvidence.removeAll()
+        stopReason = nil
         let gate = Admission(admitsLive)
         admission = gate
         for member in members {
             guard let status = host.open(plan: member.plan, permitsNeutralSilence: member.permitsNeutralSilence,
                                          clock: clock, admitsLive: { gate.check() }) else {
-                stop()
+                retire(.portCreation)
                 return phase == .idle ? .rolledBack : .recoveryPending
             }
             ids[member.plan.layout.surface] = status.id
             guard status.phase == .live, gate.check() else {
-                stop()
+                retire(status.phase == .live ? .admissionLost : reason(for: status))
                 return phase == .idle ? .rolledBack : .recoveryPending
             }
         }
         guard statuses.count == members.count, statuses.allSatisfy({ $0.phase == .live }), gate.check() else {
-            stop()
+            retire(.admissionLost)
             return phase == .idle ? .rolledBack : .recoveryPending
         }
         let now = clock()
-        guard now >= 0, gate.check() else { stop(); return phase == .idle ? .rolledBack : .recoveryPending }
+        guard now >= 0, gate.check() else { retire(now < 0 ? .clockInvalid : .admissionLost); return phase == .idle ? .rolledBack : .recoveryPending }
         self.clock = clock
         startedAt = now
         lastClock = now
@@ -97,30 +102,41 @@ public final class CustomSurfacePerformanceGroup {
     public func frame(run: UUID, surface: Surface, contacts: [CustomSurfaceContactProjection.Contact],
                       sequence: UInt64, observedAt: Int64) -> Status? {
         guard runID == run, let id = ids[surface] else { return nil }
-        guard healthy() else { stop(); return nil }
+        if let fault = healthFault() { retire(fault); return nil }
         let result = host.frame(id, surface: surface, contacts: contacts, sequence: sequence, observedAt: observedAt)
-        if result?.phase != .live || !healthy() { stop(); return nil }
+        guard let result else { retire(.memberUnavailable(surface)); return nil }
+        guard result.phase == .live else { retire(reason(for: result)); return nil }
+        if let fault = healthFault() { retire(fault); return nil }
         return result
     }
     public func poll(run: UUID) {
         guard runID == run else { return }
-        guard healthy() else { stop(); return }
+        if let fault = healthFault() { retire(fault); return }
         host.poll()
-        if !healthy() { stop() }
+        if let fault = healthFault() { retire(fault) }
     }
-    private func healthy() -> Bool {
-        guard admission?.check() == true, let clock, let startedAt, let lastClock else { return false }
-        let now = clock()
-        guard now >= lastClock else { return false }
-        self.lastClock = now
+    private func reason(for status: Status) -> StopReason {
+        status.phase == .identityLost ? .identityLost(status.surface) : .memberFault(status.surface, status.retirement)
+    }
+    private func healthFault() -> StopReason? {
         let current = statuses
-        return current.count == ids.count && current.allSatisfy { $0.phase == .live } &&
-            (current.allSatisfy { $0.hasNeutralHandshake } || now - startedAt < Self.neutralTimeoutNS) &&
-            admission?.check() == true
+        for surface in Surface.allCases where ids[surface] != nil {
+            guard let status = current.first(where: { $0.surface == surface }) else { return .memberUnavailable(surface) }
+            if status.phase != .live { return reason(for: status) }
+        }
+        guard admission?.check() == true else { return .admissionLost }
+        guard let clock, let startedAt, let lastClock else { return .clockInvalid }
+        let now = clock()
+        guard now >= lastClock else { return .clockInvalid }
+        self.lastClock = now
+        guard current.allSatisfy({ $0.hasNeutralHandshake }) || now - startedAt < Self.neutralTimeoutNS else { return .neutralTimeout }
+        return admission?.check() == true ? nil : .admissionLost
     }
     /// Retire admission before any cleanup. Automatic stop must not retry
     /// an already failed cleanup; recovery requires a distinct explicit call.
-    public func stop() {
+    public func stop() { retire(.requested) }
+    private func retire(_ reason: StopReason) {
+        if stopReason == nil, runID != nil || admission != nil { stopReason = reason }
         admission?.open = false
         admission = nil
         runID = nil
