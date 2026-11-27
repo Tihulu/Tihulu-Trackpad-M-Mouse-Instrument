@@ -156,10 +156,18 @@ public final class CustomSurfacePerformanceGroup {
     /// identity queries. Read only the other deliveries' local cadence;
     /// never poll, clean, or invoke native APIs from this callback.
     private func peerCadenceFault(excluding surface: Surface) -> StopReason? {
-        guard let clock, let lastClock else { return .clockInvalid }
+        guard let clock, let startedAt, let lastClock else { return .clockInvalid }
         let now = clock()
         guard now >= lastClock else { return .clockInvalid }
         self.lastClock = now
+        // An identity query can cross the group arm deadline before a
+        // wire send. A peer with no frame has no cadence expiry yet.
+        // Ignore the current source's unpublished in-flight handshake;
+        // the other members' statuses are already committed locally.
+        if now - startedAt >= Self.neutralTimeoutNS,
+           statuses.contains(where: { $0.surface != surface && !$0.hasNeutralHandshake }) {
+            return .neutralTimeout
+        }
         for peer in Surface.allCases where peer != surface {
             if let id = ids[peer], !host.cadenceIsCurrent(id, now: now) {
                 return .memberFault(peer, .expiredOrInvalid)

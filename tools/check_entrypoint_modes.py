@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify tracked executable modes without changing the checkout."""
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -12,20 +13,29 @@ ENTRYPOINTS = (
 )
 
 
-def main():
+def check(root):
     raw = subprocess.check_output(
-        ["git", "-C", str(ROOT), "ls-tree", "-r", "-z", "HEAD"])
+        ["git", "-C", str(root), "ls-tree", "-r", "-z", "HEAD", "--", *ENTRYPOINTS])
     modes = {}
     for entry in raw.split(b"\0"):
         if entry:
             metadata, name = entry.split(b"\t", 1)
-            modes[name.decode("utf-8")] = metadata.split()[0].decode("ascii")
+            modes[name] = metadata.split()[0].decode("ascii")
     errors = []
     for path in ENTRYPOINTS:
-        if modes.get(path) != "100755":
-            errors.append(f"{path}: expected Git mode 100755, got {modes.get(path)}")
-        if not (ROOT / path).is_file() or (ROOT / path).is_symlink():
+        mode = modes.get(os.fsencode(path))
+        if mode != "100755":
+            errors.append(f"{path}: expected Git mode 100755, got {mode}")
+        candidate = root / path
+        if not candidate.is_file() or candidate.is_symlink():
             errors.append(f"{path}: missing or not a regular file")
+        elif not os.access(candidate, os.X_OK):
+            errors.append(f"{path}: checkout is not executable")
+    return errors
+
+
+def main():
+    errors = check(ROOT)
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

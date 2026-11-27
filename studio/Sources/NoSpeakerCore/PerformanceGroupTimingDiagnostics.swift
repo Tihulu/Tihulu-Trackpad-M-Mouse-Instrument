@@ -24,8 +24,13 @@ public struct PerformanceGroupTimingDiagnostics: Equatable, Sendable {
         if let previousStart {
             let gap = (start-previousStart)*1000
             peakGapMS = max(peakGapMS,gap)
-            if gap >= 100,gapsAtLeast100MS < Int.max { gapsAtLeast100MS += 1 }
-            if gap >= 350,gapsAtLeast350MS < Int.max { gapsAtLeast350MS += 1 }
+            // Timestamp conversion and subtraction can land just below an
+            // exact boundary. Classify the diagnostic gap at nearest-ns
+            // precision (half a nanosecond in milliseconds), without
+            // changing the reported peak or any live admission deadline.
+            let halfNSInMS = 0.0000005
+            if gap >= 100-halfNSInMS,gapsAtLeast100MS < Int.max { gapsAtLeast100MS += 1 }
+            if gap >= 350-halfNSInMS,gapsAtLeast350MS < Int.max { gapsAtLeast350MS += 1 }
         }
         peakWorkMS = max(peakWorkMS,(end-start)*1000)
         previousStart = start

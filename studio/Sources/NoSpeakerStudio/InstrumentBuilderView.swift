@@ -773,7 +773,8 @@ struct InstrumentBuilderView: View {
                 Stepper("Priority \(route.wrappedValue.priority)", value: route.priority, in: -100...100)
             }
             if ContinuousResponse.isContinuous(route.wrappedValue.destination) {
-                ContinuousResponsePanel(response: route.response, target: route.wrappedValue.destination)
+                ContinuousResponsePanel(response: route.response, target: route.wrappedValue.destination,
+                    permitsRelativeInput: route.wrappedValue.signal.permitsRelativeDisplacement && route.wrappedValue.pedalMode == nil)
             }
             DisclosureGroup(route.wrappedValue.signal == .airStrike ? "Strike sensitivity & velocity" : "Calibration & gate") {
                 VStack(alignment: .leading, spacing: 4) {

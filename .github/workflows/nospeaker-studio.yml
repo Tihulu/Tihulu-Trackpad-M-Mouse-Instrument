@@ -4,7 +4,10 @@ on:
   push:
     branches: [main]
     paths:
+      - 'build.sh'
+      - 'play.sh'
       - 'install-studio.sh'
+      - 'uninstall-studio.sh'
       - 'studio/**'
       - 'tools/**'
       - 'examples/**'
@@ -17,7 +20,10 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - 'build.sh'
+      - 'play.sh'
       - 'install-studio.sh'
+      - 'uninstall-studio.sh'
       - 'studio/**'
       - 'tools/**'
       - 'examples/**'
@@ -41,11 +47,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-')) && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-') || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'agents/'))) && github.event.pull_request.head.sha || github.sha }}
       - name: Record and verify checkout provenance
         id: provenance
         env:
-          EXPECTED_SHA: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-')) && github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_SHA: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-') || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'agents/'))) && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
@@ -54,6 +60,11 @@ jobs:
           echo "Verified checkout: $actual; tree: $(git rev-parse HEAD^{tree})"
       - name: Swift version
         run: swift --version
+      - name: Verify entrypoint modes and regressions
+        run: |
+          python3 ../tools/check_entrypoint_modes.py
+          python3 ../tools/test_entrypoint_modes.py
+          python3 scripts/test_render_app_icon.py
       - name: Remote browser lifecycle tests
         run: node --test scripts/test-remote-browser.cjs
       - name: Verify native fixture inventory
@@ -70,11 +81,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-')) && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-') || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'agents/'))) && github.event.pull_request.head.sha || github.sha }}
       - name: Record and verify checkout provenance
         id: provenance
         env:
-          EXPECTED_SHA: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-')) && github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_SHA: ${{ (github.head_ref == 'qa/app-sdk-integration-20261125' || startsWith(github.head_ref, 'qa/music-') || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'agents/'))) && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
@@ -261,7 +272,7 @@ jobs:
 
   ios-sensor-compile:
     name: iOS mobile sensor compile (experimental)
-    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qa/music-')
+    if: github.event_name == 'pull_request' && (startsWith(github.head_ref, 'qa/music-') || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'agents/mobile-')))
     runs-on: macos-latest
     defaults:
       run:
@@ -303,7 +314,7 @@ jobs:
 
   android-sensor-compile:
     name: Android mobile sensor compile and unit tests (experimental)
-    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'qa/music-')
+    if: github.event_name == 'pull_request' && (startsWith(github.head_ref, 'qa/music-') || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'agents/mobile-')))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

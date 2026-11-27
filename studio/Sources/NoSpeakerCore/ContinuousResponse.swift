@@ -8,21 +8,32 @@ public struct ContinuousResponse: Codable, Equatable, Sendable {
     public var maximum: Double
     public var smoothingMS: Int
     public var release: Double?
+    /// nil preserves legacy absolute position. Reference is explicitly manual until feedback is wired.
+    public var relative: RelativeControlSettings?
     public init(minimum: Double = 0, maximum: Double = 1, smoothingMS: Int = 0,
-                release: Double? = nil) {
+                release: Double? = nil, relative: RelativeControlSettings? = nil) {
         self.minimum = minimum
         self.maximum = maximum
         self.smoothingMS = smoothingMS
         self.release = release
+        self.relative = relative
     }
     public var isValid: Bool {
         minimum.isFinite && maximum.isFinite &&
         (0...1).contains(minimum) && (0...1).contains(maximum) && minimum <= maximum &&
         (0...250).contains(smoothingMS) &&
-        (release.map { $0.isFinite && (0...1).contains($0) } ?? true)
+        (release.map { $0.isFinite && (0...1).contains($0) } ?? true) &&
+        (relative.map { $0.isValid && ($0.effectiveSource != .manual || ($0.reference >= minimum && $0.reference <= maximum)) } ?? true)
     }
     public static func isContinuous(_ target: SensorDestination) -> Bool {
         target.kind == .controlChange || target.kind == .pitchBend
+    }
+    /// Relative displacement is for expressive continuous lanes, not switches,
+    /// bank select, RPN/NRPN, data entry or channel-mode messages.
+    public static func permitsRelative(_ target: SensorDestination) -> Bool {
+        target.isValid && (target.kind == .pitchBend ||
+            (target.kind == .controlChange && !(64...69).contains(target.number) &&
+             ![0,6,32,38,96,97,98,99,100,101].contains(target.number)))
     }
     public static func wireValue(_ normalized: Double, target: SensorDestination) -> Int {
         guard normalized.isFinite else { return defaultRelease(target) }
@@ -53,7 +64,13 @@ public struct ContinuousResponse: Codable, Equatable, Sendable {
     /// curves and ranges are allowed; the winning owner determines live value.
     public static func releaseValues(for routes: [SensorMapping]) -> [SensorDestination:Int]? {
         var values: [SensorDestination:Int] = [:]
+        let relativeTargets = Set(routes.filter { $0.response?.relative != nil }.map(\.destination))
+        var seenRelative: Set<SensorDestination> = []
         for route in routes {
+            // A manually referenced gesture cannot safely take over a shared
+            // destination from another owner with a different current value.
+            if relativeTargets.contains(route.destination),
+               !seenRelative.insert(route.destination).inserted { return nil }
             guard route.isValid else { return nil }
             let target = route.destination
             let value = route.response?.releaseValue(for: target) ?? defaultRelease(target)
