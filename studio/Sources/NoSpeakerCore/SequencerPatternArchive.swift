@@ -4,7 +4,7 @@ import Foundation
 /// playback, changes the active take or restores a transient UI identity.
 public struct SequencerPatternArchive: Equatable, Sendable {
     public enum ArchiveError: Error, Equatable {
-        case invalidSize, invalidSchema, unsupportedVersion
+        case invalidSize, invalidSchema, unsupportedVersion, duplicateKey
     }
 
     private enum Kind: String, Codable, Sendable { case notes, drums }
@@ -95,9 +95,9 @@ public struct SequencerPatternArchive: Equatable, Sendable {
 
     public static func decode(_ data: Data) throws -> Self {
         guard !data.isEmpty, data.count <= maximumBytes else { throw ArchiveError.invalidSize }
+        try validateStructure(data)
         // Reject unknown fields rather than silently dropping unsupported
-        // musical settings. Foundation JSON parsing is not an authorization
-        // parser; this offline format does not promise duplicate-key rejection.
+        // musical settings. This remains an offline editor format.
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ArchiveError.invalidSchema
         }
@@ -135,6 +135,63 @@ public struct SequencerPatternArchive: Equatable, Sendable {
                                           length: decoded.length, hits: cells.map(\.hit)),
                              loop: decoded.loop, groove: decoded.groove)
         }
+    }
+
+    // JSONSerialization and JSONDecoder may resolve duplicate keys differently.
+    // Scan only structure and decoded object keys; Foundation remains the
+    // authority for full JSON grammar and value types. V1 needs at most three
+    // containers (root, cells array, cell object). Bound before parsing.
+    private enum Scope {
+        case object(Set<String>)
+        case array
+    }
+
+    private static func validateStructure(_ data: Data) throws {
+        let bytes = Array(data)
+        guard !bytes.contains(0), String(data: data, encoding: .utf8) != nil else {
+            throw ArchiveError.invalidSchema
+        }
+        func whitespace(_ b: UInt8) -> Bool { b == 32 || b == 9 || b == 10 || b == 13 }
+        var scopes: [Scope] = []
+        var i = 0
+        while i < bytes.count {
+            switch bytes[i] {
+            case 123, 91: // { or [
+                guard scopes.count < 3 else { throw ArchiveError.invalidSchema }
+                scopes.append(bytes[i] == 123 ? .object([]) : .array)
+                i += 1
+            case 125: // }
+                guard case .object? = scopes.popLast() else { throw ArchiveError.invalidSchema }
+                i += 1
+            case 93: // ]
+                guard case .array? = scopes.popLast() else { throw ArchiveError.invalidSchema }
+                i += 1
+            case 34: // quoted string; escaped quotes and braces are not structure
+                let start = i
+                var escaped = false
+                i += 1
+                while i < bytes.count, bytes[i] != 34 {
+                    if bytes[i] == 92 { escaped = true; i += 1 }
+                    i += 1
+                }
+                guard i < bytes.count else { throw ArchiveError.invalidSchema }
+                i += 1
+                let end = i
+                while i < bytes.count, whitespace(bytes[i]) { i += 1 }
+                if i < bytes.count, bytes[i] == 58 { // object key
+                    guard case .object(var keys)? = scopes.last else { throw ArchiveError.invalidSchema }
+                    let key = escaped
+                        ? try JSONDecoder().decode(String.self, from: Data(bytes[start..<end]))
+                        : String(decoding: bytes[(start + 1)..<(end - 1)], as: UTF8.self)
+                    guard !keys.contains(key) else { throw ArchiveError.duplicateKey }
+                    guard keys.count < 9 else { throw ArchiveError.invalidSchema }
+                    keys.insert(key)
+                    scopes[scopes.count - 1] = .object(keys)
+                }
+            default: i += 1
+            }
+        }
+        guard scopes.isEmpty else { throw ArchiveError.invalidSchema }
     }
 
     private static func keys(_ object: [String: Any], required: Set<String>,
