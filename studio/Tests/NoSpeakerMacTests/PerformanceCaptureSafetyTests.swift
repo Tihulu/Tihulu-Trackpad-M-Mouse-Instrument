@@ -84,7 +84,7 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
             -> PerformanceCaptureDiagnosticSnapshot {
             .init(accessibilityGranted:ax,inputMonitoringGranted:listenPermission,
                   eventTapCreated:created,eventTapEnabled:enabled,dedicatedInputThread:thread,
-                  listening:listening,shortcutArmed:armed,pointerCaptured:false,
+                  listening:listening,shortcutArmed:armed,captureLatched:false,
                   keyDownEvents:0,pointerEvents:0,shortcutMatches:0,tapTimeouts:0,
                   tapDisabledByUserInput:0,lastEventTapStatus:"fixture",
                   coalescedPressureSamples:0,physicalMailboxOverflows:0)
