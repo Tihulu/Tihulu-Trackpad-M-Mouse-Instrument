@@ -202,3 +202,25 @@ private let hostContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5, 
     #expect(host.close(second.id)?.phase == .identityLost)
     #expect(wire == [[0x92,60,100]] && disposals == 0)
 }
+
+@Test func customSurfaceHostMeasuresLocalIdentityAndSendSeparately() throws {
+    var now: Int64 = 0
+    var measured: UInt64 = 0
+    var failOff = false
+    let host = CustomSurfaceEndpointHost(backend: .init(create: { name in
+        .init(endpoint: .init(handle: 12, uniqueID: 42, name: name), succeeded: true)
+    }, owns: { _ in measured += 20_000; return true }, send: { _, bytes in
+        measured += 3_000
+        return !failOff || bytes[0] != 0x82
+    }, dispose: { _ in true }), measure: { measured })
+    let opened = try #require(host.open(plan: try hostPlan(), clock: { now }, admitsLive: { true }))
+    _ = host.frame(opened.id, surface: .trackpad, contacts: [], sequence: 1, observedAt: 0)
+    now = 100
+    _ = host.frame(opened.id, surface: .trackpad, contacts: [hostContact], sequence: 2, observedAt: 1)
+    failOff = true
+    #expect(host.close(opened.id)?.phase == .cleanupPending)
+    let evidence = try #require(host.timingEvidence(opened.id))
+    #expect(evidence.maximumIdentityNS == 20_000 && evidence.maximumSendNS == 3_000)
+    #expect(evidence.maximumFrameAgeNS == 99 && evidence.sendAttempts == 2 && evidence.failedSends == 1)
+    #expect(evidence.identityChecks > 0 && evidence.failedIdentityChecks == 0)
+}

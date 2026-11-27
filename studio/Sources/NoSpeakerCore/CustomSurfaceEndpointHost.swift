@@ -30,6 +30,27 @@ public final class CustomSurfaceEndpointHost {
             self.create = create; self.owns = owns; self.send = send; self.dispose = dispose
         }
     }
+    /// Aggregate local API timings, not DAW acknowledgement. Separate from
+    /// Status so UI state changes need not publish every native callback.
+    public struct TimingEvidence: Equatable, Sendable {
+        public fileprivate(set) var identityChecks = 0
+        public fileprivate(set) var failedIdentityChecks = 0
+        public fileprivate(set) var sendAttempts = 0
+        public fileprivate(set) var failedSends = 0
+        public fileprivate(set) var maximumIdentityNS: UInt64 = 0
+        public fileprivate(set) var maximumSendNS: UInt64 = 0
+        public fileprivate(set) var maximumFrameAgeNS: Int64 = 0
+        public var report: String {
+            "Identity checks: \(identityChecks) · failed: \(failedIdentityChecks)\n" +
+            "Local MIDI send attempts: \(sendAttempts) · failed: \(failedSends)\n" +
+            "Max identity query: \(maximumIdentityNS / 1_000) µs\n" +
+            "Max native send: \(maximumSendNS / 1_000) µs\n" +
+            "Max frame age at host entry: \(maximumFrameAgeNS / 1_000) µs"
+        }
+        fileprivate static func increment(_ value: inout Int) {
+            if value < Int.max { value += 1 }
+        }
+    }
     public enum Phase: Equatable, Sendable {
         case live, retired, cleanupPending, disposalPending, identityLost, closed
     }
@@ -49,8 +70,13 @@ public final class CustomSurfaceEndpointHost {
         var lease: CustomSurfaceEndpointReservations.Lease?
         var phase: Phase = .live
         var report: CustomSurfaceExclusiveDelivery.Report?
-        init(id: UUID, endpoint: Endpoint, surface: CustomSurfacePadLayout.Surface) {
+        var timing = TimingEvidence()
+        let clock: () -> Int64
+        let measure: () -> UInt64
+        init(id: UUID, endpoint: Endpoint, surface: CustomSurfacePadLayout.Surface,
+             clock: @escaping () -> Int64, measure: @escaping () -> UInt64) {
             self.id = id; self.endpoint = endpoint; self.surface = surface
+            self.clock = clock; self.measure = measure
         }
         var status: Status {
             .init(id: id, name: endpoint.name, phase: phase, surface: surface,
@@ -58,11 +84,27 @@ public final class CustomSurfaceEndpointHost {
                   hasNeutralHandshake: phase == .live && report?.hasNeutralHandshake == true)
         }
         func validate(_ backend: Backend) -> Bool {
-            guard phase != .identityLost, backend.owns(endpoint) else {
+            guard phase != .identityLost else { return false }
+            let started = measure()
+            let owned = backend.owns(endpoint)
+            let ended = measure()
+            TimingEvidence.increment(&timing.identityChecks)
+            if ended >= started { timing.maximumIdentityNS = max(timing.maximumIdentityNS, ended - started) }
+            if !owned { TimingEvidence.increment(&timing.failedIdentityChecks) }
+            guard owned else {
                 phase = .identityLost
                 return false
             }
             return true
+        }
+        func transmit(_ bytes: [UInt8], backend: Backend) -> Bool {
+            let started = measure()
+            let sent = backend.send(endpoint, bytes)
+            let ended = measure()
+            TimingEvidence.increment(&timing.sendAttempts)
+            if !sent { TimingEvidence.increment(&timing.failedSends) }
+            if ended >= started { timing.maximumSendNS = max(timing.maximumSendNS, ended - started) }
+            return sent
         }
         func record(_ next: CustomSurfaceExclusiveDelivery.Report) {
             report = next
@@ -72,9 +114,13 @@ public final class CustomSurfaceEndpointHost {
     }
     public static let capacity = 5
     private let backend: Backend
+    private let measure: () -> UInt64
     private let registry = CustomSurfaceEndpointReservations()
     private var entries: [UUID: Entry] = [:]
-    public init(backend: Backend) { self.backend = backend }
+    public init(backend: Backend, measure: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
+        self.backend = backend; self.measure = measure
+    }
+    public func timingEvidence(_ id: UUID) -> TimingEvidence? { entries[id]?.timing }
     public var statuses: [Status] { entries.values.map(\.status).sorted { $0.id.uuidString < $1.id.uuidString } }
 
     /// Returns nil only when no owned handle was created or capacity/admission
@@ -99,7 +145,7 @@ public final class CustomSurfaceEndpointHost {
                 if report.outstanding.isEmpty { collision.lease = nil }
             }
         }
-        let entry = Entry(id: id, endpoint: endpoint, surface: plan.layout.surface)
+        let entry = Entry(id: id, endpoint: endpoint, surface: plan.layout.surface, clock: clock, measure: measure)
         entries[id] = entry
         guard created.succeeded, endpoint.uniqueID != 0, endpoint.name == name, collisions.isEmpty,
               entry.validate(backend) else {
@@ -113,7 +159,7 @@ public final class CustomSurfaceEndpointHost {
             send: { _, _, command in
                 guard entry.phase != .identityLost,
                       let bytes = CustomSurfaceMIDIMessage.bytes(for: command) else { return false }
-                return backend.send(endpoint, bytes)
+                return entry.transmit(bytes, backend: backend)
             })
         if entry.lease == nil, entry.phase != .identityLost { entry.phase = .retired }
         return entry.status
@@ -125,7 +171,12 @@ public final class CustomSurfaceEndpointHost {
                       contacts: [CustomSurfaceContactProjection.Contact],
                       sequence: UInt64, observedAt: Int64) -> Status? {
         guard let entry = entries[id], entry.surface == surface else { return nil }
-        guard entry.phase == .live, let lease = entry.lease,
+        guard entry.phase == .live else { return entry.status }
+        let now = entry.clock()
+        if observedAt >= 0, now >= observedAt {
+            entry.timing.maximumFrameAgeNS = max(entry.timing.maximumFrameAgeNS, now - observedAt)
+        }
+        guard let lease = entry.lease,
               let report = registry.frame(lease, contacts: contacts, sequence: sequence, observedAt: observedAt)
         else { return entries[id]?.status }
         entry.record(report)
