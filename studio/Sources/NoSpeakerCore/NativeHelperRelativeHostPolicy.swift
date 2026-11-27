@@ -1,6 +1,14 @@
 /// Shared policy for a serialized legacy CoreMIDI host. Reserved channels
 /// stay excluded from MPE allocation until the lease is actually finished.
 public enum NativeHelperRelativeHostPolicy {
+    /// An empty logical transaction is not proof of successful full Stop.
+    /// On a live healthy transport, unrelated active owners may still have
+    /// ordinary release obligations; do not treat those as shutdown debt.
+    public static func permitsEmptyTerminalClosure(reservationsEmpty: Bool,
+        transportReady: Bool, shutdownCleanupPending: Bool, recoveryRequired: Bool) -> Bool {
+        reservationsEmpty && !recoveryRequired && (transportReady || !shutdownCleanupPending)
+    }
+
     public static func reservedChannels(targets: Set<SensorDestination>) -> Set<Int> {
         Set(targets.map(\.channel))
     }

@@ -2173,7 +2173,12 @@ private struct MIDIHelperView: View {
                             vibratoCC: vibratoCC,
                             expressionCC: expressionCC,
                             sendToDAW: sendToDAW,
-                            surfaceSelection: surfaceSelection
+                            surfaceSelection: surfaceSelection,
+                            targetChannel: targetChannel,
+                            trackpadSustainEnabled: sustainEnabled && trackpadSustainEnabled,
+                            magicMouseSustainEnabled: sustainEnabled && magicMouseSustainEnabled,
+                            sharePedalSurface: sharePedalSurface ?? false,
+                            configureReceiverBendRange: configureReceiverBendRange ?? false
                         )
 
                         GroupBox("Gesture Mapping") {
@@ -2277,6 +2282,45 @@ private struct RelativeUIFragment: View {
     let expressionCC: Int
     let sendToDAW: Bool
     let surfaceSelection: TouchSurfaceSelection
+    let targetChannel: Int
+    let trackpadSustainEnabled: Bool
+    let magicMouseSustainEnabled: Bool
+    let sharePedalSurface: Bool
+    let configureReceiverBendRange: Bool
+
+    private var preflightFailure: NativeHelperRelativeStartRequest.Failure? {
+        let source: NativeHelperRelativeClutch.Surface?
+        let usesSustain: Bool
+        switch surfaceSelection {
+        case .trackpad: source = .trackpad; usesSustain = trackpadSustainEnabled
+        case .magicMouse: source = .magicMouse; usesSustain = magicMouseSustainEnabled
+        case .both: source = nil; usesSustain = false
+        }
+        var axes: Set<NativeHelperRelativeClutch.Axis> = []
+        if pitchBendEnabled { axes.insert(.x) }
+        if vibratoEnabled { axes.insert(.y) }
+        if expressionEnabled { axes.insert(.contactSize) }
+        let result = NativeHelperRelativeStartRequest.resolve(selectedSurface: source,
+            orientation: studio.magicMouseOrientation, sendToDAW: sendToDAW, enabled: axes,
+            selectedSurfaceUsesSustain: usesSustain, sharePedalSurface: sharePedalSurface,
+            configureReceiverBendRange: configureReceiverBendRange, oneBasedChannel: targetChannel,
+            vibratoCC: vibratoCC, expressionCC: expressionCC, settings: relativeDraft)
+        if case .failure(let failure) = result { return failure }
+        return nil
+    }
+
+    private func preflightMessage(_ failure: NativeHelperRelativeStartRequest.Failure) -> String {
+        switch failure {
+        case .singleSurfaceRequired: return "Choose one surface, not Both."
+        case .midiOutputRequired: return "Enable MIDI Out."
+        case .expressiveAxisRequired: return "Enable at least one expressive axis."
+        case .pedalSharingRequired: return "Disable sustain on the selected surface or explicitly enable pedal sharing."
+        case .automaticBendRangeUnsupported: return "Disable automatic receiver bend range (RPN) for Relative pitch bend."
+        case .channelOutOfRange: return "Choose a MIDI channel from 1 to 16."
+        case .invalidManualSettings: return "Reset or correct the manual reference, sensitivity and smoothing settings."
+        case .invalidExpressiveTargets: return "Choose valid, distinct expressive MIDI targets."
+        }
+    }
 
     var body: some View { relativeManualPanel }
 
@@ -2303,18 +2347,18 @@ private struct RelativeUIFragment: View {
                     .disabled(studio.relativeHelperArmed)
                     .padding(.top, 6)
                 }
-                if surfaceSelection == .both || !sendToDAW || !(pitchBendEnabled || vibratoEnabled || expressionEnabled) {
-                    Text("Relative requires one surface, MIDI Out and at least one expressive axis.")
+                if let failure = preflightFailure {
+                    Text(preflightMessage(failure))
                         .font(.caption).foregroundStyle(.orange)
                 }
                 HStack {
                     Button("Enable Relative") {
-                        _ = studio.enableRelativeMIDIHelper(settings: relativeDraft)
+                        if !studio.enableRelativeMIDIHelper(settings: relativeDraft), studio.lastError == nil {
+                            studio.lastError = "Relative could not arm. Check the running Helper, device connection and MIDI cleanup status."
+                        }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!studio.midiHelperRunning || studio.relativeHelperArmed ||
-                        surfaceSelection == .both || !sendToDAW || !relativeDraft.isValid ||
-                        !(pitchBendEnabled || vibratoEnabled || expressionEnabled))
+                    .disabled(!studio.midiHelperRunning || studio.relativeHelperArmed || preflightFailure != nil)
                     Button(studio.relativeHelperArmed ? "Stop Relative / Helper" : "Stop Helper / retry cleanup") {
                         studio.stopMIDIHelper()
                     }
