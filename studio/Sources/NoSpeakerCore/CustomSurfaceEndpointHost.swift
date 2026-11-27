@@ -188,6 +188,10 @@ public final class CustomSurfaceEndpointHost {
         entry.record(report)
         return entry.status
     }
+    public func cadenceIsCurrent(_ id: UUID, now: Int64) -> Bool {
+        guard let entry = entries[id], entry.phase == .live, let lease = entry.lease else { return false }
+        return registry.cadenceIsCurrent(lease, now: now)
+    }
     public func poll() {
         for entry in entries.values where entry.phase == .live {
             if let lease = entry.lease, let report = registry.poll(lease) { entry.record(report) }

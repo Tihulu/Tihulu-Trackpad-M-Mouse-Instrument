@@ -101,9 +101,14 @@ public struct CustomSurfaceContactProjection: Sendable {
     /// Independent watchdog. An expired or regressed clock retires the
     /// source permanently; callers must release its owners and explicitly
     /// create a fresh projection after neutral.
+    /// Read-only cadence check for a serialized peer coordinator. No
+    /// renewal of the receipt clock and no fabricated neutral frame.
+    public func cadenceIsCurrent(now:Int64)->Bool {
+        !retired && now>=0 && (lastReceipt.map({now >= $0}) ?? true) &&
+            (lastObservation.map({safelyIdle || now-$0<MobileAirSendGate.freshNS}) ?? true)
+    }
     public mutating func poll(now:Int64)->Watchdog {
-        guard !retired,now>=0,lastReceipt.map({now >= $0}) ?? true,
-              lastObservation.map({safelyIdle || now-$0<MobileAirSendGate.freshNS}) ?? true else{
+        guard cadenceIsCurrent(now: now) else{
             _=retire()
             return .init(retired:true)
         }

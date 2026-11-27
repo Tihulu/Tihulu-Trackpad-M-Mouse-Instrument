@@ -45,6 +45,9 @@ public final class CustomSurfaceEndpointReservations {
                       sequence: UInt64, observedAt: Int64) -> CustomSurfaceExclusiveDelivery.Report? {
         session(lease)?.delivery.frame(contacts, sequence: sequence, observedAt: observedAt)
     }
+    public func cadenceIsCurrent(_ lease: Lease, now: Int64) -> Bool {
+        session(lease)?.delivery.cadenceIsCurrent(now: now) == true
+    }
     public func poll(_ lease: Lease) -> CustomSurfaceExclusiveDelivery.Report? {
         session(lease)?.delivery.poll()
     }

@@ -130,6 +130,13 @@ public final class CustomSurfacePerformanceGroup {
         guard now >= lastClock else { return .clockInvalid }
         self.lastClock = now
         guard current.allSatisfy({ $0.hasNeutralHandshake }) || now - startedAt < Self.neutralTimeoutNS else { return .neutralTimeout }
+        // A peer can expire between watchdog ticks. Check its actual last
+        // receipt before processing another member; no native IPC here.
+        for surface in Surface.allCases {
+            if let id = ids[surface], !host.cadenceIsCurrent(id, now: now) {
+                return .memberFault(surface, .expiredOrInvalid)
+            }
+        }
         return admission?.check() == true ? nil : .admissionLost
     }
     /// Retire admission before any cleanup. Automatic stop must not retry

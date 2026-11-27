@@ -139,6 +139,9 @@ public final class CustomSurfaceExclusiveDelivery {
         activePadIDs=Set(snapshot.intents.map(\.padID))
         return report(count)
     }
+    public func cadenceIsCurrent(now:Int64)->Bool {
+        retirement == nil && (lastClock.map { now >= $0 } ?? true) && projection.cadenceIsCurrent(now: now)
+    }
     public func poll()->Report {
         guard retirement==nil else{return report(0)}
         guard admits(),ownsCleanupEndpoint(),admits() else{return retire(.admissionDenied)}
