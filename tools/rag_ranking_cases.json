@@ -1,0 +1,168 @@
+{
+  "development": [
+    {
+      "id": "dev-fence",
+      "scope": "engine",
+      "language": "en",
+      "query": "Haptic source fence invalidates stale lease submissions",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/HapticSourceFence.swift"
+      ]
+    },
+    {
+      "id": "dev-wire",
+      "scope": "engine",
+      "language": "tr",
+      "query": "Remote flat JSON duplicate escaped aliases nested objects reject",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/RemoteFlatJSON.swift"
+      ]
+    },
+    {
+      "id": "dev-keys",
+      "scope": "engine",
+      "language": "de",
+      "query": "Physical keyboard scale map: unmapped keys and original pitch unlock",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/PhysicalKeyboardScaleMap.swift"
+      ]
+    },
+    {
+      "id": "dev-editor",
+      "scope": "app",
+      "language": "en",
+      "query": "Custom surface pad editor offline draft channel trackpad magic mouse",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/CustomSurfacePadEditor.swift"
+      ]
+    },
+    {
+      "id": "dev-compose",
+      "scope": "app",
+      "language": "tr",
+      "query": "Smart Compose note melody seed ve complexity seçim paneli",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/PatternComposerPanel.swift"
+      ]
+    },
+    {
+      "id": "dev-preview",
+      "scope": "app",
+      "language": "de",
+      "query": "Physical keyboard scale preview EDO white keys ohne MIDI subscription",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/PhysicalKeyboardScalePreview.swift"
+      ]
+    },
+    {
+      "id": "dev-budget",
+      "scope": "docs",
+      "language": "en",
+      "query": "Remote session budget reserves router slots and refuses peer admission",
+      "expected_paths": [
+        "docs/REMOTE_R9_SESSION_BUDGET.md"
+      ]
+    },
+    {
+      "id": "dev-consent",
+      "scope": "docs",
+      "language": "tr",
+      "query": "Invitation consent default off MIDI destination disclosure iptal",
+      "expected_paths": [
+        "docs/REMOTE_R9_MAPPING_CONSENT_UI.md"
+      ]
+    },
+    {
+      "id": "dev-gamepad",
+      "scope": "docs",
+      "language": "de",
+      "query": "Native gamepad value change callbacks and watchdog polling performance",
+      "expected_paths": [
+        "docs/GAMEPAD_FAST_PERFORMANCE.md"
+      ]
+    }
+  ],
+  "evaluation": [
+    {
+      "id": "eval2-port",
+      "scope": "engine",
+      "language": "en",
+      "query": "How does a transactional group MIDI source registry track handles that could not be disposed?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/PerformanceGroupPortRegistry.swift"
+      ]
+    },
+    {
+      "id": "eval2-string",
+      "scope": "engine",
+      "language": "tr",
+      "query": "Sanal telleri geçerken histerezis ile ilk örnek sadece algılayıcıyı hazırlıyor mu?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/AirStringCrossing.swift"
+      ]
+    },
+    {
+      "id": "eval2-attacks",
+      "scope": "engine",
+      "language": "de",
+      "query": "Welche begrenzte Warteschlange bewahrt kurze haptische Anschläge zwischen zwei Aktuator-Ticks?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/HapticAttackBuffer.swift"
+      ]
+    },
+    {
+      "id": "eval2-widgets",
+      "scope": "app",
+      "language": "en",
+      "query": "Which editor can rename and reorder widgets or pair horizontal and vertical axes without changing routing?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/PerformanceControlsView.swift"
+      ]
+    },
+    {
+      "id": "eval2-camera",
+      "scope": "app",
+      "language": "tr",
+      "query": "Android kamera kimliği, odak uzaklıkları, zoom ve DEPTH16 desteği nasıl listeleniyor?",
+      "expected_paths": [
+        "studio/mobile-android/src/main/java/com/tihulu/mobile/air/CameraInventory.kt"
+      ]
+    },
+    {
+      "id": "eval2-lease",
+      "scope": "app",
+      "language": "de",
+      "query": "Wo endet die Android Touch-Lebensdauer bei verlorenem Fensterfokus oder einem ausgebliebenen Lebenszeichen?",
+      "expected_paths": [
+        "studio/mobile-android/src/main/java/com/tihulu/mobile/air/MobileTouchLiveLease.kt"
+      ]
+    },
+    {
+      "id": "eval2-short",
+      "scope": "docs",
+      "language": "en",
+      "query": "Why can a complete down/up between motor ticks disappear and what best-effort mitigation exists?",
+      "expected_paths": [
+        "docs/HAPTIC_SHORT_ATTACKS.md"
+      ]
+    },
+    {
+      "id": "eval2-number",
+      "scope": "docs",
+      "language": "tr",
+      "query": "Ağ mesajındaki pasif pedal değeri neden ondalıklı sıfır değil tam sayı sıfır olmalı?",
+      "expected_paths": [
+        "docs/REMOTE_R9_NUMERIC_WIRE.md"
+      ]
+    },
+    {
+      "id": "eval2-native",
+      "scope": "docs",
+      "language": "de",
+      "query": "Welche Regeln gelten bei der Vergabe eindeutiger CoreMIDI-Quellen-IDs und der Registrierung von Gruppenports?",
+      "expected_paths": [
+        "docs/PERFORMANCE_GROUP_NATIVE_MIDI_PORTS.md"
+      ]
+    }
+  ]
+}

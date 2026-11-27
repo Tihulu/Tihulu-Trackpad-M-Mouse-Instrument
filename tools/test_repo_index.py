@@ -279,6 +279,58 @@ class RepositoryIndexTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "matrix/index identity mismatch"):
                 rag_matrix.validate_reuse_matrix(self.repo, previous, identity)
 
+    def test_cache_rejects_replaced_revision_and_conflicting_input_vectors(self):
+        self.build()
+        doc = json.loads(self.index.read_text())
+        identity, recipe = "a" * 64, {"version": 1, "dimension": 2}
+        doc["metadata"].update(mode="semantic", model_sha256=identity,
+                               dimension=2, embedding_recipe=recipe)
+        for row in doc["chunks"]:
+            row["embedding"] = [0.6, 0.8]
+        duplicate = dict(doc["chunks"][0])
+        doc["chunks"].append(duplicate)
+        self.index.write_text(json.dumps(doc))
+        # Actual committed fixture, not a mocked source verification.
+        self.assertEqual(len(repo_index.reuse_vectors(self.repo, self.index, "all",
+                                                      identity, recipe, self.commit)), 2)
+        self.git("commit", "--allow-empty", "-qm", "other valid revision")
+        newer = self.git("rev-parse", "HEAD").stdout.strip()
+        with self.assertRaisesRegex(ValueError, "commit differs"):
+            repo_index.reuse_vectors(self.repo, self.index, "all", identity, recipe, newer)
+        duplicate["embedding"] = [0.8, 0.6]
+        self.index.write_text(json.dumps(doc))
+        with self.assertRaisesRegex(ValueError, "Conflicting embeddings"):
+            repo_index.reuse_vectors(self.repo, self.index, "all", identity, recipe, self.commit)
+
+    def test_rank_profiles_compare_frozen_case_groups(self):
+        path = self.repo / "README.md"
+        path.write_text("# MIDI sustain\n")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "ranking fixture")
+        rev = self.git("rev-parse", "HEAD").stdout.strip()
+        index = self.root / "docs.json"
+        repo_index.build(SimpleNamespace(repo=self.repo, ref=rev, scope="docs",
+                                         out=index, model_dir=None))
+        case = {"id": "dev", "scope": "docs", "language": "en",
+                "query": "MIDI", "expected_paths": ["README.md"]}
+        other = dict(case, id="eval", query="sustain")
+        dataset = self.root / "ranking.json"
+        dataset.write_text(json.dumps({"development": [case], "evaluation": [other]}))
+        out = self.root / "ranking"
+        out.mkdir()
+        args = SimpleNamespace(k=8, max_per_file=3)
+        result = rag_matrix.compare_lexical_profiles(self.repo, rev, index, "docs",
+                                                     args, out, dataset)
+        self.assertEqual(set(result), {"development", "evaluation"})
+        self.assertNotEqual(result["development"]["legacy"]["cases_sha256"],
+                            result["evaluation"]["legacy"]["cases_sha256"])
+        for group in result.values():
+            self.assertEqual(group["legacy"]["cases_sha256"], group["file-first"]["cases_sha256"])
+            self.assertEqual(group["file-first"]["file_hit_rate"], 1)
+            self.assertTrue((out / group["file-first"]["report"]).is_file())
+        with self.assertRaises(ValueError):
+            rag_benchmark.load_cases(dataset, "unknown")
+
     def test_matrix_pins_revision_and_reports_unrun_vector_cells(self):
         cases = []
         for scope, relative in (("engine","studio/Sources/NoSpeakerCore/Engine.swift"),
@@ -394,6 +446,21 @@ class SemanticContractTests(unittest.TestCase):
         self.assertEqual([r["path"] for _,r in diverse_results(ranked,3,1)],
                          ["docs/overview.md","docs/MAC_HARDWARE_ACCEPTANCE.md"])
         self.assertEqual(len(diverse_results(ranked,3,2)),3)
+
+    def test_file_first_preserves_best_chunks_and_caps(self):
+        def row(path, start):
+            return {"path":path, "blob":"a"*40, "start":start, "end":start}
+        a, a2, a3 = row("a.swift", 1), row("a.swift", 2), row("a.swift", 3)
+        b, c = row("b.swift", 1), row("c.swift", 1)
+        ranked = [(10,a), (9,a), (8,a2), (7,a3), (6,b), (5,c)]
+        legacy = diverse_results(ranked, 3, 3)
+        candidate = diverse_results(ranked, 3, 3, file_first=True)
+        self.assertEqual([r["path"] for _,r in legacy], ["a.swift"] * 3)
+        self.assertEqual(candidate, [(10,a), (6,b), (5,c)])
+        self.assertEqual(diverse_results(ranked, 5, 2, file_first=True),
+                         [(10,a), (6,b), (5,c), (8,a2)])
+        self.assertEqual(diverse_results(ranked[:4], 8, 2, file_first=True),
+                         [(10,a), (8,a2)])
 
     def test_rank_fusion_uses_ranks_and_deduplicates(self):
         a = {"path":"a.swift","blob":"a"*40,"start":1,"end":1}

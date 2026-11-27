@@ -143,3 +143,17 @@ python3 tools/rag_matrix.py --repo . --ref HEAD --out-dir "$work/original" --cur
 The second suite reopens the verified index for each measured mode; setup costs are separate from query timing. A missing expected source in either suite is COVERAGE_FAIL; a rank miss is measured quality evidence, not a coverage failure. Six vector cells remain NOT_RUN if no explicitly trusted local model is selected. No model is downloaded. The fixed suite is small, author-judged and file-level, not answer or hardware correctness.
 
 For matrix reuse, the completed local manifest must declare all nine measured cells, the matching model fingerprint and one committed source revision. Each of the three semantic indices must match that revision, scope, mode and model before reuse; existing recipe, Git-source and unit-vector checks still apply during build. A syntactically valid index from a different matrix revision is refused. This is consistency checking, not a signature or proof that cached vector values are authentic; use only trusted local snapshots. Rebuild from scratch when incompatible. Do not publish indices or vectors.
+
+
+## Experimental lexical file discovery profile (RAG-02)
+
+The existing lexical score and ordering remain the default (`--lexical-profile legacy`). For file discovery, opt in to `--lexical-profile file-first`: the best ranked chunk from every distinct file precedes additional chunks, with existing deterministic tie breaking, total chunk and per-file bounds unchanged. Scores themselves are unchanged, so output order may not be descending by score in this profile. This is not a new embedding method or a default change; collecting multiple adjacent chunks from a known file may benefit from legacy ordering. Semantic and hybrid modes reject a nonlegacy lexical profile.
+
+```sh
+python3 tools/repo_index.py search --repo . --expect-ref HEAD --index "$work/engine.json" --query "MIDI owner cleanup" --lexical-profile file-first
+python3 tools/rag_benchmark.py --repo . --expect-ref HEAD --index "$work/engine.json" --scope engine --cases-file tools/rag_ranking_cases.json --case-group development --lexical-profile file-first
+```
+
+The ordinary matrix runs paired legacy/file-first lexical comparisons for a distinct development group and a fresh evaluation group (nine queries each, three per scope; frozen before the candidate change). The original curated and first held-out measurements stay separate and use legacy ranking. Group fingerprints hash the selected canonical JSON array; standalone case-file fingerprints still hash exact bytes. Both profiles use the same pinned corpus, cases, cutoff and per-file cap. Reports are private; the CI summary contains aggregates only. Treat the small author-judged evaluation as evidence, not broad generalization. Do not select new parameters against evaluation outcomes and then call those results held-out. The optional `--curated-only` flag disables the extra evaluations.
+
+Matrix cache reuse now carries the validated previous commit into the actual index read, rather than trusting only the earlier manifest check. Cache entries with the same path and exact text but conflicting vectors are rejected; rebuild without reuse on inconsistency, including possible nondeterministic model output. This is an additional fail-closed consistency check, not vector authenticity or real model equivalence. No model acquisition, source transfer, real-time inference or native behavior is introduced.

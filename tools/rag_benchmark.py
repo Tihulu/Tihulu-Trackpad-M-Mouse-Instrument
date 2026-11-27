@@ -13,14 +13,22 @@ import repo_index
 
 CASES = Path(__file__).with_name("rag_benchmark_cases.json")
 HELDOUT_CASES = Path(__file__).with_name("rag_heldout_cases.json")
+RANKING_CASES = Path(__file__).with_name("rag_ranking_cases.json")
 
 
-def load_cases(path):
+def load_cases(path, group=None):
     with Path(path).open("rb") as stream:
         data = stream.read(65537)
     if len(data) > 65536:
         raise ValueError("Case set exceeds size limit")
     cases = json.loads(data)
+    if group is not None:
+        if group not in ("development", "evaluation") or not isinstance(cases, dict):
+            raise ValueError("Invalid ranking case group")
+        cases = cases.get(group)
+        # Fingerprint the selected group independently of the other group.
+        data = json.dumps(cases, ensure_ascii=True, sort_keys=True,
+                          separators=(",", ":"), allow_nan=False).encode("utf-8")
     if not isinstance(cases, list) or not 1 <= len(cases) <= 256:
         raise ValueError("Invalid case set size")
     seen = set()
@@ -46,7 +54,8 @@ def load_cases(path):
 
 
 def run(args):
-    cases, cases_sha256 = load_cases(getattr(args, "cases_file", None) or CASES)
+    cases, cases_sha256 = load_cases(getattr(args, "cases_file", None) or CASES,
+                                     getattr(args, "case_group", None))
     selected = [case for case in cases if case["scope"] == args.scope]
     if not selected or not 1 <= args.k <= 50 or not 1 <= args.max_per_file <= 50:
         raise ValueError("Invalid scope or rank limit")
@@ -54,7 +63,8 @@ def run(args):
         raise ValueError("Semantic and hybrid require --model-dir; lexical does not")
     options = SimpleNamespace(repo=args.repo, expect_ref=args.expect_ref,
                               index=args.index, model_dir=args.model_dir,
-                              hybrid=args.mode == "hybrid", limit=args.k, max_per_file=args.max_per_file, query="")
+                              hybrid=args.mode == "hybrid", limit=args.k, max_per_file=args.max_per_file, query="",
+                              lexical_profile=getattr(args, "lexical_profile", "legacy"))
     started = time.monotonic()
     prepared = repo_index.prepare_search(options)
     setup_ms = round((time.monotonic() - started) * 1000, 2)
@@ -70,6 +80,8 @@ def run(args):
         started = time.monotonic()
         response = repo_index.search_prepared(prepared, options)
         elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+        if response["lexical_profile"] != (options.lexical_profile if args.mode == "lexical" else None):
+            raise ValueError("Benchmark ranking profile mismatch")
         # Count distinct files, not repeated chunks of one file. The
         # retrieval cutoff itself remains k chunks, as in the SDK.
         paths = list(dict.fromkeys(row["path"] for row in response["results"]))
@@ -81,7 +93,8 @@ def run(args):
     count = len(results)
     return {"schema": 1, "commit": meta["commit"], "scope": args.scope,
             "mode": args.mode, "model_sha256": meta["model_sha256"] if args.model_dir else None,
-            "source_verified": True, "cases_sha256": cases_sha256, "k_chunks": args.k, "max_per_file": args.max_per_file, "cases": count,
+            "source_verified": True, "lexical_profile": options.lexical_profile if args.mode == "lexical" else None,
+            "case_group": getattr(args, "case_group", None), "cases_sha256": cases_sha256, "k_chunks": args.k, "max_per_file": args.max_per_file, "cases": count,
             "setup_ms": setup_ms, "median_query_ms": statistics.median(r["query_ms"] for r in results),
             "file_hit_rate": sum(r["first_file_rank"] is not None for r in results) / count,
             "file_mrr": sum(1 / r["first_file_rank"] if r["first_file_rank"] else 0 for r in results) / count,
@@ -99,6 +112,8 @@ def main():
     parser.add_argument("--mode", choices=("lexical", "semantic", "hybrid"), default="lexical")
     parser.add_argument("--model-dir")
     parser.add_argument("--cases-file", help="Explicit independent JSON case set; default curated cases")
+    parser.add_argument("--case-group", choices=("development", "evaluation"))
+    parser.add_argument("--lexical-profile", choices=("legacy", "file-first"), default="legacy")
     parser.add_argument("--k", type=int, default=8)
     parser.add_argument("--max-per-file", type=int, default=3)
     args = parser.parse_args()
