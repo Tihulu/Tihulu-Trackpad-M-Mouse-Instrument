@@ -81,10 +81,9 @@ final class MIDIProcessClient: @unchecked Sendable {
         let status = MIDIClientCreateWithBlock(
             "Tihulu Trackpad & M. Mouse Instrument" as CFString, &newClient
         ) { @Sendable _ in }
-        guard status == noErr,newClient != 0 else {
-            // A successful status with a null handle is not an admitted
-            // client. Do not cache it or attempt to use it.
-            throw MIDIHapticError.client(status == noErr ? -1 : status)
+        if let failure = LegacyRecoveryPolicy.endpointCreationFailure(status: status, handle: newClient) {
+            // Do not cache an invalid client or attempt to use it.
+            throw MIDIHapticError.client(failure)
         }
         retainedClient = newClient
         return newClient
@@ -261,12 +260,16 @@ public final class MIDIHapticService: @unchecked Sendable {
         ) { [weak self] eventList, _ in
             self?.receive(eventList)
         }
-        guard status == noErr else { stop(); throw MIDIHapticError.destination(status) }
+        if let failure = LegacyRecoveryPolicy.endpointCreationFailure(status: status, handle: newDestination) {
+            stop(); throw MIDIHapticError.destination(failure)
+        }
         destination = newDestination
 
         var newSource = MIDIEndpointRef()
         status = MIDISourceCreate(client, "NoSpeaker Touch MIDI Out" as CFString, &newSource)
-        guard status == noErr else { stop(); throw MIDIHapticError.source(status) }
+        if let failure = LegacyRecoveryPolicy.endpointCreationFailure(status: status, handle: newSource) {
+            stop(); throw MIDIHapticError.source(failure)
+        }
         virtualSource = newSource
 
         var newInput = MIDIPortRef()
@@ -278,7 +281,9 @@ public final class MIDIHapticService: @unchecked Sendable {
         ) { [weak self] eventList, _ in
             self?.receive(eventList)
         }
-        guard status == noErr else { stop(); throw MIDIHapticError.inputPort(status) }
+        if let failure = LegacyRecoveryPolicy.endpointCreationFailure(status: status, handle: newInput) {
+            stop(); throw MIDIHapticError.inputPort(failure)
+        }
         inputPort = newInput
 
         for index in 0..<MIDIGetNumberOfSources() {

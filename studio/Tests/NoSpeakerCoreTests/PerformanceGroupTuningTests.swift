@@ -61,9 +61,13 @@ private func tunedGroup(_ source:SensorSource,id:UUID = UUID(),channel:Int = 3) 
         try PerformanceGroupTuningPlan(profile:.init(groups:[group]),tuning:[group.id:spec])
     }
     group = tunedGroup(.gamepad1)
+    let pitchClasses = [0, 2, 4, 5, 7, 9, 11]
     group.patch.routes = (0..<16).map { index in
-        .init(id:"n"+String(index),source:.gamepad1,signal:.padA,
-              destination:.init(.note,channel:3,number:36+(index/7)*12+[0,2,4,5,7,9,11][index%7]))
+        let octave = index / pitchClasses.count
+        let pitchClass = pitchClasses[index % pitchClasses.count]
+        let note = 36 + octave * 12 + pitchClass
+        return .init(id:"n"+String(index),source:.gamepad1,signal:.padA,
+                     destination:.init(.note,channel:3,number:note))
     }
     #expect(throws:MIDIClipError.tuningCapacity) {
         try PerformanceGroupTuningPlan(profile:.init(groups:[group]),tuning:[group.id:spec])
