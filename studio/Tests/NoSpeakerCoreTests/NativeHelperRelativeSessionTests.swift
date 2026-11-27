@@ -4,18 +4,21 @@ import Testing
 
 private typealias Session = NativeHelperRelativeSession
 private typealias Clutch = NativeHelperRelativeClutch
+private let registration = UUID()
 private struct Wire {
     var calls: [String] = []
     var beginOK = true, moveOK = true, clean = true, permitted = true
 }
 private func session(_ token: UUID, source: Clutch.Surface = .magicMouse) throws -> Session {
-    try #require(Session(source: source, monitor: token, afterSequence: 10, maximumAge: 0.125,
+    try #require(Session(source: source, monitor: token, registration: registration, afterSequence: 10, maximumAge: 0.125,
                          lanes: [.x: .init(reference: 8192, upper: 16383)]))
 }
 private func frame(_ time: Double, x: Double? = nil, count: Int? = nil,
-                   source: Clutch.Surface = .magicMouse) -> Clutch.SourceFrame {
+                   source: Clutch.Surface = .magicMouse, nativeRegistration: UUID? = registration,
+                   hasAcquisition: Bool = true) -> Clutch.SourceFrame {
     let contacts = x.map { [Clutch.Contact(surface: source,id: 1,x:$0,y:0.5,contactSize:0.5)] } ?? []
-    return .init(surface:source,rawDownCount:count ?? contacts.count,sourceConsistent:true,contacts:contacts,receipt:time)
+    return .init(surface:source,rawDownCount:count ?? contacts.count,sourceConsistent:true,contacts:contacts,receipt:time,
+                 nativeRegistration:nativeRegistration, acquisitionNS:hasAcquisition ? Int64(time * 1_000_000_000) : nil)
 }
 private func receive(_ s: inout Session, _ wire: inout Wire, _ f: Clutch.SourceFrame,
                      _ token: UUID, _ seq: UInt64, now: Double? = nil) -> Session.Result {
@@ -98,4 +101,21 @@ private func receive(_ s: inout Session, _ wire: inout Wire, _ f: Clutch.SourceF
     allowed = true
     #expect(s.receive(frame(1.125,x:0.75),monitor:token,sequence:15,now:1.125,permits:{allowed},begin:{true},move:{_ in allowed=false;return true},retire:{retired.append($0);return true}) == .retired)
     #expect(retired == [false,false])
+}
+
+@Test func relativeSessionNativeRegistrationReplacementPermanentlyCloses() throws {
+    let token = UUID(); var s = try session(token), w = Wire()
+    _ = receive(&s,&w,frame(1),token,11)
+    _ = receive(&s,&w,frame(1.03125,x:0.5),token,12)
+    #expect(receive(&s,&w,frame(1.0625,nativeRegistration:UUID()),token,13) == .retired)
+    #expect(w.calls.last == "retire:false")
+    #expect(receive(&s,&w,frame(1.09375),token,14) == .ignored)
+    #expect(receive(&s,&w,frame(1.125,x:0.5),token,15) == .ignored)
+}
+@Test func relativeSessionMissingOriginalAcquisitionCannotRearm() throws {
+    let token = UUID(); var s = try session(token), w = Wire()
+    #expect(receive(&s,&w,frame(1,hasAcquisition:false),token,11) == .retired)
+    #expect(receive(&s,&w,frame(1.03125,x:0.5),token,12) == .waiting)
+    #expect(receive(&s,&w,frame(1.0625),token,13) == .waiting)
+    #expect(receive(&s,&w,frame(1.09375,x:0.5),token,14) == .anchored)
 }

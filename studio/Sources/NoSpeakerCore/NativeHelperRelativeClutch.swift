@@ -30,11 +30,15 @@ public struct NativeHelperRelativeClutch: Sendable {
         public let sourceConsistent: Bool
         public let contacts: [Contact]
         public let receipt: Double
+        public let nativeRegistration: UUID?
+        public let acquisitionNS: Int64?
         public init(surface: Surface, rawDownCount: Int, sourceConsistent: Bool,
-                    contacts: [Contact], receipt: Double) {
+                    contacts: [Contact], receipt: Double, nativeRegistration: UUID? = nil,
+                    acquisitionNS: Int64? = nil) {
             self.surface = surface; self.rawDownCount = rawDownCount
             self.sourceConsistent = sourceConsistent; self.contacts = contacts
-            self.receipt = receipt
+            self.receipt = receipt; self.nativeRegistration = nativeRegistration
+            self.acquisitionNS = acquisitionNS
         }
         public var isComplete: Bool {
             sourceConsistent && rawDownCount >= 0 && rawDownCount == contacts.count &&

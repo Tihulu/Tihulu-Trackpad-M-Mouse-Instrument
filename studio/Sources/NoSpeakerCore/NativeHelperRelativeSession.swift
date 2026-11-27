@@ -10,18 +10,21 @@ public struct NativeHelperRelativeSession: Sendable {
     }
     private let source: Clutch.Surface
     private let monitor: UUID
+    private let registration: UUID
     private let maximumAge: Double
     private var clutch: Clutch
     private var lastSequence: UInt64
     private var lastReceipt: Double?
+    private var lastAcquisitionNS: Int64?
     private var active = false
     private var closed = false
 
-    public init?(source: Clutch.Surface, monitor: UUID, afterSequence: UInt64,
+    public init?(source: Clutch.Surface, monitor: UUID, registration: UUID, afterSequence: UInt64,
                  maximumAge: Double, lanes: [Clutch.Axis: Clutch.Lane]) {
         guard maximumAge.isFinite, maximumAge > 0,
               let clutch = Clutch(surface: source, lanes: lanes) else { return nil }
-        self.source = source; self.monitor = monitor; self.maximumAge = maximumAge
+        self.source = source; self.monitor = monitor; self.registration = registration
+        self.maximumAge = maximumAge
         self.clutch = clutch; lastSequence = afterSequence
     }
 
@@ -45,8 +48,16 @@ public struct NativeHelperRelativeSession: Sendable {
         guard !closed, token == monitor, frame.surface == source else { return .ignored }
         guard sequence > lastSequence else { return .ignored }
         lastSequence = sequence
-        guard frame.receipt.isFinite, frame.receipt >= 0,
-              lastReceipt.map({ frame.receipt > $0 }) ?? true else { return fault(retire: retire) }
+        // Same monitor but a changed native registration is a terminal
+        // device-identity boundary, not an ordinary lift or new touch.
+        guard frame.nativeRegistration == registration else {
+            closed = true
+            return fault(retire: retire)
+        }
+        guard let acquired = frame.acquisitionNS, acquired >= 0,
+              lastAcquisitionNS.map({ acquired > $0 }) ?? true else { return fault(retire: retire) }
+        lastAcquisitionNS = acquired
+        guard frame.receipt == Double(acquired) / 1_000_000_000 else { return fault(retire: retire) }
         let previous = lastReceipt
         lastReceipt = frame.receipt
         guard fresh(frame.receipt, now: now), permits() else { return fault(retire: retire) }
