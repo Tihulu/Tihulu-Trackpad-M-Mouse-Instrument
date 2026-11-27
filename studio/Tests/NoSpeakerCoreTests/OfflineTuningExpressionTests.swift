@@ -54,3 +54,35 @@ private func expressionBase(bend: Int = 9216, range: Int = 2, note: Int = 60) ->
     #expect(OfflineTuningExpression.zone(base: tuned, masterBend: 16384, masterRangeSemitones: 48) == nil)
     #expect(OfflineTuningExpression.zone(base: tuned, masterBend: 8192, masterRangeSemitones: 97) == nil)
 }
+
+@Test func memberExpressionHonorsExactHeadroomAndRefusesAdjacentOutsideOffsets() throws {
+    for range in 1...96 {
+        for bend in [0, 1, 4096, 8191, 8192, 8193, 10490, 16382, 16383] {
+            let base = expressionBase(bend: bend, range: range)
+            let neutral = try #require(OfflineTuningExpression.zone(base: base, masterBend: 8192, masterRangeSemitones: range))
+            let cents = neutral.predictedPitchFromAnchorCents
+            let limit = Double(range) * 100
+            let upper = limit - cents, lower = -limit - cents
+            #expect(OfflineTuningExpression.member(base: base, offsetCents: upper) == .projected(.init(base: base, expressiveBend: 16383, representedOffsetCents: upper)))
+            #expect(OfflineTuningExpression.member(base: base, offsetCents: lower) == .projected(.init(base: base, expressiveBend: 0, representedOffsetCents: lower)))
+            #expect(OfflineTuningExpression.member(base: base, offsetCents: upper.nextUp) == .exceedsMemberRange)
+            #expect(OfflineTuningExpression.member(base: base, offsetCents: lower.nextDown) == .exceedsMemberRange)
+        }
+    }
+}
+
+@Test func memberExpressionAcceptsReadinessHeadroomWithoutRangeExpansion() throws {
+    let preview = try ScalaKeyboardProfile(scaleText: "Dense\n4\n10.0\n20.0\n700.0\n2", mappingText: "4\n56\n67\n60\n60\n432\n4\n0\n1\n2\nx").preview
+    for range in [1, 2, 48, 96] {
+        let report = try #require(ScalaKeyboardReadiness(preview: preview, bendRangeSemitones: range))
+        for entry in report.entries {
+            guard case .projected(let projection) = entry.disposition else { continue }
+            let base = projection.member
+            let up = projection.upwardHeadroomCents, down = -projection.downwardHeadroomCents
+            #expect(OfflineTuningExpression.member(base: base, offsetCents: up) == .projected(.init(base: base, expressiveBend: 16383, representedOffsetCents: up)))
+            #expect(OfflineTuningExpression.member(base: base, offsetCents: down) == .projected(.init(base: base, expressiveBend: 0, representedOffsetCents: down)))
+            #expect(OfflineTuningExpression.member(base: base, offsetCents: up.nextUp) == .exceedsMemberRange)
+            #expect(OfflineTuningExpression.member(base: base, offsetCents: down.nextDown) == .exceedsMemberRange)
+        }
+    }
+}
