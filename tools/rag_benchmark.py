@@ -72,9 +72,42 @@ def validate_case_groups(path):
     return {"development": dev_digest, "evaluation": eval_digest}
 
 
+def diagnose_lexical(rows, query, expected, response, profile, limit, per_file, cache=None):
+    """Explain development-only retrieval misses without changing ranking."""
+    indexed = {row["path"] for row in rows}
+    ranked = repo_index.lexical_ranking(rows, query, cache, profile=profile)
+    ranked.sort(key=lambda item: (-item[0], item[1]["path"], item[1]["start"], item[1]["end"]))
+    selected = repo_index.diverse_results(ranked, limit, per_file, file_first=profile == "file-first")
+    # The diagnostic must describe the very same results, not a second ranking.
+    def key(row):
+        return (row["path"], row["blob"], row["start"], row["end"])
+    if [(key(row), round(score, 6)) for score, row in selected] != [
+            (key(row), row["score"]) for row in response["results"]]:
+        raise ValueError("Development diagnostic ranking differs from response")
+    positive = {row["path"] for _, row in ranked}
+    returned = {row["path"] for row in response["results"]}
+    missing = expected - indexed
+    hit = expected & returned
+    status = ("COVERAGE_FAIL" if missing else "HIT" if hit else
+              "CUTOFF" if expected & positive else "NO_POSITIVE_MATCH")
+    def first(paths):
+        return next((i for i, path in enumerate(paths, 1) if path in expected), None)
+    return {"status": status, "expected_files": len(expected),
+            "expected_indexed": len(expected & indexed),
+            "expected_positive": len(expected & positive),
+            "expected_returned": len(hit),
+            "positive_chunks": len(ranked), "positive_files": len(positive),
+            "returned_chunks": len(selected), "returned_unique_files": len(returned),
+            "raw_first_chunk_rank": first(row["path"] for _, row in ranked),
+            "returned_first_chunk_rank": first(row["path"] for row in response["results"])}
+
+
 def run(args):
     cases, cases_sha256 = load_cases(getattr(args, "cases_file", None) or CASES,
                                      getattr(args, "case_group", None))
+    diagnose = getattr(args, "diagnose_development", False)
+    if diagnose and (args.mode != "lexical" or getattr(args, "case_group", None) != "development"):
+        raise ValueError("Diagnostics require lexical development cases only")
     selected = [case for case in cases if case["scope"] == args.scope]
     if not selected or not 1 <= args.k <= 50 or not 1 <= args.max_per_file <= 50:
         raise ValueError("Invalid scope or rank limit")
@@ -125,6 +158,10 @@ def run(args):
                         "expected_paths": case["expected_paths"], "missing_paths": missing,
                         "returned_paths": paths, "first_file_rank": rank,
                         "query_ms": elapsed_ms, **({"warm_query_ms": warm_ms} if compare_cache else {})})
+        if diagnose:
+            results[-1]["development_diagnostic"] = diagnose_lexical(
+                rows, options.query, expected, response, options.lexical_profile,
+                args.k, args.max_per_file, cache)
     count = len(results)
     report = {"schema": 1, "commit": meta["commit"], "scope": args.scope,
             "mode": args.mode, "model_sha256": meta["model_sha256"] if args.model_dir else None,
@@ -160,6 +197,8 @@ def main():
     parser.add_argument("--case-group", choices=("development", "evaluation"))
     parser.add_argument("--lexical-profile", choices=repo_index.LEXICAL_PROFILES, default="legacy")
     parser.add_argument("--compare-cache", action="store_true", help="Measure verified lexical cache and require exact result parity")
+    parser.add_argument("--diagnose-development", action="store_true",
+                        help="Explain lexical development misses; never allowed for evaluation cases")
     parser.add_argument("--k", type=int, default=8)
     parser.add_argument("--max-per-file", type=int, default=3)
     args = parser.parse_args()
