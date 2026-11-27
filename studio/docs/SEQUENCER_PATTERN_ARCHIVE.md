@@ -11,9 +11,12 @@ are retained. Note channels are zero-based; drum playback remains channel 10.
 Cell order and transient UI UUIDs are not part of the archive identity.
 The encoder emits sorted JSON keys, canonical cell ordering, and a 1 MiB
 limit. Unknown fields, mixed note/drum payloads, unsupported versions,
-malformed grids and duplicate cells are rejected. Foundation JSON decoding
-is not a security or authorization parser and does not promise rejection
-of duplicate JSON object keys. Do not use it as a remote wire format.
+malformed grids and duplicate cells are rejected. The preflight requires
+UTF-8 JSON, rejects duplicate decoded object keys (including escaped key
+aliases), bounds nesting to three containers and object fields to nine,
+and then uses Foundation for JSON grammar and typed value validation.
+Identical keys in separate cells remain valid. This is not a security or
+authorization parser; do not use it as a remote wire format.
 
 Empty, all-rest and muted patterns are valid drafts. Explicit `frozen()`
 still invokes the existing MIDI clip validation and rejects silent playback.
