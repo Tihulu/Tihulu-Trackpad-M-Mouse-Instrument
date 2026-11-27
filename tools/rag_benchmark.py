@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local file-retrieval benchmark. No LLM answers or hardware access."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import statistics
@@ -11,10 +12,41 @@ from types import SimpleNamespace
 import repo_index
 
 CASES = Path(__file__).with_name("rag_benchmark_cases.json")
+HELDOUT_CASES = Path(__file__).with_name("rag_heldout_cases.json")
+
+
+def load_cases(path):
+    with Path(path).open("rb") as stream:
+        data = stream.read(65537)
+    if len(data) > 65536:
+        raise ValueError("Case set exceeds size limit")
+    cases = json.loads(data)
+    if not isinstance(cases, list) or not 1 <= len(cases) <= 256:
+        raise ValueError("Invalid case set size")
+    seen = set()
+    for case in cases:
+        if not isinstance(case, dict):
+            raise ValueError("Invalid benchmark case")
+        identifier = case.get("id")
+        scope = case.get("scope")
+        query = case.get("query")
+        language = case.get("language")
+        paths = case.get("expected_paths")
+        if (not isinstance(identifier, str) or not identifier or identifier in seen
+                or scope not in ("engine", "app", "docs")
+                or not isinstance(language, str) or not language
+                or not isinstance(query, str) or not query.strip() or len(query) > 4096
+                or not isinstance(paths, list) or not paths
+                or any(not isinstance(p, str) or not repo_index.allowed(p)
+                       or not repo_index.in_scope(p, scope) for p in paths)
+                or len(set(paths)) != len(paths)):
+            raise ValueError("Invalid or duplicate benchmark case")
+        seen.add(identifier)
+    return cases, hashlib.sha256(data).hexdigest()
 
 
 def run(args):
-    cases = json.loads(CASES.read_text(encoding="utf-8"))
+    cases, cases_sha256 = load_cases(getattr(args, "cases_file", None) or CASES)
     selected = [case for case in cases if case["scope"] == args.scope]
     if not selected or not 1 <= args.k <= 50 or not 1 <= args.max_per_file <= 50:
         raise ValueError("Invalid scope or rank limit")
@@ -49,7 +81,7 @@ def run(args):
     count = len(results)
     return {"schema": 1, "commit": meta["commit"], "scope": args.scope,
             "mode": args.mode, "model_sha256": meta["model_sha256"] if args.model_dir else None,
-            "source_verified": True, "k_chunks": args.k, "max_per_file": args.max_per_file, "cases": count,
+            "source_verified": True, "cases_sha256": cases_sha256, "k_chunks": args.k, "max_per_file": args.max_per_file, "cases": count,
             "setup_ms": setup_ms, "median_query_ms": statistics.median(r["query_ms"] for r in results),
             "file_hit_rate": sum(r["first_file_rank"] is not None for r in results) / count,
             "file_mrr": sum(1 / r["first_file_rank"] if r["first_file_rank"] else 0 for r in results) / count,
@@ -66,6 +98,7 @@ def main():
     parser.add_argument("--scope", choices=("engine", "app", "docs"), required=True)
     parser.add_argument("--mode", choices=("lexical", "semantic", "hybrid"), default="lexical")
     parser.add_argument("--model-dir")
+    parser.add_argument("--cases-file", help="Explicit independent JSON case set; default curated cases")
     parser.add_argument("--k", type=int, default=8)
     parser.add_argument("--max-per-file", type=int, default=3)
     args = parser.parse_args()
