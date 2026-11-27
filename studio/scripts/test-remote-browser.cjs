@@ -2288,3 +2288,19 @@ test("MUSIC-WEB phrase modes hide scale labels with controls and restore them fo
   e.pianoChord.emit("click");
   for(const id of ["pianoScale","pianoRoot","pianoScaleLabel","pianoRootLabel","scaleGuideStatus"])assert.equal(e[id].hidden,false);
 });
+
+test("MUSIC-WEB global release and mode change never renew an existing XY release deadline",()=>{
+  for(const action of ["global","mode"]){
+    const a=setup(),e=a.elements;e.pad.emit("pointerdown",xyEvent(1));e.pad.emit("pointerup",xyEvent(1));
+    a.step(100);
+    if(action==="global")e.releaseAll.emit("click");else{e.playMode.value="piano";e.playMode.emit("change");}
+    a.step(50);
+    assert.equal(a.socket.closed,true,action);assert.equal(a.socket.frames.length,1);
+  }
+});
+test("MUSIC-WEB global release retains timely XY release and waits for acknowledgment",()=>{
+  const a=setup(),e=a.elements;e.pad.emit("pointerdown",xyEvent(1));e.pad.emit("pointerup",xyEvent(1));
+  a.step(75);e.releaseAll.emit("click");a.ack();
+  assert.equal(a.socket.frames.at(-1).kind,"release");a.ack();
+  assert.equal(a.socket.closed,undefined);assert.match(e.status.textContent,/My controls released locally/);
+});

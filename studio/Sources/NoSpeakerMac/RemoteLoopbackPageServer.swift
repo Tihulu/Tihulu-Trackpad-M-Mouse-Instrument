@@ -1061,7 +1061,8 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     releasingAll=true;const now=performance.now();
     if(cameraHelper){if(pedalSentMask!==0||pendingKind==="pedalboard")cameraReleaseAt??=now;stopCamera("Camera stopped; releasing controls.");}
     // Cancel unsent onsets; retain the state of every already sent owner.
-    pointer=null;position=null;dot.hidden=true;touchQueue=touchSent?[{kind:"release",at:now}]:[];
+    const touchReleaseAt=touchQueue.find(edge=>edge.kind==="release")?.at??now;
+    pointer=null;position=null;dot.hidden=true;touchQueue=touchSent?[{kind:"release",at:touchReleaseAt}]:[];
     resetStick();drumEnabled=false;drumOwners.clear();drumDesired=0;drumQueue=[];drumEmergency=drumSent!==0;
     resetPhrase();pianoEnabled=false;pianoOwners.clear();pianoVisited.clear();pianoDesired=0;pianoQueue=[];pianoEmergency=pianoSent!==0;
     pedalEnabled=false;pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;
