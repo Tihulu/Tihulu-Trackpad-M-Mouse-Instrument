@@ -130,8 +130,15 @@ public enum LegacyRecoveryPolicy {
     public static func permitsActiveStart(faulted: Bool, unknownFailure: Bool, cleaning: Bool) -> Bool {
         !faulted && !unknownFailure && !cleaning
     }
-    public static func permitsSend(enabled: Bool, faulted: Bool, cleaning: Bool) -> Bool {
-        cleaning || (enabled && !faulted)
+    /// Manual recovery blocks new writes immediately, even without a native
+    /// transport error. Full Stop still drains the actual-attempt ledgers.
+    public static func permitsSend(enabled: Bool, faulted: Bool, cleaning: Bool, unknownFailure: Bool = false) -> Bool {
+        cleaning || (enabled && !faulted && !unknownFailure)
+    }
+    /// Notify the owner once when ambiguity is first latched without an
+    /// existing transport failure. Cleanup itself never schedules another Stop.
+    public static func shouldNotifyManualRecovery(alreadyRequired: Bool, faulted: Bool, cleaning: Bool) -> Bool {
+        !alreadyRequired && !faulted && !cleaning
     }
     public static func permitsReplacement(gatesPending: Bool, controllersPending: Bool, unknownFailure: Bool) -> Bool {
         !gatesPending && !controllersPending && !unknownFailure

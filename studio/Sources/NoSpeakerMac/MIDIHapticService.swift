@@ -176,6 +176,7 @@ public final class MIDIHapticService: @unchecked Sendable {
     private var controllerRecoveryRequired = false
     private var cleaningOutgoing = false
     private var outgoingFailureHandler: (@Sendable (OSStatus) -> Void)?
+    private var manualRecoveryHandler: (@Sendable () -> Void)?
 
     public var hasUnconfirmedOutgoingCleanup: Bool {
         !LegacyRecoveryPolicy.permitsReplacement(gatesPending:!gateDebt.isEmpty,
@@ -183,11 +184,19 @@ public final class MIDIHapticService: @unchecked Sendable {
     }
     public var requiresManualDAWReset: Bool { controllerRecoveryRequired }
 
+    private func markManualRecoveryRequired() {
+        let notify = LegacyRecoveryPolicy.shouldNotifyManualRecovery(alreadyRequired: controllerRecoveryRequired,
+            faulted: outgoingFault != nil, cleaning: cleaningOutgoing)
+        controllerRecoveryRequired = true
+        if notify { manualRecoveryHandler?() }
+    }
+
     private var permitsOutgoingSend: Bool {
         lock.lock()
         let running = enabled
         lock.unlock()
-        return LegacyRecoveryPolicy.permitsSend(enabled:running,faulted:outgoingFault != nil,cleaning:cleaningOutgoing)
+        return LegacyRecoveryPolicy.permitsSend(enabled: running, faulted: outgoingFault != nil,
+            cleaning: cleaningOutgoing, unknownFailure: controllerRecoveryRequired)
     }
     public var outgoingFailureStatus: OSStatus? { outgoingFault }
 
@@ -198,7 +207,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         disposeEndpoints()
     }
 
-    public func start(masterLevel: Double, onFailure: (@Sendable (OSStatus) -> Void)? = nil, onMessage: (@Sendable (LiveMIDIMessage) -> Void)? = nil) throws {
+    public func start(masterLevel: Double, onFailure: (@Sendable (OSStatus) -> Void)? = nil, onManualRecovery: (@Sendable () -> Void)? = nil, onMessage: (@Sendable (LiveMIDIMessage) -> Void)? = nil) throws {
         lock.lock()
         let alreadyActive = enabled && destination != 0 && virtualSource != 0 && inputPort != 0
         if alreadyActive && !LegacyRecoveryPolicy.permitsActiveStart(faulted: outgoingFault != nil,
@@ -221,6 +230,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         guard !hasUnconfirmedOutgoingCleanup else { throw MIDIHapticError.outgoingRecoveryRequired }
         outgoingFault = nil
         outgoingFailureHandler = onFailure
+        manualRecoveryHandler = onManualRecovery
         if client == 0 { client = try MIDIProcessClient.shared.acquire() }
         if destination == 0 || virtualSource == 0 || inputPort == 0 {
             // Clean up any partial endpoints left by a previous failed start,
@@ -326,6 +336,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             completeRange: { self.controllerDebt.completeRange(channel: $0) })
         cleaningOutgoing = false
         outgoingFailureHandler = nil
+        manualRecoveryHandler = nil
 
         lock.lock()
         enabled = false
@@ -790,18 +801,18 @@ public final class MIDIHapticService: @unchecked Sendable {
                 // A partially applied data entry has no known receiver
                 // baseline. Do not silently allow another performance.
                 if !result.completed {
-                    if result.dataAttempted { controllerRecoveryRequired=true }
+                    if result.dataAttempted { markManualRecoveryRequired() }
                     return false
                 }
                 changedRange=true
             }
             guard permits(),permitsOutgoingSend else {
-                if changedRange { controllerRecoveryRequired=true }
+                if changedRange { markManualRecoveryRequired() }
                 return false
             }
             let value=max(0,min(16383,update.value))
             let ok=sendMIDI1(status:0xe0|target.channel,data1:value&0x7f,data2:(value>>7)&0x7f)
-            if !ok && changedRange { controllerRecoveryRequired=true }
+            if !ok && changedRange { markManualRecoveryRequired() }
             return ok
         case .controlChange:
             return sendMIDI1(status:0xb0|target.channel,data1:target.number,data2:update.value,
@@ -1294,7 +1305,7 @@ public final class MIDIHapticService: @unchecked Sendable {
             self.sendMIDI1(status: 0xb0 | channel, data1: cc, data2: value, rangePart: true)
         }
         if result.completed { controllerDebt.completeRange(channel: channel) }
-        if result.requiresManualRecovery { controllerRecoveryRequired = true }
+        if result.requiresManualRecovery { markManualRecoveryRequired() }
     }
 
     private func sendPitchBend(_ value: Int, channel: Int) {
