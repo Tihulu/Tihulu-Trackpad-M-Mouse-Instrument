@@ -35,6 +35,12 @@ public final class CustomSurfacePerformanceGroup {
     private var lastClock: Int64?
     public static let neutralTimeoutNS: Int64 = 10_000_000_000
     private var ids: [Surface: UUID] = [:]
+    private var closedEvidence: [Surface: CustomSurfaceEndpointHost.TimingEvidence] = [:]
+    public var timingEvidence: [Surface: CustomSurfaceEndpointHost.TimingEvidence] {
+        var result = closedEvidence
+        for (surface,id) in ids { result[surface] = host.timingEvidence(id) }
+        return result
+    }
     public private(set) var runID: UUID?
     public init(host: CustomSurfaceEndpointHost) { self.host = host }
     deinit { admission?.open = false }
@@ -56,6 +62,7 @@ public final class CustomSurfacePerformanceGroup {
         guard phase == .idle, host.statuses.isEmpty, !members.isEmpty,
               members.count <= CustomSurfaceEndpointHost.capacity,
               Set(surfaces).count == members.count, admitsLive() else { return .refused }
+        closedEvidence.removeAll()
         let gate = Admission(admitsLive)
         admission = gate
         for member in members {
@@ -129,6 +136,9 @@ public final class CustomSurfacePerformanceGroup {
         for surface in Surface.allCases {
             guard let id = ids[surface] else { continue }
             if host.close(id, retryPending: retry)?.phase == .closed {
+                // Copy before closing the next source overwrites the host's
+                // single most-recently-closed timing slot.
+                closedEvidence[surface] = host.timingEvidence(id)
                 ids.removeValue(forKey: surface)
             }
         }

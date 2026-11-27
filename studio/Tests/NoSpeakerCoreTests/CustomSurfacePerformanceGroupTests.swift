@@ -162,3 +162,39 @@ private let groupContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5,
                         admitsLive:{allowed}) == .rolledBack)
     #expect(disposed==Set([1,2]) && group.phase == .idle && host.statuses.isEmpty)
 }
+
+@Test func customSurfaceGroupRetainsBothFinalTimingRecordsAcrossRecovery() throws {
+    var next: UInt32=1
+    var now: Int64=0
+    var failOff=true
+    let host=CustomSurfaceEndpointHost(backend:.init(create:{name in
+        defer {next+=1}
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{_ in true},send:{e,b in !(e.handle==1 && b[0]==0x82 && failOff)},dispose:{_ in true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    let members=try [groupMember(.trackpad),groupMember(.magicMouse)]
+    guard case .started(let run)=group.start(members,clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not start");return
+    }
+    for surface in [CustomSurfacePadLayout.Surface.trackpad,.magicMouse] {
+        group.frame(run:run,surface:surface,contacts:[],sequence:1,observedAt:0)
+    }
+    now=1
+    for surface in [CustomSurfacePadLayout.Surface.trackpad,.magicMouse] {
+        group.frame(run:run,surface:surface,contacts:[groupContact],sequence:2,observedAt:now)
+    }
+    group.stop()
+    #expect(group.phase == .recoveryPending)
+    #expect(group.timingEvidence[.trackpad]?.failedSends == 1)
+    #expect(group.timingEvidence[.magicMouse]?.sendAttempts == 2)
+    failOff=false
+    group.retryRecovery()
+    #expect(group.phase == .idle && group.timingEvidence.count == 2)
+    #expect(group.timingEvidence[.trackpad]?.sendAttempts == 3)
+    #expect(group.timingEvidence[.magicMouse]?.sendAttempts == 2)
+    guard case .started = group.start(members,clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not restart");return
+    }
+    #expect(group.timingEvidence.values.allSatisfy { $0.sendAttempts == 0 })
+    group.stop()
+}
