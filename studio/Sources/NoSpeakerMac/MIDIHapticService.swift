@@ -822,13 +822,18 @@ public final class MIDIHapticService: @unchecked Sendable {
 
     public func beginRelativeHelperOutput(plan: NativeHelperRelativeOutputPlan,
                                           admitOnset: () -> Bool) -> Bool {
-        guard relativeHelperOutput == nil, virtualSource != 0, permitsOutgoingSend,
-              !controllerRecoveryRequired,
-              !NativeHelperRelativeHostPolicy.hasPendingCleanup(targets:plan.targetDestinations,debt:controllerDebt) else { return false }
+        guard relativeHelperOutput == nil else { return false }
+        // Every rejected begin, including early transport/debt denial, must
+        // retain a retired transaction until a genuine neutral boundary.
         var state = NativeHelperRelativeOutputTransaction(plan:plan)
         var staged = continuousOwners
         let result = state.anchor(owners:&staged,reservedChannels:relativeUnavailableChannels,
-                                  permits:{ admitOnset() && self.permitsOutgoingSend })
+                                  permits:{
+            self.virtualSource != 0 && self.permitsOutgoingSend &&
+                !self.controllerRecoveryRequired &&
+                !NativeHelperRelativeHostPolicy.hasPendingCleanup(targets:plan.targetDestinations,debt:self.controllerDebt) &&
+                admitOnset()
+        })
         continuousOwners = staged
         // Even a rejected clutch waits for an explicit neutral boundary.
         relativeHelperOutput = state
