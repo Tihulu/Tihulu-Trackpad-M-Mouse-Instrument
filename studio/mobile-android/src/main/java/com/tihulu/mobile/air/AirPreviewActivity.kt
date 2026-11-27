@@ -38,6 +38,7 @@ class AirPreviewActivity: ComponentActivity() {
     private lateinit var zoomLabel:TextView
     private lateinit var status:TextView
     private lateinit var meter:TextView
+    private lateinit var feedback:AirStageFeedbackView
     private lateinit var start:Button
     private lateinit var stopButton:Button
     private lateinit var flip:Button
@@ -262,8 +263,10 @@ class AirPreviewActivity: ComponentActivity() {
                 val reading=d.read()
                 if(d.isStopped){end(reading.status)}else {
                     status.text=reading.status
-                    showOutput(reading.output)
-                    reading.observedAt?.let {submit(reading.output,it,emptyMap(),true)}
+                    val at=reading.observedAt
+                    if(at==null || submit(reading.output,at,emptyMap(),true)) {
+                        if(depthSource===d)showOutput(reading.output)
+                    }
                 }
             }
             val s=source;val p=projection
@@ -357,9 +360,9 @@ class AirPreviewActivity: ComponentActivity() {
         customFar=calibrationField("Far distance (cm)","85")
         imageRotation=spinner(listOf("Raw image 0°","Raw image 90°","Raw image 180°","Raw image 270°"))
         label("Instrument / helper")
-        modePick=spinner(modes.map {it.name.replace('_',' ')})
-        rolePick=spinner(HandRole.entries.map {it.name})
-        orientationPick=spinner(Orientation.entries.map {it.name})
+        modePick=spinner(modes.map {it.name.replace('_',' ')}).apply {contentDescription="Air instrument or helper mode"}
+        rolePick=spinner(HandRole.entries.map {it.name}).apply {contentDescription="Performing hand"}
+        orientationPick=spinner(Orientation.entries.map {it.name}).apply {contentDescription="Musical control orientation"}
         mirror=CheckBox(this).also {it.text="Mirror X";column.addView(it)}
         modeGuide=label("")
         xyz=CheckBox(this).apply {text="Measured XYZ · Camera2 DEPTH16";column.addView(this)}
@@ -368,6 +371,7 @@ class AirPreviewActivity: ComponentActivity() {
         label("ARCore may require Google Play Services for AR; live depth is experimental. Native calibrated view: lens and zoom locked. Measured XYZ requires a rear DEPTH16 stream with a real-time sensor clock.")
         status=label("Stopped")
         meter=label("All preview keys released")
+        feedback=AirStageFeedbackView(this);column.addView(feedback)
         start=button("Start sensors"){begin()}
         stopButton=button("Stop / release"){end("Stopped")}
         cameraPick.onItemSelectedListener=object:AdapterView.OnItemSelectedListener {
@@ -414,12 +418,22 @@ class AirPreviewActivity: ComponentActivity() {
             override fun afterTextChanged(s:Editable?){controls()}
         }
         customNear.addTextChangedListener(refreshCalibration);customFar.addTextChangedListener(refreshCalibration)
+        xyzSettings.selectionChanged={controls()}
         setContentView(ScrollView(this).apply {addView(column)})
         controls()
     }
     private fun showOutput(out:AirOutput){
-        meter.text=out.level?.let {"Helper: "+(it*100).toInt()+"%"}
-            ?: if(out.keys==0) "All preview keys released" else "Logical keys: "+(0..24).filter {(out.keys and (1 shl it))!=0}.joinToString { (it+1).toString() }
+        if(touchStage){
+            meter.text=if(out.keys==0) "All preview keys released" else "Logical keys: "+(0..24).filter {(out.keys and (1 shl it))!=0}.joinToString { (it+1).toString() }
+            return
+        }
+        val mode=selectedMode() ?: return
+        val keys=if(wantsPair)lan?.status()?.assignment?.piano?:0 else (1 shl 25)-1
+        val state=AirStageFeedback.from(mode,keys,out)
+        feedback.render(mode,state)
+        val description=if(mode.isHelper)state.level?.let {"Projected helper: "+(it*100).toInt()+"%"} ?: "Helper released"
+            else if(state.active.isEmpty()) "All preview keys released" else "Projected logical keys: "+state.active.joinToString { (it+1).toString() }
+        if(meter.text.toString()!=description)meter.text=description
     }
     private fun showZoom(){zoomLabel.text="Lens-relative zoom: %.2f×".format(zoom)}
     private fun setZoom(value:Float) {
@@ -441,6 +455,8 @@ class AirPreviewActivity: ComponentActivity() {
             field.isEnabled=custom&&canEditInstrument
         }
         modeGuide.visibility=if(measuredMode||wantsTouchPair)View.GONE else View.VISIBLE
+        feedback.visibility=if(measuredMode||wantsTouchPair||touchStage)View.GONE else View.VISIBLE
+        if(!busy&&!measuredMode&&!wantsTouchPair&&!touchStage)showOutput(AirOutput())
         modeGuide.text=when {
             depth&&selectedRange()==null -> "Enter a valid near/far range: near 10–150 cm, far 20–300 cm, at least 10 cm apart."
             !validRole() -> "Choose left or right performing hand for chords."
@@ -484,7 +500,14 @@ class AirPreviewActivity: ComponentActivity() {
             status.text="Mode incompatible with assignment: choose the same family or disconnect and pair again."
         start.isEnabled=!wantsTouchPair&&!busy&&!qrRequested&&validAirSetup()&&(depth||r?.admits(zoom)==true)&&(!wantsPair||pairedProjection()!=null)
         if(measuredMode){
-            start.isEnabled=!busy&&!qrRequested&&measuredCamera()!=null&&(!wantsPair||xyzAssigned())
+            val validVolume=xyzSettings.volume()!=null && xyzSettings.mask in 1..7
+            start.isEnabled=!busy&&!qrRequested&&measuredCamera()!=null&&validVolume&&(!wantsPair||xyzAssigned())
+            xyzSettings.describeEligibility(when {
+                measuredCamera()==null -> "Select a rear camera with advertised DEPTH16."
+                !validVolume -> "Set valid XYZ bounds and enable at least one helper axis for Helper or Hybrid."
+                wantsPair&&!xyzAssigned() -> "Wait for a compatible Mac assignment; reconnect to change role or axes."
+                else -> null
+            })
             modelButton.isEnabled=false
         }
         stopButton.isEnabled=xyzSource!=null||pending||source!=null||depthSource!=null||lan!=null
@@ -511,7 +534,7 @@ class AirPreviewActivity: ComponentActivity() {
         val root=rootDer
         val digest=fingerprint.text.toString()
         val mode=selectedMode()
-        if(endpoint==null||check==null||root==null||(!wantsTouchPair&&mode==null)){
+        if(endpoint==null||check==null||root==null||(!wantsTouchPair&&!measuredMode&&mode==null)){
             connectionStatus.text="Enter the exact Mac address, invitation and verified DER root.";return
         }
         if(!measuredMode&&!wantsTouchPair&&!validAirSetup()){
@@ -656,7 +679,8 @@ class AirPreviewActivity: ComponentActivity() {
         }
         livePiano=piano
         touchPanel.addView(hint)
-        touchPanel.addView(piano,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,(240*resources.displayMetrics.density).toInt()))
+        val stageDp=(resources.configuration.screenHeightDp*0.38f).coerceIn(110f,240f)
+        touchPanel.addView(piano,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,(stageDp*resources.displayMetrics.density).toInt()))
         touchPanel.addView(arm)
         touchPanel.addView(leave)
         arm.setOnClickListener{
@@ -679,6 +703,7 @@ class AirPreviewActivity: ComponentActivity() {
         xyzStage?.close();xyzStage=null;xyzKeys=null;xyzTracking=null;xyzVolume=null;xyzLastAt=null
         source?.let {it.stop();retiring=it};source=null;projection=null
         depthSource?.let {it.stop();depthRetiring=it};depthSource=null
+        showOutput(AirOutput())
         meter.text="All preview keys released"
     }
     private fun pauseInstrument() {

@@ -75,15 +75,23 @@ internal class TouchPianoView(context:Context,
     }
     private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
     init {
-        contentDescription="${keyList.size} assigned logical piano zones; use multiple fingers."
+        describe(0,false)
         isFocusable=true
         importantForAccessibility=IMPORTANT_FOR_ACCESSIBILITY_YES
+    }
+    private fun describe(mask:Int,armed:Boolean) {
+        val active=keyList.filter {mask and (1 shl it)!=0}
+        val state=if(!armed)"Stopped; all keys released" else if(active.isEmpty())"Armed; no held keys"
+            else "Held logical keys: "+active.joinToString{(it+1).toString()}
+        val description="${keyList.size} assigned logical piano zones. $state. Direct touch performance surface; accessibility activation does not play notes."
+        if(contentDescription?.toString()!=description)contentDescription=description
     }
     fun arm():String? {
         if(owner!=null)return "Already armed."
         if(!ownerActive())return "Show the whole piano in the active window, then Arm."
         armedUptime=SystemClock.uptimeMillis()
         owner=MobileTouchLiveLease(authorized,SystemClock.elapsedRealtimeNanos())
+        describe(0,true)
         changed(AirOutput(),true);invalidate()
         postDelayed(pulse,50)
         return null
@@ -92,6 +100,7 @@ internal class TouchPianoView(context:Context,
         val old=owner?:return
         owner=null;removeCallbacks(pulse);old.retire()
         parent?.requestDisallowInterceptTouchEvent(false)
+        describe(0,false)
         changed(AirOutput(),false);invalidate()
     }
     override fun onDraw(canvas:Canvas){
@@ -139,6 +148,7 @@ internal class TouchPianoView(context:Context,
         if(sample==null||live?.invoke(sample)==false){retire();return true}
         if(owner!==current)return true
         if(current.activeIDs.isEmpty())parent?.requestDisallowInterceptTouchEvent(false)
+        describe(sample.output.keys,true)
         changed(sample.output,true);invalidate()
         return true
     }

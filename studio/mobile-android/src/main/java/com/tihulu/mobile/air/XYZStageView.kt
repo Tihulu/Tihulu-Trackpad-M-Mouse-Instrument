@@ -6,6 +6,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.text.InputType
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -19,6 +21,8 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
     val pitchAxis:Int? get()=role.selectedItemPosition.takeIf {it in 1..6}?.let {(it-1)%3}
     private val name=EditText(context)
     private val message=TextView(context)
+    private val eligibility=TextView(context)
+    var selectionChanged: (() -> Unit)? = null
     val mask:Int get()=if(pitchAxis!=null&&!hybrid)7 else enabledAxes.foldIndexed(0){i,m,box->if(box.isChecked)m or (1 shl i) else m}
     fun volume():XYZVolume? {
         val v=fields.map {it.text.toString().toDoubleOrNull()?:return null}
@@ -28,6 +32,7 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
     init {
         orientation=VERTICAL
         addView(TextView(context).apply{text="Move one isolated hand or object in front of the rear depth camera. X increases right, Y up and Z away."})
+        role.contentDescription="XYZ instrument role and pitch axis"
         role.adapter=ArrayAdapter(context,android.R.layout.simple_spinner_dropdown_item,
             listOf("XYZ helper","Instrument · X pitch","Instrument · Y pitch","Instrument · Z pitch","Hybrid · X pitch","Hybrid · Y pitch","Hybrid · Z pitch"))
         addView(role)
@@ -36,22 +41,30 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
             override fun onNothingSelected(parent:AdapterView<*>?) {}
             override fun onItemSelected(parent:AdapterView<*>?, view:View?, position:Int, id:Long){
                 axes.visibility=if(position==0||position>=4)View.VISIBLE else View.GONE
+                selectionChanged?.invoke()
             }
         }
         for(axis in listOf("X", "Y", "Z")){
             val check=CheckBox(context).apply{text=axis;isChecked=true}
+            check.contentDescription="Enable "+axis+" helper axis"
+            check.setOnCheckedChangeListener { _, _ -> selectionChanged?.invoke() }
             enabledAxes.add(check);axes.addView(check)
         }
         val labels=listOf("Left","Right","Bottom","Top","Near (m)","Far (m)")
         val defaults=listOf(0.0,1.0,0.0,1.0,.25,.85)
         for((i,label) in labels.withIndex()){
             val line=LinearLayout(context);addView(line)
-            val title=TextView(context).apply{text=label};line.addView(title)
+            val title=TextView(context).apply{text=label};line.addView(title,LayoutParams(0,-2,1f))
             val field=EditText(context).apply {
                 id=View.generateViewId();inputType=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
                 setSingleLine();setText(defaults[i].toString())
             }
-            title.labelFor=field.id;fields.add(field);line.addView(field)
+            field.addTextChangedListener(object:TextWatcher {
+                override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+                override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){}
+                override fun afterTextChanged(s:Editable?){selectionChanged?.invoke()}
+            })
+            title.labelFor=field.id;fields.add(field);line.addView(field,LayoutParams(0,-2,1f))
         }
         name.hint="Calibration name";name.setSingleLine();addView(name)
         addView(Button(context).apply{text="Save new calibration";setOnClickListener {save()}})
@@ -59,6 +72,10 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
         addView(Button(context).apply{text="Update named calibration";setOnClickListener {update()}})
         addView(Button(context).apply{text="Delete named calibration";setOnClickListener {delete()}})
         addView(message)
+        addView(eligibility)
+    }
+    fun describeEligibility(reason:String?) {
+        eligibility.text=reason ?: "Calibration and role valid."
     }
     private fun save(){
         val key=name.text.toString().trim()

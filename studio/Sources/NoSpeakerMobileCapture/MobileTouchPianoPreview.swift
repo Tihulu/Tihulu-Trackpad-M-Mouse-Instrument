@@ -37,13 +37,17 @@ import NoSpeakerCore
         let detail=UILabel()
         detail.text=liveMode ? "Assigned keys · paired Mac MIDI · up to ten contacts" : "Local logical-key preview · up to ten contacts · no sound or MIDI"
         detail.numberOfLines=0
-        status.numberOfLines=1
-        status.adjustsFontSizeToFitWidth=true
-        status.minimumScaleFactor=0.6
+        detail.font = .preferredFont(forTextStyle: .subheadline)
+        detail.adjustsFontForContentSizeCategory = true
+        status.numberOfLines=0
+        status.font = .preferredFont(forTextStyle: .footnote)
+        status.adjustsFontForContentSizeCategory = true
         status.text="Stopped. Press Arm to begin."
         armButton.setTitle("Arm piano",for:.normal)
         releaseButton.setTitle(liveMode ? "Release / disconnect" : "Release all / stop",for:.normal)
         releaseButton.isEnabled=false
+        armButton.accessibilityHint = "Arms the visible direct-touch surface. Does not play a note."
+        releaseButton.accessibilityHint = "Releases this surface's held keys and stops it."
         armButton.addTarget(self,action:#selector(arm),for:.touchUpInside)
         releaseButton.addTarget(self,action:#selector(retire),for:.touchUpInside)
         piano.changed={ [weak self] output,armed in
@@ -66,7 +70,9 @@ import NoSpeakerCore
             stack.bottomAnchor.constraint(equalTo:guide.bottomAnchor,constant:-16),
             stack.leadingAnchor.constraint(equalTo:guide.leadingAnchor,constant:16),
             stack.trailingAnchor.constraint(equalTo:guide.trailingAnchor,constant:-16),
-            piano.heightAnchor.constraint(greaterThanOrEqualToConstant:100)
+            piano.heightAnchor.constraint(greaterThanOrEqualToConstant:100),
+            armButton.heightAnchor.constraint(greaterThanOrEqualToConstant:44),
+            releaseButton.heightAnchor.constraint(greaterThanOrEqualToConstant:44)
         ])
         status.setContentHuggingPriority(.required,for:.vertical)
         detail.setContentHuggingPriority(.required,for:.vertical)
@@ -97,7 +103,9 @@ import NoSpeakerCore
         super.init(frame:.zero)
         isMultipleTouchEnabled=true
         isAccessibilityElement=true
-        accessibilityLabel="\(keyList.count) assigned logical piano zones; use multiple fingers."
+        accessibilityLabel="\(keyList.count) assigned logical piano zones"
+        accessibilityHint="Direct touch performance surface. Screen reader activation does not generate a note."
+        accessibilityValue="Stopped"
         backgroundColor = .secondarySystemBackground
         contentMode = .redraw
     }
@@ -123,6 +131,7 @@ import NoSpeakerCore
         contacts.removeAll()
         armedUptime=ProcessInfo.processInfo.systemUptime
         owner=lease
+        accessibilityValue="Armed; no held keys"
         changed?(.init(),true);setNeedsDisplay()
         let timer=Timer(timeInterval:0.05,target:self,selector:#selector(pulse(_:)),userInfo:nil,repeats:true)
         pulseTimer=timer;RunLoop.main.add(timer,forMode:.common)
@@ -144,6 +153,7 @@ import NoSpeakerCore
     func retire(){
         guard owner != nil else{return}
         owner=nil;contacts.removeAll();pulseTimer?.invalidate();pulseTimer=nil
+        accessibilityValue="Stopped; all keys released"
         changed?(.init(),false);setNeedsDisplay()
     }
     override func didMoveToWindow(){
@@ -167,7 +177,11 @@ import NoSpeakerCore
         guard let sample=current.event(change,contacts:snapshot,now:MobileLANSocket.nowNS,ownerActive:ownerActive) else{retire();return}
         owner=current
         if live?(sample)==false{retire();return}
-        if owner != nil {changed?(sample.output,true);setNeedsDisplay()}
+        if owner != nil {
+            let active = keyList.filter { sample.output.keys & (1 << $0) != 0 }
+            accessibilityValue = active.isEmpty ? "Armed; no held keys" : "Held logical keys: " + active.map { String($0+1) }.joined(separator: ", ")
+            changed?(sample.output,true);setNeedsDisplay()
+        }
     }
     override func touchesBegan(_ touches:Set<UITouch>,with event:UIEvent?){
         guard owner != nil else{return}
