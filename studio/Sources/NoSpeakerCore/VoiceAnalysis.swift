@@ -101,12 +101,23 @@ public enum HapticVoiceAnalyzer {
         try analyzeImpl(input,cancellation:cancellation)
     }
 
-    private static func analyzeImpl(_ input: [Float], cancellation: VoiceRenderCancellation?) throws -> [HapticVoiceFrame] {
+    // Internal observation point for deterministic cancellation tests. Public
+    // callers use the same DSP path with no observer and no new deadline.
+    static func analyze(_ input: [Float], cancellation: VoiceRenderCancellation,
+                        onFrameProcessed: (Int) -> Void) throws -> [HapticVoiceFrame] {
+        try analyzeImpl(input,cancellation:cancellation,onFrameProcessed:onFrameProcessed)
+    }
+
+    private static func analyzeImpl(_ input: [Float], cancellation: VoiceRenderCancellation?,
+                                    onFrameProcessed: (Int) -> Void = { _ in }) throws -> [HapticVoiceFrame] {
         try cancellation?.check()
         let windowSize = Int(0.025 * sampleRate)
         let hopSize = Int(hopSeconds * sampleRate)
         let order = 18
-        guard input.count >= windowSize else { return [] }
+        guard input.count >= windowSize else {
+            guard input.allSatisfy({ $0.isFinite }) else { throw VoiceAnalysisError.invalidSample }
+            return []
+        }
         let hamming = (0..<windowSize).map {
             0.54 - 0.46 * cos(2 * .pi * Double($0) / Double(windowSize - 1))
         }
@@ -186,6 +197,17 @@ public enum HapticVoiceAnalyzer {
             frames.append(frame)
             previous = frame
             offset += hopSize
+            onFrameProcessed(frames.count)
+        }
+
+        // The last complete window can leave a partial hop unexamined.
+        // Reject malformed PCM there too, without changing valid DSP output.
+        let processedEnd = offset + windowSize - hopSize
+        if processedEnd < input.count {
+            try cancellation?.check()
+            guard input[processedEnd...].allSatisfy({ $0.isFinite }) else {
+                throw VoiceAnalysisError.invalidSample
+            }
         }
 
         let peak = rmsValues.max() ?? 1
@@ -213,12 +235,20 @@ public enum HapticVoiceAnalyzer {
 
     public static func hapticEvents(frames: [HapticVoiceFrame], safety: HapticSafetyPolicy = .init()) -> [ScheduledHapticEvent] {
         frames.enumerated().compactMap { index, frame in
-            guard frame.level > 0 else { return nil }
+            guard frame.level.isFinite, frame.level > 0 else { return nil }
             let tones: [HapticTone]
             let durationMS: Double
             if frame.voiced {
+                // Public frames can be constructed outside the analyzer.
+                // Validate only the lanes consumed by this renderer.
+                guard frame.formants.count >= 2, frame.amplitudes.count >= 2,
+                      frame.formants.prefix(2).allSatisfy({ $0.isFinite && $0 > 0 }),
+                      frame.amplitudes.prefix(2).allSatisfy({ $0.isFinite && $0 >= 0 }),
+                      frame.fundamentalHz.isFinite, frame.fundamentalHz > 0 else { return nil }
                 let weights = [frame.amplitudes[0], frame.amplitudes[1] * 1.8]
-                let total = max(weights[0] + weights[1], 1e-9)
+                let sum = weights[0] + weights[1]
+                guard sum.isFinite else { return nil }
+                let total = max(sum, 1e-9)
                 tones = [
                     HapticTone(frequencyHz: frame.formants[0], amplitude: weights[0] / total),
                     HapticTone(frequencyHz: frame.formants[1], amplitude: weights[1] / total)
