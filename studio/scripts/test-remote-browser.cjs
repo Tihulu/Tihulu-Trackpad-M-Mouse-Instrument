@@ -2122,3 +2122,15 @@ test("MUSIC-WEB overlapping kit elements expose deterministic selected state wit
   assert.equal(e.kitBoard.children[1].attributes["data-selected"],"true");
   assert.equal(a.socket.frames.length,0);
 });
+
+for(const [bad,mask] of [[-32,1],[-31,3]]){
+  test("MUSIC-WEB independently reported negative sequence index "+bad+" is not a rest",()=>{
+    const a=setup("granted",{...touchOnly,touch:false,piano:mask},false),e=a.elements;
+    e.playMode.value="seq";e.playMode.emit("change");e.pianoEnable.emit("click");
+    e.phraseTempo.value="120";e.phraseStep0.value="0";e.phraseStep1.value=String(bad);e.phraseStep1.emit("change");
+    assert.equal(e.phraseStart.disabled,true);assert.match(e.phraseStatus.textContent,/unavailable/);
+    e.phraseStart.emit("click");a.step(25);assert.equal(a.socket.frames.length,0);
+    e.phraseStep1.value="-1";e.phraseStep1.emit("change");assert.equal(e.phraseStart.disabled,false);
+    e.phraseStart.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,1);
+  });
+}

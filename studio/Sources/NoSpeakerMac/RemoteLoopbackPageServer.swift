@@ -1613,7 +1613,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       if(direction==="down")pattern.reverse();if(direction==="bounce"&&pattern.length>2)pattern=pattern.concat(pattern.slice(1,-1).reverse());
     }
     if(!pattern.length||!pattern.some(i=>i>=0))return {reason:playMode==="seq"?"Choose at least one mapped note; an all-rest pattern cannot start.":"Choose mapped notes or an available chord."};
-    if(!pattern.every(i=>Number.isInteger(i)&&(i===-1||(i<25&&has("piano",i)))))return {reason:"The pattern contains an unavailable note."};
+    if(!pattern.every(i=>Number.isInteger(i)&&(i===-1||(i>=0&&i<25&&has("piano",i)))))return {reason:"The pattern contains an unavailable note."};
     const swing=playMode==="arp"?Number(get("arpSwing").value||"50"):50;
     if(![50,55,60].includes(swing))return {reason:"Choose a supported swing value."};
     return {pattern,swing,period:240000/(bpm*(playMode==="arp"?Number(rate):8))};
