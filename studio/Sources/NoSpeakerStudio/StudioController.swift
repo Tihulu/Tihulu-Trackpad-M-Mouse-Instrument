@@ -3620,6 +3620,7 @@ final class StudioController: ObservableObject {
         touch.setCustomSurfaceInbox(inbox)
         refreshSharedSurfaceMonitoring()
         guard touchPreviewRunning, missingNativeSurfaceMessage([source]) == nil,
+              let registration = driver?.registeredSurfaceTokens[source], inbox.bindRegistration(registration),
               inbox.begin(at: NativeCustomSurfaceMIDIHost.monotonicNow()) else {
             stopCustomPad(reason: "Diagnostic surface unavailable.")
             return
@@ -3632,6 +3633,9 @@ final class StudioController: ObservableObject {
                 guard let self, let inbox, self.customPadInbox === inbox,
                       self.customPadDiagnosticRunning, self.engineGeneration == generation else { return }
                 self.updateCustomPadEvidence(inbox)
+                guard self.driver?.registeredSurfaceTokens[source] == registration, inbox.queueEvidence().fault == nil else {
+                    self.stopCustomPad(reason: "Diagnostic surface registration changed."); return
+                }
                 if NativeCustomSurfaceMIDIHost.monotonicNow() - started >= 20_000_000_000 {
                     self.stopCustomPad(reason: "Input-only diagnostic complete")
                     return
@@ -3680,8 +3684,9 @@ final class StudioController: ObservableObject {
         customPadInbox = inbox
         touch.setCustomSurfaceInbox(inbox)
         refreshSharedSurfaceMonitoring()
-        guard touchPreviewRunning, missingNativeSurfaceMessage([surface]) == nil else {
-            stopCustomPad(reason: "Requested physical surface unavailable.")
+        guard touchPreviewRunning, missingNativeSurfaceMessage([surface]) == nil,
+              let registration = driver?.registeredSurfaceTokens[surface], inbox.bindRegistration(registration) else {
+            stopCustomPad(reason: "Requested physical surface registration unavailable.")
             return
         }
         startPerformanceEventMonitor()
@@ -3725,6 +3730,9 @@ final class StudioController: ObservableObject {
                 guard self.captureMonitor?.customPadEmergencyOperational == true else {
                     self.stopCustomPad(reason: "Escape monitor lost. Performance stopped.")
                     return
+                }
+                guard self.driver?.registeredSurfaceTokens[surface] == registration else {
+                    self.stopCustomPad(reason: "Native surface registration changed. Restart explicitly."); return
                 }
                 // Receiving occupied frames is not readiness. Bound the
                 // initial lift handshake even if a held finger keeps reporting.
@@ -3794,8 +3802,9 @@ final class StudioController: ObservableObject {
             stopCustomPad(reason: "Group subscription refused."); return
         }
         refreshSharedSurfaceMonitoring()
-        guard touchPreviewRunning, missingNativeSurfaceMessage(required) == nil else {
-            stopCustomPad(reason: "Both native surfaces must be available."); return
+        guard touchPreviewRunning, missingNativeSurfaceMessage(required) == nil,
+              let registrations = driver?.registeredSurfaceTokens, input.bindRegistrations(registrations) else {
+            stopCustomPad(reason: "Both native surface registrations must be available."); return
         }
         startPerformanceEventMonitor()
         guard captureMonitor?.diagnosticSnapshot().operational == true,
@@ -3828,6 +3837,9 @@ final class StudioController: ObservableObject {
                 guard self.customPadHost.groupRunID == run,
                       self.captureMonitor?.customPadEmergencyOperational == true else {
                     self.stopCustomPad(reason: self.customPadGroupStopReason(input)); return
+                }
+                guard let current = self.driver?.registeredSurfaceTokens, input.matchesRegistrations(current) else {
+                    self.stopCustomPad(reason: "Native group registration changed. Restart explicitly."); return
                 }
                 let result = input.drain { sample in
                     self.customPadHost.groupFrame(run: run, surface: sample.surface, contacts: sample.contacts,

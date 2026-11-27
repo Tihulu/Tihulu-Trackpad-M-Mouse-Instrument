@@ -1,4 +1,5 @@
 #if os(macOS)
+import Foundation
 import Testing
 import NoSpeakerCore
 @testable import NoSpeakerMac
@@ -58,5 +59,30 @@ private func groupNativeFrame(_ n: Int, surface: TouchSurfaceKind, valid: Bool =
     mouse.submit(groupNativeFrame(2,surface:.magicMouse,valid:false))
     #expect(group.drain { _ in Issue.record("Unexpected delivery"); return true } == .revoked)
     #expect(group.inboxes.allSatisfy { !$0.admitsDelivery })
+}
+#endif
+
+#if os(macOS)
+@Test func customNativeGroupRegistrationBindingIsDistinctAndImmutable() throws {
+    let group=try #require(CustomSurfaceNativeGroupInput(surfaces:[.trackpad,.magicMouse],orientation:.horizontal,notBefore:0))
+    let a=UUID(), b=UUID()
+    #expect(group.bindRegistrations([.trackpad:a,.magicMouse:b]))
+    #expect(group.matchesRegistrations([.trackpad:a,.magicMouse:b]))
+    #expect(!group.matchesRegistrations([.trackpad:a,.magicMouse:UUID()]))
+    #expect(!group.matchesRegistrations([.trackpad:a]))
+    #expect(!group.bindRegistrations([.trackpad:b,.magicMouse:a]))
+    #expect(group.begin(at:1))
+    let mouse=try #require(group.inboxes.first { $0.surface == .magicMouse })
+    mouse.submit(.init(surface:.magicMouse,contacts:[],timestamp:0,frameNumber:2,acquisitionNS:2,
+        validNativeEnvelope:true,rawNativeContactCount:0,nativeRegistration:a))
+    #expect(group.drain { _ in Issue.record("Unexpected delivery");return true } == .revoked)
+}
+@Test func customNativeGroupMissingOrDuplicateRegistrationClosesBoth() throws {
+    let token=UUID()
+    for current in [[TouchSurfaceKind.trackpad:token],[.trackpad:token,.magicMouse:token]] {
+        let group=try #require(CustomSurfaceNativeGroupInput(surfaces:[.trackpad,.magicMouse],orientation:.horizontal,notBefore:0))
+        #expect(!group.bindRegistrations(current))
+        #expect(!group.admitsSetup && !group.begin(at:1))
+    }
 }
 #endif

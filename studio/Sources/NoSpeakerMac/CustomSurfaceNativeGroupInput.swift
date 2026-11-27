@@ -14,6 +14,7 @@ public final class CustomSurfaceNativeGroupInput: @unchecked Sendable {
     private let lock = NSLock()
     private var began = false
     private var closed = false
+    private var registrations: [TouchSurfaceKind: UUID]?
     public init?(surfaces: Set<TouchSurfaceKind>, orientation: SurfaceOrientation, notBefore: Int64) {
         guard !surfaces.isEmpty, surfaces.count <= 2, notBefore >= 0 else { return nil }
         inboxes = [TouchSurfaceKind.trackpad, .magicMouse].filter { surfaces.contains($0) }.map {
@@ -28,6 +29,30 @@ public final class CustomSurfaceNativeGroupInput: @unchecked Sendable {
     public var admitsDelivery: Bool {
         lock.lock(); defer { lock.unlock() }
         return began && !closed && inboxes.allSatisfy { $0.admitsDelivery }
+    }
+    /// All selected sources must be bound to distinct current tokens.
+    /// A partial bind closes all members; it cannot be retried in place.
+    @discardableResult
+    public func bindRegistrations(_ current: [TouchSurfaceKind: UUID]) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed, !began, registrations == nil else { return false }
+        let selected = current.filter { pair in inboxes.contains { $0.surface == pair.key } }
+        guard selected.count == inboxes.count, Set(selected.values).count == selected.count,
+              inboxes.allSatisfy({ inbox in
+                  guard let token = selected[inbox.surface] else { return false }
+                  return inbox.bindRegistration(token)
+              }) else {
+            closed = true
+            for inbox in inboxes { inbox.close() }
+            return false
+        }
+        registrations = selected
+        return true
+    }
+    public func matchesRegistrations(_ current: [TouchSurfaceKind: UUID]) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed, let registrations else { return false }
+        return registrations.allSatisfy { current[$0.key] == $0.value }
     }
     @discardableResult
     public func begin(at receipt: Int64) -> Bool {
