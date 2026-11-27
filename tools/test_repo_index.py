@@ -640,6 +640,8 @@ class RepositoryIndexTests(unittest.TestCase):
         docs = next(cell for cell in result["scopes"] if cell["scope"] == "docs")
         self.assertEqual(docs["status"], "COVERAGE_FAIL")
         self.assertEqual(docs["missing_paths"], 1)
+        self.assertEqual(docs["missing_expected_files"], [str(doc.relative_to(self.repo))])
+        self.assertTrue(docs["canonical_lexical_complete"])
         self.assertEqual(docs["file_hit_rate"], 0)
         result = subprocess.run([sys.executable, str(TOOL.with_name("rag_feature_probe.py")),
             "--repo", str(self.repo), "--ref", later, "--cases-file", str(cases_file),
@@ -680,6 +682,48 @@ class RepositoryIndexTests(unittest.TestCase):
                          {"engine": 3, "app": 3, "docs": 3})
         for scope in ("engine", "app", "docs"):
             self.assertFalse(in_scope("tools/" + fixture.name, scope))
+
+    def test_canonical_lexical_coverage_detects_missing_duplicate_and_skip_claims(self):
+        self.build()
+        original = json.loads(self.index.read_text())
+        def check(document, message):
+            self.index.write_text(json.dumps(document))
+            normal = self.cli("verify", "--repo", self.repo, "--index", self.index)
+            self.assertEqual(normal.returncode, 0, normal.stderr)
+            strict = self.cli("verify", "--repo", self.repo, "--index", self.index,
+                              "--require-complete-lexical")
+            self.assertEqual(strict.returncode, 2)
+            self.assertIn(message, strict.stderr)
+        strict = self.cli("verify", "--repo", self.repo, "--index", self.index,
+                          "--require-complete-lexical")
+        self.assertEqual(strict.returncode, 0, strict.stderr)
+        self.assertTrue(json.loads(strict.stdout)["canonical_lexical_complete"])
+        self.assertEqual(json.loads(strict.stdout)["canonical_chunks"], 2)
+        check(dict(original, chunks=original["chunks"][:1]), "missing=1")
+        check(dict(original, chunks=original["chunks"] + original["chunks"][:1]), "unexpected=1")
+        check(dict(original, metadata=dict(original["metadata"], skipped=[{"path": "invented"}])),
+              "skip_inventory_matches=False")
+        meta, rows = original["metadata"], original["chunks"]
+        self.assertTrue(repo_index.verify_complete_lexical(self.repo, meta, list(reversed(rows)))
+                        ["canonical_lexical_complete"])
+        with self.assertRaisesRegex(ValueError, "requires a lexical"):
+            repo_index.verify_complete_lexical(self.repo, dict(meta, mode="semantic"), rows)
+
+    def test_matrix_wide_digest_rejects_replaced_group_between_scopes(self):
+        case = {"id": "dev", "scope": "docs", "language": "en", "query": "test one",
+                "expected_paths": ["README.md"]}
+        dataset = self.root / "groups.json"
+        evaluation = dict(case, id="eval", query="test two")
+        dataset.write_text(json.dumps({"development": [case], "evaluation": [evaluation]}))
+        digests = rag_benchmark.validate_case_groups(dataset)
+        dataset.write_text(json.dumps({"development": [dict(case, query="changed")],
+                                       "evaluation": [evaluation]}))
+        with patch.object(rag_benchmark, "run") as run:
+            with self.assertRaisesRegex(ValueError, "Matrix-wide ranking dataset changed"):
+                rag_matrix.compare_lexical_profiles(self.repo, self.commit, self.index,
+                    "docs", SimpleNamespace(k=8, max_per_file=3), self.root, dataset,
+                    expected_digests=digests)
+            run.assert_not_called()
 
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
