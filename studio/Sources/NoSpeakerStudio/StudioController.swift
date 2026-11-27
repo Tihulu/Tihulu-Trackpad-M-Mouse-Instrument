@@ -1137,9 +1137,9 @@ final class StudioController: ObservableObject {
     private var activeSequenceMIDI:ChordMIDIOutput { sequenceUsesTuning ? tunedSequenceMIDI : sequenceMIDI }
     private func releaseSequenceOutput() -> Bool {
         let port = activeSequenceMIDI
-        let notesReleased = sequenceLedger.releaseAll(send:{ port.send($0) })
-        let selectorsReleased = sequenceSelectors.releaseAll(send:{ port.send($0) })
-        let released = notesReleased && selectorsReleased
+        let released = SequencerMIDIRecovery.release(notes: &sequenceLedger, selectors: &sequenceSelectors) {
+            port.send($0)
+        }
         sequenceCleanupPending = !released
         return released
     }
