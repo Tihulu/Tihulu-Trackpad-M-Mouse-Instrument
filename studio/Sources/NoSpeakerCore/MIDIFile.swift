@@ -97,6 +97,7 @@ public enum MIDIFileParser {
                 } else {
                     cursor += 1
                     if status < 0xF0 { runningStatus = status }
+                    else { runningStatus = nil }
                 }
 
                 if status == 0xFF {
