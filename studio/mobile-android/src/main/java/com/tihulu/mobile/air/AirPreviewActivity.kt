@@ -360,9 +360,9 @@ class AirPreviewActivity: ComponentActivity() {
         customFar=calibrationField("Far distance (cm)","85")
         imageRotation=spinner(listOf("Raw image 0°","Raw image 90°","Raw image 180°","Raw image 270°"))
         label("Instrument / helper")
-        modePick=spinner(modes.map {it.name.replace('_',' ')})
-        rolePick=spinner(HandRole.entries.map {it.name})
-        orientationPick=spinner(Orientation.entries.map {it.name})
+        modePick=spinner(modes.map {it.name.replace('_',' ')}).apply {contentDescription="Air instrument or helper mode"}
+        rolePick=spinner(HandRole.entries.map {it.name}).apply {contentDescription="Performing hand"}
+        orientationPick=spinner(Orientation.entries.map {it.name}).apply {contentDescription="Musical control orientation"}
         mirror=CheckBox(this).also {it.text="Mirror X";column.addView(it)}
         modeGuide=label("")
         xyz=CheckBox(this).apply {text="Measured XYZ · Camera2 DEPTH16";column.addView(this)}
@@ -418,6 +418,7 @@ class AirPreviewActivity: ComponentActivity() {
             override fun afterTextChanged(s:Editable?){controls()}
         }
         customNear.addTextChangedListener(refreshCalibration);customFar.addTextChangedListener(refreshCalibration)
+        xyzSettings.selectionChanged={controls()}
         setContentView(ScrollView(this).apply {addView(column)})
         controls()
     }
@@ -498,7 +499,9 @@ class AirPreviewActivity: ComponentActivity() {
             status.text="Mode incompatible with assignment: choose the same family or disconnect and pair again."
         start.isEnabled=!wantsTouchPair&&!busy&&!qrRequested&&validAirSetup()&&(depth||r?.admits(zoom)==true)&&(!wantsPair||pairedProjection()!=null)
         if(measuredMode){
-            start.isEnabled=!busy&&!qrRequested&&measuredCamera()!=null&&(!wantsPair||xyzAssigned())
+            val validVolume=xyzSettings.volume()!=null && xyzSettings.mask in 1..7
+            start.isEnabled=!busy&&!qrRequested&&measuredCamera()!=null&&validVolume&&(!wantsPair||xyzAssigned())
+            if(!busy&&!validVolume)status.text="Set valid XYZ bounds and enable at least one helper axis for Helper or Hybrid."
             modelButton.isEnabled=false
         }
         stopButton.isEnabled=xyzSource!=null||pending||source!=null||depthSource!=null||lan!=null
@@ -525,7 +528,7 @@ class AirPreviewActivity: ComponentActivity() {
         val root=rootDer
         val digest=fingerprint.text.toString()
         val mode=selectedMode()
-        if(endpoint==null||check==null||root==null||(!wantsTouchPair&&mode==null)){
+        if(endpoint==null||check==null||root==null||(!wantsTouchPair&&!measuredMode&&mode==null)){
             connectionStatus.text="Enter the exact Mac address, invitation and verified DER root.";return
         }
         if(!measuredMode&&!wantsTouchPair&&!validAirSetup()){
