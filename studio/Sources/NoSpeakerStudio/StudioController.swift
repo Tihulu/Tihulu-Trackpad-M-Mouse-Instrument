@@ -3700,7 +3700,8 @@ final class StudioController: ObservableObject {
         guard let opened = customPadHost.open(plan: plan, permitsNeutralSilence: true, admitsLive: { [weak self, weak inbox] in
             guard let self, let inbox else { return false }
             return self.customPadInbox === inbox && self.engineGeneration == generation &&
-                inbox.admitsDelivery && self.captureMonitor?.customPadEmergencyOperational == true
+                inbox.admitsDelivery && HapticTrackpadDriver.matchesTouchRegistrations([surface: registration]) &&
+                self.captureMonitor?.customPadEmergencyOperational == true
         }) else {
             stopCustomPad(reason: "Dedicated MIDI port could not be opened.")
             return
@@ -3715,6 +3716,7 @@ final class StudioController: ObservableObject {
         customPadFrozenChannel = channel
         customPadRunID = opened.id
         guard inbox.begin(at: NativeCustomSurfaceMIDIHost.monotonicNow()),
+              HapticTrackpadDriver.matchesTouchRegistrations([surface: registration]),
               captureMonitor?.customPadEmergencyOperational == true else {
             stopCustomPad(reason: "Input or emergency admission changed while opening MIDI.")
             return
@@ -3811,10 +3813,12 @@ final class StudioController: ObservableObject {
               captureMonitor?.setCustomPadEmergencyArmed(true) == true else {
             stopCustomPad(reason: "Escape monitor unavailable. Check input permissions."); return
         }
+        let frozenRegistrations = registrations.filter { required.contains($0.key) }
         let started = customPadHost.openGroup(members, admitsLive: { [weak self, weak input] in
             guard let self, let input else { return false }
             return self.customPadGroupInput === input && self.engineGeneration == generation &&
-                input.admitsSetup && self.captureMonitor?.customPadEmergencyOperational == true
+                input.admitsSetup && HapticTrackpadDriver.matchesTouchRegistrations(frozenRegistrations) &&
+                self.captureMonitor?.customPadEmergencyOperational == true
         })
         customPadPorts = customPadHost.statuses
         guard case .started(let run) = started else {
@@ -3824,6 +3828,7 @@ final class StudioController: ObservableObject {
         customPadGroupLayouts = [trackpad, mouse]
         customPadGroupChannels = [.trackpad: trackpadChannel, .magicMouse: mouseChannel]
         guard input.begin(at: NativeCustomSurfaceMIDIHost.monotonicNow()),
+              HapticTrackpadDriver.matchesTouchRegistrations(frozenRegistrations),
               captureMonitor?.customPadEmergencyOperational == true else {
             stopCustomPad(reason: "Group admission changed during arm."); return
         }

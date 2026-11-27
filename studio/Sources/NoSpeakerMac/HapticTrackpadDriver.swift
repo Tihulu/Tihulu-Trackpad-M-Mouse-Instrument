@@ -160,6 +160,14 @@ private final class TouchBridge: @unchecked Sendable {
         os_unfair_lock_unlock(&lock)
     }
 
+    func matchesRegistrations(_ required: [TouchSurfaceKind: UUID]) -> Bool {
+        os_unfair_lock_lock(&lock)
+        defer { os_unfair_lock_unlock(&lock) }
+        guard handler != nil else { return false }
+        let current = Dictionary(uniqueKeysWithValues: surfaceByDevice.values.map { ($0.kind, $0.registration) })
+        return NativeSurfaceAdmission.matchesRegistrations(required: required, current: current)
+    }
+
     func clear() {
         os_unfair_lock_lock(&lock)
         handler = nil
@@ -251,6 +259,10 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
     private var monitoredDeviceIDs: Set<UInt64> = []
     private var monitoredKinds: Set<TouchSurfaceKind> = []
     private var monitoredRegistrations: [TouchSurfaceKind: UUID] = [:]
+    /// Short bridge-lock check only; no private API, actuator lock or IPC.
+    public static func matchesTouchRegistrations(_ required: [TouchSurfaceKind: UUID]) -> Bool {
+        TouchBridge.shared.matchesRegistrations(required)
+    }
     public var registeredSurfaceTokens: [TouchSurfaceKind: UUID] {
         lifetime.snapshot { monitoredRegistrations }
     }

@@ -57,6 +57,12 @@ public struct NativeSurfaceInventoryGuard: Sendable {
 /// Explicitly requested routes are all-or-nothing at start. An absent
 /// inventory is not evidence of an available surface.
 public enum NativeSurfaceAdmission {
+    /// Match an explicitly frozen nonempty registration set; unrelated
+    /// currently monitored kinds do not authorize or invalidate it.
+    public static func matchesRegistrations<Surface: Hashable>(required: [Surface: UUID], current: [Surface: UUID]) -> Bool {
+        !required.isEmpty && Set(required.values).count == required.count &&
+            required.allSatisfy { current[$0.key] == $0.value }
+    }
     /// Do not silently collapse duplicate native IDs into a healthy set.
     public static func uniqueInventory(_ ids: [UInt64]) -> Set<UInt64>? {
         guard ids.count <= 64 else { return nil }
