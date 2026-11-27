@@ -1,4 +1,5 @@
 #if os(macOS)
+import Foundation
 import Testing
 import NoSpeakerCore
 @testable import NoSpeakerMac
@@ -132,5 +133,28 @@ private func inboxFrame(_ n: Int, surface: TouchSurfaceKind = .trackpad, valid: 
     trackpad.submit(inboxFrame(2))
     #expect(!trackpad.admitsDelivery && mouse.admitsDelivery)
     #expect(mouse.drain().samples.map(\.observedAt) == [3])
+}
+#endif
+
+#if os(macOS)
+@Test func customNativeInboxRegistrationMismatchRevokesDrainedBatch() {
+    let token=UUID()
+    let inbox=CustomSurfaceNativeInbox(surface:.trackpad,orientation:.horizontal,notBefore:0)
+    #expect(inbox.bindRegistration(token))
+    #expect(!inbox.bindRegistration(UUID()))
+    #expect(inbox.begin(at:1))
+    inbox.submit(.init(surface:.trackpad,contacts:[],timestamp:0,frameNumber:2,acquisitionNS:2,
+        validNativeEnvelope:true,rawNativeContactCount:0,nativeRegistration:token))
+    #expect(inbox.drain().samples.count == 1)
+    inbox.submit(.init(surface:.trackpad,contacts:[],timestamp:0,frameNumber:3,acquisitionNS:3,
+        validNativeEnvelope:true,rawNativeContactCount:0,nativeRegistration:UUID()))
+    #expect(!inbox.admitsDelivery && inbox.queueEvidence().fault == .registrationChanged)
+}
+@Test func customNativeInboxMissingBoundRegistrationCannotConfirmNeutral() {
+    let inbox=CustomSurfaceNativeInbox(surface:.trackpad,orientation:.horizontal,notBefore:0)
+    #expect(inbox.bindRegistration(UUID()))
+    #expect(inbox.begin(at:1))
+    inbox.submit(inboxFrame(2))
+    #expect(inbox.drain().samples.isEmpty && inbox.queueEvidence().fault == .registrationChanged)
 }
 #endif

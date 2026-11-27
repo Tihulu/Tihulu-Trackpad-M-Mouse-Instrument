@@ -15,6 +15,7 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
     public enum Fault: String, Sendable {
         case invalidFrame = "Invalid or incomplete native contact frame"
         case overflow = "Native contact FIFO overflow"
+        case registrationChanged = "Native surface registration changed or missing"
         case unorderedFrame = "Native contact sequence or receipt regressed"
     }
     private var fault: Fault?
@@ -23,6 +24,7 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
     private var previousReceipt: Int64?
     private var closed = false
     private var began = false
+    private var expectedRegistration: UUID?
     public init(surface: TouchSurfaceKind, orientation: SurfaceOrientation, notBefore: Int64,
                 diagnosticOnly: Bool = false) {
         self.surface = surface; self.orientation = orientation; self.notBefore = notBefore
@@ -34,6 +36,9 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
         // A previously admitted callback can still be completing while a
         // new subscription is attached. Never replay it into the new run.
         if let receipt = frame.acquisitionNS, receipt < notBefore { return }
+        if let expectedRegistration, frame.nativeRegistration != expectedRegistration {
+            latch(.registrationChanged); return
+        }
         let sample = CustomSurfaceNativeFrame(frame: frame, orientation: orientation)
         evidence.observe(receipt: frame.acquisitionNS, rawCount: frame.rawNativeContactCount,
                          rawStates: frame.rawNativeStates, decodedCount: frame.contacts.count,
@@ -57,6 +62,17 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
     private func latch(_ reason: Fault) {
         fault = reason
         samples.removeAll()
+    }
+    /// Bind the registration selected by the driver, not by the first
+    /// received frame. Only setup may bind, exactly once.
+    @discardableResult
+    public func bindRegistration(_ token: UUID) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed, !began, fault == nil, expectedRegistration == nil else { return false }
+        expectedRegistration = token
+        samples.removeAll(keepingCapacity: true)
+        previousSequence = nil; previousReceipt = nil
+        return true
     }
     /// Drop all provisional samples when the actual output and emergency
     /// admission are ready. Do not revive an already faulted or closed inbox.
