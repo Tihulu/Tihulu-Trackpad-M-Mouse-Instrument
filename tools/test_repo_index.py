@@ -313,7 +313,9 @@ class RepositoryIndexTests(unittest.TestCase):
                 else:
                     self.assertNotIn("heldout", cell)
             self.assertEqual(json.loads((out / "matrix.json").read_text()), report)
-            self.assertEqual(len(list(out.glob("*-report.json"))), 3)
+            self.assertEqual({path.name for path in out.glob("*-report.json")},
+                             {scope + "-lexical" + suffix + "-report.json"
+                              for scope in rag_matrix.SCOPES for suffix in ("", "-heldout")})
             with self.assertRaises(FileExistsError):
                 rag_matrix.run(args)
 
