@@ -204,3 +204,20 @@ import Testing
     #expect(router.disconnect(id).isEmpty)
     #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.22), now: 1.22))
 }
+
+@Test func relativeControlRejectsAmbiguousPedalAndWrappedAngleLanesUntilBound() {
+    for signal in [SensorSignal.pedalExpression, .pedalVolume, .pedalWah, .tiltYaw, .tiltPitch] {
+        let absolute = SensorMapping(id: "lane", source: .phone, signal: signal,
+            destination: .init(.controlChange, number: 74))
+        #expect(absolute.isValid)
+        var relative = absolute
+        relative.response = .init(relative: .init(reference: 0.5))
+        #expect(!relative.isValid)
+    }
+    for signal in [SensorSignal.x, .y, .tiltRoll, .rotationMagnitude] {
+        let route = SensorMapping(id: "level", source: .phone, signal: signal,
+            destination: .init(.controlChange, number: 74),
+            response: .init(relative: .init(reference: 0.5)))
+        #expect(route.isValid)
+    }
+}
