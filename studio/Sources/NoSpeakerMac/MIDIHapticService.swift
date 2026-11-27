@@ -305,16 +305,15 @@ public final class MIDIHapticService: @unchecked Sendable {
         touchOutputFretless = false
         // Retry only the outstanding attempted note/pedal destinations.
         // Sustain-off precedes note-off; continuous cleanup follows the gates.
-        for message in gateDebt.pending { sendMIDI1(status:message.status,data1:message.data1,data2:message.data2) }
-        for channel in controllerDebt.pendingRanges {
-            let msb = sendMIDI1(status:0xb0|channel,data1:101,data2:127,rangePart:true)
-            let lsb = sendMIDI1(status:0xb0|channel,data1:100,data2:127,rangePart:true)
-            if msb && lsb { controllerDebt.completeRange(channel:channel) }
-        }
-        for message in controllerDebt.pending {
-            let neutral = (message.status & 0xf0) == 0xb0 ? message.data2 : LegacyControllerReleaseDebt.neutral(for:message)
-            sendMIDI1(status:message.status,data1:message.data1,data2:message.data2,neutral:neutral)
-        }
+        LegacyRecoveryPolicy.drainAttemptedCleanup(
+            pendingGates: { self.gateDebt.pending },
+            pendingRanges: { self.controllerDebt.pendingRanges },
+            pendingControllers: { self.controllerDebt.pending },
+            send: { message, neutral, rangePart in
+                self.sendMIDI1(status: message.status, data1: message.data1, data2: message.data2,
+                    neutral: neutral, rangePart: rangePart)
+            },
+            completeRange: { self.controllerDebt.completeRange(channel: $0) })
         cleaningOutgoing = false
         outgoingFailureHandler = nil
 

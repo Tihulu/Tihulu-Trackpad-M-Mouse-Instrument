@@ -67,6 +67,28 @@ public struct LegacyControllerReleaseDebt: Sendable {
 /// Keep cleanup submissions possible after input and normal output stop.
 /// Replacement must not discard unresolved receiver-state obligations.
 public enum LegacyRecoveryPolicy {
+    /// Full-source Stop only. Read each ledger at its original cleanup phase;
+    /// the caller's wire callback records actual results in those ledgers.
+    /// Always attempt both RPN null selectors, even if the first fails.
+    public static func drainAttemptedCleanup(
+        pendingGates: () -> [LegacyGateReleaseDebt.Message],
+        pendingRanges: () -> [Int],
+        pendingControllers: () -> [LegacyGateReleaseDebt.Message],
+        send: (LegacyGateReleaseDebt.Message, Int?, Bool) -> Bool,
+        completeRange: (Int) -> Void
+    ) {
+        for message in pendingGates() { _ = send(message, nil, false) }
+        for channel in pendingRanges() {
+            let msb = send(.init(0xb0 | channel, 101, 127), nil, true)
+            let lsb = send(.init(0xb0 | channel, 100, 127), nil, true)
+            if msb && lsb { completeRange(channel) }
+        }
+        for message in pendingControllers() {
+            let neutral = (message.status & 0xf0 == 0xb0) ? message.data2 : LegacyControllerReleaseDebt.neutral(for: message)
+            _ = send(message, neutral, false)
+        }
+    }
+
     /// Release callbacks arriving after Stop are not new performance intent.
     public static func permitsSustainEvent(running: Bool, pressed: Bool) -> Bool {
         running || pressed
