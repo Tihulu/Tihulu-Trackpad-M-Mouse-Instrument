@@ -129,6 +129,7 @@ def run(args):
     ranking_cases = getattr(args, "ranking_cases", None)
     multilingual_cases = getattr(args, "multilingual_cases", None)
     contextual_cases = getattr(args, "contextual_cases", None)
+    domain_cases = getattr(args, "domain_cases", None)
     # Freeze all input digests before building any scope; pairwise checks alone
     # cannot detect a replaced fixture between otherwise consistent scopes.
     curated_digest = rag_benchmark.load_cases(rag_benchmark.CASES)[1]
@@ -136,6 +137,7 @@ def run(args):
     ranking_digests = rag_benchmark.validate_case_groups(ranking_cases) if ranking_cases else None
     multilingual_digests = rag_benchmark.validate_case_groups(multilingual_cases) if multilingual_cases else None
     contextual_digests = rag_benchmark.validate_case_groups(contextual_cases) if contextual_cases else None
+    domain_digests = rag_benchmark.validate_case_groups(domain_cases) if domain_cases else None
     out = Path(args.out_dir).resolve()
     # A matrix contains source text and possibly vectors. Never overwrite
     # previous evidence or create a public/shared directory by default.
@@ -224,6 +226,15 @@ def run(args):
                 if any(result["missing_paths"] for group in cell["contextual_comparison"].values()
                        for result in group.values()):
                     cell["status"] = "COVERAGE_FAIL"
+            if domain_cases and mode == "lexical":
+                cell["domain_comparison"] = compare_lexical_profiles(
+                    repo, revision, index, scope, args, out, domain_cases,
+                    baseline="multilingual-context", candidate="multilingual-domain",
+                    prefix="domain-", compare_cache=False,
+                    expected_digests=domain_digests)
+                if any(result["missing_paths"] for group in cell["domain_comparison"].values()
+                       for result in group.values()):
+                    cell["status"] = "COVERAGE_FAIL"
             cells.append(cell)
     if identity and repo_index.fingerprint(args.model_dir)[1] != identity:
         raise ValueError("Model changed during matrix")
@@ -253,6 +264,7 @@ def main():
     args.ranking_cases = None if args.curated_only else rag_benchmark.RANKING_CASES
     args.multilingual_cases = None if args.curated_only else rag_benchmark.MULTILINGUAL_CASES
     args.contextual_cases = None if args.curated_only else rag_benchmark.CONTEXTUAL_CASES
+    args.domain_cases = None if args.curated_only else rag_benchmark.DOMAIN_CASES
     try:
         result = run(args)
         print(json.dumps(result, ensure_ascii=True, allow_nan=False))
