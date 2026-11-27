@@ -159,7 +159,9 @@ public struct NativeHelperRelativeSession: Sendable {
                 return .waiting
             }
             if result == .releaseRequired { return fault(retire: retire) }
-            return .waiting
+            // A valid held contact can be unchanged after quantization or
+            // saturation. Report active admission without a redundant send.
+            return active ? .accepted : .waiting
         case .anchored:
             guard permits(), begin(), permits(), activeLeaseValid() else { return fault(retire: retire) }
             neutralAdmitted = false; active = true
