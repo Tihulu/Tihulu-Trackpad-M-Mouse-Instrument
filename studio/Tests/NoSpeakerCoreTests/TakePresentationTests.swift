@@ -100,6 +100,38 @@ final class TakePresentationTests: XCTestCase {
         XCTAssertTrue(p.confirmStarted(token: b))
         XCTAssertTrue(p.confirmPosition(token: b, receipt: 0, cycle: 0, tick: 0))
     }
+    func testGridMarkerUsesOnlyMatchingConfirmedPlayingTake() throws {
+        var p = SequencerTakePresentation()
+        let notes = try take(loop: true)
+        let drums = try FrozenSequencerPattern(drums: .init(bpm: 120, length: 8,
+            hits: [.init(index: 0, voice: .kick)]), loop: true)
+        XCTAssertNil(p.confirmedGridStep(for: .notes))
+        XCTAssertNil(p.confirmedGridStep(for: .drums))
+        let a = try XCTUnwrap(p.reserve(notes))
+        XCTAssertNil(p.confirmedGridStep(for: .notes))
+        XCTAssertTrue(p.confirmStarted(token: a))
+        XCTAssertNil(p.confirmedGridStep(for: .notes))
+        XCTAssertTrue(p.confirmPosition(token: a, receipt: 1, cycle: 0, tick: 240))
+        XCTAssertEqual(p.confirmedGridStep(for: .notes), 1)
+        XCTAssertNil(p.confirmedGridStep(for: .drums))
+        XCTAssertTrue(p.requestStop(token: a))
+        XCTAssertNil(p.confirmedGridStep(for: .notes))
+        XCTAssertTrue(p.stopped(token: a, cleanupConfirmed: false))
+        XCTAssertNil(p.confirmedGridStep(for: .notes))
+        XCTAssertNil(p.reserve(drums))
+        XCTAssertTrue(p.confirmCleanup(token: a, succeeded: true))
+        let b = try XCTUnwrap(start(&p, drums))
+        XCTAssertFalse(p.confirmPosition(token: a, receipt: 2, cycle: 0, tick: 480))
+        XCTAssertNil(p.confirmedGridStep(for: .drums))
+        XCTAssertTrue(p.confirmPosition(token: b, receipt: 1, cycle: 0, tick: 480))
+        XCTAssertEqual(p.confirmedGridStep(for: .drums), 2)
+        XCTAssertNil(p.confirmedGridStep(for: .notes))
+        XCTAssertTrue(p.confirmPosition(token: b, receipt: 2, cycle: 1, tick: 0))
+        XCTAssertEqual(p.confirmedGridStep(for: .drums), 0)
+        XCTAssertTrue(p.stopped(token: b, cleanupConfirmed: true))
+        XCTAssertNil(p.confirmedGridStep(for: .drums))
+    }
+
     func testStopDuringStartupCannotResurrect() throws {
         var p = SequencerTakePresentation()
         let t = try take(loop: false)
