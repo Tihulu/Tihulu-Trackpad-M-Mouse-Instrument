@@ -4123,6 +4123,11 @@ final class StudioController: ObservableObject {
         }
         for sample in batch.samples {
             guard surfaceMonitorToken == token, surfaceInbox === inbox, touchPreviewRunning else { return }
+            guard inbox.permits(batch) else {
+                touchDispatchMetrics.reject()
+                if inbox.acknowledgeOverflow(after:batch) { handleTouchInputBacklog() }
+                return
+            }
             let startedAt = ProcessInfo.processInfo.systemUptime
             guard let revision = touch?.currentSampleRevision,
                   surfaceSnapshotCursor.accept(sample.stamp) else {
@@ -4158,7 +4163,17 @@ final class StudioController: ObservableObject {
                 clickSnapshotRevision = sample.clickObservation?.stamp.revision
                 clickSnapshotReceivedAt = sample.clickObservation?.receivedAt
             }
-            guard handleSharedSurfaceStates(sample,admitTouch:mappedCurrent,startedAt:startedAt) else {
+            let dispatched = handleSharedSurfaceStates(sample,admitTouch:mappedCurrent,startedAt:startedAt,
+                queuePermits:{ inbox.permits(batch) })
+            // A fault may arise while dispatch is in progress, including during
+            // its final attempted send. Acknowledge once without stealing an
+            // outstanding producer callback or scheduling the old continuation.
+            guard inbox.permits(batch) else {
+                touchDispatchMetrics.reject()
+                if inbox.acknowledgeOverflow(after:batch) { handleTouchInputBacklog() }
+                return
+            }
+            guard dispatched else {
                 touchDispatchMetrics.reject()
                 if touchRunning || midiHelperRunning {
                     handleTouchInputBacklog()
@@ -4201,7 +4216,8 @@ final class StudioController: ObservableObject {
         }
     }
 
-    private func handleSharedSurfaceStates(_ sample:QueuedTouchSnapshot,admitTouch:Bool,startedAt:Double) -> Bool {
+    private func handleSharedSurfaceStates(_ sample:QueuedTouchSnapshot,admitTouch:Bool,startedAt:Double,
+        queuePermits:@escaping ()->Bool) -> Bool {
         let instrumentStates = admitTouch && (instrumentPreviewRequested || touchRunning) ? sample.states.filter {
             currentTouchConfiguration.surfaceSelection.accepts($0.surface)
         } : nil
@@ -4215,7 +4231,7 @@ final class StudioController: ObservableObject {
         let effectsAdmitted = helperEffectsPublicationFence.permits(sample.stamp,selectedSource:selectedSource)
         var pedal:MIDIHelperSustainSnapshot?
         var fence=PhysicalReceiptSendFence(receipt:sample.queuedAt,maximumAge:TouchPublicationAdmission.maximumAge,initialNow:startedAt)
-        let admit:()->Bool = { fence.permits(now:ProcessInfo.processInfo.systemUptime) }
+        let admit:()->Bool = { queuePermits() && fence.permits(now:ProcessInfo.processInfo.systemUptime) }
         return TouchPublicationAdmission.dispatch(permits:admit,
             prepare:{
                 pedal = applyPhysicalPedalFrame(touchStates:instrumentStates,
