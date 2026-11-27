@@ -23,9 +23,14 @@ public final class CustomSurfacePerformanceGroup {
     }
     private let host: CustomSurfaceEndpointHost
     private var admission: Admission?
+    private var clock: (() -> Int64)?
+    private var startedAt: Int64?
+    private var lastClock: Int64?
+    public static let neutralTimeoutNS: Int64 = 10_000_000_000
     private var ids: [Surface: UUID] = [:]
     public private(set) var runID: UUID?
     public init(host: CustomSurfaceEndpointHost) { self.host = host }
+    deinit { admission?.open = false }
     public var statuses: [Status] {
         host.statuses.filter { ids.values.contains($0.id) }
     }
@@ -62,6 +67,11 @@ public final class CustomSurfacePerformanceGroup {
             stop()
             return phase == .idle ? .rolledBack : .recoveryPending
         }
+        let now = clock()
+        guard now >= 0 else { stop(); return phase == .idle ? .rolledBack : .recoveryPending }
+        self.clock = clock
+        startedAt = now
+        lastClock = now
         let token = UUID()
         runID = token
         return .started(token)
@@ -73,14 +83,25 @@ public final class CustomSurfacePerformanceGroup {
     public func frame(run: UUID, surface: Surface, contacts: [CustomSurfaceContactProjection.Contact],
                       sequence: UInt64, observedAt: Int64) -> Status? {
         guard runID == run, let id = ids[surface] else { return nil }
+        guard healthy() else { stop(); return nil }
         let result = host.frame(id, surface: surface, contacts: contacts, sequence: sequence, observedAt: observedAt)
-        if result?.phase != .live { stop() }
+        if result?.phase != .live || !healthy() { stop(); return nil }
         return result
     }
     public func poll(run: UUID) {
         guard runID == run else { return }
+        guard healthy() else { stop(); return }
         host.poll()
-        if statuses.count != ids.count || statuses.contains(where: { $0.phase != .live }) { stop() }
+        if !healthy() { stop() }
+    }
+    private func healthy() -> Bool {
+        guard let clock, let startedAt, let lastClock else { return false }
+        let now = clock()
+        guard now >= lastClock else { return false }
+        self.lastClock = now
+        let current = statuses
+        return current.count == ids.count && current.allSatisfy { $0.phase == .live } &&
+            (current.allSatisfy { $0.hasNeutralHandshake } || now - startedAt < Self.neutralTimeoutNS)
     }
     /// Retire admission before any cleanup. Automatic stop must not retry
     /// an already failed cleanup; recovery requires a distinct explicit call.
@@ -88,6 +109,7 @@ public final class CustomSurfacePerformanceGroup {
         admission?.open = false
         admission = nil
         runID = nil
+        clock = nil; startedAt = nil; lastClock = nil
         closeOwned(retry: false)
     }
     public func retryRecovery() {
