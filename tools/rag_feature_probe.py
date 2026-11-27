@@ -35,6 +35,10 @@ def run(args):
                                                  out=index, model_dir=None))
         if info["commit"] != revision or info["scope"] != scope or info["mode"] != "lexical":
             raise ValueError("Feature probe build identity mismatch")
+        meta, rows = repo_index.read_index(index)
+        coverage = repo_index.verify_complete_lexical(repo, meta, rows)
+        if coverage["commit"] != revision or coverage["scope"] != scope:
+            raise ValueError("Feature probe canonical coverage identity mismatch")
         report = rag_benchmark.run(SimpleNamespace(repo=repo, expect_ref=revision,
             index=index, scope=scope, mode="lexical", model_dir=None,
             cases_file=cases_file, k=args.k, max_per_file=args.max_per_file,
@@ -51,8 +55,11 @@ def run(args):
             json.dump(report, stream, ensure_ascii=True, allow_nan=False)
         results.append({"scope": scope,
                         "status": "COVERAGE_FAIL" if report["missing_paths"] else "MEASURED",
+                        "canonical_lexical_complete": coverage["canonical_lexical_complete"],
                         "cases": report["cases"], "chunks": info["chunks"],
                         "skipped": info["skipped"], "missing_paths": report["missing_paths"],
+                        "missing_expected_files": sorted({path for row in report["results"]
+                                                          for path in row["missing_paths"]}),
                         "file_hit_rate": report["file_hit_rate"], "file_mrr": report["file_mrr"],
                         "median_query_ms": report["median_query_ms"], "report": name})
     summary = {"schema": 1, "commit": revision, "mode": "lexical",

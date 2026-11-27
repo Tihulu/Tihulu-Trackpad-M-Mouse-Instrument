@@ -462,8 +462,34 @@ def verify_sources(repo, meta, rows):
             "scope": "source provenance only"}
 
 
+def verify_complete_lexical(repo, meta, rows):
+    """Check canonical lexical coverage, not just authenticity of supplied rows.
+
+    Reconstruct the deterministic chunk inventory from the same committed tree.
+    This is intentionally opt-in: it adds a full source traversal, and cannot
+    authenticate semantic vectors or prove that deliberately excluded files are indexed.
+    """
+    if meta["mode"] != "lexical":
+        raise ValueError("Complete lexical verification requires a lexical index")
+    provenance = verify_sources(repo, meta, rows)
+    expected, skipped = chunks(Path(repo).resolve(strict=True), meta["commit"],
+                               meta.get("scope", "all"))
+    actual_keys = Counter(_lexical_signature(row) for row in rows)
+    expected_keys = Counter(_lexical_signature(row) for row in expected)
+    missing = sum((expected_keys - actual_keys).values())
+    unexpected = sum((actual_keys - expected_keys).values())
+    if missing or unexpected or meta.get("skipped") != skipped:
+        raise ValueError(f"Lexical corpus differs: missing={missing}, unexpected={unexpected}, "
+                         f"skip_inventory_matches={meta.get('skipped') == skipped}")
+    return {**provenance, "scope": meta.get("scope", "all"),
+            "canonical_lexical_complete": True, "canonical_chunks": len(expected),
+            "skipped_chunks_or_files": len(skipped)}
+
+
 def verify(args):
     meta, rows = read_index(args.index)
+    if getattr(args, "require_complete_lexical", False):
+        return verify_complete_lexical(args.repo, meta, rows)
     return verify_sources(args.repo, meta, rows)
 
 
@@ -731,6 +757,8 @@ def main(argv=None):
     v = sub.add_parser("verify")
     v.add_argument("--index", required=True)
     v.add_argument("--repo", default=".")
+    v.add_argument("--require-complete-lexical", action="store_true",
+                   help="Reconstruct canonical lexical chunk inventory and verify exact coverage")
     args = parser.parse_args(argv)
     try:
         result = {"build": build, "search": search, "verify": verify, "context": context}[args.command](args)
