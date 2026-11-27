@@ -288,7 +288,9 @@ import Testing
         let cell = try #require(layout.microtonalCell(x:(Double(index)+0.5)/6,y:1))
         #expect(abs(cell.pitch-(62+Double(layout.customFretCents![index])/100)) < 0.000001)
         let delta = Double(cell.bend-8192)
-        #expect(abs(Double(cell.anchor)+2*delta/Double(delta < 0 ? 8192 : 8191)-cell.pitch) < 0.00013)
+        let bendScale: Double = delta < 0 ? 8192 : 8191
+        let reconstructedPitch = Double(cell.anchor) + 2 * delta / bendScale
+        #expect(abs(reconstructedPitch - cell.pitch) < 0.00013)
     }
     #expect(try JSONDecoder().decode(StringSurfaceLayout.self,from:JSONEncoder().encode(layout)) == layout)
     #expect(StringSurfaceLayout.parseFretCents("0, 181 355, 1200") == [0,181,355,1200])

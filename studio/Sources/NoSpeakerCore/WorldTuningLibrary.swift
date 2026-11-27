@@ -123,8 +123,10 @@ public enum WorldTuningLibrary {
         make("africa.likembe-m0196","Angola · Chisende 10618",.africa,.documentedSample,[0,149,361,538,674,851],damusc+"M0196 https://doi.org/10.21504/amj.v6i1.1097","Instrument-specific measurement; first pitch used as reference, not asserted tonic."),
         make("americas.bolivia-m0045","Bolivia · Panpipe 1",.americas,.documentedSample,[0,326,742,1046,1382,1739,2108,2394],damusc+"M0045 https://scalelibrary.org/scales/damusc/Bolivia_Panpipe_01/","Finite measured range; 2394 cents is not assumed to be an octave or repeat period.",periodic:false),
         make("americas.brazil-m0154","Brazil · Pífano",.americas,.documentedSample,[0,180,350,590,810,1000,1120,1300],damusc+"M0154 https://scalelibrary.org/scales/damusc/Brazil_Pifano/","Finite documented range; 1300 cents is not assumed to be a repeat period.",periodic:false)
-    ] + [5,7,12,17,19,22,24,31,36,41,53,60,72,96,128].map{count in
-        make("edo."+String(count),"\(count)-EDO",.experimental,.mathematical,(0..<count).map{1200*Double($0)/Double(count)},archive,"Equal octave division; not a cultural tuning claim.")
+    ] + [5,7,12,17,19,22,24,31,36,41,53,60,72,96,128].map { (count: Int) -> P in
+        let cents = (0..<count).map { 1200 * Double($0) / Double(count) }
+        return make("edo." + String(count), "\(count)-EDO", .experimental, .mathematical,
+                    cents, archive, "Equal octave division; not a cultural tuning claim.")
     }
 
     public static func preset(id:String)->WorldTuningPreset? {presets.first{$0.id==id}}

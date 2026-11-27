@@ -27,7 +27,8 @@ public struct NativeHelperRelativeSession: Sendable {
 
     public init?(source: Clutch.Surface, monitor: UUID, registration: UUID, afterSequence: UInt64,
                  afterAcquisitionNS: Int64, maximumAge: Double, lanes: [Clutch.Axis: Clutch.Lane]) {
-        guard afterAcquisitionNS >= 0, maximumAge.isFinite, maximumAge > 0,
+        guard afterSequence < UInt64.max, (0..<Int64.max).contains(afterAcquisitionNS),
+              maximumAge.isFinite, maximumAge > 0,
               let clutch = Clutch(surface: source, lanes: lanes) else { return nil }
         self.source = source; self.monitor = monitor; self.registration = registration
         self.maximumAge = maximumAge; self.maximumAgeNS = nil; self.afterAcquisitionNS = afterAcquisitionNS
@@ -38,7 +39,8 @@ public struct NativeHelperRelativeSession: Sendable {
     /// Double receipts remain only for the existing gesture/smoothing math.
     public init?(source: Clutch.Surface, monitor: UUID, registration: UUID, afterSequence: UInt64,
                  afterAcquisitionNS: Int64, maximumAgeNS: Int64, lanes: [Clutch.Axis: Clutch.Lane]) {
-        guard (0..<Int64.max).contains(afterAcquisitionNS), (1..<Int64.max).contains(maximumAgeNS),
+        guard afterSequence < UInt64.max, (0..<Int64.max).contains(afterAcquisitionNS),
+              (1..<Int64.max).contains(maximumAgeNS),
               let clutch = Clutch(surface: source, lanes: lanes) else { return nil }
         self.source = source; self.monitor = monitor; self.registration = registration
         self.maximumAge = Double(maximumAgeNS) / 1_000_000_000

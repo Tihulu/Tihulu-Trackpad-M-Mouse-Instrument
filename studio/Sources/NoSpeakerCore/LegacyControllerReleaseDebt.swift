@@ -67,6 +67,13 @@ public struct LegacyControllerReleaseDebt: Sendable {
 /// Keep cleanup submissions possible after input and normal output stop.
 /// Replacement must not discard unresolved receiver-state obligations.
 public enum LegacyRecoveryPolicy {
+    /// A CoreMIDI creation status is not sufficient without a usable handle.
+    /// Preserve native errors; a success status with a null handle is invalid.
+    public static func endpointCreationFailure(status: Int32, handle: UInt32) -> Int32? {
+        if status != 0 { return status }
+        return handle == 0 ? -1 : nil
+    }
+
     public struct LegacyBendRangeResult: Equatable, Sendable {
         public let completed: Bool
         public let dataAttempted: Bool
