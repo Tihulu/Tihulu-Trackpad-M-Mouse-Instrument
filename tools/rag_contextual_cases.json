@@ -1,0 +1,114 @@
+{
+  "development": [
+    {
+      "id": "dev5-owner",
+      "scope": "engine",
+      "language": "tr",
+      "query": "Sürekli kontrol sahipliği: eski kaynak bırakma işlemi, geri yükleme ve öncelik",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/LegacyContinuousOwners.swift"
+      ]
+    },
+    {
+      "id": "dev5-capture",
+      "scope": "engine",
+      "language": "en",
+      "query": "Which bounded aggregate records invalid frames and occupied gaps without storing contact identifiers?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/CustomSurfaceCaptureEvidence.swift"
+      ]
+    },
+    {
+      "id": "dev5-lab",
+      "scope": "app",
+      "language": "tr",
+      "query": "MIDI olmadan kaynak ve hedef eşleştirmesi için deneysel laboratuvar",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/SensorMappingLabView.swift"
+      ]
+    },
+    {
+      "id": "dev5-library",
+      "scope": "app",
+      "language": "de",
+      "query": "Read-only World tuning library ohne automatische Übernahme",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/WorldTuningLibraryPanel.swift"
+      ]
+    },
+    {
+      "id": "dev5-recovery",
+      "scope": "docs",
+      "language": "tr",
+      "query": "Capture Now ve Escape: geri dönüş, fiziksel yakalama ve eski monitor oturumu",
+      "expected_paths": [
+        "docs/STUDIO_CAPTURE_INDEPENDENT_LIFETIME.md"
+      ]
+    },
+    {
+      "id": "dev5-priority",
+      "scope": "docs",
+      "language": "en",
+      "query": "Fixed priority continuous controller ownership and restoring a lower priority value",
+      "expected_paths": [
+        "docs/STUDIO_CONTINUOUS_OWNERSHIP.md"
+      ]
+    }
+  ],
+  "evaluation": [
+    {
+      "id": "eval5-write",
+      "scope": "engine",
+      "language": "en",
+      "query": "Which transport guard holds an early acknowledgement until the exact write completes?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/MobileLANWriteFence.swift"
+      ]
+    },
+    {
+      "id": "eval5-timing",
+      "scope": "engine",
+      "language": "de",
+      "query": "Host scheduling evidence: Zähler für Lücken und Spitzenwerte ohne Empfängerlatenz",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/PerformanceGroupTimingDiagnostics.swift"
+      ]
+    },
+    {
+      "id": "eval5-gamepad",
+      "scope": "app",
+      "language": "de",
+      "query": "Wo lassen sich Gamepad-Tasten als Akkord, Sustain, Pitch bend oder Schalter zuweisen?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/GamepadMappingPanel.swift"
+      ]
+    },
+    {
+      "id": "eval5-preview",
+      "scope": "app",
+      "language": "en",
+      "query": "Which offline workspace previews independent group tuning without starting a performance?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/PerformanceGroupTuningPreviewView.swift"
+      ]
+    },
+    {
+      "id": "eval5-projection",
+      "scope": "docs",
+      "language": "en",
+      "query": "Which isolated mapping projection withholds destination tuples from unauthorized peers?",
+      "expected_paths": [
+        "docs/REMOTE_R9_MAPPING_PROJECTION.md"
+      ]
+    },
+    {
+      "id": "eval5-output",
+      "scope": "docs",
+      "language": "tr",
+      "query": "İki gamepad için bağımsız çıkış seçimi ve ortak MIDI kanalı kısıtlaması",
+      "expected_paths": [
+        "docs/GAMEPAD_SPLIT_OUTPUT.md"
+      ]
+    }
+  ]
+}

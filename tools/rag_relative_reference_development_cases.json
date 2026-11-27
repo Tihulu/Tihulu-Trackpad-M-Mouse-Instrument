@@ -1,0 +1,83 @@
+[
+  {
+    "id": "rel2-reference-age",
+    "scope": "engine",
+    "language": "en",
+    "query": "RelativeReferenceEvidence rejects future-dated or stale 250 ms evidence and mismatched reference source",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/RelativeControlGesture.swift"
+    ]
+  },
+  {
+    "id": "rel2-watermark",
+    "scope": "engine",
+    "language": "tr",
+    "query": "Relative reference watermark consumed evidence cannot be submitted again after release",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/SensorRouter.swift"
+    ]
+  },
+  {
+    "id": "rel2-clutch",
+    "scope": "engine",
+    "language": "de",
+    "query": "provideRelativeReference session mapping destination and blocked clutch until release",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/SensorRouter.swift"
+    ]
+  },
+  {
+    "id": "rel2-capability",
+    "scope": "app",
+    "language": "en",
+    "query": "Which builder passes permitsRelativeInput using continuous displacement and no pedal mode?",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerStudio/InstrumentBuilderView.swift"
+    ]
+  },
+  {
+    "id": "rel2-manual-range",
+    "scope": "app",
+    "language": "tr",
+    "query": "Manual starting value slider output range fixed reference correction and accessibility",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerStudio/ContinuousResponsePanel.swift"
+    ]
+  },
+  {
+    "id": "rel2-fallback-ui",
+    "scope": "app",
+    "language": "de",
+    "query": "Relative unavailable input target Use Absolute or manual reference correction",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerStudio/ContinuousResponsePanel.swift"
+    ]
+  },
+  {
+    "id": "rel2-provenance-doc",
+    "scope": "docs",
+    "language": "en",
+    "query": "Relative manual last delivered receiver confirmed reference contract and remote ACK not receiver feedback",
+    "expected_paths": [
+      "studio/docs/RELATIVE_CONTINUOUS_CONTROL.md"
+    ]
+  },
+  {
+    "id": "rel2-gyro-doc",
+    "scope": "docs",
+    "language": "de",
+    "query": "Relative control gyro tilt angular seam and scoped release no second transform",
+    "expected_paths": [
+      "studio/docs/RELATIVE_CONTINUOUS_CONTROL.md"
+    ]
+  },
+  {
+    "id": "rel2-sensor-doc",
+    "scope": "docs",
+    "language": "tr",
+    "query": "Relative XYZ D-Beam camera calibrated depth 150 ms freshness and new clutch",
+    "expected_paths": [
+      "studio/docs/RELATIVE_CONTINUOUS_CONTROL.md"
+    ]
+  }
+]

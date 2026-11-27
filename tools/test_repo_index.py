@@ -1,4 +1,6 @@
 import json
+import math
+from collections import Counter
 from pathlib import Path
 import subprocess
 import sys
@@ -9,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import rag_benchmark
 import rag_matrix
+import rag_feature_probe
 import repo_index
 
 TOOL = Path(__file__).resolve().with_name("repo_index.py")
@@ -228,6 +231,113 @@ class RepositoryIndexTests(unittest.TestCase):
                 repo_index.build(args)
             self.assertFalse(args.out.exists())
 
+    def test_benchmark_case_identity_and_rejection(self):
+        fixture = self.root / "cases.json"
+        case = {"id": "unique", "scope": "docs", "language": "en",
+                "query": "offline guide", "expected_paths": ["README.md"]}
+        fixture.write_text(json.dumps([case]))
+        cases, digest = rag_benchmark.load_cases(fixture)
+        self.assertEqual(cases, [case])
+        self.assertEqual(len(digest), 64)
+        fixture.write_text(json.dumps([case], indent=2))
+        self.assertNotEqual(rag_benchmark.load_cases(fixture)[1], digest)
+        for invalid in ([case, case], [dict(case, query=" ")],
+                        [dict(case, expected_paths=["../README.md"])],
+                        [dict(case, scope="engine")],
+                        [dict(case, expected_paths=["README.md", "README.md"])]):
+            fixture.write_text(json.dumps(invalid))
+            with self.assertRaises(ValueError):
+                rag_benchmark.load_cases(fixture)
+
+    def test_reuse_matrix_rejects_mixed_revision_and_unrun_cells(self):
+        identity = "a" * 64
+        previous = self.root / "previous"
+        previous.mkdir()
+        manifest = {"schema": 1, "commit": self.commit, "model_sha256": identity,
+                    "cells": [{"scope": scope, "mode": mode, "status": "MEASURED",
+                               "model_sha256": None if mode == "lexical" else identity}
+                              for scope in rag_matrix.SCOPES for mode in rag_matrix.MODES]}
+        def save():
+            (previous / "matrix.json").write_text(json.dumps(manifest))
+        def index(path):
+            scope = path.name.split("-")[0]
+            return ({"commit": self.commit, "scope": scope, "mode": "semantic",
+                     "model_sha256": identity}, [])
+        save()
+        with patch.object(repo_index, "read_index", side_effect=index):
+            rag_matrix.validate_reuse_matrix(self.repo, previous, identity)
+            manifest["cells"][1]["status"] = "NOT_RUN"
+            save()
+            with self.assertRaisesRegex(ValueError, "nine measured cells"):
+                rag_matrix.validate_reuse_matrix(self.repo, previous, identity)
+            manifest["cells"][1]["status"] = "MEASURED"
+            manifest["cells"][1]["model_sha256"] = "b" * 64
+            save()
+            with self.assertRaisesRegex(ValueError, "cell model mismatch"):
+                rag_matrix.validate_reuse_matrix(self.repo, previous, identity)
+            manifest["cells"][1]["model_sha256"] = identity
+            self.git("commit", "--allow-empty", "-qm", "new revision")
+            manifest["commit"] = self.git("rev-parse", "HEAD").stdout.strip()
+            save()
+            with self.assertRaisesRegex(ValueError, "matrix/index identity mismatch"):
+                rag_matrix.validate_reuse_matrix(self.repo, previous, identity)
+
+    def test_cache_rejects_replaced_revision_and_conflicting_input_vectors(self):
+        self.build()
+        doc = json.loads(self.index.read_text())
+        identity, recipe = "a" * 64, {"version": 1, "dimension": 2}
+        doc["metadata"].update(mode="semantic", model_sha256=identity,
+                               dimension=2, embedding_recipe=recipe)
+        for row in doc["chunks"]:
+            row["embedding"] = [0.6, 0.8]
+        duplicate = dict(doc["chunks"][0])
+        doc["chunks"].append(duplicate)
+        self.index.write_text(json.dumps(doc))
+        # Actual committed fixture, not a mocked source verification.
+        self.assertEqual(len(repo_index.reuse_vectors(self.repo, self.index, "all",
+                                                      identity, recipe, self.commit)), 2)
+        self.git("commit", "--allow-empty", "-qm", "other valid revision")
+        newer = self.git("rev-parse", "HEAD").stdout.strip()
+        with self.assertRaisesRegex(ValueError, "commit differs"):
+            repo_index.reuse_vectors(self.repo, self.index, "all", identity, recipe, newer)
+        duplicate["embedding"] = [0.8, 0.6]
+        self.index.write_text(json.dumps(doc))
+        with self.assertRaisesRegex(ValueError, "Conflicting embeddings"):
+            repo_index.reuse_vectors(self.repo, self.index, "all", identity, recipe, self.commit)
+
+    def test_rank_profiles_compare_frozen_case_groups(self):
+        path = self.repo / "README.md"
+        path.write_text("# MIDI sustain\n")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "ranking fixture")
+        rev = self.git("rev-parse", "HEAD").stdout.strip()
+        index = self.root / "docs.json"
+        repo_index.build(SimpleNamespace(repo=self.repo, ref=rev, scope="docs",
+                                         out=index, model_dir=None))
+        case = {"id": "dev", "scope": "docs", "language": "en",
+                "query": "MIDI", "expected_paths": ["README.md"]}
+        other = dict(case, id="eval", query="sustain")
+        dataset = self.root / "ranking.json"
+        dataset.write_text(json.dumps({"development": [case], "evaluation": [other]}))
+        out = self.root / "ranking"
+        out.mkdir()
+        args = SimpleNamespace(k=8, max_per_file=3)
+        result = rag_matrix.compare_lexical_profiles(self.repo, rev, index, "docs",
+                                                     args, out, dataset)
+        self.assertEqual(set(result), {"development", "evaluation"})
+        self.assertNotEqual(result["development"]["legacy"]["cases_sha256"],
+                            result["evaluation"]["legacy"]["cases_sha256"])
+        for group in result.values():
+            self.assertEqual(group["legacy"]["cases_sha256"], group["file-first"]["cases_sha256"])
+            self.assertEqual(group["file-first"]["file_hit_rate"], 1)
+            self.assertTrue((out / group["file-first"]["report"]).is_file())
+        self.assertEqual(result["development"]["legacy"]["cache_comparison"]["parity_cases"], 1)
+        self.assertEqual(result["development"]["legacy"]["development_ranks"],
+                         [{"id": "dev", "language": "en", "first_file_rank": 1}])
+        self.assertNotIn("cache_comparison", result["evaluation"]["legacy"])
+        with self.assertRaises(ValueError):
+            rag_benchmark.load_cases(dataset, "unknown")
+
     def test_matrix_pins_revision_and_reports_unrun_vector_cells(self):
         cases = []
         for scope, relative in (("engine","studio/Sources/NoSpeakerCore/Engine.swift"),
@@ -243,17 +353,28 @@ class RepositoryIndexTests(unittest.TestCase):
         revision = self.git("rev-parse", "HEAD").stdout.strip()
         fixture = self.root / "cases.json"
         fixture.write_text(json.dumps(cases))
+        heldout = self.root / "heldout.json"
+        heldout.write_text(json.dumps([dict(case, id="heldout-" + case["id"], query="sustain") for case in cases]))
         out = self.root / "matrix"
         args = SimpleNamespace(repo=self.repo, ref=revision, out_dir=out,
-                               model_dir=None, k=8, max_per_file=3)
+                               model_dir=None, k=8, max_per_file=3, heldout_cases=heldout)
         with patch.object(rag_benchmark, "CASES", fixture):
             report = rag_matrix.run(args)
             self.assertEqual(report["commit"], revision)
             self.assertEqual(len(report["cells"]), 9)
             self.assertEqual(sum(c["status"] == "MEASURED" for c in report["cells"]), 3)
             self.assertEqual(sum(c["status"] == "NOT_RUN" for c in report["cells"]), 6)
+            for cell in report["cells"]:
+                if cell["status"] == "MEASURED":
+                    self.assertNotEqual(cell["cases_sha256"], cell["heldout"]["cases_sha256"])
+                    self.assertEqual(cell["heldout"]["cases"], 1)
+                    self.assertTrue((out / cell["heldout"]["report"]).is_file())
+                else:
+                    self.assertNotIn("heldout", cell)
             self.assertEqual(json.loads((out / "matrix.json").read_text()), report)
-            self.assertEqual(len(list(out.glob("*-report.json"))), 3)
+            self.assertEqual({path.name for path in out.glob("*-report.json")},
+                             {scope + "-lexical" + suffix + "-report.json"
+                              for scope in rag_matrix.SCOPES for suffix in ("", "-heldout")})
             with self.assertRaises(FileExistsError):
                 rag_matrix.run(args)
 
@@ -271,6 +392,484 @@ class RepositoryIndexTests(unittest.TestCase):
         args.hybrid = True
         with self.assertRaisesRegex(ValueError, "genuine local"):
             search_prepared(prepared, args)
+
+    def test_lexical_cache_preserves_verified_responses_and_reuses_tokens(self):
+        self.build()
+        args = SimpleNamespace(repo=self.repo, expect_ref=self.commit, index=self.index,
+                               model_dir=None, hybrid=False, limit=5, query="sustain")
+        prepared = prepare_search(args)
+        cache = repo_index.prepare_lexical(prepared)
+        self.assertIsNotNone(cache)
+        self.assertEqual(cache.commit, self.commit)
+        self.assertGreater(cache.entries, 0)
+        self.assertGreater(cache.term_bytes, 0)
+        for profile in ("legacy", "file-first"):
+            args.lexical_profile = profile
+            for query in ("sustain cleanup", "Router", "line 75", "absentkeyword"):
+                args.query = query
+                cold = search_prepared(prepared, args)
+                with patch.object(repo_index, "tokens", wraps=repo_index.tokens) as calls:
+                    warm = search_prepared(prepared, args, lexical_cache=cache)
+                self.assertEqual(warm, cold)
+                self.assertEqual(calls.call_count, 1)
+
+    def test_lexical_cache_fails_closed_on_snapshot_changes_and_budget(self):
+        self.build()
+        args = SimpleNamespace(repo=self.repo, expect_ref=self.commit, index=self.index,
+                               model_dir=None, hybrid=False, limit=5, query="sustain")
+        prepared = prepare_search(args)
+        meta, rows, verified, model, identity = prepared
+        cache = repo_index.prepare_lexical(prepared)
+        self.assertIsNone(repo_index.prepare_lexical(prepared, max_entries=1))
+        self.assertIsNone(repo_index.prepare_lexical(prepared, max_term_bytes=1))
+        with self.assertRaisesRegex(ValueError, "budget"):
+            repo_index.prepare_lexical(prepared, max_entries=0)
+        unverified = (meta, rows, False, model, identity)
+        with self.assertRaisesRegex(ValueError, "verified lexical"):
+            repo_index.prepare_lexical(unverified)
+        with self.assertRaisesRegex(ValueError, "verified lexical"):
+            search_prepared(unverified, args, lexical_cache=cache)
+        for changed in (dict(meta, commit="f"*40), dict(meta, scope="docs")):
+            with self.assertRaisesRegex(ValueError, "revision or scope"):
+                search_prepared((changed, rows, verified, model, identity), args,
+                                lexical_cache=cache)
+        for altered in ([dict(rows[0], text="changed")] + rows[1:],
+                        [dict(rows[0], blob="f"*40)] + rows[1:],
+                        list(reversed(rows)), rows[:-1]):
+            with self.assertRaisesRegex(ValueError, "snapshot differs"):
+                search_prepared((meta, altered, verified, model, identity), args,
+                                lexical_cache=cache)
+
+    def test_lexical_refactor_preserves_reference_scoring(self):
+        rows = [{"path":"docs/NoteRouter.md","blob":"a"*40,"start":1,"end":1,
+                 "text":"note sustain sustain Müzik"},
+                {"path":"docs/Other.md","blob":"b"*40,"start":1,"end":1,
+                 "text":"note cleanup"},
+                {"path":"docs/Sustain.md","blob":"c"*40,"start":1,"end":1,
+                 "text":"Müzik"}]
+        def reference(query):
+            terms = set(tokens(query))
+            stats = [(row, Counter(tokens(row["text"])),
+                      set(tokens(Path(row["path"]).stem))) for row in rows]
+            average = max(1, sum(sum(body.values()) for _, body, _ in stats)/len(rows))
+            frequencies = Counter()
+            for _, body, name in stats:
+                frequencies.update(terms.intersection(body.keys() | name))
+            expected = []
+            for row, body, name in stats:
+                score = 0.0
+                for term in sorted(terms):
+                    count = body[term]
+                    weight = math.log1p((len(rows)-frequencies[term]+0.5) /
+                                        (frequencies[term]+0.5))
+                    denom = count + 1.2*(0.25+0.75*sum(body.values())/average)
+                    score += weight*(count*2.2/denom+(1.5 if term in name else 0))
+                if score > 0:
+                    expected.append((score, row))
+            return expected
+        for query in ("note note sustain", "Müzik", "Router", "cleanup missing", "absent"):
+            self.assertEqual(lexical_ranking(rows, query), reference(query))
+
+    def test_multilingual_query_aliases_are_bounded_and_preserve_originals(self):
+        weights = repo_index.query_weights("KALİBRASYON kalibrasyon Tiefenkamera camera", "multilingual")
+        self.assertEqual(weights["camera"], 1.0)
+        self.assertEqual(weights["calibration"], repo_index.QUERY_ALIAS_WEIGHT)
+        self.assertEqual(weights["depth"], repo_index.QUERY_ALIAS_WEIGHT)
+        self.assertEqual(weights["kalibrasyon"], 1.0)
+        self.assertEqual(repo_index.query_weights("Tiefenkamera", "legacy"), {"tiefenkamera": 1.0})
+        self.assertEqual(repo_index.query_weights("unlisted", "multilingual"), {"unlisted": 1.0})
+        with patch.object(repo_index, "QUERY_ALIASES", {"test": tuple("alias" + str(i) for i in range(100))}):
+            expanded = repo_index.query_weights("test", "multilingual")
+            self.assertEqual(len(expanded), 1 + repo_index.MAX_QUERY_ALIASES)
+            self.assertEqual(expanded["test"], 1.0)
+        for query in ("", "!?"):
+            with self.assertRaisesRegex(ValueError, "No searchable"):
+                repo_index.query_weights(query, "multilingual")
+        with self.assertRaisesRegex(ValueError, "Invalid lexical"):
+            repo_index.query_weights("test", "unknown")
+
+    def test_multilingual_profile_search_cache_and_scope_parity(self):
+        self.build()
+        args = SimpleNamespace(repo=self.repo, expect_ref=self.commit, index=self.index,
+                               model_dir=None, hybrid=False, limit=5,
+                               query="nota temizlik", lexical_profile="multilingual")
+        prepared = prepare_search(args)
+        cache = repo_index.prepare_lexical(prepared)
+        self.assertIsNotNone(cache)
+        expanded = search_prepared(prepared, args)
+        self.assertTrue(expanded["results"])
+        self.assertEqual(expanded["lexical_profile"], "multilingual")
+        self.assertTrue(expanded["source_verified"])
+        self.assertEqual(search_prepared(prepared, args, lexical_cache=cache), expanded)
+        args.lexical_profile = "legacy"
+        self.assertEqual(search_prepared(prepared, args)["results"], [])
+        result = self.cli("context", "--repo", self.repo, "--expect-ref", self.commit,
+                          "--index", self.index, "--query", "nota temizlik",
+                          "--lexical-profile", "multilingual")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        context = json.loads(result.stdout)
+        self.assertTrue(context["sources"])
+        self.assertEqual(context["lexical_profile"], "multilingual")
+
+    def test_multilingual_matrix_preserves_separate_case_groups(self):
+        path = self.repo / "README.md"
+        path.write_text("# Camera depth calibration profile")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "multilingual fixture")
+        rev = self.git("rev-parse", "HEAD").stdout.strip()
+        index = self.root / "docs-index.json"
+        repo_index.build(SimpleNamespace(repo=self.repo, ref=rev, scope="docs",
+                                         out=index, model_dir=None))
+        case = {"id": "de", "scope": "docs", "language": "de",
+                "query": "Tiefenkamera", "expected_paths": ["README.md"]}
+        dataset = self.root / "multilingual.json"
+        dataset.write_text(json.dumps({"development": [case], "evaluation": [
+            dict(case, id="tr", language="tr", query="kalibrasyon")]}))
+        out = self.root / "multilingual"
+        out.mkdir()
+        comparison = rag_matrix.compare_lexical_profiles(self.repo, rev, index, "docs",
+            SimpleNamespace(k=8, max_per_file=3), out, dataset,
+            candidate="multilingual", prefix="multilingual-", compare_cache=False)
+        for group in comparison.values():
+            self.assertEqual(group["legacy"]["file_hit_rate"], 0)
+            self.assertEqual(group["multilingual"]["file_hit_rate"], 1)
+            self.assertEqual(group["legacy"]["cases_sha256"],
+                             group["multilingual"]["cases_sha256"])
+            self.assertNotIn("cache_comparison", group["legacy"])
+        self.assertNotEqual(comparison["development"]["legacy"]["cases_sha256"],
+                            comparison["evaluation"]["legacy"]["cases_sha256"])
+
+    def test_contextual_aliases_require_phrase_and_preserve_prior_profile(self):
+        old = repo_index.query_weights("geri", "multilingual")
+        self.assertIn("feedback", old)
+        for query in ("geri", "geri dönüş", "geri yükleme", "geri başka bildirim",
+                      "bildirimi", "yeniden", "çubuk"):
+            weights = repo_index.query_weights(query, "multilingual-context")
+            self.assertNotIn("feedback", weights, query)
+            self.assertNotIn("retry", weights, query)
+            self.assertNotIn("bar", weights, query)
+        for query, alias in (("GERİ BİLDİRİM", "feedback"), ("geri bildirimi", "feedback"),
+                             ("geri yükleme", "restore"), ("geri dönüş", "return"),
+                             ("yeniden deneme", "retry"), ("yeniden başlatma", "restart"),
+                             ("dokunmatik çubuk", "bar"), ("letzte Zustellung", "delivered")):
+            self.assertEqual(repo_index.query_weights(query, "multilingual-context")[alias],
+                             repo_index.QUERY_ALIAS_WEIGHT, query)
+        self.assertEqual(repo_index.query_weights("geri bildirim feedback",
+                            "multilingual-context")["feedback"], 1.0)
+        self.assertEqual(repo_index.query_weights("kalibrasyon", "multilingual-context"),
+                         repo_index.query_weights("kalibrasyon", "multilingual"))
+
+    def test_case_group_leakage_and_changed_snapshot_are_rejected(self):
+        case = {"id": "dev", "scope": "docs", "language": "en", "query": "MIDI sustain",
+                "expected_paths": ["README.md"]}
+        dataset = self.root / "groups.json"
+        def write(dev, evaluation):
+            dataset.write_text(json.dumps({"development": dev, "evaluation": evaluation}))
+        for other in (dict(case, id="eval", query="  ＭＩＤＩ   SUSTAIN "),
+                      dict(case, query="different")):
+            write([case], [other])
+            with self.assertRaisesRegex(ValueError, "case overlap"):
+                rag_benchmark.validate_case_groups(dataset)
+        write([case, dict(case, id="duplicate", query="midi SUSTAIN")],
+              [dict(case, id="eval", query="other")])
+        with self.assertRaisesRegex(ValueError, "Duplicate normalized query"):
+            rag_benchmark.validate_case_groups(dataset)
+        write([case], [dict(case, id="eval", query="other")])
+        digests = rag_benchmark.validate_case_groups(dataset)
+        self.assertNotEqual(digests["development"], digests["evaluation"])
+        fake_report = {"commit": self.commit, "scope": "docs", "mode": "lexical",
+                       "source_verified": True, "model_sha256": None,
+                       "lexical_profile": "legacy", "case_group": "development",
+                       "cases_sha256": "0"*64}
+        with patch.object(rag_benchmark, "run", return_value=fake_report):
+            with self.assertRaisesRegex(ValueError, "identity mismatch"):
+                rag_matrix.compare_lexical_profiles(self.repo, self.commit, self.index, "docs",
+                    SimpleNamespace(k=8, max_per_file=3), self.root, dataset)
+        self.assertFalse(list(self.root.glob("*-report.json")))
+
+    def test_contextual_rankings_differ_only_for_ambiguous_expansion(self):
+        rows = [{"path":"docs/Receiver.md", "blob":"a"*40, "start":1,"end":1,
+                 "text":"feedback confirmed"},
+                {"path":"docs/Restore.md", "blob":"b"*40, "start":1,"end":1,
+                 "text":"restore previous setting"}]
+        legacy = lexical_ranking(rows, "geri yükleme", profile="multilingual")
+        contextual = lexical_ranking(rows, "geri yükleme", profile="multilingual-context")
+        self.assertEqual([row["path"] for _, row in legacy], ["docs/Receiver.md"])
+        self.assertEqual([row["path"] for _, row in contextual], ["docs/Restore.md"])
+        self.assertEqual(lexical_ranking(rows, "feedback", profile="multilingual"),
+                         lexical_ranking(rows, "feedback", profile="multilingual-context"))
+        self.assertEqual(lexical_ranking(rows, "geri", profile="legacy"), [])
+        self.assertEqual(lexical_ranking(rows, "geri", profile="multilingual-context"), [])
+
+    def test_feature_probe_pins_source_and_reports_missing_feature(self):
+        engine = self.repo / "studio/Sources/NoSpeakerCore/RelativeProbe.swift"
+        engine.parent.mkdir(parents=True)
+        engine.write_text("// reference watermark")
+        doc = self.repo / "docs/RELATIVE_PROBE.md"
+        doc.parent.mkdir()
+        doc.write_text("# reference evidence")
+        (self.repo / "README.md").write_text("# general help")
+        self.git("add", str(engine.relative_to(self.repo)), str(doc.relative_to(self.repo)), "README.md")
+        self.git("commit", "-qm", "feature fixture")
+        feature = self.git("rev-parse", "HEAD").stdout.strip()
+        cases = [{"id": "engine", "scope": "engine", "language": "en", "query": "watermark",
+                  "expected_paths": [str(engine.relative_to(self.repo))]},
+                 {"id": "docs", "scope": "docs", "language": "en", "query": "reference evidence",
+                  "expected_paths": [str(doc.relative_to(self.repo))]}]
+        cases_file = self.root / "feature.json"
+        cases_file.write_text(json.dumps(cases))
+        self.git("rm", str(doc.relative_to(self.repo)))
+        self.git("commit", "-qm", "later tree without feature documentation")
+        later = self.git("rev-parse", "HEAD").stdout.strip()
+        engine.write_text("// dirty working copy")
+        args = SimpleNamespace(repo=self.repo, ref=feature, cases_file=cases_file,
+                               out_dir=self.root / "feature-old", lexical_profile="legacy",
+                               k=8, max_per_file=3)
+        result = rag_feature_probe.run(args)
+        self.assertEqual(result["commit"], feature)
+        self.assertEqual({cell["scope"] for cell in result["scopes"]}, {"engine", "docs"})
+        self.assertTrue(all(cell["status"] == "MEASURED" and cell["file_hit_rate"] == 1
+                            for cell in result["scopes"]))
+        self.assertNotIn("dirty working copy", (args.out_dir / "engine-lexical.json").read_text())
+        with self.assertRaises(FileExistsError):
+            rag_feature_probe.run(args)
+        args.ref = later
+        args.out_dir = self.root / "feature-new"
+        result = rag_feature_probe.run(args)
+        self.assertEqual(result["commit"], later)
+        docs = next(cell for cell in result["scopes"] if cell["scope"] == "docs")
+        self.assertEqual(docs["status"], "COVERAGE_FAIL")
+        self.assertEqual(docs["missing_paths"], 1)
+        self.assertEqual(docs["missing_expected_files"], [str(doc.relative_to(self.repo))])
+        self.assertTrue(docs["canonical_lexical_complete"])
+        self.assertEqual(docs["file_hit_rate"], 0)
+        result = subprocess.run([sys.executable, str(TOOL.with_name("rag_feature_probe.py")),
+            "--repo", str(self.repo), "--ref", later, "--cases-file", str(cases_file),
+            "--out-dir", str(self.root / "feature-cli")], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["commit"], later)
+
+    def test_feature_probe_rejects_symbolic_ref_and_dataset_change(self):
+        (self.repo / "README.md").write_text("# feature")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "probe source")
+        revision = self.git("rev-parse", "HEAD").stdout.strip()
+        cases_file = self.root / "feature.json"
+        cases_file.write_text(json.dumps([{"id": "docs", "scope": "docs", "language": "en",
+            "query": "feature", "expected_paths": ["README.md"]}]))
+        args = SimpleNamespace(repo=self.repo, ref="HEAD", cases_file=cases_file,
+            out_dir=self.root / "feature-probe", lexical_profile="legacy", k=8, max_per_file=3)
+        with self.assertRaisesRegex(ValueError, "full commit SHA"):
+            rag_feature_probe.run(args)
+        self.assertFalse(args.out_dir.exists())
+        args.ref = revision
+        actual_run = rag_benchmark.run
+        def wrong_digest(options):
+            report = actual_run(options)
+            report["cases_sha256"] = "0" * 64
+            return report
+        with patch.object(rag_benchmark, "run", side_effect=wrong_digest):
+            with self.assertRaisesRegex(ValueError, "report identity mismatch"):
+                rag_feature_probe.run(args)
+        self.assertFalse((args.out_dir / "feature-probe.json").exists())
+
+    def test_relative_reference_development_fixture_stays_out_of_index(self):
+        fixture = TOOL.with_name("rag_relative_reference_development_cases.json")
+        cases, digest = rag_benchmark.load_cases(fixture)
+        self.assertEqual(len(cases), 9)
+        self.assertEqual(len(digest), 64)
+        self.assertEqual(Counter(case["scope"] for case in cases),
+                         {"engine": 3, "app": 3, "docs": 3})
+        for scope in ("engine", "app", "docs"):
+            self.assertFalse(in_scope("tools/" + fixture.name, scope))
+
+    def test_canonical_lexical_coverage_detects_missing_duplicate_and_skip_claims(self):
+        self.build()
+        original = json.loads(self.index.read_text())
+        def check(document, message):
+            self.index.write_text(json.dumps(document))
+            normal = self.cli("verify", "--repo", self.repo, "--index", self.index)
+            self.assertEqual(normal.returncode, 0, normal.stderr)
+            strict = self.cli("verify", "--repo", self.repo, "--index", self.index,
+                              "--require-complete-lexical")
+            self.assertEqual(strict.returncode, 2)
+            self.assertIn(message, strict.stderr)
+        strict = self.cli("verify", "--repo", self.repo, "--index", self.index,
+                          "--require-complete-lexical")
+        self.assertEqual(strict.returncode, 0, strict.stderr)
+        self.assertTrue(json.loads(strict.stdout)["canonical_lexical_complete"])
+        self.assertEqual(json.loads(strict.stdout)["canonical_chunks"], 2)
+        check(dict(original, chunks=original["chunks"][:1]), "missing=1")
+        check(dict(original, chunks=original["chunks"] + original["chunks"][:1]), "unexpected=1")
+        check(dict(original, metadata=dict(original["metadata"], skipped=[{"path": "invented"}])),
+              "skip_inventory_matches=False")
+        meta, rows = original["metadata"], original["chunks"]
+        self.assertTrue(repo_index.verify_complete_lexical(self.repo, meta, list(reversed(rows)))
+                        ["canonical_lexical_complete"])
+        with self.assertRaisesRegex(ValueError, "requires a lexical"):
+            repo_index.verify_complete_lexical(self.repo, dict(meta, mode="semantic"), rows)
+
+    def test_matrix_wide_digest_rejects_replaced_group_between_scopes(self):
+        case = {"id": "dev", "scope": "docs", "language": "en", "query": "test one",
+                "expected_paths": ["README.md"]}
+        dataset = self.root / "groups.json"
+        evaluation = dict(case, id="eval", query="test two")
+        dataset.write_text(json.dumps({"development": [case], "evaluation": [evaluation]}))
+        digests = rag_benchmark.validate_case_groups(dataset)
+        dataset.write_text(json.dumps({"development": [dict(case, query="changed")],
+                                       "evaluation": [evaluation]}))
+        with patch.object(rag_benchmark, "run") as run:
+            with self.assertRaisesRegex(ValueError, "Matrix-wide ranking dataset changed"):
+                rag_matrix.compare_lexical_profiles(self.repo, self.commit, self.index,
+                    "docs", SimpleNamespace(k=8, max_per_file=3), self.root, dataset,
+                    expected_digests=digests)
+            run.assert_not_called()
+
+    def test_git_replacement_refs_cannot_relabel_committed_source(self):
+        original = self.commit
+        source = "studio/Sources/Router.swift"
+        self.git("add", source)
+        self.git("commit", "-qm", "replacement commit fixture")
+        replacement = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("replace", original, replacement)
+        try:
+            self.assertEqual(self.git("rev-parse", original + "^{commit}").stdout.strip(),
+                             original)
+            self.assertIn("dirty working tree marker", self.git("show", original + ":" + source).stdout)
+            self.build()
+            meta, rows = repo_index.read_index(self.index)
+            self.assertEqual(meta["commit"], original)
+            self.assertIn("Sustain ownership", rows[0]["text"])
+            self.assertNotIn("dirty working tree marker", self.index.read_text())
+            self.assertTrue(repo_index.verify_complete_lexical(self.repo, meta, rows)
+                            ["canonical_lexical_complete"])
+        finally:
+            self.git("replace", "-d", original)
+        old_blob = self.git("rev-parse", original + ":" + source).stdout.strip()
+        new_blob = self.git("rev-parse", replacement + ":" + source).stdout.strip()
+        self.git("replace", old_blob, new_blob)
+        try:
+            self.assertIn("dirty working tree marker", self.git("cat-file", "blob", old_blob).stdout)
+            self.assertTrue(repo_index.verify_complete_lexical(self.repo, meta, rows)
+                            ["canonical_lexical_complete"])
+            forged = [{"path": source, "blob": old_blob, "start": 1, "end": 1,
+                       "text": "dirty working tree marker"}]
+            with self.assertRaisesRegex(ValueError, "text/line mismatch"):
+                repo_index.verify_sources(self.repo, meta, forged)
+            self.assertIn("Sustain ownership", repo_index.git(self.repo, "cat-file", "blob", old_blob).decode())
+        finally:
+            self.git("replace", "-d", old_blob)
+
+    def test_development_diagnostics_classify_coverage_and_rank_cutoff(self):
+        rows = [{"path":"docs/Alpha.md", "blob":"a"*40, "start":1,"end":1,
+                 "text":"sustain sustain"},
+                {"path":"docs/Beta.md", "blob":"b"*40, "start":1,"end":1,
+                 "text":"sustain"},
+                {"path":"docs/Gamma.md", "blob":"c"*40, "start":1,"end":1,
+                 "text":"calibration"}]
+        raw = lexical_ranking(rows, "sustain")
+        raw.sort(key=lambda item: (-item[0], item[1]["path"], item[1]["start"], item[1]["end"]))
+        top, tail = raw[0][1]["path"], raw[-1][1]["path"]
+        self.assertNotEqual(top, tail)
+        response = {"results": [{**raw[0][1], "score": round(raw[0][0], 6)}]}
+        def diagnose(expected):
+            return rag_benchmark.diagnose_lexical(rows, "sustain", set(expected), response,
+                                                   "legacy", 1, 1)
+        for expected, status in (([top], "HIT"), ([tail], "CUTOFF"),
+                                 (["docs/Gamma.md"], "NO_POSITIVE_MATCH"),
+                                 (["docs/Missing.md"], "COVERAGE_FAIL"),
+                                 ([top, "docs/Missing.md"], "COVERAGE_FAIL")):
+            self.assertEqual(diagnose(expected)["status"], status)
+        self.assertEqual(diagnose([top])["returned_first_chunk_rank"], 1)
+        self.assertEqual(diagnose([tail])["raw_first_chunk_rank"], 2)
+        self.assertIsNone(diagnose([tail])["returned_first_chunk_rank"])
+        self.assertEqual(diagnose([top, tail])["expected_returned"], 1)
+        self.assertEqual(diagnose([top, tail])["expected_positive"], 2)
+        response["results"][0]["score"] = -1
+        with self.assertRaisesRegex(ValueError, "ranking differs"):
+            diagnose([top])
+
+    def test_development_diagnostics_matrix_excludes_evaluation_cases(self):
+        (self.repo / "README.md").write_text("# sustain release")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "diagnostic source")
+        revision = self.git("rev-parse", "HEAD").stdout.strip()
+        index = self.root / "diagnostic.json"
+        repo_index.build(SimpleNamespace(repo=self.repo, ref=revision, scope="docs",
+                                         out=index, model_dir=None))
+        case = {"id": "dev", "scope": "docs", "language": "en", "query": "sustain",
+                "expected_paths": ["README.md"]}
+        fixture = self.root / "diagnostic-cases.json"
+        fixture.write_text(json.dumps({"development": [case], "evaluation": [
+            dict(case, id="eval", query="release")]}))
+        out = self.root / "reports"
+        out.mkdir()
+        comparison = rag_matrix.compare_lexical_profiles(self.repo, revision, index, "docs",
+            SimpleNamespace(k=8, max_per_file=3), out, fixture)
+        for profile in ("legacy", "file-first"):
+            dev = comparison["development"][profile]
+            self.assertEqual(dev["development_diagnostics"]["statuses"], {"HIT": 1})
+            self.assertEqual(dev["development_diagnostics"]["expected_returned"], 1)
+            eval_report = comparison["evaluation"][profile]
+            self.assertNotIn("development_diagnostics", eval_report)
+            data = json.loads((out / eval_report["report"]).read_text())
+            self.assertNotIn("development_diagnostic", data["results"][0])
+        args = SimpleNamespace(repo=self.repo, expect_ref=revision, index=index, scope="docs",
+            mode="lexical", model_dir=None, cases_file=fixture, case_group="evaluation",
+            k=8, max_per_file=3, diagnose_development=True)
+        with self.assertRaisesRegex(ValueError, "development cases only"):
+            rag_benchmark.run(args)
+
+    def test_domain_aliases_preserve_contextual_and_original_weights(self):
+        query = "Sürekli kontrol sahipliği öncelik geri yükleme"
+        old = repo_index.query_weights(query, "multilingual-context")
+        new = repo_index.query_weights(query, "multilingual-domain")
+        self.assertEqual(repo_index.query_weights(query, "multilingual-context"), old)
+        for term, weight in old.items():
+            self.assertEqual(new[term], weight)
+        for alias in ("continuous", "control", "controller", "owner", "ownership",
+                      "priority", "restore", "restores"):
+            self.assertEqual(new[alias], repo_index.QUERY_ALIAS_WEIGHT)
+        self.assertNotIn("feedback", repo_index.query_weights("geri", "multilingual-domain"))
+        self.assertEqual(repo_index.query_weights("priority öncelik", "multilingual-domain")
+                         ["priority"], 1.0)
+        self.assertEqual(repo_index.query_weights("gibt frei", "multilingual-domain")
+                         ["release"], repo_index.QUERY_ALIAS_WEIGHT)
+        self.assertNotIn("release", repo_index.query_weights("gibt", "multilingual-domain"))
+        with patch.object(repo_index, "DOMAIN_ALIASES", {"test": tuple("a"+str(i) for i in range(100))}):
+            self.assertEqual(len(repo_index.query_weights("test", "multilingual-domain")),
+                             1 + repo_index.MAX_QUERY_ALIASES)
+
+    def test_domain_profile_retrieves_technical_terms_and_matches_cache(self):
+        self.build()
+        args = SimpleNamespace(repo=self.repo, expect_ref=self.commit, index=self.index,
+                               model_dir=None, hybrid=False, limit=5,
+                               query="sahipliği", lexical_profile="multilingual-domain")
+        prepared = prepare_search(args)
+        result = search_prepared(prepared, args)
+        self.assertTrue(result["results"])
+        self.assertTrue(result["source_verified"])
+        cache = repo_index.prepare_lexical(prepared)
+        self.assertEqual(search_prepared(prepared, args, lexical_cache=cache), result)
+        args.lexical_profile = "multilingual-context"
+        self.assertEqual(search_prepared(prepared, args)["results"], [])
+        args.lexical_profile = "multilingual-domain"
+        report = self.cli("context", "--repo", self.repo, "--expect-ref", self.commit,
+                          "--index", self.index, "--query", "sahipliği",
+                          "--lexical-profile", "multilingual-domain")
+        self.assertEqual(report.returncode, 0, report.stderr)
+        self.assertEqual(json.loads(report.stdout)["lexical_profile"], "multilingual-domain")
+
+    def test_domain_fixture_is_separate_and_balanced(self):
+        dev, _ = rag_benchmark.load_cases(rag_benchmark.DOMAIN_CASES, "development")
+        evaluation, _ = rag_benchmark.load_cases(rag_benchmark.DOMAIN_CASES, "evaluation")
+        digests = rag_benchmark.validate_case_groups(rag_benchmark.DOMAIN_CASES)
+        self.assertNotEqual(digests["development"], digests["evaluation"])
+        for cases in (dev, evaluation):
+            self.assertEqual(Counter(case["scope"] for case in cases),
+                             {"engine": 2, "app": 2, "docs": 2})
+        for scope in ("engine", "app", "docs"):
+            self.assertFalse(in_scope("tools/rag_domain_cases.json", scope))
 
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
@@ -332,6 +931,21 @@ class SemanticContractTests(unittest.TestCase):
         self.assertEqual([r["path"] for _,r in diverse_results(ranked,3,1)],
                          ["docs/overview.md","docs/MAC_HARDWARE_ACCEPTANCE.md"])
         self.assertEqual(len(diverse_results(ranked,3,2)),3)
+
+    def test_file_first_preserves_best_chunks_and_caps(self):
+        def row(path, start):
+            return {"path":path, "blob":"a"*40, "start":start, "end":start}
+        a, a2, a3 = row("a.swift", 1), row("a.swift", 2), row("a.swift", 3)
+        b, c = row("b.swift", 1), row("c.swift", 1)
+        ranked = [(10,a), (9,a), (8,a2), (7,a3), (6,b), (5,c)]
+        legacy = diverse_results(ranked, 3, 3)
+        candidate = diverse_results(ranked, 3, 3, file_first=True)
+        self.assertEqual([r["path"] for _,r in legacy], ["a.swift"] * 3)
+        self.assertEqual(candidate, [(10,a), (6,b), (5,c)])
+        self.assertEqual(diverse_results(ranked, 5, 2, file_first=True),
+                         [(10,a), (6,b), (5,c), (8,a2)])
+        self.assertEqual(diverse_results(ranked[:4], 8, 2, file_first=True),
+                         [(10,a), (8,a2)])
 
     def test_rank_fusion_uses_ranks_and_deduplicates(self):
         a = {"path":"a.swift","blob":"a"*40,"start":1,"end":1}

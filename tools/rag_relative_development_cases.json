@@ -1,0 +1,56 @@
+[
+  {
+    "id": "rel-dev-origin",
+    "scope": "engine",
+    "language": "en",
+    "query": "First contact anchors a relative continuous gesture without sending MIDI; signed displacement and no accumulation",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/RelativeControlGesture.swift"
+    ]
+  },
+  {
+    "id": "rel-dev-manual",
+    "scope": "engine",
+    "language": "tr",
+    "query": "Göreli kontrol manuel referans, kazanç ve sınırlandırma; DAW geri bildirimi değildir",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/RelativeControlGesture.swift"
+    ]
+  },
+  {
+    "id": "rel-dev-ownership",
+    "scope": "engine",
+    "language": "de",
+    "query": "Relative Ziele exklusiv, doppelte Zielzuordnung und gemeinsame Freigabewerte ablehnen",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/ContinuousResponse.swift"
+    ]
+  },
+  {
+    "id": "rel-dev-router",
+    "scope": "engine",
+    "language": "en",
+    "query": "Route-local relative gesture ownership: source session release disconnect panic and neutral cleanup",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/SensorRouter.swift"
+    ]
+  },
+  {
+    "id": "rel-dev-absolute",
+    "scope": "app",
+    "language": "de",
+    "query": "Absolut oder relativ, manuelle Startposition und Bewegungsempfindlichkeit in den Ausgabeeinstellungen",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerStudio/ContinuousResponsePanel.swift"
+    ]
+  },
+  {
+    "id": "rel-dev-feedback",
+    "scope": "app",
+    "language": "tr",
+    "query": "İlk temas MIDI yollamaz, manuel başlangıç gerçek DAW geri bildirimi değildir",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerStudio/ContinuousResponsePanel.swift"
+    ]
+  }
+]

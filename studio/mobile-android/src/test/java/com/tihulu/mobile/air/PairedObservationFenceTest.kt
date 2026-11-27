@@ -32,4 +32,20 @@ class PairedObservationFenceTest {
         f.retire()
         assertEquals(PairedObservationFence.Verdict.RETIRE,f.observe(1,2))
     }
+    @Test fun modeSwitchRequiresNewPostStartObservationAndRetiresOldGeneration() {
+        val old=PairedObservationFence(ms(10))
+        assertEquals(PairedObservationFence.Verdict.SEND,old.observe(ms(20),ms(21)))
+        old.retire()
+        assertEquals(PairedObservationFence.Verdict.RETIRE,old.observe(ms(30),ms(31)))
+
+        // This fence is created only after the UI observes neutral ACK and starts a new capture.
+        val changed=PairedObservationFence(ms(40))
+        assertEquals(PairedObservationFence.Verdict.RETIRE,changed.observe(ms(39),ms(41)))
+        assertEquals(PairedObservationFence.Verdict.RETIRE,changed.observe(ms(42),ms(43)))
+
+        val restarted=PairedObservationFence(ms(50))
+        assertEquals(PairedObservationFence.Verdict.SEND,restarted.observe(ms(50),ms(51)))
+        assertEquals(PairedObservationFence.Verdict.DUPLICATE,restarted.observe(ms(50),ms(199),true))
+        assertEquals(PairedObservationFence.Verdict.RETIRE,restarted.observe(ms(50),ms(200),true))
+    }
 }

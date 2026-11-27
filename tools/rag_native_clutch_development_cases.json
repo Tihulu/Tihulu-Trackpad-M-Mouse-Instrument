@@ -1,0 +1,56 @@
+[
+  {
+    "id": "rel4-neutral",
+    "scope": "engine",
+    "language": "en",
+    "query": "Native helper relative clutch genuine neutral frame before anchoring first single contact",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/NativeHelperRelativeClutch.swift"
+    ]
+  },
+  {
+    "id": "rel4-id",
+    "scope": "engine",
+    "language": "tr",
+    "query": "Trackpad Magic Mouse relative clutch contact ID replacement invalid frame releaseRequired",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/NativeHelperRelativeClutch.swift"
+    ]
+  },
+  {
+    "id": "rel4-fence",
+    "scope": "engine",
+    "language": "de",
+    "query": "permitsRelativeDisplacement temporary capability fence wrapped tilt yaw pitch and pedal signals",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/SensorRouter.swift"
+    ]
+  },
+  {
+    "id": "rel4-gamepad",
+    "scope": "app",
+    "language": "en",
+    "query": "GamepadMappingPanel permitsRelativeInput only analog joystick single target bend CC",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerStudio/GamepadMappingPanel.swift"
+    ]
+  },
+  {
+    "id": "rel4-doc",
+    "scope": "docs",
+    "language": "tr",
+    "query": "Native helper planner candidate genuine neutral independent x y contact size and scoped cleanup",
+    "expected_paths": [
+      "studio/docs/RELATIVE_CONTINUOUS_CONTROL.md"
+    ]
+  },
+  {
+    "id": "rel4-remote-doc",
+    "scope": "docs",
+    "language": "de",
+    "query": "Relative pedal lane ambiguity and wrapped angular position temporary capability restriction",
+    "expected_paths": [
+      "studio/docs/RELATIVE_CONTINUOUS_CONTROL.md"
+    ]
+  }
+]
