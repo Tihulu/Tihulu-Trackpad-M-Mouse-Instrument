@@ -71,3 +71,55 @@ import Testing
     #expect(received.sorted() == Array(0..<64))
     #expect(!inbox.permits(old))
 }
+
+@Test func orderedTouchAdmissionOverflowHandoffRetainsProducerScheduledCallback() {
+    let inbox = OrderedTouchInbox<Int>()
+    #expect(inbox.submit(0))
+    let batch = inbox.take()
+    #expect(!batch.more)
+    #expect(inbox.submit(1))
+    for i in 2...65 { #expect(!inbox.submit(i)) }
+    #expect(inbox.acknowledgeOverflow(after: batch))
+    #expect(!inbox.acknowledgeOverflow(after: batch))
+    #expect(!inbox.permits(batch))
+    #expect(!inbox.submit(66)) // producer callback is still outstanding
+    let fresh = inbox.take()
+    #expect(!fresh.overflow)
+    #expect(fresh.samples == [66])
+    #expect(inbox.permits(fresh))
+    #expect(inbox.submit(67))
+}
+
+@Test func orderedTouchAdmissionOverflowHandoffReleasesConsumerContinuation() {
+    let inbox = OrderedTouchInbox<Int>()
+    for i in 0..<64 { #expect(inbox.submit(i) == (i == 0)) }
+    let batch = inbox.take()
+    #expect(batch.more)
+    for i in 64...80 { #expect(!inbox.submit(i)) }
+    #expect(inbox.acknowledgeOverflow(after: batch))
+    #expect(!inbox.permits(batch))
+    #expect(inbox.submit(81)) // old consumer continuation relinquished
+    let fresh = inbox.take()
+    #expect(fresh.samples == [81])
+    #expect(!fresh.overflow)
+    #expect(inbox.permits(fresh))
+}
+
+@Test func orderedTouchAdmissionOverflowHandoffRejectsForeignAndEarlierDrain() {
+    let inbox = OrderedTouchInbox<Int>()
+    let foreign = OrderedTouchInbox<Int>()
+    _ = foreign.submit(0)
+    let other = foreign.take()
+    for i in 0..<64 { _ = inbox.submit(i) }
+    let earlier = inbox.take()
+    let current = inbox.take()
+    for i in 64...96 { _ = inbox.submit(i) }
+    #expect(!inbox.acknowledgeOverflow(after: other))
+    #expect(!inbox.acknowledgeOverflow(after: earlier))
+    #expect(!inbox.permits(current))
+    #expect(inbox.acknowledgeOverflow(after: current))
+    #expect(inbox.submit(97))
+    #expect(inbox.take().samples == [97])
+    inbox.close()
+    #expect(!inbox.acknowledgeOverflow(after: current))
+}

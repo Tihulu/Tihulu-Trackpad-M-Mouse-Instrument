@@ -9,6 +9,7 @@ public final class OrderedTouchInbox<Payload: Sendable>: @unchecked Sendable {
         public let overflow: Bool
         public let more: Bool
         fileprivate let admissionEpoch: UUID
+        fileprivate let drainSerial: UInt64
     }
     private let lock = NSLock()
     private var pending: [Payload] = []
@@ -16,6 +17,8 @@ public final class OrderedTouchInbox<Payload: Sendable>: @unchecked Sendable {
     private var overflow = false
     private var closed = false
     private var admissionEpoch = UUID()
+    private var overflowedEpoch: UUID?
+    private var drainSerial: UInt64 = 0
     public init() { pending.reserveCapacity(64) }
 
     /// True transfers responsibility for scheduling one consumer to caller.
@@ -25,6 +28,7 @@ public final class OrderedTouchInbox<Payload: Sendable>: @unchecked Sendable {
         guard !closed, !overflow else { return false }
         if pending.count == 64 {
             overflow = true
+            overflowedEpoch = admissionEpoch
             admissionEpoch = UUID()
             pending.removeAll(keepingCapacity:true)
         } else {
@@ -39,19 +43,21 @@ public final class OrderedTouchInbox<Payload: Sendable>: @unchecked Sendable {
     /// stop and release commands can run between batches.
     public func take() -> Batch {
         lock.lock(); defer { lock.unlock() }
+        drainSerial &+= 1
         if closed || overflow {
             let fault = overflow && !closed
             pending.removeAll(keepingCapacity:true)
             overflow = false
+            overflowedEpoch = nil
             scheduled = false
-            return .init(samples:[],overflow:fault,more:false,admissionEpoch:admissionEpoch)
+            return .init(samples:[],overflow:fault,more:false,admissionEpoch:admissionEpoch,drainSerial:drainSerial)
         }
         let count = min(16,pending.count)
         let result = Array(pending.prefix(count))
         pending.removeFirst(count)
         let more = !pending.isEmpty
         if !more { scheduled = false }
-        return .init(samples:result,overflow:false,more:more,admissionEpoch:admissionEpoch)
+        return .init(samples:result,overflow:false,more:more,admissionEpoch:admissionEpoch,drainSerial:drainSerial)
     }
 
     /// Point-in-time check for a previously drained batch. Recheck before
@@ -62,11 +68,28 @@ public final class OrderedTouchInbox<Payload: Sendable>: @unchecked Sendable {
             batch.admissionEpoch == admissionEpoch
     }
 
+    /// Only the serialized consumer may acknowledge overflow during its
+    /// current nonempty drain. The old continuation must not run again.
+    /// If this drain had emptied the queue, a producer owns the next
+    /// scheduled callback; preserve that ownership even after clearing fault.
+    @discardableResult
+    public func acknowledgeOverflow(after batch: Batch) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed, overflow, !batch.overflow, !batch.samples.isEmpty,
+              batch.admissionEpoch == overflowedEpoch,
+              batch.drainSerial == drainSerial else { return false }
+        overflow = false
+        overflowedEpoch = nil
+        scheduled = !batch.more
+        return true
+    }
+
     public func close() {
         lock.lock(); defer { lock.unlock() }
         closed = true
         pending.removeAll()
         overflow = false
+        overflowedEpoch = nil
         scheduled = false
     }
 }
