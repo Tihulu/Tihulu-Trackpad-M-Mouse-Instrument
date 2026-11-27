@@ -17,6 +17,17 @@ public struct NativeHelperRelativeOutputTransaction: Sendable {
 
     public init(plan: NativeHelperRelativeOutputPlan) { self.plan = plan }
 
+    /// Debt scope is independent of whether anchor obtained a lease.
+    public var cleanupTargets: Set<SensorDestination> { plan.targetDestinations }
+
+    /// Read-only check for the session's stationary frames and callback
+    /// boundaries. This is logical ownership, not wire/receiver evidence.
+    public func hasActiveLogicalLease(owners: LegacyContinuousOwners, reservedChannels: Set<Int>) -> Bool {
+        guard case .active = phase, let lease, owners.permitsRelativeHelper(lease),
+              expected == owners.values(for: .helper) else { return false }
+        return plan.prepare(movement: [:], owners: owners, reservedChannels: reservedChannels) != nil
+    }
+
     public mutating func anchor(owners: inout LegacyContinuousOwners, reservedChannels: Set<Int>,
                                 permits: () -> Bool) -> Result {
         switch phase {

@@ -31,4 +31,24 @@ public enum NativeHelperRelativeHostPolicy {
             }
         }
     }
+
+    /// Cleanliness is scoped to the immutable plan even if anchor failed
+    /// before obtaining a reservation. Never use this union as send targets.
+    public static func permitsCleanupConfirmation(plannedTargets: Set<SensorDestination>,
+        reservedTargets: Set<SensorDestination>, debt: LegacyControllerReleaseDebt,
+        transportReady: Bool, recoveryRequired: Bool) -> Bool {
+        !plannedTargets.isEmpty && transportReady && !recoveryRequired &&
+            !hasPendingCleanup(targets: plannedTargets.union(reservedTargets), debt: debt)
+    }
+
+    /// Before a transaction exists, only an explicit, genuinely neutral
+    /// observation for a known plan may authorize a future anchor. No sends.
+    public static func permitsInitialNeutral(genuineNeutral: Bool, plannedTargets: Set<SensorDestination>?,
+        owners: LegacyContinuousOwners, debt: LegacyControllerReleaseDebt,
+        transportReady: Bool, recoveryRequired: Bool) -> Bool {
+        guard genuineNeutral, let plannedTargets, owners.relativeReservedTargets.isEmpty,
+              owners.values(for: .helper).isEmpty else { return false }
+        return permitsCleanupConfirmation(plannedTargets: plannedTargets, reservedTargets: [], debt: debt,
+            transportReady: transportReady, recoveryRequired: recoveryRequired)
+    }
 }
