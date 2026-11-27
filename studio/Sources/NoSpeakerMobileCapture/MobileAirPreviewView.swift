@@ -8,6 +8,7 @@ import NoSpeakerCore
     @Environment(\.scenePhase) private var scenePhase
     @State private var window = MobileCaptureWindow()
     @State private var captureOrientation: MobileSensorOrientation?
+    @State private var displayFence = MobileObservationDisplayFence()
     @State private var useMac = false
     @State private var touchOnlyPairing = false
     @State private var pageAddress = ""
@@ -81,6 +82,19 @@ import NoSpeakerCore
         return nil
     }
     private var valid: Bool { sensorIssue(for: mode) == nil }
+    // Source eligibility is not a negotiated host capability. Never convert here.
+    private var responseGuide: String {
+        switch mode {
+        case .horizontal, .vertical, .aperture, .depthControl:
+            return "Position source · Relative is a proposed host response; not negotiated on mobile."
+        case .speed:
+            return "Speed source · keep absolute until a separate relative-speed contract is reviewed."
+        case .pinchHelper, .toggleHelper:
+            return "Binary gate · use Absolute response on the Mac. The current assignment does not report its response mode."
+        case .pinchKeys, .chords, .strings, .depthKeys:
+            return "Discrete notes · no relative displacement."
+        }
+    }
     private var modeGuide: String {
         switch mode {
         case .pinchKeys: return "Move horizontally to choose a logical key; open then pinch to hold it. Open to release."
@@ -213,6 +227,7 @@ import NoSpeakerCore
                         Text(issue).foregroundStyle(.orange)
                     }
                     Text(modeGuide).font(.caption).foregroundStyle(.secondary)
+                    Text(responseGuide).font(.caption).foregroundStyle(.secondary)
                 }
                 GeometryReader {geo in
                     ZStack {
@@ -222,9 +237,9 @@ import NoSpeakerCore
                         if let sample {
                             Circle().fill(.cyan).frame(width:22,height:22)
                                 .position(x:sample.x*geo.size.width,y:(1-sample.y)*geo.size.height)
-                        } else {Text("No reliable hand").foregroundStyle(.secondary)}
+                        } else {Text("No fresh observed hand").foregroundStyle(.secondary)}
                     }
-                }.frame(height:210).accessibilityLabel("Derived hand position; no camera image")
+                }.frame(height:210).accessibilityLabel("Observed hand position; not tracking admission or receiver feedback")
                 if mode == .pinchKeys || mode == .strings {
                     let slots = mode == .strings ? Array(logicalSlots.prefix(3)) : logicalSlots
                     Text("Regions, left to right: " + (slots.isEmpty ? "No assigned keys" : slots.map { String($0 + 1) }.joined(separator: ", ")))
@@ -248,18 +263,13 @@ import NoSpeakerCore
                 }
                 if let level=output.level {
                     ProgressView(value:level).accessibilityLabel("Projected helper level")
-                    Text("Helper: \(Int(level*100))%")
+                    Text("Projected helper: \(Int(level*100))% · not receiver feedback")
                 } else {Text("Helper released").foregroundStyle(.secondary)}
                 let active=(0..<25).filter { output.keys & (1<<$0) != 0 }
                 Text(active.isEmpty ? "All preview keys released":"Logical keys: "+active.map {String($0+1)}.joined(separator:", "))
-                HStack {
-                    Button(useMac ? "Start playing" : "Start sensors", action: start).buttonStyle(.borderedProminent)
-                        .disabled(busy || scanning || askingPermission || !valid || !playableAssignment || scenePhase != .active)
-                    Button("Stop / release") { stop("Stopped") }.buttonStyle(.bordered).disabled(!busy)
-                    if useMac,socket != nil {
-                        Button("Pause / change instrument",action:pauseInstrument)
-                            .buttonStyle(.bordered).disabled(assignment == nil || (source == nil && !pending))
-                    }
+                ViewThatFits(in: .horizontal) {
+                    HStack { stageActions }
+                    VStack(alignment: .leading, spacing: 10) { stageActions }
                 }
                 Text(useMac ? "Your hand position and depth are processed on this device. The Mac receives assigned keys or helper levels." : "Preview keys and helper levels on this device.").font(.caption).foregroundStyle(.secondary)
             }.padding().frame(maxWidth:640).frame(maxWidth:.infinity)
@@ -300,6 +310,15 @@ import NoSpeakerCore
             if phase != .active { scanning = false; touchPreview=false; stop("App inactive · stopped") }
         }
         .onDisappear {stop("View closed")}
+    }
+    @ViewBuilder private var stageActions: some View {
+        Button(useMac ? "Start playing" : "Start sensors", action: start).buttonStyle(.borderedProminent)
+            .disabled(busy || scanning || askingPermission || !valid || !playableAssignment || scenePhase != .active)
+        Button("Stop / release") { stop("Stopped") }.buttonStyle(.bordered).disabled(!busy)
+        if useMac, socket != nil {
+            Button("Pause / change instrument",action:pauseInstrument)
+                .buttonStyle(.bordered).disabled(assignment == nil || (source == nil && !pending))
+        }
     }
     private var pairingPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -392,6 +411,7 @@ import NoSpeakerCore
         guard !busy, !scanning, !askingPermission, !(useMac && touchOnlyPairing), valid, playableAssignment, scenePhase == .active,
               let pose = window.orientation else {return}
         captureOrientation = pose
+        displayFence = .init()
         let ticket=UUID();generation=ticket;pending=true;status="Waiting for camera permission"
         Task { @MainActor in
             let granted=await MobileAirSensorSource.requestCameraPermission()
@@ -418,7 +438,7 @@ import NoSpeakerCore
         assignment=nil
         socket.pauseForModeChange()
         if let source {source.stop();retiring=source}
-        source=nil;projection=nil;output = .init();sample=nil;depth=nil
+        source=nil;projection=nil;output = .init();sample=nil;depth=nil;displayFence = .init()
         status="Waiting for neutral ACK; choose a mode and restart."
     }
     private func stop(_ message:String) {
@@ -430,7 +450,7 @@ import NoSpeakerCore
         assignment = nil
         if let source {source.stop();retiring=source}
         source=nil;projection=nil
-        output = .init();sample=nil;depth=nil;status=message
+        output = .init();sample=nil;depth=nil;displayFence = .init();status=message
     }
     private func poll() {
         if retiring?.isStopped == true {retiring=nil}
@@ -462,13 +482,18 @@ import NoSpeakerCore
                 }
                 let observation:MobileAirObservation?
                 switch role {case .single:observation=frame.single;case .left:observation=frame.left;case .right:observation=frame.right}
-                if frame.time.isFinite,now>=frame.time,now-frame.time<0.15 {
+                if displayFence.observe(MobileAirCaptureFrame.nanoseconds(frame.time),
+                                        now: MobileAirCaptureFrame.nanoseconds(now),
+                                        freshness: MobileAirSendGate.freshNS) {
                     sample=observation?.sample?.oriented(musicalOrientation,mirrorX:mirror)
-                    depth=observation?.depth
+                    depth=sample == nil ? nil : observation?.depth.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
                 } else {sample=nil;depth=nil}
             }
         }
-        if let release=p.expire(now:now) {output=release;sample=nil;depth=nil}
+        if let release=p.expire(now:now) {output=release}
+        if displayFence.expire(now: MobileAirCaptureFrame.nanoseconds(now), freshness: MobileAirSendGate.freshNS) {
+            sample=nil;depth=nil
+        }
         projection=p
     }
 }
