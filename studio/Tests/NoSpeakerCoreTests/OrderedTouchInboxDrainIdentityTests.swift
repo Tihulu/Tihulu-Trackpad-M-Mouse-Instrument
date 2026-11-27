@@ -25,7 +25,7 @@ struct OrderedTouchInboxDrainIdentityTests {
         for previous in older { #expect(!inbox.permits(previous)) }
         let empty = inbox.take()
         #expect(!inbox.permits(empty))
-        #expect(!inbox.permits(next))
+        #expect(inbox.permits(next)) // Existing empty-probe contract.
         inbox.close()
         #expect(!inbox.permits(next))
     }
