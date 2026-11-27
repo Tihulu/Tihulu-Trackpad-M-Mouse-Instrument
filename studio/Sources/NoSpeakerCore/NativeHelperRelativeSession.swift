@@ -12,12 +12,15 @@ public struct NativeHelperRelativeSession: Sendable {
     private let monitor: UUID
     private let registration: UUID
     private let maximumAge: Double
+    private let maximumAgeNS: Int64?
+    private enum Clock { case seconds(Double), nanoseconds(Int64) }
     private let afterAcquisitionNS: Int64
     private var clutch: Clutch
     private var lastSequence: UInt64
     private var lastReceipt: Double?
     private var lastAcquisitionNS: Int64?
     private var lastHostNow: Double?
+    private var lastHostNowNS: Int64?
     private var neutralAdmitted = false
     private var active = false
     private var closed = false
@@ -27,20 +30,51 @@ public struct NativeHelperRelativeSession: Sendable {
         guard afterAcquisitionNS >= 0, maximumAge.isFinite, maximumAge > 0,
               let clutch = Clutch(surface: source, lanes: lanes) else { return nil }
         self.source = source; self.monitor = monitor; self.registration = registration
-        self.maximumAge = maximumAge; self.afterAcquisitionNS = afterAcquisitionNS
+        self.maximumAge = maximumAge; self.maximumAgeNS = nil; self.afterAcquisitionNS = afterAcquisitionNS
         self.clutch = clutch; lastSequence = afterSequence
     }
 
-    private func fresh(_ receipt: Double, now: Double) -> Bool {
-        receipt.isFinite && receipt >= 0 && now.isFinite && now >= receipt && now - receipt < maximumAge
+    /// Native hosts should use one integer clock domain for the entire session.
+    /// Double receipts remain only for the existing gesture/smoothing math.
+    public init?(source: Clutch.Surface, monitor: UUID, registration: UUID, afterSequence: UInt64,
+                 afterAcquisitionNS: Int64, maximumAgeNS: Int64, lanes: [Clutch.Axis: Clutch.Lane]) {
+        guard (0..<Int64.max).contains(afterAcquisitionNS), (1..<Int64.max).contains(maximumAgeNS),
+              let clutch = Clutch(surface: source, lanes: lanes) else { return nil }
+        self.source = source; self.monitor = monitor; self.registration = registration
+        self.maximumAge = Double(maximumAgeNS) / 1_000_000_000
+        self.maximumAgeNS = maximumAgeNS; self.afterAcquisitionNS = afterAcquisitionNS
+        self.clutch = clutch; lastSequence = afterSequence
     }
 
-    /// A fresh receipt alone cannot prove that the trusted host clock has
-    /// advanced since a previous observation or watchdog tick. Keep the
-    /// high-water mark even after a fault; equal clock samples are valid.
-    private mutating func observeHostClock(_ now: Double) -> Bool {
-        guard now.isFinite, now >= 0, lastHostNow.map({ now >= $0 }) ?? true else { return false }
-        lastHostNow = now
+    private func fresh(_ receipt: Double, acquisitionNS: Int64, now: Clock) -> Bool {
+        switch now {
+        case .seconds(let seconds):
+            return maximumAgeNS == nil && receipt.isFinite && receipt >= 0 && seconds.isFinite &&
+                seconds >= receipt && seconds - receipt < maximumAge
+        case .nanoseconds(let ns):
+            guard let limit = maximumAgeNS, (0..<Int64.max).contains(ns),
+                  (0..<Int64.max).contains(acquisitionNS), ns >= acquisitionNS else { return false }
+            return ns - acquisitionNS < limit
+        }
+    }
+
+    private func matchesClock(_ now: Clock) -> Bool {
+        switch now {
+        case .seconds: maximumAgeNS == nil
+        case .nanoseconds: maximumAgeNS != nil
+        }
+    }
+
+    /// Keep the trusted high-water mark after faults; equal samples are valid.
+    private mutating func observeHostClock(_ now: Clock) -> Bool {
+        switch now {
+        case .seconds(let seconds):
+            guard seconds.isFinite, seconds >= 0, lastHostNow.map({ seconds >= $0 }) ?? true else { return false }
+            lastHostNow = seconds
+        case .nanoseconds(let ns):
+            guard (0..<Int64.max).contains(ns), lastHostNowNS.map({ ns >= $0 }) ?? true else { return false }
+            lastHostNowNS = ns
+        }
         return true
     }
 
@@ -57,9 +91,26 @@ public struct NativeHelperRelativeSession: Sendable {
         sequence: UInt64, now: Double, permits: () -> Bool, activeLeaseValid: () -> Bool,
         begin: () -> Bool, move: ([Clutch.Axis:Int]) -> Bool,
         retire: (Bool) -> Bool) -> Result {
+        receive(frame, monitor: token, sequence: sequence, clock: .seconds(now), permits: permits,
+                activeLeaseValid: activeLeaseValid, begin: begin, move: move, retire: retire)
+    }
+
+    public mutating func receive(_ frame: Clutch.SourceFrame, monitor token: UUID,
+        sequence: UInt64, nowNS: Int64, permits: () -> Bool, activeLeaseValid: () -> Bool,
+        begin: () -> Bool, move: ([Clutch.Axis:Int]) -> Bool,
+        retire: (Bool) -> Bool) -> Result {
+        receive(frame, monitor: token, sequence: sequence, clock: .nanoseconds(nowNS), permits: permits,
+                activeLeaseValid: activeLeaseValid, begin: begin, move: move, retire: retire)
+    }
+
+    private mutating func receive(_ frame: Clutch.SourceFrame, monitor token: UUID,
+        sequence: UInt64, clock now: Clock, permits: () -> Bool, activeLeaseValid: () -> Bool,
+        begin: () -> Bool, move: ([Clutch.Axis:Int]) -> Bool,
+        retire: (Bool) -> Bool) -> Result {
         guard !closed, token == monitor, frame.surface == source else { return .ignored }
         guard sequence > lastSequence else { return .ignored }
         lastSequence = sequence
+        guard matchesClock(now) else { return close(retire: retire) }
         let clockValid = observeHostClock(now)
         // Same monitor but a changed native registration is a terminal
         // device-identity boundary, not an ordinary lift or new touch.
@@ -69,16 +120,17 @@ public struct NativeHelperRelativeSession: Sendable {
         }
         guard let acquired = frame.acquisitionNS, acquired > afterAcquisitionNS,
               lastAcquisitionNS.map({ acquired > $0 }) ?? true else { return fault(retire: retire) }
+        let previousAcquisition = lastAcquisitionNS
         lastAcquisitionNS = acquired
         guard frame.receipt == Double(acquired) / 1_000_000_000 else { return fault(retire: retire) }
         let previous = lastReceipt
         guard previous.map({ frame.receipt > $0 }) ?? true else { return fault(retire: retire) }
         lastReceipt = frame.receipt
-        guard clockValid, fresh(frame.receipt, now: now), permits(), (!active || activeLeaseValid()) else { return fault(retire: retire) }
+        guard clockValid, fresh(frame.receipt, acquisitionNS: acquired, now: now), permits(), (!active || activeLeaseValid()) else { return fault(retire: retire) }
         // A new fresh sample cannot hide an expired active stream if the
         // watchdog was delayed. Even a neutral sample after a gap must be
         // processed on a later call, not on the expiry boundary itself.
-        if active, let previous, !fresh(previous, now: now) { return fault(retire: retire) }
+        if active, let previous, let previousAcquisition, !fresh(previous, acquisitionNS: previousAcquisition, now: now) { return fault(retire: retire) }
         let result = clutch.frame(frame)
         switch result {
         case .blocked:
@@ -107,14 +159,24 @@ public struct NativeHelperRelativeSession: Sendable {
     /// The host schedules this on the same serialized execution context.
     /// Never use an absent or stale sample as neutral evidence.
     public mutating func expire(now: Double, retire: (Bool) -> Bool) -> Result {
+        expire(clock: .seconds(now), retire: retire)
+    }
+
+    public mutating func expire(nowNS: Int64, retire: (Bool) -> Bool) -> Result {
+        expire(clock: .nanoseconds(nowNS), retire: retire)
+    }
+
+    private mutating func expire(clock now: Clock, retire: (Bool) -> Bool) -> Result {
         guard !closed else { return .ignored }
+        guard matchesClock(now) else { return close(retire: retire) }
         guard observeHostClock(now) else {
             // Revoke even a silent neutral admission, but do not retry
             // cleanup on every subsequent bad idle watchdog sample.
             guard active || neutralAdmitted else { return .ignored }
             return fault(retire: retire)
         }
-        guard active, let receipt = lastReceipt, !fresh(receipt, now: now) else { return .ignored }
+        guard active, let receipt = lastReceipt, let acquired = lastAcquisitionNS,
+              !fresh(receipt, acquisitionNS: acquired, now: now) else { return .ignored }
         return fault(retire: retire)
     }
 
