@@ -66,6 +66,7 @@ public enum MIDIFileParser {
 
         var allEvents: [MIDITrackEvent] = []
         var eventOrder = 0
+        var lastTrackTick = 0
 
         for _ in 0..<trackCount {
             guard String(bytes: try read(4), encoding: .ascii) == "MTrk" else { throw MIDIFileError.malformed("Missing MTrk chunk") }
@@ -140,6 +141,7 @@ public enum MIDIFileParser {
                     break
                 }
             }
+            lastTrackTick = max(lastTrackTick, tick)
             cursor = trackEnd
         }
 
@@ -178,7 +180,9 @@ public enum MIDIFileParser {
         }
 
         notes.sort { $0.startSeconds < $1.startSeconds }
-        let duration = notes.map { $0.startSeconds + $0.durationSeconds }.max() ?? currentSeconds
+        // The last track event (including End of Track) can follow the final note.
+        advance(to: lastTrackTick)
+        let duration = max(currentSeconds, notes.map { $0.startSeconds + $0.durationSeconds }.max() ?? 0)
         return ParsedMIDIFile(notes: notes, durationSeconds: duration)
     }
 
