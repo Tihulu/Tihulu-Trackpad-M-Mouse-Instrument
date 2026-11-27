@@ -1128,6 +1128,7 @@ final class StudioController: ObservableObject {
     private var touchClickFence = PhysicalClickSessionFence()
     @Published private(set) var sequenceRunning = false
     @Published private(set) var sequenceStatus = "Sequencer MIDI idle"
+    @Published private(set) var sequenceCleanupPending = false
     @Published private(set) var sequencePresentation = SequencerTakePresentation()
     private let sequenceMIDI = ChordMIDIOutput(name: "TIHULU Sequencer")
     private let tunedSequenceMIDI = ChordMIDIOutput(name:"TIHULU Tuned Sequencer MPE")
@@ -1138,7 +1139,9 @@ final class StudioController: ObservableObject {
         let port = activeSequenceMIDI
         let notesReleased = sequenceLedger.releaseAll(send:{ port.send($0) })
         let selectorsReleased = sequenceSelectors.releaseAll(send:{ port.send($0) })
-        return notesReleased && selectorsReleased
+        let released = notesReleased && selectorsReleased
+        sequenceCleanupPending = !released
+        return released
     }
 
     func startTunedNoteSequence(output:MusicalOutput,loop:Bool,makeClip:() throws -> MIDIClip) {
