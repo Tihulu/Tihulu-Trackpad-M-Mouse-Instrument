@@ -240,8 +240,10 @@ def build(args):
 
 
 def tokens(text):
+    # Preserve Unicode words; split code identifiers and Markdown filenames.
+    text = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", text)
     text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
-    return re.findall(r"[^\W]+", text.casefold(), flags=re.UNICODE)
+    return re.findall(r"[^\W_]+", text.casefold(), flags=re.UNICODE)
 
 
 def read_index(path):
@@ -389,10 +391,14 @@ def search_prepared(prepared, args):
     else:
         ranked = lexical_ranking(rows, args.query)
         mode = "lexical"
-    ranked.sort(key=lambda item: (-item[0], item[1]["path"], item[1]["start"]))
+    ranked.sort(key=lambda item: (-item[0], item[1]["path"], item[1]["start"], item[1]["end"]))
+    per_file = getattr(args, "max_per_file", 3)
+    if not 1 <= per_file <= 50:
+        raise ValueError("Invalid per-file result limit")
+    ranked = diverse_results(ranked, args.limit, per_file)
     return {"commit": meta["commit"], "mode": mode, "scope": meta.get("scope", "all"), "source_verified": verified, "results": [
         {**{k: row[k] for k in ("path", "blob", "start", "end", "text")}, "score": round(score, 6)}
-        for score, row in ranked[:args.limit]]}
+        for score, row in ranked]}
 
 
 def search(args):
@@ -400,16 +406,52 @@ def search(args):
 
 
 def lexical_ranking(rows, query):
+    """Bound repeated common words and reward discriminative filename terms."""
     terms = set(tokens(query))
     if not terms:
         raise ValueError("No searchable terms")
-    ranked = []
+    prepared = []
+    frequencies = Counter()
+    total_words = 0
     for row in rows:
-        words = Counter(tokens(row["path"] + "\n" + row["text"]))
-        score = sum(math.log1p(words[t]) for t in terms)
+        body = Counter(tokens(row["text"]))
+        name = set(tokens(Path(row["path"]).stem))
+        length = sum(body.values())
+        total_words += length
+        frequencies.update(terms.intersection(body.keys() | name))
+        prepared.append((row, body, name, length))
+    average = max(1, total_words / max(1, len(rows)))
+    idf = {term: math.log1p((len(rows) - frequencies[term] + 0.5) /
+                           (frequencies[term] + 0.5)) for term in terms}
+    ranked = []
+    for row, body, name, length in prepared:
+        score = 0.0
+        for term in sorted(terms):
+            count = body[term]
+            # BM25-style term saturation and length normalization; filename
+            # matches are a separate bounded signal, not repeated path text.
+            denominator = count + 1.2 * (0.25 + 0.75 * length / average)
+            score += idf[term] * (count * 2.2 / denominator + (1.5 if term in name else 0))
         if score > 0:
             ranked.append((score, row))
     return ranked
+
+
+def diverse_results(ranked, limit, max_per_file):
+    counts = Counter()
+    seen = set()
+    result = []
+    for score, row in ranked:
+        path = row["path"]
+        key = (path, row["blob"], row["start"], row["end"])
+        if key in seen or counts[path] >= max_per_file:
+            continue
+        seen.add(key)
+        counts[path] += 1
+        result.append((score, row))
+        if len(result) >= limit:
+            break
+    return result
 
 
 def fuse_rankings(semantic, lexical):
@@ -467,6 +509,8 @@ def main(argv=None):
         q.add_argument("--index", required=True)
         q.add_argument("--query", required=True)
         q.add_argument("--limit", type=int, default=8)
+        q.add_argument("--max-per-file", type=int, default=3,
+                       help="Maximum ranked chunks per source file (1–50)")
         q.add_argument("--model-dir")
         q.add_argument("--hybrid", action="store_true")
         q.add_argument("--repo", required=command=="context",

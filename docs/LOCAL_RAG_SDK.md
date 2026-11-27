@@ -28,7 +28,7 @@ python3 tools/repo_index.py context --repo . --expect-ref "$rev" --index "$work/
 python3 tools/repo_index.py context --repo . --expect-ref "$rev" --index "$work/docs.json" --query "Logic Pro microtonal setup" --limit 6
 ```
 
-This is **lexical** retrieval, not vectorization. Each context call verifies source path, blob and exact lines against Git and rejects a stale revision. It returns only whole chunks within a serialized JSON byte budget (default 32,000 bytes; 1,024–128,000), or an error when nothing fits. The newline on stdout is separate. Byte limits are not LLM token limits.
+This is **lexical** retrieval, not vectorization. Ranking uses Unicode and identifier-aware tokenization, bounded term-frequency/length normalization and rare filename-term weighting. By default at most three ranked chunks per file are returned in each search/context call; use `--max-per-file 1` for breadth or up to 50 for focused source inspection. Scores are ranking signals, not probabilities. Each context call verifies source path, blob and exact lines against Git and rejects a stale revision. It returns only whole chunks within a serialized JSON byte budget (default 32,000 bytes; 1,024–128,000), or an error when nothing fits. The newline on stdout is separate. Byte limits are not LLM token limits.
 
 ## 3. Real local embeddings and hybrid retrieval
 
@@ -89,7 +89,7 @@ Retrieve each corpus at the same explicit revision. Keep the provenance on every
 
 ## 6. Measure retrieval quality on the actual repository
 
-The local benchmark uses nine curated file-level targets across engine, app and docs, with English, Turkish and German queries. It verifies commit/source provenance once per scope, loads a selected local model once per run, and reports file hit rate, reciprocal rank, missing expected files, setup time and median query time. Top-k is a chunk limit; repeated files are deduplicated for file rank. These metrics are preliminary retrieval evidence, not answer accuracy or native acceptance.
+The local benchmark uses nine curated file-level targets across engine, app and docs, with English, Turkish and German queries. It verifies commit/source provenance once per scope, loads a selected local model once per run, and reports file hit rate, reciprocal rank, missing expected files, setup time and median query time. Top-k is a chunk limit, with the same per-file limit as search (default three); repeated files are deduplicated for file rank. Use the same k, per-file limit and cases when comparing modes. This curated set is useful for regression evidence, not an independent generalization test. These metrics are preliminary retrieval evidence, not answer accuracy or native acceptance.
 
 ```sh
 python3 tools/rag_benchmark.py --repo . --expect-ref "$rev" --index "$work/engine.json" --scope engine

@@ -4,7 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from repo_index import normalized, semantic_windows, fuse_rankings, in_scope, tokens, prepare_search, search_prepared
+from repo_index import normalized, semantic_windows, fuse_rankings, in_scope, tokens, prepare_search, search_prepared, lexical_ranking, diverse_results
 from types import SimpleNamespace
 
 TOOL = Path(__file__).resolve().with_name("repo_index.py")
@@ -229,6 +229,22 @@ class SemanticContractTests(unittest.TestCase):
             self.assertEqual(part["text"], "\n".join(lines[part["start"]-5:part["end"]-4]))
             self.assertLessEqual(len(model.tokenizer.encode(part["path"]+"\n"+part["text"])),32)
         self.assertEqual(rows[-1]["end"],21)
+
+    def test_lexical_identifier_ranking_and_file_diversity(self):
+        def row(path, start, text):
+            return {"path":path,"blob":"a"*40,"start":start,"end":start,"text":text}
+        target = row("docs/MAC_HARDWARE_ACCEPTANCE.md",1,"Verify hardware and Logic Pro.")
+        noise = row("docs/overview.md",1,"MIDI " * 500 + "hardware")
+        ranks = sorted(lexical_ranking([target, noise], "Mac hardware acceptance"),
+                       key=lambda item: -item[0])
+        self.assertEqual(ranks[0][1], target)
+        self.assertIn("midi", tokens("TunedMIDIClip"))
+        self.assertIn("clip", tokens("TunedMIDIClip"))
+        other = row("docs/overview.md",2,"MIDI")
+        ranked = [(5,noise),(4,noise),(3,other),(2,target)]
+        self.assertEqual([r["path"] for _,r in diverse_results(ranked,3,1)],
+                         ["docs/overview.md","docs/MAC_HARDWARE_ACCEPTANCE.md"])
+        self.assertEqual(len(diverse_results(ranked,3,2)),3)
 
     def test_rank_fusion_uses_ranks_and_deduplicates(self):
         a = {"path":"a.swift","blob":"a"*40,"start":1,"end":1}
