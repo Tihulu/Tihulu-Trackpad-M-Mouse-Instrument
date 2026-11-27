@@ -2202,3 +2202,28 @@ test("REL-WEB focus transfer to unrelated control still fails closed",()=>{
   e.pad.emit("blur",{relatedTarget:e.pianoEnable});
   assert.equal(a.socket.closed,true);
 });
+
+test("MUSIC-WEB sparse verified scale highlights only mapped keys",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false,false);
+  mappingResponse(a,[[17,0,0,48,1]]);const e=a.elements;
+  e.pianoScale.value="major";e.pianoRoot.value="0";e.pianoScale.emit("change");
+  assert.equal(e.piano0.attributes["data-scale"],"true");
+  assert.equal(e.piano2.attributes["data-scale"],"false");
+  const n=a.socket.frames.length;
+  for(const invalid of ["__proto__","constructor","invalid"]){
+    e.pianoScale.value=invalid;e.pianoScale.emit("change");
+    assert.equal(e.piano0.attributes["data-scale"],"false");
+  }
+  e.pianoScale.value="major";e.pianoRoot.value="12";e.pianoRoot.emit("change");
+  assert.equal(e.piano0.attributes["data-scale"],"false");assert.equal(a.socket.frames.length,n);
+});
+test("MUSIC-WEB verified scale guide matches 12-TET Dorian and Hicaz collections without remapping",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:31},false,false);
+  mappingResponse(a,Array.from({length:5},(_,i)=>[17+i,0,0,48+i,1]));const e=a.elements,n=a.socket.frames.length;
+  e.pianoRoot.value="0";
+  for(const [name,expected] of [["dorian",[true,false,true,true,false]],["hicaz",[true,true,false,false,true]]]){
+    e.pianoScale.value=name;e.pianoScale.emit("change");
+    assert.deepEqual(Array.from({length:5},(_,i)=>e["piano"+i].attributes["data-scale"]==="true"),expected);
+  }
+  assert.equal(a.socket.frames.length,n);
+});

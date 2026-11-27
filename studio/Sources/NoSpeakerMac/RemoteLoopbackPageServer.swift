@@ -260,7 +260,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <button id="pianoEnable" disabled>Enable piano</button><button id="pianoRelease" disabled>Release keys &amp; pedal</button>
 <p id="pianoStatus" role="status">Off.</p>
 <button id="octaveDown" disabled>Octave −</button><span id="octaveLabel">C3–C4</span><button id="octaveUp" disabled>Octave +</button>
-<label for="pianoScale">Scale guide (visual only)</label><select id="pianoScale"><option value="all">Chromatic</option><option value="major">Major</option><option value="minor">Natural minor</option><option value="pentatonic">Major pentatonic</option></select>
+<label for="pianoScale">Scale guide (visual only)</label><select id="pianoScale"><option value="all">Chromatic</option><option value="major">Major</option><option value="minor">Natural Minor</option><option value="harmonicMinor">Harmonic Minor</option><option value="melodicMinor">Melodic Minor (ascending)</option><option value="dorian">Dorian</option><option value="phrygian">Phrygian</option><option value="lydian">Lydian</option><option value="mixolydian">Mixolydian</option><option value="locrian">Locrian</option><option value="pentatonic">Major Pentatonic</option><option value="minorPentatonic">Minor Pentatonic</option><option value="blues">Blues</option><option value="hicaz">Hicaz-inspired (12-TET)</option><option value="nihavend">Nihavend-inspired (12-TET)</option><option value="kurdi">Kurdi-inspired (12-TET)</option><option value="hicazkar">Hicazkar-inspired (12-TET)</option></select>
 <label for="pianoRoot">Root note</label><select id="pianoRoot"><option value="0">C</option><option value="1">C♯</option><option value="2">D</option><option value="3">D♯</option><option value="4">E</option><option value="5">F</option><option value="6">F♯</option><option value="7">G</option><option value="8">G♯</option><option value="9">A</option><option value="10">A♯</option><option value="11">B</option></select>
 <button id="pianoStrips" aria-pressed="false" disabled>Note strips</button>
 <small id="pianoStripHint" hidden>Slide between assigned notes or hold multiple fingers. Lift to release; leaving the surface releases that finger. Discrete notes only, no independent pitch bend. Change layouts when all notes and pedal are released.</small>
@@ -1524,7 +1524,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const pianoPedal=get("pianoSustain"),pianoEnable=get("pianoEnable"),pianoRelease=get("pianoRelease"),pianoStatus=get("pianoStatus");
   const octaveDown=get("octaveDown"),octaveUp=get("octaveUp"),octaveLabel=get("octaveLabel"),pianoScale=get("pianoScale"),pianoRoot=get("pianoRoot");
   const pitchNames=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
-  const scaleDegrees={all:[0,1,2,3,4,5,6,7,8,9,10,11],major:[0,2,4,5,7,9,11],minor:[0,2,3,5,7,8,10],pentatonic:[0,2,4,7,9]};
+  // Visual 12-TET guide mirrors ChordScale intervals; legacy browser IDs retained.
+  const scaleDegrees={"all":[0,1,2,3,4,5,6,7,8,9,10,11],"major":[0,2,4,5,7,9,11],"minor":[0,2,3,5,7,8,10],"harmonicMinor":[0,2,3,5,7,8,11],"melodicMinor":[0,2,3,5,7,9,11],"dorian":[0,2,3,5,7,9,10],"phrygian":[0,1,3,5,7,8,10],"lydian":[0,2,4,6,7,9,11],"mixolydian":[0,2,4,5,7,9,10],"locrian":[0,1,3,5,6,8,10],"pentatonic":[0,2,4,7,9],"minorPentatonic":[0,3,5,7,10],"blues":[0,3,5,6,7,10],"hicaz":[0,1,4,5,7,9,10],"nihavend":[0,2,3,5,7,8,10],"kurdi":[0,1,3,5,7,8,10],"hicazkar":[0,1,4,5,7,8,11]};
   const pianoBoard=get("pianoBoard"),pianoStrips=get("pianoStrips"),pianoStripHint=get("pianoStripHint");
   let strips=false;
   let pianoEnabled=false,pianoOctave=0,pianoOwners=new Map(),pianoQueue=[],pianoDesired=0,pianoSent=0,lastPianoSend=-Infinity,pianoEmergency=false;
@@ -1657,8 +1658,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pianoStripHint.hidden=!strips;
     pianoBoard.setAttribute("data-strips",String(strips));
     pianoBoard.setAttribute("aria-label",strips?"Assigned note strips":"Piano keyboard");
-    const scale=scaleDegrees[pianoScale.value]||scaleDegrees.all;
-    const root=Number(pianoRoot.value)||0;
+    const root=Number(pianoRoot.value);
+    const guideValid=Object.hasOwn(scaleDegrees,pianoScale.value)&&pianoScale.value!=="all"&&
+      Number.isInteger(root)&&root>=0&&root<12&&pianoRoot.value===String(root);
+    const scale=guideValid?scaleDegrees[pianoScale.value]:[];
     pianoButtons.forEach((b,i)=>{
       const index=i+12*pianoOctave,note=pitchNames[index%12]+(3+Math.floor(index/12));
       b.disabled=!admitted||!pianoEnabled||!has("piano",index)||pianoEmergency;
@@ -1671,7 +1674,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       b.textContent=label;b.setAttribute("aria-label",(mappingLabels.has(17+index)?labelFor(17+index)+" · ":"")+label+(rows.length?" · "+rows.map(targetText).join("; "):" · mapping details hidden"));
       b.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<index))));
       b.setAttribute("data-arp-selected",String(playMode==="arp"&&arpSelected.has(index)));if(playMode==="arp"&&phraseRun)b.disabled=true;
-      b.setAttribute("data-scale",String(scaleAllowed&&pianoScale.value!=="all"&&scale.includes((index-root+12)%12)));
+      b.setAttribute("data-scale",String(scaleAllowed&&has("piano",index)&&guideValid&&scale.includes((index-root+12)%12)));
     });
     get("pianoBoard").hidden=!Boolean(caps?.piano&33554431);
     pianoPedal.hidden=!has("piano",25);pianoPedal.disabled=!admitted||!pianoEnabled||!has("piano",25)||pianoEmergency;
