@@ -21,3 +21,17 @@ import Testing
     #expect(CustomSurfacePadPreset.sustain.layout(surface:.trackpad,channel:-1) == nil)
     #expect(CustomSurfacePadPreset.drums.layout(surface:.trackpad,channel:16) == nil)
 }
+
+@Test func customPadMergedRoutingAdvisoryIncludesDrumsAndChannelWideHelpers() throws {
+    let trackpad=try #require(CustomSurfacePadPreset.chromatic.layout(surface:.trackpad,channel:0))
+    let sustain=try #require(CustomSurfacePadPreset.sustain.layout(surface:.magicMouse,channel:0))
+    let notes=try CustomSurfaceMixedPlan(layout:trackpad,melodicChannel:0)
+    let pedal=try CustomSurfaceMixedPlan(layout:sustain,melodicChannel:1)
+    let shared=notes.overlapIfMerged(with:pedal)
+    #expect(shared.channels == Set([0]) && shared.destinations.isEmpty)
+    let drumsA=try CustomSurfaceMixedPlan(layout:#require(CustomSurfacePadPreset.drums.layout(surface:.trackpad,channel:0)),melodicChannel:0)
+    let drumsB=try CustomSurfaceMixedPlan(layout:#require(CustomSurfacePadPreset.drums.layout(surface:.magicMouse,channel:1)),melodicChannel:1)
+    #expect(drumsA.overlapIfMerged(with:drumsB).channels == Set([9]))
+    #expect(drumsA.overlapIfMerged(with:drumsB).destinations.count == 8)
+    #expect(notes.overlapIfMerged(with:drumsB).channels.isEmpty)
+}

@@ -35,6 +35,19 @@ public struct CustomSurfaceMixedPlan: Sendable {
         return result
     }
 
+    /// Advisory only: independent source ports are valid even when wire
+    /// destinations coincide. If a receiver merges them, channel-wide
+    /// sustain, pitch bend and CC can affect the other source's notes.
+    public struct RoutingOverlap: Equatable, Sendable {
+        public let channels: Set<Int>
+        public let destinations: Set<SensorDestination>
+    }
+    public func overlapIfMerged(with other: Self) -> RoutingOverlap {
+        let a = destinations, b = other.destinations
+        return .init(channels: Set(a.map(\.channel)).intersection(Set(b.map(\.channel))),
+                     destinations: a.intersection(b))
+    }
+
     public init(layout:CustomSurfacePadLayout,melodicChannel:Int)throws {
         guard CustomSurfaceStandardNotePlan(layout:layout,melodicChannel:melodicChannel) != nil else{throw Failure.channelConflict}
         var reserved:Set<SensorDestination>=[]

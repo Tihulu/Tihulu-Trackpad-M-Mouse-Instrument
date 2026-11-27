@@ -322,6 +322,7 @@ struct CustomSurfacePadEditor:View {
                         if let trackpad=layouts[.trackpad],let mouse=layouts[.magicMouse] {
                             Stepper("Trackpad MIDI channel \(groupTrackpadChannel+1)",value:channelBinding(.trackpad),in:0...15)
                             Stepper("Magic Mouse MIDI channel \(groupMouseChannel+1)",value:channelBinding(.magicMouse),in:0...15)
+                            groupRoutingAdvisory(trackpad:trackpad,mouse:mouse)
                             Button("Arm both drafts…") {
                                 pending=nil
                                 groupConfirmation=GroupConfirmation(trackpad:trackpad,mouse:mouse,
@@ -390,6 +391,19 @@ struct CustomSurfacePadEditor:View {
                 }.clipped()
             }.frame(height:160)
             Text("Read-only frozen map. Highlight = locally reconciled pad, not DAW acknowledgement.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+    @ViewBuilder private func groupRoutingAdvisory(trackpad:Layout,mouse:Layout)->some View {
+        if let a=try? CustomSurfaceMixedPlan(layout:trackpad,melodicChannel:groupTrackpadChannel),
+           let b=try? CustomSurfaceMixedPlan(layout:mouse,melodicChannel:groupMouseChannel) {
+            let overlap=a.overlapIfMerged(with:b)
+            if !overlap.channels.isEmpty {
+                let names=overlap.channels.sorted().map{String($0+1)}.joined(separator:", ")
+                Label("If your DAW merges these sources: shared channels \(names); \(overlap.destinations.count) identical MIDI targets. Channel-wide controls can affect both instruments.",systemImage:"exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+            } else {
+                Text("No shared MIDI channels in the current drafts. Independent receiver routing is still required.").font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
     private func compatibility(_ layout:Layout)->String {

@@ -164,7 +164,10 @@ private final class TouchBridge: @unchecked Sendable {
         os_unfair_lock_lock(&lock)
         defer { os_unfair_lock_unlock(&lock) }
         guard handler != nil else { return false }
-        let current = Dictionary(uniqueKeysWithValues: surfaceByDevice.values.map { ($0.kind, $0.registration) })
+        var current: [TouchSurfaceKind: UUID] = [:]
+        for source in surfaceByDevice.values {
+            guard current.updateValue(source.registration, forKey: source.kind) == nil else { return false }
+        }
         return NativeSurfaceAdmission.matchesRegistrations(required: required, current: current)
     }
 
