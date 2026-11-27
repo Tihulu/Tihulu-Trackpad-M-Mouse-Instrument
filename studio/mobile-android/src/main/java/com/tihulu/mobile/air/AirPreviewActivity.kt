@@ -11,6 +11,8 @@ import android.os.SystemClock
 import android.view.View
 import android.text.InputFilter
 import android.text.InputType
+import android.text.Editable
+import android.text.TextWatcher
 import android.widget.*
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,6 +47,10 @@ class AirPreviewActivity: ComponentActivity() {
     private lateinit var mirror:CheckBox
     private lateinit var depthToggle:CheckBox
     private lateinit var depthRange:Spinner
+    private lateinit var customNear:EditText
+    private lateinit var customFar:EditText
+    private lateinit var modeGuide:TextView
+    private var captureRotation:Int?=null
     private lateinit var imageRotation:Spinner
     private var depthSource:ArCoreDiagnosticSource?=null
     private var depthRetiring:ArCoreDiagnosticSource?=null
@@ -74,7 +80,6 @@ class AirPreviewActivity: ComponentActivity() {
     }
     private var installRequested=false
     private val depthModes=listOf(AirMode.BEAM_KEYS,AirMode.BEAM_HELPER)
-    private val depthRanges=listOf(.25 to .85,.15 to .55,.4 to 1.2)
     private lateinit var modelButton:Button
     private lateinit var modelStatus:TextView
     private val importer=Executors.newSingleThreadExecutor()
@@ -116,12 +121,14 @@ class AirPreviewActivity: ComponentActivity() {
     private fun selectedMode()=(if(depthToggle.isChecked)depthModes else modes).getOrNull(modePick.selectedItemPosition)
     private fun selectedRole()=HandRole.entries.getOrNull(rolePick.selectedItemPosition)
     private fun selectedOrientation()=Orientation.entries.getOrNull(orientationPick.selectedItemPosition)
-    private fun selectedRange()=depthRanges.getOrNull(depthRange.selectedItemPosition)?:depthRanges.first()
+    private fun selectedRange()=AirDepthCalibration.selected(depthRange.selectedItemPosition,customNear.text.toString(),customFar.text.toString())
+    private fun validRole()=selectedMode()!=null && selectedRole()!=null && (selectedMode()!=AirMode.CHORDS || selectedRole()!=HandRole.SINGLE)
+    private fun validAirSetup()=validRole() && (!depthToggle.isChecked || selectedRange()!=null)
     private fun pairedProjection():AirProjection? {
         val mode=selectedMode()?:return null
         val role=selectedRole()?:return null
         val orientation=selectedOrientation()?:return null
-        val (near,far)=selectedRange()
+        val (near,far)=if(depthToggle.isChecked) selectedRange()?:return null else AirDepthCalibration.presets.first()
         return lan?.newProjection(mode,role,orientation,mirror.isChecked,near,far,depthToggle.isChecked)
     }
     private fun clearInvitation(){invitation.text.clear()}
@@ -196,8 +203,16 @@ class AirPreviewActivity: ComponentActivity() {
         status.text=if(granted)"Camera permission granted. Press Start." else "Camera permission denied."
         controls()
     }
+    private fun cameraPermitted() = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    private fun captureFailure() = AirCaptureLifecycle.failure(captureRotation, displayDegrees(),
+        lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED), cameraPermitted())
     private val pulse=object:Runnable {
         override fun run() {
+            if(pending||source!=null||depthSource!=null||xyzSource!=null) {
+                captureFailure()?.let {
+                    end(it.message);handler.postDelayed(this,50);return
+                }
+            }
             lan?.let {client->
                 val state=client.status()
                 if(state.phase==MobileLanSession.Phase.CLOSED) {
@@ -213,7 +228,7 @@ class AirPreviewActivity: ComponentActivity() {
                     controls()
                 }
             }
-            if((xyzSource!=null||source!=null||depthSource!=null||(lan!=null&&!wantsTouchPair))&&ContextCompat.checkSelfPermission(this@AirPreviewActivity,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
+            if(lan!=null&&!wantsTouchPair&&!cameraPermitted()) {
                 end("Camera permission lost");handler.postDelayed(this,50);return
             }
             if(retiring?.isStopped==true) {retiring=null;controls()}
@@ -332,13 +347,21 @@ class AirPreviewActivity: ComponentActivity() {
         plus=button("Zoom +"){setZoom(zoom*1.25f)}
         reset=button("Reset zoom"){range?.let {setZoom(it.reset)}}
         depthToggle=CheckBox(this).also {it.text="Use ARCore raw depth (estimated/fused, rear camera)";column.addView(it)}
-        depthRange=spinner(listOf("25–85 cm","15–55 cm","40–120 cm"))
+        depthRange=spinner(listOf("25–85 cm","15–55 cm","40–120 cm","Custom (cm)"))
+        fun calibrationField(hintText:String,initial:String)=EditText(this).also {
+            it.hint=hintText;it.contentDescription=hintText;it.setSingleLine(true)
+            it.inputType=InputType.TYPE_CLASS_NUMBER;it.filters=arrayOf(InputFilter.LengthFilter(3))
+            it.setText(initial);column.addView(it)
+        }
+        customNear=calibrationField("Near distance (cm)","25")
+        customFar=calibrationField("Far distance (cm)","85")
         imageRotation=spinner(listOf("Raw image 0°","Raw image 90°","Raw image 180°","Raw image 270°"))
         label("Instrument / helper")
         modePick=spinner(modes.map {it.name.replace('_',' ')})
         rolePick=spinner(HandRole.entries.map {it.name})
         orientationPick=spinner(Orientation.entries.map {it.name})
         mirror=CheckBox(this).also {it.text="Mirror X";column.addView(it)}
+        modeGuide=label("")
         xyz=CheckBox(this).apply {text="Measured XYZ · Camera2 DEPTH16";column.addView(this)}
         xyzSettings=XYZSettings(this){measuredCamera()?.id}
         column.addView(xyzSettings)
@@ -380,10 +403,17 @@ class AirPreviewActivity: ComponentActivity() {
             if(!locked){pairPanel.visibility=if(checked&&pairedAllowed)View.VISIBLE else View.GONE;clearInvitation();controls()}
         }
         touchOnly.setOnCheckedChangeListener {_,_->if(!locked){clearInvitation();controls()}}
-        modePick.onItemSelectedListener=object:AdapterView.OnItemSelectedListener {
+        val refreshSelection=object:AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent:AdapterView<*>?) {controls()}
             override fun onItemSelected(parent:AdapterView<*>?,view:View?,position:Int,id:Long){controls()}
         }
+        for(picker in listOf(modePick,rolePick,depthRange))picker.onItemSelectedListener=refreshSelection
+        val refreshCalibration=object:TextWatcher {
+            override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+            override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){}
+            override fun afterTextChanged(s:Editable?){controls()}
+        }
+        customNear.addTextChangedListener(refreshCalibration);customFar.addTextChangedListener(refreshCalibration)
         setContentView(ScrollView(this).apply {addView(column)})
         controls()
     }
@@ -405,6 +435,30 @@ class AirPreviewActivity: ComponentActivity() {
         for(v in listOf(modePick,rolePick,orientationPick,mirror,depthToggle))v.isEnabled=canEditInstrument
         cameraPick.isEnabled=canEditInstrument&&!depth
         depthRange.isEnabled=canEditInstrument&&depth;imageRotation.isEnabled=canEditInstrument&&depth
+        val custom=depth&&!measuredMode&&depthRange.selectedItemPosition==AirDepthCalibration.presets.size
+        for(field in listOf(customNear,customFar)){
+            field.visibility=if(custom)View.VISIBLE else View.GONE
+            field.isEnabled=custom&&canEditInstrument
+        }
+        modeGuide.visibility=if(measuredMode||wantsTouchPair)View.GONE else View.VISIBLE
+        modeGuide.text=when {
+            depth&&selectedRange()==null -> "Enter a valid near/far range: near 10–150 cm, far 20–300 cm, at least 10 cm apart."
+            !validRole() -> "Choose left or right performing hand for chords."
+            else -> when(selectedMode()) {
+                AirMode.PINCH_KEYS -> "Move horizontally to choose a key; open then pinch to hold, open to release."
+                AirMode.CHORDS -> "Select with the other hand; pinch with the performing hand. Loss of either hand releases."
+                AirMode.STRINGS -> "Cross the three vertical string regions for short note pulses."
+                AirMode.HORIZONTAL -> "Horizontal position controls the helper."
+                AirMode.VERTICAL -> "Vertical position controls the helper."
+                AirMode.APERTURE -> "Thumb-to-index aperture controls the helper."
+                AirMode.SPEED -> "Hand motion speed controls the helper."
+                AirMode.PINCH_HELPER -> "Open then pinch to engage; open to disengage."
+                AirMode.TOGGLE_HELPER -> "Open then pinch to toggle; tracking loss clears the latch."
+                AirMode.BEAM_KEYS -> "Move within the selected depth range to choose a logical key zone. Invalid depth releases."
+                AirMode.BEAM_HELPER -> "Near/far distance controls the helper. Invalid depth releases."
+                null -> "Choose an instrument."
+            }
+        }
         flip.isEnabled=canEditInstrument&&!depth&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_FRONT}&&choices.any {it.facing==CameraCharacteristics.LENS_FACING_BACK}
         for(v in listOf(zoomBar,minus,plus,reset))v.isEnabled=canEditInstrument&&!depth&&r!=null&&r.max>r.min
         xyz.isEnabled=!b&&!wantsTouchPair
@@ -428,7 +482,7 @@ class AirPreviewActivity: ComponentActivity() {
         start.text=if(wantsPair)"Start playing" else "Start sensors"
         if(!measuredMode&&!wantsTouchPair&&lan?.status()?.phase==MobileLanSession.Phase.READY&&!busy&&pairedProjection()==null)
             status.text="Mode incompatible with assignment: choose the same family or disconnect and pair again."
-        start.isEnabled=!wantsTouchPair&&!busy&&!qrRequested&&(depth||r?.admits(zoom)==true)&&(!wantsPair||pairedProjection()!=null)
+        start.isEnabled=!wantsTouchPair&&!busy&&!qrRequested&&validAirSetup()&&(depth||r?.admits(zoom)==true)&&(!wantsPair||pairedProjection()!=null)
         if(measuredMode){
             start.isEnabled=!busy&&!qrRequested&&measuredCamera()!=null&&(!wantsPair||xyzAssigned())
             modelButton.isEnabled=false
@@ -460,8 +514,8 @@ class AirPreviewActivity: ComponentActivity() {
         if(endpoint==null||check==null||root==null||(!wantsTouchPair&&mode==null)){
             connectionStatus.text="Enter the exact Mac address, invitation and verified DER root.";return
         }
-        if(!measuredMode&&!wantsTouchPair&&mode==AirMode.CHORDS&&selectedRole()==HandRole.SINGLE){
-            connectionStatus.text="Choose a left or right performing hand for chords.";return
+        if(!measuredMode&&!wantsTouchPair&&!validAirSetup()){
+            connectionStatus.text="Choose a valid performing hand and depth range.";return
         }
         if(measuredMode && (measuredCamera()==null || xyzSettings.volume()==null || xyzSettings.mask==0)){
             connectionStatus.text="Select a rear DEPTH16 camera, enabled axes and valid volume";return
@@ -479,8 +533,9 @@ class AirPreviewActivity: ComponentActivity() {
             handler.post {
                 if(destroyed||epoch!=ticket||!importing)return@post
                 importing=false
-                if(trust==null||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)){
-                    connectionStatus.text="Root fingerprint or certificate invalid, or app inactive";controls();return@post
+                if(trust==null||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||
+                    (!wantsTouchPair&&!cameraPermitted())){
+                    connectionStatus.text="Root fingerprint or certificate invalid, app inactive or camera permission lost";controls();return@post
                 }
                 val client=BoundedMobileLanSocket(endpoint,selection,trust)
                 lan=client;lastPhase=null
@@ -514,13 +569,14 @@ class AirPreviewActivity: ComponentActivity() {
                 if(allowed !in 1 until (1 shl 25)){end("No assigned keys");return}
                 MeasuredXYZKeys(allowed,axis)
             }
-            xyzRotation=displayDegrees();xyzVolume=volume;xyzLastAt=null
+            xyzRotation=displayDegrees();captureRotation=xyzRotation;xyzVolume=volume;xyzLastAt=null
             xyzTracking=MeasuredXYZTracking(volume,mask)
             observationFence=if(wantsPair)PairedObservationFence(SystemClock.elapsedRealtimeNanos()) else null
             val measured=Camera2XYZSource(applicationContext,camera,xyzRotation,volume)
             xyzSource=measured;xyzStage=XYZStageView(this,mask,xyzSettings.pitchAxis,xyzSettings.hybrid,::end)
             measured.start();controls();return
         }
+        if(!validAirSetup()){status.text="Choose a valid performing hand and depth range";return}
         if(depthToggle.isChecked){beginDepth();return}
         val c=choices.getOrNull(cameraPick.selectedItemPosition) ?: return
         val mode=modes[modePick.selectedItemPosition]
@@ -533,10 +589,12 @@ class AirPreviewActivity: ComponentActivity() {
             status.text="Local hand_landmarker.task asset required";return
         }
         observationFence=if(wantsPair)PairedObservationFence(SystemClock.elapsedRealtimeNanos()) else null
+        captureRotation=displayDegrees()
         val epoch=++ticket;pending=true;controls();status.text="Opening camera"
         val future=ProcessCameraProvider.getInstance(this)
         future.addListener({
-            if(epoch==ticket&&pending&&lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            if(epoch==ticket&&pending) {
+                captureFailure()?.let {end(it.message);return@addListener}
                 try {
                     if(wantsPair&&lan?.status()?.phase!=MobileLanSession.Phase.READY){end("Mac assignment ended");return@addListener}
                     val s=RgbHandSource(this,this,future.get(),"hand_landmarker.task",model) { message ->
@@ -557,8 +615,10 @@ class AirPreviewActivity: ComponentActivity() {
                 ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {installRequested=true;status.text="Complete ARCore installation, then press Start again";return}
                 ArCoreApk.InstallStatus.INSTALLED -> installRequested=false
             }
-            if(!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
-            val range=depthRanges[depthRange.selectedItemPosition]
+            if(!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||!cameraPermitted()){
+                end("App inactive or camera permission lost");return
+            }
+            val range=selectedRange()?:run{status.text="Invalid depth range";return}
             val keys=if(wantsPair){
                 if(pairedProjection()==null){end("Mac assignment ended");return}
                 lan?.status()?.assignment?.piano?:run{end("Mac assignment ended");return}
@@ -568,6 +628,7 @@ class AirPreviewActivity: ComponentActivity() {
             val s=ArCoreDiagnosticSource(applicationContext,model,imageRotation.selectedItemPosition*90,displayRotation,
                 HandRole.entries[rolePick.selectedItemPosition],depthModes[modePick.selectedItemPosition],
                 Orientation.entries[orientationPick.selectedItemPosition],mirror.isChecked,range.first,range.second,keys)
+            captureRotation=displayDegrees()
             depthSource=s;controls();s.start();status.text="Starting ARCore diagnostic sensor"
         }catch(_:Exception){end("ARCore unavailable, unsupported or install declined")}
         catch(_:LinkageError){end("ARCore runtime not included by embedding app")}
@@ -610,7 +671,7 @@ class AirPreviewActivity: ComponentActivity() {
         touchStage=false
         livePiano?.retire();livePiano=null
         touchPanel.removeAllViews();touchPanel.visibility=View.GONE
-        ticket++;pending=false;importing=false
+        ticket++;pending=false;importing=false;captureRotation=null
         observationFence?.retire();observationFence=null
         // No capture callback can renew the old session after this fence.
         beforeWorkerStop()

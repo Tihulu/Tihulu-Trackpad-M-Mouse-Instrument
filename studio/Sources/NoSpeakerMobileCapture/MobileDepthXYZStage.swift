@@ -5,7 +5,7 @@ import UIKit
 import NoSpeakerCore
 
 /// Use the scene actually displaying this stage, including iPad multiwindow.
-@MainActor private final class XYZWindow {
+@MainActor final class MobileCaptureWindow {
     weak var view: UIView?
     var orientation: MobileSensorOrientation? {
         switch view?.window?.windowScene?.interfaceOrientation {
@@ -18,8 +18,8 @@ import NoSpeakerCore
     }
 }
 
-private struct XYZSceneProbe: UIViewRepresentable {
-    let window: XYZWindow
+struct MobileCaptureSceneProbe: UIViewRepresentable {
+    let window: MobileCaptureWindow
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
         window.view = view
@@ -31,7 +31,7 @@ private struct XYZSceneProbe: UIViewRepresentable {
 @MainActor struct MobileDepthXYZStage: View {
     @Environment(\.scenePhase) private var scene
     @AppStorage("mobile.depthXYZ.calibrations.v1") private var stored = Data()
-    @State private var window = XYZWindow()
+    @State private var window = MobileCaptureWindow()
     @State private var volume = DepthXYZVolume()
     @State private var axes = 7
     private enum Role: String, CaseIterable { case helper = "Helper", instrument = "Instrument", hybrid = "Hybrid" }
@@ -94,7 +94,7 @@ private struct XYZSceneProbe: UIViewRepresentable {
                 }.buttonStyle(.bordered)
             }.padding().frame(maxWidth: 760).frame(maxWidth: .infinity)
         }
-        .background(XYZSceneProbe(window: window).allowsHitTesting(false))
+        .background(MobileCaptureSceneProbe(window: window).allowsHitTesting(false))
         .onReceive(tick) { _ in poll() }
         .onChange(of: scene) { _, phase in if phase != .active { stop("App inactive · restart required") } }
         .onDisappear { stop("Closed"); returnCapture(retiring) }
