@@ -311,7 +311,7 @@ def tokens(text):
 
 # Explicit small, general-purpose domain glossary; no source paths or case IDs.
 # Keys are folded *only* for alias lookup. Original tokens remain unchanged.
-LEXICAL_PROFILES = ("legacy", "file-first", "multilingual", "multilingual-context")
+LEXICAL_PROFILES = ("legacy", "file-first", "multilingual", "multilingual-context", "multilingual-domain")
 MAX_QUERY_ALIASES = 64
 QUERY_ALIAS_WEIGHT = 0.55
 QUERY_ALIASES = {
@@ -361,23 +361,53 @@ QUERY_PHRASES = {
 }
 
 
+# Explicit technical morphology for the domain experiment. These are
+# concept aliases, not case IDs, source paths, stemming or translations.
+DOMAIN_ALIASES = {
+    "surekli": ("continuous",), "kontrol": ("control", "controller"),
+    "kontrolu": ("control", "controller"), "sahip": ("owner",),
+    "sahibi": ("owner",), "sahipler": ("owners",),
+    "sahipligi": ("ownership", "owner"), "sahiplik": ("ownership", "owner"),
+    "oncelik": ("priority",), "birakma": ("release", "releasing"),
+    "ortak": ("shared",), "cikis": ("output",), "cikisinda": ("output",),
+    "kanal": ("channel",), "kanali": ("channel",),
+    "yumusatma": ("smoothing",), "konum": ("position",), "konumu": ("position",),
+    "ozel": ("custom",), "ilk": ("first",), "son": ("last",),
+    "besitzer": ("owner",), "besitzern": ("owners",),
+    "kanalbesitzer": ("channel", "owner"), "gemeinsam": ("shared",),
+    "gemeinsame": ("shared",), "freigeben": ("release",),
+    "freigabe": ("release",), "steuerung": ("control",),
+    "wiedergabe": ("playback",), "gerenderter": ("rendered",),
+    "unabhangiger": ("independent",), "konflikt": ("conflict",),
+    "letzte": ("last",), "erste": ("first",),
+}
+DOMAIN_PHRASES = {
+    ("geri", "yukleme"): ("restore", "restores"),
+    ("gibt", "frei"): ("release",),
+}
+
+
 def query_weights(query, profile="legacy"):
     if profile not in LEXICAL_PROFILES:
         raise ValueError("Invalid lexical ranking profile")
     weights = dict.fromkeys(tokens(query), 1.0)
     if not weights:
         raise ValueError("No searchable terms")
-    if profile in ("multilingual", "multilingual-context"):
+    if profile in ("multilingual", "multilingual-context", "multilingual-domain"):
         folded = "".join(c for c in unicodedata.normalize("NFKD", query)
                          if not unicodedata.combining(c)).replace("ı", "i")
         folded_tokens = tokens(folded)
-        contextual = profile == "multilingual-context"
+        contextual = profile in ("multilingual-context", "multilingual-domain")
         aliases = {alias for term in folded_tokens
                    if not contextual or term not in CONTEXT_ONLY_ALIASES
                    for alias in QUERY_ALIASES.get(term, ())}
         if contextual:
             for phrase in zip(folded_tokens, folded_tokens[1:]):
                 aliases.update(QUERY_PHRASES.get(phrase, ()))
+        if profile == "multilingual-domain":
+            aliases.update(alias for term in folded_tokens for alias in DOMAIN_ALIASES.get(term, ()))
+            for phrase in zip(folded_tokens, folded_tokens[1:]):
+                aliases.update(DOMAIN_PHRASES.get(phrase, ()))
         weights.update((alias, QUERY_ALIAS_WEIGHT)
                        for alias in sorted(aliases - weights.keys())[:MAX_QUERY_ALIASES])
     return weights
