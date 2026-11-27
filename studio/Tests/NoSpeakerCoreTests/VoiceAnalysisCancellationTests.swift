@@ -27,13 +27,30 @@ import Testing
     }
 }
 
-@Test func voiceAnalysisCanCancelDuringLongComputation() {
+@Test(arguments: [1, 4, 9], [Float(0), 0.12])
+func voiceAnalysisCanCancelDuringLongComputation(cancelAfter: Int, sample: Float) {
     let token = VoiceRenderCancellation()
-    let input = Array(repeating:Float(0.12),count:16000*30)
-    DispatchQueue.global().asyncAfter(deadline:.now()+0.02) { token.cancel() }
+    // Nine complete frames, including cancellation at the final boundary
+    // before normalization. No wall-clock or global-queue scheduling race.
+    let input = Array(repeating:sample,count:400+8*160)
+    var processed: [Int] = []
     #expect(throws: CancellationError.self) {
-        try HapticVoiceAnalyzer.analyze(input,cancellation:token)
+        try HapticVoiceAnalyzer.analyze(input,cancellation:token,onFrameProcessed:{ count in
+            processed.append(count)
+            if count == cancelAfter { token.cancel() }
+        })
     }
+    #expect(processed == Array(1...cancelAfter))
+}
+
+@Test func voiceAnalysisFrameObserverPreservesUncancelledOutput() throws {
+    let input: [Float] = (0..<1680).map { Float(0.12*sin(2*Double.pi*120*Double($0)/16000)) }
+    var processed: [Int] = []
+    let observed = try HapticVoiceAnalyzer.analyze(input,cancellation:.init(),onFrameProcessed:{ processed.append($0) })
+    let ordinary = try HapticVoiceAnalyzer.analyze(input,cancellation:.init())
+    #expect(processed == Array(1...9))
+    #expect(observed == ordinary)
+    #expect(HapticVoiceAnalyzer.hapticEvents(frames:observed) == HapticVoiceAnalyzer.hapticEvents(frames:ordinary))
 }
 
 @Test func voiceAnalysisRejectsInvalidPCMWithoutMotorEvents() {
