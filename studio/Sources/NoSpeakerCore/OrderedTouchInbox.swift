@@ -19,6 +19,8 @@ public final class OrderedTouchInbox<Payload: Sendable>: @unchecked Sendable {
     private var admissionEpoch = UUID()
     private var overflowedEpoch: UUID?
     private var drainSerial: UInt64 = 0
+    // Empty probes do not supersede the latest nonempty drain.
+    private var latestNonemptyDrainSerial: UInt64 = 0
     public init() { pending.reserveCapacity(64) }
 
     /// True transfers responsibility for scheduling one consumer to caller.
@@ -55,6 +57,7 @@ public final class OrderedTouchInbox<Payload: Sendable>: @unchecked Sendable {
         let count = min(16,pending.count)
         let result = Array(pending.prefix(count))
         pending.removeFirst(count)
+        if count > 0 { latestNonemptyDrainSerial = drainSerial }
         let more = !pending.isEmpty
         if !more { scheduled = false }
         return .init(samples:result,overflow:false,more:more,admissionEpoch:admissionEpoch,drainSerial:drainSerial)
@@ -65,7 +68,7 @@ public final class OrderedTouchInbox<Payload: Sendable>: @unchecked Sendable {
     public func permits(_ batch: Batch) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return !closed && !overflow && !batch.overflow && !batch.samples.isEmpty &&
-            batch.admissionEpoch == admissionEpoch
+            batch.admissionEpoch == admissionEpoch && batch.drainSerial == latestNonemptyDrainSerial
     }
 
     /// Only the serialized consumer may acknowledge overflow during its
