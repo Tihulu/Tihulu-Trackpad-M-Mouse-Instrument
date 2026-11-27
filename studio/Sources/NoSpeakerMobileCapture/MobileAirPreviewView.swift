@@ -8,6 +8,7 @@ import NoSpeakerCore
     @Environment(\.scenePhase) private var scenePhase
     @State private var window = MobileCaptureWindow()
     @State private var captureOrientation: MobileSensorOrientation?
+    @State private var displayFence = MobileObservationDisplayFence()
     @State private var useMac = false
     @State private var touchOnlyPairing = false
     @State private var pageAddress = ""
@@ -222,9 +223,9 @@ import NoSpeakerCore
                         if let sample {
                             Circle().fill(.cyan).frame(width:22,height:22)
                                 .position(x:sample.x*geo.size.width,y:(1-sample.y)*geo.size.height)
-                        } else {Text("No reliable hand").foregroundStyle(.secondary)}
+                        } else {Text("No fresh observed hand").foregroundStyle(.secondary)}
                     }
-                }.frame(height:210).accessibilityLabel("Derived hand position; no camera image")
+                }.frame(height:210).accessibilityLabel("Observed hand position; not tracking admission or receiver feedback")
                 if mode == .pinchKeys || mode == .strings {
                     let slots = mode == .strings ? Array(logicalSlots.prefix(3)) : logicalSlots
                     Text("Regions, left to right: " + (slots.isEmpty ? "No assigned keys" : slots.map { String($0 + 1) }.joined(separator: ", ")))
@@ -392,6 +393,7 @@ import NoSpeakerCore
         guard !busy, !scanning, !askingPermission, !(useMac && touchOnlyPairing), valid, playableAssignment, scenePhase == .active,
               let pose = window.orientation else {return}
         captureOrientation = pose
+        displayFence = .init()
         let ticket=UUID();generation=ticket;pending=true;status="Waiting for camera permission"
         Task { @MainActor in
             let granted=await MobileAirSensorSource.requestCameraPermission()
@@ -418,7 +420,7 @@ import NoSpeakerCore
         assignment=nil
         socket.pauseForModeChange()
         if let source {source.stop();retiring=source}
-        source=nil;projection=nil;output = .init();sample=nil;depth=nil
+        source=nil;projection=nil;output = .init();sample=nil;depth=nil;displayFence = .init()
         status="Waiting for neutral ACK; choose a mode and restart."
     }
     private func stop(_ message:String) {
@@ -430,7 +432,7 @@ import NoSpeakerCore
         assignment = nil
         if let source {source.stop();retiring=source}
         source=nil;projection=nil
-        output = .init();sample=nil;depth=nil;status=message
+        output = .init();sample=nil;depth=nil;displayFence = .init();status=message
     }
     private func poll() {
         if retiring?.isStopped == true {retiring=nil}
@@ -462,13 +464,18 @@ import NoSpeakerCore
                 }
                 let observation:MobileAirObservation?
                 switch role {case .single:observation=frame.single;case .left:observation=frame.left;case .right:observation=frame.right}
-                if frame.time.isFinite,now>=frame.time,now-frame.time<0.15 {
+                if displayFence.observe(MobileAirCaptureFrame.nanoseconds(frame.time),
+                                        now: MobileAirCaptureFrame.nanoseconds(now),
+                                        freshness: MobileAirSendGate.freshNS) {
                     sample=observation?.sample?.oriented(musicalOrientation,mirrorX:mirror)
-                    depth=observation?.depth
+                    depth=sample == nil ? nil : observation?.depth
                 } else {sample=nil;depth=nil}
             }
         }
-        if let release=p.expire(now:now) {output=release;sample=nil;depth=nil}
+        if let release=p.expire(now:now) {output=release}
+        if displayFence.expire(now: MobileAirCaptureFrame.nanoseconds(now), freshness: MobileAirSendGate.freshNS) {
+            sample=nil;depth=nil
+        }
         projection=p
     }
 }
