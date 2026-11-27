@@ -20,6 +20,7 @@ public final class CustomSurfacePerformanceGroup {
     }
     private final class Admission {
         var open = true
+        var peerFault: StopReason?
         let external: () -> Bool
         init(_ external: @escaping () -> Bool) { self.external = external }
         func check() -> Bool {
@@ -71,8 +72,19 @@ public final class CustomSurfacePerformanceGroup {
         let gate = Admission(admitsLive)
         admission = gate
         for member in members {
+            let surface = member.plan.layout.surface
             guard let status = host.open(plan: member.plan, permitsNeutralSilence: member.permitsNeutralSilence,
-                                         clock: clock, admitsLive: { gate.check() }) else {
+                                         clock: clock, admitsLive: { [weak self] in
+                guard gate.check(), let self else { return false }
+                // During transactional setup no frames are admitted.
+                guard self.runID != nil else { return true }
+                if let fault = self.peerCadenceFault(excluding: surface) {
+                    gate.peerFault = fault
+                    gate.open = false
+                    return false
+                }
+                return gate.check()
+            }) else {
                 retire(.portCreation)
                 return phase == .idle ? .rolledBack : .recoveryPending
             }
@@ -105,7 +117,7 @@ public final class CustomSurfacePerformanceGroup {
         if let fault = healthFault() { retire(fault); return nil }
         let result = host.frame(id, surface: surface, contacts: contacts, sequence: sequence, observedAt: observedAt)
         guard let result else { retire(.memberUnavailable(surface)); return nil }
-        guard result.phase == .live else { retire(reason(for: result)); return nil }
+        guard result.phase == .live else { retire(admission?.peerFault ?? reason(for: result)); return nil }
         if let fault = healthFault() { retire(fault); return nil }
         return result
     }
@@ -119,6 +131,7 @@ public final class CustomSurfacePerformanceGroup {
         status.phase == .identityLost ? .identityLost(status.surface) : .memberFault(status.surface, status.retirement)
     }
     private func healthFault() -> StopReason? {
+        if let fault = admission?.peerFault { return fault }
         let current = statuses
         for surface in Surface.allCases where ids[surface] != nil {
             guard let status = current.first(where: { $0.surface == surface }) else { return .memberUnavailable(surface) }
@@ -138,6 +151,21 @@ public final class CustomSurfacePerformanceGroup {
             }
         }
         return admission?.check() == true ? nil : .admissionLost
+    }
+    /// Runs inside the admission callback after potentially blocking native
+    /// identity queries. Read only the other deliveries' local cadence;
+    /// never poll, clean, or invoke native APIs from this callback.
+    private func peerCadenceFault(excluding surface: Surface) -> StopReason? {
+        guard let clock, let lastClock else { return .clockInvalid }
+        let now = clock()
+        guard now >= lastClock else { return .clockInvalid }
+        self.lastClock = now
+        for peer in Surface.allCases where peer != surface {
+            if let id = ids[peer], !host.cadenceIsCurrent(id, now: now) {
+                return .memberFault(peer, .expiredOrInvalid)
+            }
+        }
+        return nil
     }
     /// Retire admission before any cleanup. Automatic stop must not retry
     /// an already failed cleanup; recovery requires a distinct explicit call.
