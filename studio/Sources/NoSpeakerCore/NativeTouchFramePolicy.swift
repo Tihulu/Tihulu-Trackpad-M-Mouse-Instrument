@@ -57,6 +57,12 @@ public struct NativeSurfaceInventoryGuard: Sendable {
 /// Explicitly requested routes are all-or-nothing at start. An absent
 /// inventory is not evidence of an available surface.
 public enum NativeSurfaceAdmission {
+    /// Do not silently collapse duplicate native IDs into a healthy set.
+    public static func uniqueInventory(_ ids: [UInt64]) -> Set<UInt64>? {
+        guard ids.count <= 64 else { return nil }
+        let unique = Set(ids)
+        return unique.count == ids.count ? unique : nil
+    }
     public static func missing<Surface:Hashable>(required:Set<Surface>,registered:Set<Surface>?) -> Set<Surface> {
         required.subtracting(registered ?? [])
     }

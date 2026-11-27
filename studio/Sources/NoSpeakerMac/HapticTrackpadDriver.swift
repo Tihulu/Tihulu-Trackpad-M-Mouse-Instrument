@@ -11,6 +11,7 @@ public enum HapticDriverError: LocalizedError {
     case noTrackpad
     case noHapticTrackpad
     case ambiguousExternalSurfaces
+    case ambiguousSurfaceIdentity
     case inventoryBusy
     case actuatorOpenFailed
     case actuationCreationFailed
@@ -24,6 +25,7 @@ public enum HapticDriverError: LocalizedError {
         case .noTrackpad: return "No compatible trackpad was found."
         case .noHapticTrackpad: return "A trackpad was found, but its haptic actuator could not be opened."
         case .ambiguousExternalSurfaces: return "More than one external touch device matches the legacy Magic Mouse route. Disconnect the extra devices and restart monitoring."
+        case .ambiguousSurfaceIdentity: return "Native touch inventory contains duplicate device identities. Reconnect the devices and restart monitoring."
         case .inventoryBusy: return "Native device inventory is busy or unavailable. Retry explicitly after the outstanding read finishes."
         case .actuatorOpenFailed: return "The trackpad haptic actuator could not be opened."
         case .actuationCreationFailed: return "The trackpad framework could not create a haptic frame."
@@ -287,14 +289,14 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         guard let createList,let getID,let list=createList()?.takeRetainedValue() else { return nil }
         let count=CFArrayGetCount(list)
         guard (0...64).contains(count) else { return nil }
-        var available:Set<UInt64> = []
+        var available:[UInt64] = []
         for index in 0..<count {
             guard let raw=CFArrayGetValueAtIndex(list,index) else { return nil }
             var id:UInt64=0
             guard getID(UnsafeMutableRawPointer(mutating:raw),&id)==0 else { return nil }
-            available.insert(id)
+            available.append(id)
         }
-        return available
+        return NativeSurfaceAdmission.uniqueInventory(available)
     }
 
     private var createList: CreateList?
@@ -469,7 +471,9 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         // Re-enumerate on explicit start; the actuator's original list may
         // predate a Bluetooth device connection or disconnection.
         guard let deviceList = createList()?.takeRetainedValue() else { throw HapticDriverError.noTrackpad }
+        guard (0...64).contains(CFArrayGetCount(deviceList)) else { throw HapticDriverError.inventoryBusy }
         var selected: [UnsafeMutableRawPointer] = []
+        var enumeratedIDs: [UInt64] = []
         var selectedIDs:Set<UInt64> = []
         var kinds: [UnsafeMutableRawPointer: TouchSurfaceKind] = [:]
 
@@ -479,17 +483,19 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
             var id: UInt64 = 0
             guard getID(device, &id) == 0 else { continue }
 
+            enumeratedIDs.append(id)
             if id == motorDeviceID {
-                guard selectedIDs.insert(id).inserted else { continue }
+                guard selectedIDs.insert(id).inserted else { throw HapticDriverError.ambiguousSurfaceIdentity }
                 selected.append(device)
                 kinds[device] = .trackpad
             } else if includeExternalSurfaces, !(deviceIsBuiltIn?(device) ?? false) {
-                guard selectedIDs.insert(id).inserted else { continue }
+                guard selectedIDs.insert(id).inserted else { throw HapticDriverError.ambiguousSurfaceIdentity }
                 selected.append(device)
                 kinds[device] = .magicMouse
             }
         }
 
+        guard NativeSurfaceAdmission.uniqueInventory(enumeratedIDs) != nil else { throw HapticDriverError.ambiguousSurfaceIdentity }
         guard selectedIDs.contains(motorDeviceID) else { throw HapticDriverError.noTrackpad }
         // Legacy surface/contact identity cannot represent two external
         // devices as one Mouse without false releases and ID collisions.

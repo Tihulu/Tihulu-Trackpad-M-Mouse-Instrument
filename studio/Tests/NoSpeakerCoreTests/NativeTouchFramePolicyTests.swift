@@ -134,3 +134,10 @@ import Testing
         #expect(evidence.observe(expected:[1,2],available:[1,2]) == .healthy)
     }
 }
+
+@Test func nativeSurfaceInventoryRefusesDuplicateIdentityRatherThanCollapsingIt() {
+    #expect(NativeSurfaceAdmission.uniqueInventory([1,2]) == Set([UInt64(1),2]))
+    #expect(NativeSurfaceAdmission.uniqueInventory([1,1]) == nil)
+    #expect(NativeSurfaceAdmission.uniqueInventory(Array(0...64).map(UInt64.init)) == nil)
+    #expect(NativeSurfaceAdmission.uniqueInventory([]) == Set<UInt64>())
+}
