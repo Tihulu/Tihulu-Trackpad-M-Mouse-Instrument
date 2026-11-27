@@ -1,0 +1,83 @@
+[
+  {
+    "id": "touch-owner-en",
+    "scope": "engine",
+    "language": "en",
+    "query": "What happens when a motionless finger's owning view stops sending liveness pulses?",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/MobileTouchLiveLease.swift"
+    ]
+  },
+  {
+    "id": "depth-loss-tr",
+    "scope": "engine",
+    "language": "tr",
+    "query": "El kalibre edilmiş hacmin dışına çıkınca devre dışı eksende bile bütün giriş bırakılıyor mu?",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/DepthXYZTracking.swift"
+    ]
+  },
+  {
+    "id": "step-length-de",
+    "scope": "engine",
+    "language": "de",
+    "query": "Wie berechnet der Notenschritt seine Dauer aus Tempo und Unterteilungen pro Schlag?",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/Sequencer.swift"
+    ]
+  },
+  {
+    "id": "camera-exclusion-en",
+    "scope": "app",
+    "language": "en",
+    "query": "Which Android process-local guard prevents the RGB diagnostic and ARCore from owning the camera at once?",
+    "expected_paths": [
+      "studio/mobile-android/src/main/java/com/tihulu/mobile/air/MobileCaptureLease.kt"
+    ]
+  },
+  {
+    "id": "camera-privacy-tr",
+    "scope": "app",
+    "language": "tr",
+    "query": "Kamera görüntüleri saklanmadan sadece türetilen el örnekleri hangi seri kuyruktan çıkıyor?",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerStudio/BuilderCameraSource.swift"
+    ]
+  },
+  {
+    "id": "sequence-destination-de",
+    "scope": "app",
+    "language": "de",
+    "query": "Wo bleibt die Auswahl des Ausgabeziels während einer laufenden MIDI-Sequenz gesperrt?",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerStudio/SequencerOutputPanel.swift"
+    ]
+  },
+  {
+    "id": "two-hands-en",
+    "scope": "docs",
+    "language": "en",
+    "query": "How can one hand control filter while the other controls pitch in a DAW without feedback?",
+    "expected_paths": [
+      "docs/CAMERA_MIDI_HELPER_DAW.md"
+    ]
+  },
+  {
+    "id": "scheduler-tr",
+    "scope": "docs",
+    "language": "tr",
+    "query": "Yüksek gecikmede sıradaki bırakma olaylarına öncelik verilirken ACK kanalı ve güvenlik süreleri nasıl korunuyor?",
+    "expected_paths": [
+      "docs/REMOTE_R9_RELEASE_AWARE_SCHEDULER.md"
+    ]
+  },
+  {
+    "id": "sequence-cleanup-de",
+    "scope": "docs",
+    "language": "de",
+    "query": "Welche Noten werden bei einem fehlgeschlagenen Sendevorgang für Stop oder Panic erneut freigegeben?",
+    "expected_paths": [
+      "studio/docs/LIVE_SEQUENCER_MIDI.md"
+    ]
+  }
+]

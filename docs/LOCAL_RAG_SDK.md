@@ -129,3 +129,17 @@ python3 tools/rag_matrix.py --repo . --ref HEAD --model-dir "$model" --reuse-dir
 ```
 
 Matrix cells report reused_embeddings and encoded_embeddings (semantic and hybrid share one build; do not sum those cells). No model download or inference is performed by the default lexical CI. Cache tests use a deterministic model double and validate reuse and provenance mechanics only. Real model speed, numerical equivalence and retrieval quality require local acceptance.
+
+
+## Independent evaluation and matrix reuse consistency
+
+The independent evaluation file `tools/rag_heldout_cases.json` contains a separate frozen set of nine EN/TR/DE file-retrieval targets (three per scope), authored before ranking was measured. The normal matrix CLI reports these separately from the original curated nine. The case files live in tools rather than the three evaluated corpora. Do not optimize on held-out outcomes and then claim independent quality; freeze a new evaluation set if tuning against these queries. Each report records the SHA-256 of the exact case-file bytes. Compare only like-for-like revision, dataset digest, ranking limits and model recipe. `--curated-only` reproduces the original benchmark format of three queries per scope (with added dataset fingerprint).
+
+```sh
+python3 tools/rag_matrix.py --repo . --ref HEAD --out-dir "$work/independent"
+python3 tools/rag_matrix.py --repo . --ref HEAD --out-dir "$work/original" --curated-only
+```
+
+The second suite reopens the verified index for each measured mode; setup costs are separate from query timing. A missing expected source in either suite is COVERAGE_FAIL; a rank miss is measured quality evidence, not a coverage failure. Six vector cells remain NOT_RUN if no explicitly trusted local model is selected. No model is downloaded. The fixed suite is small, author-judged and file-level, not answer or hardware correctness.
+
+For matrix reuse, the completed local manifest must declare all nine measured cells, the matching model fingerprint and one committed source revision. Each of the three semantic indices must match that revision, scope, mode and model before reuse; existing recipe, Git-source and unit-vector checks still apply during build. A syntactically valid index from a different matrix revision is refused. This is consistency checking, not a signature or proof that cached vector values are authentic; use only trusted local snapshots. Rebuild from scratch when incompatible. Do not publish indices or vectors.

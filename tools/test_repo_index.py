@@ -228,6 +228,57 @@ class RepositoryIndexTests(unittest.TestCase):
                 repo_index.build(args)
             self.assertFalse(args.out.exists())
 
+    def test_benchmark_case_identity_and_rejection(self):
+        fixture = self.root / "cases.json"
+        case = {"id": "unique", "scope": "docs", "language": "en",
+                "query": "offline guide", "expected_paths": ["README.md"]}
+        fixture.write_text(json.dumps([case]))
+        cases, digest = rag_benchmark.load_cases(fixture)
+        self.assertEqual(cases, [case])
+        self.assertEqual(len(digest), 64)
+        fixture.write_text(json.dumps([case], indent=2))
+        self.assertNotEqual(rag_benchmark.load_cases(fixture)[1], digest)
+        for invalid in ([case, case], [dict(case, query=" ")],
+                        [dict(case, expected_paths=["../README.md"])],
+                        [dict(case, scope="engine")],
+                        [dict(case, expected_paths=["README.md", "README.md"])]):
+            fixture.write_text(json.dumps(invalid))
+            with self.assertRaises(ValueError):
+                rag_benchmark.load_cases(fixture)
+
+    def test_reuse_matrix_rejects_mixed_revision_and_unrun_cells(self):
+        identity = "a" * 64
+        previous = self.root / "previous"
+        previous.mkdir()
+        manifest = {"schema": 1, "commit": self.commit, "model_sha256": identity,
+                    "cells": [{"scope": scope, "mode": mode, "status": "MEASURED",
+                               "model_sha256": None if mode == "lexical" else identity}
+                              for scope in rag_matrix.SCOPES for mode in rag_matrix.MODES]}
+        def save():
+            (previous / "matrix.json").write_text(json.dumps(manifest))
+        def index(path):
+            scope = path.name.split("-")[0]
+            return ({"commit": self.commit, "scope": scope, "mode": "semantic",
+                     "model_sha256": identity}, [])
+        save()
+        with patch.object(repo_index, "read_index", side_effect=index):
+            rag_matrix.validate_reuse_matrix(self.repo, previous, identity)
+            manifest["cells"][1]["status"] = "NOT_RUN"
+            save()
+            with self.assertRaisesRegex(ValueError, "nine measured cells"):
+                rag_matrix.validate_reuse_matrix(self.repo, previous, identity)
+            manifest["cells"][1]["status"] = "MEASURED"
+            manifest["cells"][1]["model_sha256"] = "b" * 64
+            save()
+            with self.assertRaisesRegex(ValueError, "cell model mismatch"):
+                rag_matrix.validate_reuse_matrix(self.repo, previous, identity)
+            manifest["cells"][1]["model_sha256"] = identity
+            self.git("commit", "--allow-empty", "-qm", "new revision")
+            manifest["commit"] = self.git("rev-parse", "HEAD").stdout.strip()
+            save()
+            with self.assertRaisesRegex(ValueError, "matrix/index identity mismatch"):
+                rag_matrix.validate_reuse_matrix(self.repo, previous, identity)
+
     def test_matrix_pins_revision_and_reports_unrun_vector_cells(self):
         cases = []
         for scope, relative in (("engine","studio/Sources/NoSpeakerCore/Engine.swift"),
@@ -243,17 +294,28 @@ class RepositoryIndexTests(unittest.TestCase):
         revision = self.git("rev-parse", "HEAD").stdout.strip()
         fixture = self.root / "cases.json"
         fixture.write_text(json.dumps(cases))
+        heldout = self.root / "heldout.json"
+        heldout.write_text(json.dumps([dict(case, id="heldout-" + case["id"], query="sustain") for case in cases]))
         out = self.root / "matrix"
         args = SimpleNamespace(repo=self.repo, ref=revision, out_dir=out,
-                               model_dir=None, k=8, max_per_file=3)
+                               model_dir=None, k=8, max_per_file=3, heldout_cases=heldout)
         with patch.object(rag_benchmark, "CASES", fixture):
             report = rag_matrix.run(args)
             self.assertEqual(report["commit"], revision)
             self.assertEqual(len(report["cells"]), 9)
             self.assertEqual(sum(c["status"] == "MEASURED" for c in report["cells"]), 3)
             self.assertEqual(sum(c["status"] == "NOT_RUN" for c in report["cells"]), 6)
+            for cell in report["cells"]:
+                if cell["status"] == "MEASURED":
+                    self.assertNotEqual(cell["cases_sha256"], cell["heldout"]["cases_sha256"])
+                    self.assertEqual(cell["heldout"]["cases"], 1)
+                    self.assertTrue((out / cell["heldout"]["report"]).is_file())
+                else:
+                    self.assertNotIn("heldout", cell)
             self.assertEqual(json.loads((out / "matrix.json").read_text()), report)
-            self.assertEqual(len(list(out.glob("*-report.json"))), 3)
+            self.assertEqual({path.name for path in out.glob("*-report.json")},
+                             {scope + "-lexical" + suffix + "-report.json"
+                              for scope in rag_matrix.SCOPES for suffix in ("", "-heldout")})
             with self.assertRaises(FileExistsError):
                 rag_matrix.run(args)
 
