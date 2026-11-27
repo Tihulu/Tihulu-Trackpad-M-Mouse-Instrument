@@ -885,7 +885,16 @@ public final class MIDIHapticService: @unchecked Sendable {
         let finished = state.confirmCleanup(owners:&staged,genuineNeutral:genuineNeutral,transportClean:clean)
         continuousOwners = staged
         relativeHelperOutput = finished ? nil : state
-        return finished
+        // Retiring the previous transaction and authorizing a replacement
+        // plan are separate decisions. Never let old clean targets prove
+        // that a newly selected target is clean.
+        guard finished else { return false }
+        if let initialPlan {
+            return NativeHelperRelativeHostPolicy.permitsInitialNeutral(genuineNeutral: genuineNeutral,
+                plannedTargets: initialPlan.targetDestinations, owners: continuousOwners, debt: controllerDebt,
+                transportReady: relativeTransportReady, recoveryRequired: controllerRecoveryRequired)
+        }
+        return true
     }
 
     public func sendHelperControls(
