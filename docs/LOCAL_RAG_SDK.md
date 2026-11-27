@@ -74,7 +74,20 @@ Pass only approved evidence to a local model or a separately authorized external
 
 For app work, retrieve the app corpus first and engine separately when a routing or ownership contract is needed. For SDK work, start with the engine and docs corpora and run the independent example. Use fresh indices on checkout changes; do not commit or expose these artifacts. Remove them when no longer needed.
 
-## 5. Acceptance and follow-up
+## 5. Example retrieval tasks
+
+| Task | First corpus | Follow-up corpus |
+| --- | --- | --- |
+| Where do held notes release on source loss? | engine | docs |
+| How do I add a custom expression pad without breaking MIDI ownership? | app | engine |
+| What does a mobile device need before it can send motion? | app | docs, engine |
+| How do I export a microtonal MIDI file? | docs | engine |
+| Where are native MIDI cleanup and timing bounds defined? | engine | docs |
+| What is actually available in the published app? | docs | inspect exact release tag separately |
+
+Retrieve each corpus at the same explicit revision. Keep the provenance on every result when merging context in your own SDK client. Do not infer release status from draft source or from retrieval rank. Compare queries in English, Turkish and German when evaluating model quality. A lexical Unicode tokenizer is not a translation system.
+
+## 6. Acceptance and follow-up
 
 - Portable tests: `python3 tools/test_repo_index.py`; CI includes the suite.
 - Verify scoped source inclusion, old index compatibility, stale revision refusal, bounded context, malformed metadata and forged source checks.

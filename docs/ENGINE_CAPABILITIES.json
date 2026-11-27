@@ -147,14 +147,17 @@
       "id": "source-retrieval",
       "api": [],
       "source": [
-        "tools/repo_index.py"
+        "tools/repo_index.py",
+        "tools/test_repo_index.py",
+        "docs/LOCAL_RAG_SDK.md"
       ],
       "cli": [
         "build",
         "search",
-        "verify"
+        "verify",
+        "context"
       ],
-      "status": "commit-pinned lexical retrieval and source verification; semantic requires trusted local model"
+      "status": "commit-pinned all/engine/app/docs scopes; lexical retrieval and source verification; genuine semantic and hybrid ranking require a trusted local model; bounded verified context envelopes; offline developer tool, not a Studio runtime feature"
     },
     {
       "id": "midi-file",

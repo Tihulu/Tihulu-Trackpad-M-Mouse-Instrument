@@ -135,6 +135,40 @@ class RepositoryIndexTests(unittest.TestCase):
             self.assertEqual(self.cli("search", "--index", index, "--query", "MIDI",
                                       "--hybrid").returncode, 2)
 
+    def test_context_rejects_forged_source_and_insufficient_budget(self):
+        self.build()
+        document = json.loads(self.index.read_text())
+        original = self.index.read_bytes()
+        document["chunks"][0]["text"] = document["chunks"][0]["text"].replace("Sustain", "Forged")
+        self.index.write_text(json.dumps(document))
+        args = ("context", "--repo", self.repo, "--expect-ref", self.commit,
+                "--index", self.index, "--query", "Sustain")
+        failure = self.cli(*args)
+        self.assertEqual(failure.returncode, 2)
+        self.assertFalse(failure.stdout)
+        self.assertIn("text/line mismatch", failure.stderr)
+        self.index.write_bytes(original)
+        self.assertEqual(self.cli(*args, "--max-bytes", "100").returncode, 2)
+        missing = self.cli("context", "--repo", self.repo, "--expect-ref", self.commit,
+                           "--index", self.index, "--query", "noresultzzzz")
+        self.assertEqual(missing.returncode, 2)
+        self.assertFalse(missing.stdout)
+        self.assertIn("No complete retrieved source", missing.stderr)
+
+    def test_legacy_scope_and_declared_scope_mismatch(self):
+        self.build()
+        doc = json.loads(self.index.read_text())
+        del doc["metadata"]["scope"]
+        self.index.write_text(json.dumps(doc))
+        result = self.cli("search", "--index", self.index, "--query", "sustain")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["scope"], "all")
+        doc["metadata"]["scope"] = "app"
+        self.index.write_text(json.dumps(doc))
+        result = self.cli("verify", "--repo", self.repo, "--index", self.index)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Invalid source row", result.stderr)
+
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
         document = json.loads(self.index.read_text())
