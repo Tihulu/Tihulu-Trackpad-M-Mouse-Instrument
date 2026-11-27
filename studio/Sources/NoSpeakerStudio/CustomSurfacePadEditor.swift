@@ -11,8 +11,15 @@ struct CustomSurfacePadEditor:View {
     @State private var layouts:[Layout.Surface:Layout]=[:]
     @AppStorage("TIHULU.customSurfaceLayouts.v1") private var storage=Data()
     @State private var pending:Pending?
-    @State private var groupTrackpadChannel=0
-    @State private var groupMouseChannel=1
+    @State private var draftChannels: [Layout.Surface:Int] = [:]
+    @State private var preset: CustomSurfacePadPreset = .chromatic
+    private func defaultChannel(_ surface: Layout.Surface)->Int { surface == .magicMouse ? 1:0 }
+    private func melodicChannel(_ surface: Layout.Surface)->Int { draftChannels[surface] ?? defaultChannel(surface) }
+    private func channelBinding(_ surface: Layout.Surface)->Binding<Int> {
+        Binding(get:{melodicChannel(surface)},set:{draftChannels[surface]=$0})
+    }
+    private var groupTrackpadChannel:Int { melodicChannel(.trackpad) }
+    private var groupMouseChannel:Int { melodicChannel(.magicMouse) }
     @State private var groupConfirmation:GroupConfirmation?
     private struct GroupConfirmation: Identifiable {
         let id=UUID()
@@ -27,6 +34,7 @@ struct CustomSurfacePadEditor:View {
         let surface:Layout.Surface
         let draft:Layout?
         let saved:Layout?
+        let savedChannel:Int?
         let channel:Int
         var id: String {action.rawValue+surface.rawValue}
     }
@@ -40,7 +48,7 @@ struct CustomSurfacePadEditor:View {
     }
     private func request(_ action:Pending.Action) {
         groupConfirmation=nil
-        pending=Pending(action:action,surface:surface,draft:layouts[surface],saved:library?.layout(for:surface),channel:previewChannel)
+        pending=Pending(action:action,surface:surface,draft:layouts[surface],saved:library?.layout(for:surface),savedChannel:library?.melodicChannel(for:surface),channel:previewChannel)
     }
     private var library:CustomSurfaceLayoutLibrary? {
         storage.isEmpty ? .init() : try? JSONDecoder().decode(CustomSurfaceLayoutLibrary.self,from:storage)
@@ -68,7 +76,7 @@ struct CustomSurfacePadEditor:View {
     @State private var feedback=""
     @State private var newWidth=1000
     @State private var newHeight=2500
-    @State private var previewChannel=0
+    private var previewChannel:Int { melodicChannel(surface) }
     private enum Kind:String,CaseIterable,Identifiable {
         case note="Note",drum="Drum",degree="Tuning degree",chord="Chord",sustain="Sustain",bend="Pitch bend",cc="Custom MIDI CC",xy="Custom XY"
         var id:String{rawValue}
@@ -82,6 +90,18 @@ struct CustomSurfacePadEditor:View {
             DisclosureGroup("Custom pad designer · offline draft",isExpanded:$expanded) {
             VStack(alignment:.leading,spacing:8) {
                 Text("Edit independent surface drafts, then explicitly save or load the selected surface. Saved layouts are offline designs, not active performance routes.").font(.caption).foregroundStyle(.secondary)
+                if layouts[surface] == nil {
+                    Picker("Starter layout",selection:$preset) {
+                        ForEach(CustomSurfacePadPreset.allCases,id:\.self) { Text($0.rawValue).tag($0) }
+                    }
+                    Stepper("Melodic / starter helper channel "+String(previewChannel+1),value:channelBinding(surface),in:0...15)
+                    Button("Create starter draft") {
+                        if let layout=preset.layout(surface:surface,channel:previewChannel) {
+                            layouts[surface]=layout;select(layout.pads.first);feedback="Starter draft created."
+                        } else { feedback="Starter draft could not be validated." }
+                    }
+                    Text("GM drums use channel 10. Helper channels are fixed in their assignments; edit a pad to change its destination.").font(.caption).foregroundStyle(.secondary)
+                }
                 HStack {
                     Stepper("Columns \(columns)",value:$columns,in:1...16)
                     if surface != .touchBar {Stepper("Rows \(rows)",value:$rows,in:1...16)}
@@ -96,9 +116,9 @@ struct CustomSurfacePadEditor:View {
                 }
                 if let library {
                     HStack {
-                        Button("Save layout"){request(.save)}
-                            .disabled(layouts[surface]==nil || layouts[surface]==library.layout(for:surface))
-                        Button("Load saved layout"){request(.load)}
+                        Button("Save layout + channel"){request(.save)}
+                            .disabled(layouts[surface]==nil || (layouts[surface]==library.layout(for:surface) && previewChannel==library.melodicChannel(for:surface)))
+                        Button("Load saved layout + channel"){request(.load)}
                             .disabled(library.layout(for:surface)==nil)
                         Text(library.layout(for:surface)==nil ? "No saved layout":"Saved layout available").font(.caption)
                     }
@@ -107,7 +127,7 @@ struct CustomSurfacePadEditor:View {
                 }
                 if let layout=layouts[surface] {
                     DisclosureGroup("Standard MIDI compatibility check") {
-                        Stepper("Preview melodic channel \(previewChannel+1)",value:$previewChannel,in:0...15)
+                        Stepper("Preview melodic channel \(previewChannel+1)",value:channelBinding(surface),in:0...15)
                         Text(compatibility(layout)).font(.caption).textSelection(.enabled)
                         Text("Offline check only. No endpoint reservation, MIDI send or MPE activation.").font(.caption).foregroundStyle(.secondary)
                     }
@@ -237,17 +257,21 @@ struct CustomSurfacePadEditor:View {
                         layouts.removeValue(forKey:surface);selected=nil;feedback="Draft cleared."
                     case .save:
                         guard var current=library,let layout=operation.draft,
-                              current.layout(for:surface)==operation.saved else{
+                              current.layout(for:surface)==operation.saved,
+                              current.melodicChannel(for:surface)==operation.savedChannel,previewChannel==operation.channel else{
                             feedback="Saved layout changed or cannot be read; repeat the operation.";return
                         }
-                        current.save(layout)
+                        guard current.save(layout,melodicChannel:operation.channel) else {feedback="Invalid channel.";return}
                         guard let data=try? JSONEncoder().encode(current) else{feedback="Could not encode layout.";return}
-                        storage=data;feedback="Layout saved."
+                        storage=data;feedback="Layout and channel saved."
                     case .load:
-                        guard let layout=operation.saved,library?.layout(for:surface)==layout else{
+                        guard let layout=operation.saved,library?.layout(for:surface)==layout,
+                              library?.melodicChannel(for:surface)==operation.savedChannel,previewChannel==operation.channel else{
                             feedback="Saved layout changed; repeat the operation.";return
                         }
-                        layouts[surface]=layout;select(layout.pads.first);feedback="Saved layout loaded."
+                        layouts[surface]=layout
+                        draftChannels[surface]=operation.savedChannel ?? defaultChannel(surface)
+                        select(layout.pads.first);feedback="Saved layout and channel loaded."
                     }
                 }
             }
@@ -283,7 +307,7 @@ struct CustomSurfacePadEditor:View {
                     Text("Restart is blocked until cleanup and port disposal are confirmed. Identity loss may require resetting the receiving DAW and relaunching Studio.")
                         .font(.caption).foregroundStyle(.orange)
                 } else if let layout=layouts[surface], surface == .trackpad || surface == .magicMouse {
-                    Stepper("Performance MIDI channel \(previewChannel+1)",value:$previewChannel,in:0...15)
+                    Stepper("Performance MIDI channel \(previewChannel+1)",value:channelBinding(surface),in:0...15)
                     Button("Arm draft…") { request(.arm) }
                         .disabled((try? CustomSurfaceMixedPlan(layout:layout,melodicChannel:previewChannel)) == nil)
                     Text("Arming explicitly enables the global Escape emergency monitor without pointer capture. Existing Accessibility/Input Monitoring permissions and a fresh physical lift are required. No automatic restart.")
@@ -296,15 +320,15 @@ struct CustomSurfacePadEditor:View {
                 if studio.customPadRunID == nil && !studio.customPadDiagnosticRunning && studio.customPadPorts.isEmpty {
                     DisclosureGroup("Two-device performance · experimental") {
                         if let trackpad=layouts[.trackpad],let mouse=layouts[.magicMouse] {
-                            Stepper("Trackpad MIDI channel \(groupTrackpadChannel+1)",value:$groupTrackpadChannel,in:0...15)
-                            Stepper("Magic Mouse MIDI channel \(groupMouseChannel+1)",value:$groupMouseChannel,in:0...15)
+                            Stepper("Trackpad MIDI channel \(groupTrackpadChannel+1)",value:channelBinding(.trackpad),in:0...15)
+                            Stepper("Magic Mouse MIDI channel \(groupMouseChannel+1)",value:channelBinding(.magicMouse),in:0...15)
                             Button("Arm both drafts…") {
                                 pending=nil
                                 groupConfirmation=GroupConfirmation(trackpad:trackpad,mouse:mouse,
                                     trackpadChannel:groupTrackpadChannel,mouseChannel:groupMouseChannel)
                             }.disabled((try? CustomSurfaceMixedPlan(layout:trackpad,melodicChannel:groupTrackpadChannel)) == nil ||
                                         (try? CustomSurfaceMixedPlan(layout:mouse,melodicChannel:groupMouseChannel)) == nil)
-                            Text("Separate ports; route independently in your DAW. A fault stops both devices.").font(.caption).foregroundStyle(.secondary)
+                            Text("Melodic channels are shared with each surface's single-device draft. Drums use channel 10; helpers retain their explicit targets. Separate ports; route independently in your DAW. A fault stops both devices.").font(.caption).foregroundStyle(.secondary)
                         } else {
                             Text("Create or load a Trackpad and Magic Mouse draft first.").font(.caption)
                             Button("Open layout designer") { expanded=true }
