@@ -1,0 +1,9 @@
+# UXV-07 / REL-UX-04 checkpoint
+
+Previous frozen #203 2d16e13d9e5a5f1c127f1ed146eb0457c10f3b53 RAG 45934590784 PASS; integration #173 34361977e4ae8754790194e6a95a6088e8b4eefc unchanged at inspection. Three companion reports preserve exact source, commands, evidence and limits.
+
+Independent execution: 249 focused assertions, 248 PASS and 1 FAIL. 63 Swift angle assertions (62 PASS, 1 FAIL), 181 Swift output/owner assertions PASS, 5 V8 extracted web key reset assertions PASS. Source hashes verified for complete angle, gesture, clutch, output planner and owner files; output dependency declarations extracted, no whole product checkout. Angular invalid sample timestamp gap reported #7209087828, remains OPEN; known alias assumption separately reproduced as diagnostic PASS. Existing green #205 core/Android does not erase independent failure. No production change. No actual native UI, paired transport, AT, hardware/DAW or full router/host transaction execution by UX reviewer.
+
+Planning estimate existing UX 80→83% (+3pp,17% remains); REL-UX 60→67% (+7pp,33% remains). Reviewer planning estimates only, new failure remains open. Baseline 53/53 source triaged,38 open/partial,15 candidate,0 independently closed; runtime 0/53. REL 13/13 inventory, runtime 0/13. Coordinator #7209063888 prior-scope 69.30/30.70 unchanged, expanded provisional 68.421/31.579 (+0.15pp from68.271), REL implementation40/60, +5pp. No independent overall increase or double count.
+
+NEXT: independent recheck angular watermark correction on actual new SHA, host rearm/cleanup and receiver identity, exact native build results, updated mobile non-depth calibration candidate, real rendered accessibility/device tests only with authorized evidence. Freeze review SHA. No merge/release/shared writes/force/hardware or timing relaxation.
