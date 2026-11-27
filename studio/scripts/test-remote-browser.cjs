@@ -2368,3 +2368,52 @@ test("MUSIC-WEB global release cancels all active synth dials without affecting 
   assert.deepEqual([e.pedalLevel0.value,e.pedalLevel1.value],before);
   assert.equal(a.socket.closed,undefined);
 });
+
+test("WEB-09 arpeggio selection exposes selected state before any MIDI output",()=>{
+  const a=setup(),e=a.elements;e.pianoArp.emit("click");e.pianoEnable.emit("click");
+  const b=e.piano0;b.emit("keydown",xyKey(" "));b.emit("keyup",xyKey(" "));
+  assert.equal(b.attributes["data-arp-selected"],"true");assert.equal(b.attributes["aria-pressed"],"true");
+  assert.equal(b.attributes["data-sounding"],"false");assert.equal(a.socket.frames.length,0);
+  e.arpClear.emit("click");assert.equal(b.attributes["aria-pressed"],"false");assert.equal(a.socket.frames.length,0);
+});
+test("WEB-09 arpeggio selection remains distinct from scheduler note output",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:17},false),e=a.elements;
+  e.pianoArp.emit("click");e.pianoEnable.emit("click");
+  for(const i of [0,4]){e["piano"+i].emit("pointerdown",drumEvent(i+1));e["piano"+i].emit("pointerup",drumEvent(i+1));}
+  e.phraseTempo.value="120";e.phraseStart.emit("click");
+  assert.equal(a.socket.frames.at(-1).mask,1);
+  assert.equal(e.piano0.attributes["aria-pressed"],"true");assert.equal(e.piano4.attributes["aria-pressed"],"true");
+  assert.equal(e.piano0.attributes["data-sounding"],"true");assert.equal(e.piano4.attributes["data-sounding"],"false");
+  a.ack();e.phraseStop.emit("click");a.step(25);a.ack();
+  assert.equal(e.piano0.attributes["aria-pressed"],"true");assert.equal(e.piano4.attributes["aria-pressed"],"true");
+  assert.equal(e.piano0.attributes["data-sounding"],"false");assert.equal(e.piano4.attributes["data-sounding"],"false");
+  e.arpClear.emit("click");assert.equal(e.piano4.attributes["aria-pressed"],"false");
+});
+test("WEB-09 ordinary piano and sustain retain sounding pressed state",()=>{
+ const a=setup(),e=a.elements;e.pianoEnable.emit("click");
+ e.piano0.emit("pointerdown",drumEvent(1));a.ack();
+ assert.equal(e.piano0.attributes["aria-pressed"],"true");
+ assert.equal(e.piano0.attributes["data-sounding"],"true");
+ e.pianoSustain.emit("pointerdown",drumEvent(2));a.step(25);a.ack();
+ assert.equal(e.pianoSustain.attributes["aria-pressed"],"true");
+ e.piano0.emit("pointerup",drumEvent(1));a.step(25);a.ack();
+ assert.equal(e.piano0.attributes["aria-pressed"],"false");assert.equal(e.piano0.attributes["data-sounding"],"false");
+ assert.equal(e.pianoSustain.attributes["aria-pressed"],"true");
+});
+
+test("WEB-10 arpeggio live status changes only when selection changes",()=>{
+  const a=setup(),e=a.elements;e.pianoArp.emit("click");e.pianoEnable.emit("click");
+  const status=e.arpSelected;
+  let value=status.textContent,writes=0;
+  Object.defineProperty(status,"textContent",{get(){return value;},set(next){value=next;writes++;}});
+  e.piano0.emit("pointerdown",drumEvent(1));e.piano0.emit("pointerup",drumEvent(1));
+  assert.equal(writes,1);
+  e.pianoRoot.value="2";e.pianoRoot.emit("change");
+  e.pianoScale.value="major";e.pianoScale.emit("change");
+  assert.equal(writes,1);
+  e.phraseTempo.value="120";e.phraseStart.emit("click");a.ack();
+  e.phraseStop.emit("click");a.step(25);a.ack();
+  assert.equal(writes,1);
+  e.arpClear.emit("click");assert.equal(writes,2);
+  e.arpClear.emit("click");assert.equal(writes,2);
+});
