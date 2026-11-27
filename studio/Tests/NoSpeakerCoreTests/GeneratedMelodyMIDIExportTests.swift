@@ -114,3 +114,38 @@ func generatedMelodySparseExportPreservesTrailingRest(genre: MelodicPatternGener
     let last = try #require(receipt.events.last)
     #expect(last.tick < receipt.endTick)
 }
+
+// Consolidates the complementary genre/role coverage from independent QA #316.
+@Test(arguments: MelodicPatternGenerator.Genre.allCases, MelodicPatternGenerator.Role.allCases)
+func generatedMelodyGenreProfilesExportExactWireEvents(genre: MelodicPatternGenerator.Genre, role: MelodicPatternGenerator.Role) throws {
+    let profiles: [(Int, Int, Double, Double, UInt64, Double)] = [
+        (1, 0, 0.05, 20, 0, 0.01),
+        (2, 40, 0.65, 123.5, 42, 0.85),
+        (16, 100, 1, 300, UInt64.max, 1)
+    ]
+    for (bars, density, gate, bpm, seed, velocity) in profiles {
+        var c = MelodicPatternGenerator.Configuration()
+        c.genre = genre; c.role = role; c.bars = bars; c.density = density
+        c.gate = gate; c.bpm = bpm; c.seed = seed; c.velocity = velocity
+        c.low = role == .bass ? 28 : 60; c.high = role == .bass ? 59 : 96
+        c.complexity = 100; c.variation = 100
+        let pattern = try MelodicPatternGenerator.generate(c)
+        let regenerated = try MelodicPatternGenerator.generate(c)
+        for channel in [0, 9, 15] {
+            let bytes = try MIDIClipWriter.encode(MIDIClip.melody(pattern, channel: channel))
+            let receipt = try decodeGeneratedSMF(bytes)
+            #expect(bytes == (try MIDIClipWriter.encode(MIDIClip.melody(regenerated, channel: channel))))
+            #expect(receipt.tempo == Int((60_000_000 / bpm).rounded()))
+            #expect(receipt.endTick == bars * 16 * 240)
+            var expected: [GeneratedSMFEvent] = []
+            for step in pattern.steps.sorted(by: { $0.index < $1.index }) {
+                let pitch = try #require(step.midi)
+                expected.append(.init(tick: step.index * 240, status: UInt8(0x90 | channel),
+                                      pitch: UInt8(pitch), velocity: UInt8(max(1, Int((step.velocity * 127).rounded())))))
+                expected.append(.init(tick: step.index * 240 + Int((gate * 240).rounded()), status: UInt8(0x80 | channel),
+                                      pitch: UInt8(pitch), velocity: 0))
+            }
+            #expect(receipt.events == expected)
+        }
+    }
+}
