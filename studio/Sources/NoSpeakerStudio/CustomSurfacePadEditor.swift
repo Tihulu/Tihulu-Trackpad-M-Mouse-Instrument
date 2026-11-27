@@ -11,6 +11,16 @@ struct CustomSurfacePadEditor:View {
     @State private var layouts:[Layout.Surface:Layout]=[:]
     @AppStorage("TIHULU.customSurfaceLayouts.v1") private var storage=Data()
     @State private var pending:Pending?
+    @State private var groupTrackpadChannel=0
+    @State private var groupMouseChannel=1
+    @State private var groupConfirmation:GroupConfirmation?
+    private struct GroupConfirmation: Identifiable {
+        let id=UUID()
+        let trackpad:Layout
+        let mouse:Layout
+        let trackpadChannel:Int
+        let mouseChannel:Int
+    }
     private struct Pending:Identifiable {
         enum Action:String {case save,load,reset,arm}
         let action:Action
@@ -189,6 +199,18 @@ struct CustomSurfacePadEditor:View {
             }.padding(.vertical,6)
             }
         }.onChange(of:surface){value in select(layouts[value]?.pads.first);feedback=""}
+        .confirmationDialog("Arm two independent MIDI sources?",isPresented:Binding(get:{groupConfirmation != nil},set:{if !$0 {groupConfirmation=nil}}),titleVisibility:.visible,presenting:groupConfirmation) { request in
+            Button("Arm both · Esc stops group") {
+                guard layouts[.trackpad]==request.trackpad,layouts[.magicMouse]==request.mouse,
+                      groupTrackpadChannel==request.trackpadChannel,groupMouseChannel==request.mouseChannel else {
+                    feedback="Group drafts or channels changed; repeat Arm.";return
+                }
+                studio.startCustomPadGroup(trackpad:request.trackpad,trackpadChannel:request.trackpadChannel,
+                    mouse:request.mouse,mouseChannel:request.mouseChannel)
+            }
+        } message: { _ in
+            Text("Route each dedicated MIDI source independently in your DAW. Both devices require a fresh lift; a fault stops the entire group. No cursor capture.")
+        }
         .confirmationDialog("Confirm Custom Pad action",isPresented:Binding(get:{pending != nil},set:{if !$0 {pending=nil}}),titleVisibility:.visible,presenting:pending){operation in
             Button(operation.action == .arm ? "Arm dedicated MIDI + Escape stop" : operation.action == .reset ? "Reset draft":operation.action == .save ? "Save layout":"Load layout",
                    role:operation.action == .reset ? .destructive:nil){
@@ -234,6 +256,11 @@ struct CustomSurfacePadEditor:View {
                     if let layout=studio.customPadFrozenLayout, let channel=studio.customPadFrozenChannel {
                         frozenPerformance(layout,channel:channel)
                     }
+                    ForEach(studio.customPadGroupLayouts,id:\.surface) { layout in
+                        if let channel=studio.customPadGroupChannels[layout.surface] {
+                            frozenPerformance(layout,channel:channel)
+                        }
+                    }
                     Text("Esc stops this performance even outside Studio; the foreground app still receives Escape. Cursor remains free.")
                         .font(.caption)
                 } else if !studio.customPadPorts.isEmpty {
@@ -250,6 +277,23 @@ struct CustomSurfacePadEditor:View {
                     Text(surface == .trackpad || surface == .magicMouse ?
                          "Create or load a compatible draft first." : "This surface supports offline layout editing only.").font(.caption)
                     Button("Open layout designer") { expanded=true }
+                }
+                if studio.customPadRunID == nil && !studio.customPadDiagnosticRunning && studio.customPadPorts.isEmpty {
+                    DisclosureGroup("Two-device performance · experimental") {
+                        if let trackpad=layouts[.trackpad],let mouse=layouts[.magicMouse] {
+                            Stepper("Trackpad MIDI channel \(groupTrackpadChannel+1)",value:$groupTrackpadChannel,in:0...15)
+                            Stepper("Magic Mouse MIDI channel \(groupMouseChannel+1)",value:$groupMouseChannel,in:0...15)
+                            Button("Arm both drafts…") {
+                                groupConfirmation=GroupConfirmation(trackpad:trackpad,mouse:mouse,
+                                    trackpadChannel:groupTrackpadChannel,mouseChannel:groupMouseChannel)
+                            }.disabled((try? CustomSurfaceMixedPlan(layout:trackpad,melodicChannel:groupTrackpadChannel)) == nil ||
+                                        (try? CustomSurfaceMixedPlan(layout:mouse,melodicChannel:groupMouseChannel)) == nil)
+                            Text("Separate ports; route independently in your DAW. A fault stops both devices.").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text("Create or load a Trackpad and Magic Mouse draft first.").font(.caption)
+                            Button("Open layout designer") { expanded=true }
+                        }
+                    }
                 }
                 if studio.customPadRunID == nil && !studio.customPadDiagnosticRunning && studio.customPadPorts.isEmpty && (surface == .trackpad || surface == .magicMouse) {
                     Button("Run 20-second input diagnostic") { studio.startCustomPadDiagnostic(surface) }
@@ -281,7 +325,7 @@ struct CustomSurfacePadEditor:View {
     /// Render only the armed immutable layout, never the mutable editor draft.
     /// Highlights are local reconciled intent, not acoustic or DAW confirmation.
     private func frozenPerformance(_ layout:Layout,channel:Int)->some View {
-        let active=studio.customPadPorts.first(where:{$0.id==studio.customPadRunID && $0.phase == .live})?.activePadIDs ?? []
+        let active=studio.customPadPorts.first(where:{$0.surface==layout.surface && $0.phase == .live})?.activePadIDs ?? []
         return VStack(alignment:.leading,spacing:6) {
             Text("Armed: "+layout.surface.rawValue+" · melodic channel "+String(channel+1)).font(.caption.bold())
             Text("Active logical pads: "+String(active.count)+" / "+String(layout.pads.count)).font(.caption.monospacedDigit())

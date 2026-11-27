@@ -3851,7 +3851,8 @@ final class StudioController: ObservableObject {
         let report = input.inboxes.map { inbox in
             let queue = inbox.queueEvidence()
             return inbox.surface.rawValue + "\n" + inbox.captureEvidence().report +
-                "\nPeak live FIFO depth: \(queue.peak)/64\nInput fault: \(queue.fault?.rawValue ?? "none")"\n        }.joined(separator: "\n\n")
+                "\nPeak live FIFO depth: \(queue.peak)/64\nInput fault: \(queue.fault?.rawValue ?? "none")"
+        }.joined(separator: "\n\n")
         if customPadEvidenceReport != report { customPadEvidenceReport = report }
         let timing = customPadHost.statuses.compactMap { port -> String? in
             guard let evidence = customPadHost.timingEvidence(port.id) else { return nil }
