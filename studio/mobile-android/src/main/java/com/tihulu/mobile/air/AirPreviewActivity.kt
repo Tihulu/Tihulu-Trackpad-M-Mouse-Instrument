@@ -127,14 +127,15 @@ class AirPreviewActivity: ComponentActivity() {
     private fun selectedOrientation()=Orientation.entries.getOrNull(orientationPick.selectedItemPosition)
     private fun selectedRange()=AirDepthCalibration.selected(depthRange.selectedItemPosition,customNear.text.toString(),customFar.text.toString())
     private fun validRole()=selectedMode()!=null && selectedRole()!=null && (selectedMode()!=AirMode.CHORDS || selectedRole()!=HandRole.SINGLE)
-    private fun validAirSetup()=validRole() && (!depthToggle.isChecked || selectedRange()!=null)
-    private fun pairedProjection():AirProjection? {
-        val mode=selectedMode()?:return null
-        val role=selectedRole()?:return null
-        val orientation=selectedOrientation()?:return null
-        val (near,far)=if(depthToggle.isChecked) selectedRange()?:return null else AirDepthCalibration.presets.first()
-        return lan?.newProjection(mode,role,orientation,mirror.isChecked,near,far,depthToggle.isChecked)
+    private fun airSetup(newPairing:Boolean=false)=AirSetupAdmission.resolve(
+        selectedMode(),selectedRole(),selectedOrientation(),depthToggle.isChecked,selectedRange(),
+        imageRotation.selectedItemPosition,wantsPair,newPairing,helperPick.selectedItemPosition)
+    private fun validAirSetup()=airSetup()!=null
+    private fun pairedProjection(setup:AirSetupAdmission):AirProjection? {
+        val (near,far)=setup.range
+        return lan?.newProjection(setup.mode,setup.role,setup.orientation,mirror.isChecked,near,far,setup.depth)
     }
+    private fun pairedProjection():AirProjection? = airSetup()?.let {pairedProjection(it)}
     private fun clearInvitation(){invitation.text.clear()}
     private val qrCamera=registerForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
         val expected=qrRequested
@@ -416,7 +417,7 @@ class AirPreviewActivity: ComponentActivity() {
             override fun onNothingSelected(parent:AdapterView<*>?) {controls()}
             override fun onItemSelected(parent:AdapterView<*>?,view:View?,position:Int,id:Long){controls()}
         }
-        for(picker in listOf(modePick,rolePick,depthRange))picker.onItemSelectedListener=refreshSelection
+        for(picker in listOf(modePick,rolePick,depthRange,orientationPick,imageRotation,helperPick))picker.onItemSelectedListener=refreshSelection
         val refreshCalibration=object:TextWatcher {
             override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
             override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){}
@@ -470,7 +471,10 @@ class AirPreviewActivity: ComponentActivity() {
         if(!busy&&!measuredMode&&!wantsTouchPair&&!touchStage)showOutput(AirOutput())
         modeGuide.text=when {
             depth&&selectedRange()==null -> "Enter a valid near/far range: near 10–150 cm, far 20–300 cm, at least 10 cm apart. If an exact 10 cm gap is rejected, increase the gap by 1 cm."
-            !validRole() -> "Choose left or right performing hand for chords."
+            !validRole() -> "Choose a valid instrument and performing hand; chords need left or right."
+            selectedOrientation()==null -> "Choose a musical control orientation."
+            depth&&imageRotation.selectedItemPosition !in 0..3 -> "Choose a raw image rotation."
+            wantsPair&&lan==null&&selectedMode()?.isHelper==true&&helperPick.selectedItemPosition !in 0..2 -> "Choose a Mac helper lane."
             else -> when(selectedMode()) {
                 AirMode.PINCH_KEYS -> "Move horizontally to choose a key; open then pinch to hold, open to release."
                 AirMode.CHORDS -> "Select with the other hand; pinch with the performing hand. Loss of either hand releases."
@@ -503,8 +507,11 @@ class AirPreviewActivity: ComponentActivity() {
         for(v in listOf(address,invitation,fingerprint,qrButton,rootButton,helperPick))v.isEnabled=!b&&wantsPair
         touchOnly.isEnabled=!b&&wantsPair
         helperPick.visibility=if(!measuredMode&&!wantsTouchPair&&selectedMode()?.isHelper==true)View.VISIBLE else View.GONE
-        connectButton.isEnabled=!b&&wantsPair&&(!measuredMode||
-            (measuredCamera()!=null&&xyzSettings.volume()!=null&&xyzSettings.selection!=null))
+        connectButton.isEnabled=!b&&wantsPair&&when {
+            wantsTouchPair -> true
+            measuredMode -> measuredCamera()!=null&&xyzSettings.volume()!=null&&xyzSettings.selection!=null
+            else -> airSetup(newPairing=true)!=null
+        }
         disconnectButton.isEnabled=lan!=null
         pauseModeButton.isEnabled=lan?.status()?.phase==MobileLanSession.Phase.READY&&(pending||source!=null||depthSource!=null)
         start.text=if(wantsPair)"Start playing" else "Start sensors"
@@ -536,6 +543,11 @@ class AirPreviewActivity: ComponentActivity() {
     }
     private fun connectMac() {
         if(!wantsPair||locked||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
+        val ordinaryAir=!measuredMode&&!wantsTouchPair
+        val setup=if(ordinaryAir)airSetup(newPairing=true) else null
+        if(ordinaryAir&&setup==null){
+            connectionStatus.text="Choose a valid instrument, hand, orientation, range and helper lane.";return
+        }
         if(!wantsTouchPair&&ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){
             permission.launch(Manifest.permission.CAMERA);return
         }
@@ -545,12 +557,8 @@ class AirPreviewActivity: ComponentActivity() {
         check?.fill(0)
         val root=rootDer
         val digest=fingerprint.text.toString()
-        val mode=selectedMode()
-        if(endpoint==null||check==null||root==null||(!wantsTouchPair&&!measuredMode&&mode==null)){
+        if(endpoint==null||check==null||root==null){
             connectionStatus.text="Enter the exact Mac address, invitation and verified DER root.";return
-        }
-        if(!measuredMode&&!wantsTouchPair&&!validAirSetup()){
-            connectionStatus.text="Choose a valid performing hand and depth range.";return
         }
         if(measuredMode && (measuredCamera()==null || xyzSettings.volume()==null || xyzSettings.selection==null)){
             connectionStatus.text="Select a rear DEPTH16 camera, enabled axes and valid volume";return
@@ -558,7 +566,7 @@ class AirPreviewActivity: ComponentActivity() {
         val selection=when {
             measuredMode && xyzSettings.hybrid -> MobileLanSession.Selection.Hybrid(xyzSettings.mask)
             measuredMode && xyzSettings.pitchAxis==null -> MobileLanSession.Selection.XYZ(xyzSettings.mask)
-            !measuredMode && !wantsTouchPair && mode?.isHelper==true -> MobileLanSession.Selection.Helper(helperPick.selectedItemPosition)
+            setup?.newHelperIndex!=null -> MobileLanSession.Selection.Helper(setup.newHelperIndex)
             else -> MobileLanSession.Selection.Keys
         }
         clearInvitation()
@@ -571,6 +579,9 @@ class AirPreviewActivity: ComponentActivity() {
                 if(trust==null||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||
                     (!wantsTouchPair&&!cameraPermitted())){
                     connectionStatus.text="Root fingerprint or certificate invalid, app inactive or camera permission lost";controls();return@post
+                }
+                if(ordinaryAir&&(!wantsPair||measuredMode||wantsTouchPair||airSetup(newPairing=true)!=setup)){
+                    connectionStatus.text="Air setup changed; choose a valid setup and connect again.";controls();return@post
                 }
                 val client=BoundedMobileLanSocket(endpoint,selection,trust)
                 lan=client;lastPhase=null
@@ -590,7 +601,10 @@ class AirPreviewActivity: ComponentActivity() {
         }
     }
     private fun begin() {
-        if(wantsTouchPair||busy||qrRequested||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||wantsPair&&(if(measuredMode)!xyzAssigned() else pairedProjection()==null))return
+        if(wantsTouchPair||busy||qrRequested||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
+        val setup=if(measuredMode)null else airSetup()
+        if(!measuredMode&&setup==null){status.text="Choose a valid Air setup.";return}
+        if(wantsPair&&(if(measuredMode)!xyzAssigned() else setup?.let{pairedProjection(it)}==null))return
         if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
             permission.launch(Manifest.permission.CAMERA);return
         }
@@ -612,12 +626,12 @@ class AirPreviewActivity: ComponentActivity() {
             xyzSource=measured;xyzStage=XYZStageView(this,mask,selected.pitchAxis,selected.hybrid,::end)
             measured.start();controls();return
         }
-        if(!validAirSetup()){status.text="Choose a valid performing hand and depth range";return}
-        if(depthToggle.isChecked){beginDepth();return}
+        val admitted=setup?:return
+        if(admitted.depth){beginDepth(admitted);return}
         val c=choices.getOrNull(cameraPick.selectedItemPosition) ?: return
-        val mode=modes[modePick.selectedItemPosition]
-        val role=HandRole.entries[rolePick.selectedItemPosition]
-        val p=if(wantsPair)pairedProjection() else runCatching {AirProjection(mode,(1 shl 25)-1,role,Orientation.entries[orientationPick.selectedItemPosition],mirror.isChecked)}.getOrNull()
+        val p=if(wantsPair)pairedProjection(admitted) else runCatching {
+            AirProjection(admitted.mode,(1 shl 25)-1,admitted.role,admitted.orientation,mirror.isChecked)
+        }.getOrNull()
         if(p==null){status.text="Select a compatible assigned instrument and performing hand";return}
         // The local model must be supplied by the embedding application.
         val model=localModel
@@ -631,6 +645,7 @@ class AirPreviewActivity: ComponentActivity() {
         future.addListener({
             if(epoch==ticket&&pending) {
                 captureFailure()?.let {end(it.message);return@addListener}
+                if(airSetup()!=admitted||measuredMode||wantsTouchPair){end("Air setup changed; press Start again");return@addListener}
                 try {
                     if(wantsPair&&lan?.status()?.phase!=MobileLanSession.Phase.READY){end("Mac assignment ended");return@addListener}
                     val s=RgbHandSource(this,this,future.get(),"hand_landmarker.task",model) { message ->
@@ -642,7 +657,7 @@ class AirPreviewActivity: ComponentActivity() {
             }
         },ContextCompat.getMainExecutor(this))
     }
-    private fun beginDepth(){
+    private fun beginDepth(admitted:AirSetupAdmission){
         val model=localModel
         if(model==null&&runCatching {assets.open("hand_landmarker.task").use {}}.isFailure){status.text="Choose a trusted local hand_landmarker.task first";return}
         try {
@@ -654,16 +669,17 @@ class AirPreviewActivity: ComponentActivity() {
             if(!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||!cameraPermitted()){
                 end("App inactive or camera permission lost");return
             }
-            val range=selectedRange()?:run{status.text="Invalid depth range";return}
+            if(!admitted.depth||airSetup()!=admitted||measuredMode||wantsTouchPair){status.text="Air setup changed; press Start again.";return}
+            val rawRotation=admitted.rawRotationDegrees?:return
+            val range=admitted.range
             val keys=if(wantsPair){
-                if(pairedProjection()==null){end("Mac assignment ended");return}
+                if(pairedProjection(admitted)==null){end("Mac assignment ended");return}
                 lan?.status()?.assignment?.piano?:run{end("Mac assignment ended");return}
             } else (1 shl 25)-1
             observationFence=if(wantsPair)PairedObservationFence(SystemClock.elapsedRealtimeNanos()) else null
             @Suppress("DEPRECATION") val displayRotation=windowManager.defaultDisplay.rotation
-            val s=ArCoreDiagnosticSource(applicationContext,model,imageRotation.selectedItemPosition*90,displayRotation,
-                HandRole.entries[rolePick.selectedItemPosition],depthModes[modePick.selectedItemPosition],
-                Orientation.entries[orientationPick.selectedItemPosition],mirror.isChecked,range.first,range.second,keys)
+            val s=ArCoreDiagnosticSource(applicationContext,model,rawRotation,displayRotation,
+                admitted.role,admitted.mode,admitted.orientation,mirror.isChecked,range.first,range.second,keys)
             captureRotation=displayDegrees()
             depthSource=s;controls();s.start();status.text="Starting ARCore diagnostic sensor"
         }catch(_:Exception){end("ARCore unavailable, unsupported or install declined")}
