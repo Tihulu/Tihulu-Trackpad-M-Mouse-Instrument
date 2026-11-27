@@ -261,3 +261,21 @@ private let sustain=SensorDestination(.sustain,channel:2)
     let result=d.frame([note],sequence:2,observedAt:1)
     #expect(result.retirement == .admissionDenied && result.outstanding.isEmpty && wire.isEmpty)
 }
+
+@Test func customPadExclusiveDeliveryWatchdogRevocationDuringClockReadReleasesOwnedNote() throws {
+    var now:Int64=0
+    var allowed=true
+    var revokeOnClock=false
+    var wire:[SensorCommand]=[]
+    let d=CustomSurfaceExclusiveDelivery(plan:try deliveryPlan(),clock:{
+        if revokeOnClock {allowed=false}
+        return now
+    },admitsExclusiveEndpoint:{allowed},ownsCleanupEndpoint:{true},send:{wire.append($0);return true})
+    _=d.frame([],sequence:1,observedAt:0)
+    now=1
+    _=d.frame([note],sequence:2,observedAt:1)
+    now=2;revokeOnClock=true
+    let result=d.poll()
+    #expect(result.retirement == .admissionDenied && result.outstanding.isEmpty)
+    #expect(wire==[.init(n60,value:100),.init(n60,value:0)])
+}

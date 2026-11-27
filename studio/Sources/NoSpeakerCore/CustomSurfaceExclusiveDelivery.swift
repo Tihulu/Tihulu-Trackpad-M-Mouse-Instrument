@@ -139,6 +139,7 @@ public final class CustomSurfaceExclusiveDelivery {
         guard retirement==nil else{return report(0)}
         guard admits(),ownsCleanupEndpoint(),admits() else{return retire(.admissionDenied)}
         guard let now=tick(),!projection.poll(now:now).retired else{return retire(.expiredOrInvalid)}
+        guard admits() else{return retire(.admissionDenied)}
         return report(0)
     }
     public func stop()->Report {retire(.stopped)}
