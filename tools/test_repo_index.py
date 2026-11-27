@@ -4,7 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from repo_index import normalized, semantic_windows
+from repo_index import normalized, semantic_windows, fuse_rankings, in_scope, tokens
 
 TOOL = Path(__file__).resolve().with_name("repo_index.py")
 
@@ -103,6 +103,38 @@ class RepositoryIndexTests(unittest.TestCase):
         self.assertEqual(failure.returncode, 2)
         self.assertIn("path/blob mismatch", failure.stderr)
 
+    def test_scoped_indices_and_context_revision_guard(self):
+        app = self.repo / "studio/mobile-android/src/main/java/Pad.kt"
+        app.parent.mkdir(parents=True)
+        app.write_text("// MIDI pad controller")
+        (self.repo / "studio/Sources/NoSpeakerCore").mkdir()
+        (self.repo / "studio/Sources/NoSpeakerCore/Engine.swift").write_text("// MIDI ownership")
+        (self.repo / "README.md").write_text("# MIDI help")
+        self.git("add", "studio/mobile-android", "studio/Sources/NoSpeakerCore", "README.md")
+        self.git("commit", "-qm", "scopes")
+        for scope, expected in (("engine", "studio/Sources/NoSpeakerCore/Engine.swift"),
+                                ("app", "studio/mobile-android/src/main/java/Pad.kt"),
+                                ("docs", "README.md")):
+            index = self.root / (scope + ".json")
+            built = self.cli("build", "--repo", self.repo, "--scope", scope, "--out", index)
+            self.assertEqual(built.returncode, 0, built.stderr)
+            doc = json.loads(index.read_text())
+            self.assertEqual({row["path"] for row in doc["chunks"]}, {expected})
+            self.assertEqual(doc["metadata"]["scope"], scope)
+            result = self.cli("context", "--repo", self.repo, "--expect-ref", "HEAD",
+                              "--index", index, "--query", "MIDI", "--max-bytes", "1024")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            data = json.loads(result.stdout)
+            self.assertTrue(data["source_verified"])
+            self.assertIn(expected + ":1-1@", data["sources"][0]["citation"])
+            self.assertLessEqual(len(result.stdout.strip().encode()), 1024)
+            stale = self.cli("context", "--repo", self.repo, "--expect-ref", self.commit,
+                             "--index", index, "--query", "MIDI")
+            self.assertEqual(stale.returncode, 2)
+            self.assertIn("differs from expected revision", stale.stderr)
+            self.assertEqual(self.cli("search", "--index", index, "--query", "MIDI",
+                                      "--hybrid").returncode, 2)
+
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
         document = json.loads(self.index.read_text())
@@ -147,6 +179,18 @@ class SemanticContractTests(unittest.TestCase):
             self.assertEqual(part["text"], "\n".join(lines[part["start"]-5:part["end"]-4]))
             self.assertLessEqual(len(model.tokenizer.encode(part["path"]+"\n"+part["text"])),32)
         self.assertEqual(rows[-1]["end"],21)
+
+    def test_rank_fusion_uses_ranks_and_deduplicates(self):
+        a = {"path":"a.swift","blob":"a"*40,"start":1,"end":1}
+        b = {"path":"b.swift","blob":"b"*40,"start":1,"end":1}
+        c = {"path":"c.swift","blob":"c"*40,"start":1,"end":1}
+        fused = fuse_rankings([(0.8,a),(0.7,b),(0.7,b),(0.6,c)],[(200,b),(100,c)])
+        scores = {row["path"]:score for score,row in fused}
+        self.assertGreater(scores["b.swift"], scores["a.swift"])
+        self.assertAlmostEqual(scores["b.swift"], 1/62+1/61)
+        self.assertTrue(in_scope("studio/mobile-ios/Pad.swift", "app"))
+        self.assertFalse(in_scope("studio/mobile-ios/Pad.swift", "engine"))
+        self.assertIn("müzik", tokens("Müzik"))
 
     def test_invalid_embedding_norms_and_finite_values(self):
         self.assertEqual(normalized([3,4]),[0.6,0.8])
