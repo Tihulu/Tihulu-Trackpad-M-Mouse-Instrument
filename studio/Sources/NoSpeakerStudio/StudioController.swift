@@ -3440,7 +3440,7 @@ final class StudioController: ObservableObject {
                     }
                 }
             }
-            sequenceTask = Task { [weak self] in
+            sequenceTask = Task { @MainActor [weak self] in
                 let clock = ContinuousClock()
                 func offset(_ tick: Int) -> Duration {
                     .nanoseconds(Int64((schedule.seconds(at: tick) * 1_000_000_000).rounded()))
@@ -3456,7 +3456,8 @@ final class StudioController: ObservableObject {
                     return step * sampleSteps
                 } ?? 0
                 var nextClockTick = 0
-                @MainActor func waitForTick(_ target: Int) async throws -> Bool {
+                // Keep an independent weak capture in the actor-isolated helper.
+                let waitForTick: @MainActor (Int) async throws -> Bool = { [weak self] target in
                     let deadline = origin.advanced(by: offset(target))
                     while clockStride > 0 && nextClockTick < target {
                         guard !Task.isCancelled, self?.sequenceToken == token else { return false }
