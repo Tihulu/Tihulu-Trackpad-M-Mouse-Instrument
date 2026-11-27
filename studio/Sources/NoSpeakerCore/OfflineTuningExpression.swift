@@ -41,9 +41,14 @@ public enum OfflineTuningExpression {
             return .projected(.init(base: base, expressiveBend: base.bend, representedOffsetCents: 0))
         }
         let baseCents = cents(bend: base.bend, range: base.bendRangeSemitones)
-        let requested = baseCents + offsetCents
         let limit = Double(base.bendRangeSemitones) * 100
-        guard (-limit...limit).contains(requested) else { return .exceedsMemberRange }
+        // Compare in the offset domain used by readiness headroom. A rounded
+        // addition can otherwise reject the reported endpoint or hide an
+        // offset immediately outside it. Only normalize the sum after admission.
+        guard (-limit - baseCents...limit - baseCents).contains(offsetCents) else {
+            return .exceedsMemberRange
+        }
+        let requested = min(limit, max(-limit, baseCents + offsetCents))
         let fraction = requested / limit
         let bend = 8192 + Int((fraction * (fraction >= 0 ? 8191 : 8192)).rounded())
         return .projected(.init(base: base, expressiveBend: bend,
