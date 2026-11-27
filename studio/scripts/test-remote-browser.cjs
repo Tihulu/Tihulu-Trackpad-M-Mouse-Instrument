@@ -2339,3 +2339,32 @@ test("REL-WEB source labels do not claim relative capability from camera or gyro
   assert.match(e.webCameraDescription.textContent,/does not establish relative capability/);
   assert.equal(a.socket.frames.length,0);
 });
+
+test("MUSIC-WEB global release retires synth dial contact before re-enable",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1,pedals:1},false),e=a.elements;
+  e.playMode.value="piano";e.playMode.emit("change");e.pianoSynth.emit("click");e.pedalEnable.emit("click");
+  const toggle=()=>{e.pedalToggle0.emit("click");a.step(25);a.ack();};
+  const finger=(id,y)=>({pointerId:id,clientY:y,button:0,preventDefault(){}});
+  const dial=e.pedalValue0,initial=Number(e.pedalLevel0.value),delta=initial<=80?10:-10;
+  toggle();dial.emit("pointerdown",finger(1,50));
+  e.releaseAll.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  e.pedalEnable.emit("click");toggle();
+  dial.emit("pointermove",finger(1,50-delta));assert.equal(Number(e.pedalLevel0.value),initial);
+  dial.emit("pointerdown",finger(2,50));dial.emit("pointermove",finger(2,50-delta));
+  assert.equal(Number(e.pedalLevel0.value),initial+delta);
+  dial.emit("pointerup",finger(1,50));dial.emit("pointermove",finger(2,50-2*delta));
+  assert.equal(Number(e.pedalLevel0.value),initial+2*delta);
+});
+test("MUSIC-WEB global release cancels all active synth dials without affecting saved defaults",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1,pedals:3},false),e=a.elements;
+  e.playMode.value="piano";e.playMode.emit("change");e.pianoSynth.emit("click");e.pedalEnable.emit("click");
+  const toggle=i=>{e["pedalToggle"+i].emit("click");a.step(25);a.ack();};
+  const finger=(id,y)=>({pointerId:id,clientY:y,button:0,preventDefault(){}});
+  for(const i of [0,1]){toggle(i);e["pedalValue"+i].emit("pointerdown",finger(i+1,50));}
+  const before=[e.pedalLevel0.value,e.pedalLevel1.value];
+  e.releaseAll.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  e.pedalEnable.emit("click");for(const i of [0,1])toggle(i);
+  for(const i of [0,1])e["pedalValue"+i].emit("pointermove",finger(i+1,Number(before[i])<50?20:80));
+  assert.deepEqual([e.pedalLevel0.value,e.pedalLevel1.value],before);
+  assert.equal(a.socket.closed,undefined);
+});
