@@ -28,7 +28,10 @@ EXCLUDED = {".git", ".build", "node_modules", "vendor", "models", "recordings", 
 
 
 def git(repo, *args):
-    return subprocess.check_output(["git", "-C", str(repo), *args], stderr=subprocess.PIPE)
+    # A replace ref can make Git return different object contents under the
+    # requested SHA. All provenance reads must address original objects.
+    return subprocess.check_output(["git", "--no-replace-objects", "-C", str(repo), *args],
+                                   stderr=subprocess.PIPE)
 
 
 def allowed(path):
