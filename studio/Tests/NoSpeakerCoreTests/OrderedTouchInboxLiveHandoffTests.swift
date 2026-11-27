@@ -11,11 +11,20 @@ struct OrderedTouchInboxLiveHandoffTests {
         var value: Int { lock.lock(); defer { lock.unlock() }; return count }
     }
 
+    // A semaphore wait must not occupy a cooperative Swift Testing worker.
+    // Use independent threads for the blocking producer and bounded waits;
+    // assertions still run in the original asynchronous test task.
+    private func waitOffExecutor(_ wait: @escaping @Sendable () -> Bool) async -> Bool {
+        await withCheckedContinuation { continuation in
+            Thread.detachNewThread { continuation.resume(returning: wait()) }
+        }
+    }
+
     // One producer and one serialized consumer run simultaneously. A wave
     // acknowledgement bounds outstanding input; no assumption about thread
     // scheduling or how many batches a wave will require.
     @Test(arguments: [1, 4, 16, 32], [1, 8, 32])
-    func liveProducerConsumerHandoff(waveSize: Int, waves: Int) {
+    func liveProducerConsumerHandoff(waveSize: Int, waves: Int) async {
         let inbox = OrderedTouchInbox<Int>()
         let callback = DispatchSemaphore(value: 0)
         let acknowledgement = DispatchSemaphore(value: 0)
@@ -23,7 +32,7 @@ struct OrderedTouchInboxLiveHandoffTests {
         let requested = Counter()
         let producerTimeouts = Counter()
         finished.enter()
-        DispatchQueue.global().async {
+        Thread.detachNewThread {
             defer { finished.leave() }
             for wave in 0..<waves {
                 for index in 0..<waveSize {
@@ -41,41 +50,45 @@ struct OrderedTouchInboxLiveHandoffTests {
         var received: [Int] = []
         var callbackCount = 0
         var previous: OrderedTouchInbox<Int>.Batch?
-        defer {
-            inbox.close()
-            acknowledgement.signal()
-            #expect(finished.wait(timeout: .now() + 6) == .success)
-        }
-        while received.count < waveSize * waves {
-            guard callback.wait(timeout: .now() + 5) == .success else {
-                Issue.record("Producer scheduling handoff lost")
-                return
-            }
-            callbackCount += 1
-            while true {
-                let batch = inbox.take()
-                guard !batch.overflow, !batch.samples.isEmpty else {
-                    Issue.record("Unexpected empty or overflow callback")
+        func drain() async {
+            while received.count < waveSize * waves {
+                let signalled = await waitOffExecutor { callback.wait(timeout: .now() + 5) == .success }
+                guard signalled else {
+                    Issue.record("Producer scheduling handoff lost")
                     return
                 }
-                #expect(inbox.permits(batch))
-                if let previous { #expect(!inbox.permits(previous)) }
-                previous = batch
-                received.append(contentsOf: batch.samples)
-                if received.count.isMultiple(of: waveSize) { acknowledgement.signal() }
-                if !batch.more { break }
+                callbackCount += 1
+                while true {
+                    let batch = inbox.take()
+                    guard !batch.overflow, !batch.samples.isEmpty else {
+                        Issue.record("Unexpected empty or overflow callback")
+                        return
+                    }
+                    #expect(inbox.permits(batch))
+                    if let previous { #expect(!inbox.permits(previous)) }
+                    previous = batch
+                    received.append(contentsOf: batch.samples)
+                    if received.count.isMultiple(of: waveSize) { acknowledgement.signal() }
+                    if !batch.more { break }
+                }
             }
+            let producerFinished = await waitOffExecutor { finished.wait(timeout: .now() + 5) == .success }
+            #expect(producerFinished)
+            #expect(producerTimeouts.value == 0)
+            #expect(received == Array(0..<(waveSize * waves)))
+            #expect(callbackCount == requested.value)
+            #expect(callback.wait(timeout: .now()) == .timedOut)
+            #expect(inbox.take().samples.isEmpty)
+            if let previous { #expect(inbox.permits(previous)) }
+            inbox.close()
+            if let previous { #expect(!inbox.permits(previous)) }
+            #expect(!inbox.submit(-1))
         }
-        #expect(finished.wait(timeout: .now() + 5) == .success)
-        #expect(producerTimeouts.value == 0)
-        #expect(received == Array(0..<(waveSize * waves)))
-        #expect(callbackCount == requested.value)
-        #expect(callback.wait(timeout: .now()) == .timedOut)
-        #expect(inbox.take().samples.isEmpty)
-        if let previous { #expect(inbox.permits(previous)) }
+        await drain()
         inbox.close()
-        if let previous { #expect(!inbox.permits(previous)) }
-        #expect(!inbox.submit(-1))
+        acknowledgement.signal()
+        let joined = await waitOffExecutor { finished.wait(timeout: .now() + 6) == .success }
+        #expect(joined)
     }
 
     // Closing while producers are released together must revoke the old
