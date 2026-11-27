@@ -2065,3 +2065,39 @@ test("MUSIC-WEB toolbar and menu use identical release and neutral ACK barriers"
     assert.equal(a.socket.frames.at(-1).mask,145);
   }
 });
+
+function xyKey(key,repeat=false){return {key,repeat,preventDefault(){}};}
+test("MUSIC-WEB keyboard XY shares one contact and sends bounded paced axes",()=>{
+  const a=setup(),e=a.elements,p=e.pad;
+  assert.equal(p.attributes.tabindex,"0");
+  p.emit("keydown",xyKey("ArrowUp"));assert.equal(a.socket.frames.length,0);
+  p.emit("keydown",xyKey(" "));assert.equal(a.socket.frames.at(-1).kind,"touch");
+  assert.equal(a.socket.frames.at(-1).x,.5);assert.equal(a.socket.frames.at(-1).y,.5);
+  assert.equal(p.attributes["aria-pressed"],"true");
+  p.emit("keydown",xyKey(" ",true));p.emit("pointerdown",xyEvent(7));p.emit("pointerup",xyEvent(7));
+  p.emit("keyup",xyKey("Enter"));a.ack();
+  for(let i=0;i<25;i++){p.emit("keydown",xyKey("ArrowRight",true));p.emit("keydown",xyKey("ArrowDown",true));}
+  a.step(50);assert.equal(a.socket.frames.at(-1).x,1);assert.equal(a.socket.frames.at(-1).y,0);a.ack();
+  p.emit("keyup",xyKey(" "));a.step(50);assert.equal(a.socket.frames.at(-1).kind,"release");a.ack();
+  assert.equal(p.attributes["aria-pressed"],"false");assert.equal(a.socket.closed,undefined);
+});
+test("MUSIC-WEB XY keyboard cancellation discards queued onset on blur",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.pad.emit("keydown",xyKey("Enter"));a.elements.pad.emit("blur");
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB keyboard XY mode switch retires key and waits for release ACK",()=>{
+  const a=setup(),e=a.elements,p=e.pad;
+  p.emit("keydown",xyKey("Enter"));e.playMode.value="piano";e.playMode.emit("change");
+  a.ack();a.step(50);assert.equal(a.socket.frames.at(-1).kind,"release");assert.equal(e.playMode.disabled,true);
+  a.ack();assert.equal(p.attributes.tabindex,"-1");const n=a.socket.frames.length;
+  p.emit("keyup",xyKey("Enter"));p.emit("keydown",xyKey(" ",true));a.step(50);
+  assert.equal(a.socket.frames.length,n);assert.equal(e.pianoEnable.disabled,false);
+});
+test("MUSIC-WEB keyboard XY cannot steal pointer ownership or arm from setup",()=>{
+  const a=setup(),e=a.elements,p=e.pad;
+  p.emit("pointerdown",xyEvent(1));p.emit("keydown",xyKey(" "));p.emit("keyup",xyKey(" "));
+  assert.equal(a.socket.frames.length,1);a.ack();p.emit("pointerup",xyEvent(1));a.step(50);a.ack();
+  e.navSetup.emit("click");assert.equal(p.attributes.tabindex,"-1");
+  const n=a.socket.frames.length;p.emit("keydown",xyKey("Enter"));assert.equal(a.socket.frames.length,n);
+});

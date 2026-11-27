@@ -129,7 +129,7 @@ p{color:#c8c8c8;line-height:1.45}label{display:block;margin:12px 0 6px}
 input,button{font:inherit;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #777;background:#252525;color:inherit}
 input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #pad{position:relative;height:clamp(180px,42vh,340px);border:1px solid #888;border-radius:12px;background:linear-gradient(90deg,transparent 49.7%,#454545 50%,transparent 50.3%),linear-gradient(transparent 49.7%,#454545 50%,transparent 50.3%),#252525;touch-action:none;user-select:none;display:grid;place-items:center}
-#pad[aria-disabled=true]{opacity:.45}#dot{position:absolute;width:22px;height:22px;background:#e34f4f;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}#dot[hidden]{display:none}
+#pad:focus-visible{outline:3px solid #e5a33b;outline-offset:3px}#pad[aria-disabled=true]{opacity:.45}#dot{position:absolute;width:22px;height:22px;background:#e34f4f;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}#dot[hidden]{display:none}
 #releaseAll{min-height:44px;border-color:#e5a33b}#status{min-height:2.8em}small{color:#bdbdbd}
 #drumGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}#drumGrid button{margin:0;min-height:80px;padding:8px;touch-action:none;user-select:none;overflow-wrap:anywhere}#drumGrid button[aria-pressed=true]{background:#286b50;border-color:#79c9a5} @media(max-width:420px){#drumGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #kitBoard{container-type:size;position:relative;height:clamp(250px,48vh,430px);border:1px solid #777;border-radius:12px;background:radial-gradient(#454545 1px,transparent 1px) 0 0/16px 16px;overflow:hidden}
@@ -238,8 +238,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <p>Enable the mapped control families separately. Existing workload limits still apply.</p>
 <button id="customDrumEnable" type="button" disabled>Enable drum pads</button><button id="customPedalEnable" type="button" disabled>Enable pedalboard</button>
 <button id="customDrumRelease" type="button" disabled>Release all drum pads</button><button id="customPedalRelease" type="button" disabled>Release all pedals</button>
-<div id="customGrid"></div></section><section id="touchSection" hidden><div id="pad" aria-label="XY touch surface" aria-disabled="true"><span>Touch and move</span><div id="dot" hidden></div></div>
-<p><small>X and Y control the mapped instrument. Lift to release. One contact only.</small></p></section>
+<div id="customGrid"></div></section><section id="touchSection" hidden><div id="pad" role="button" tabindex="-1" aria-label="XY touch surface" aria-describedby="xyHelp" aria-disabled="true" aria-pressed="false"><span>Touch and move</span><div id="dot" hidden></div></div>
+<p><small id="xyHelp">X and Y control the mapped instrument. Lift to release. Keyboard: hold Space or Enter, use arrow keys to move, release the held key to stop. One contact only.</small></p></section>
 <section id="drumSection" hidden aria-labelledby="drum-title"><h2 id="drum-title">Drum Pads</h2>
 <p>Only pads mapped for this paired device are available. Pad numbers identify controls, not assumed MIDI notes. Actual destinations are listed in Setup when shared.</p>
 <button id="drumEnable" disabled>Enable drum pads</button><button id="drumRelease" disabled>Release all pads</button>
@@ -1870,7 +1870,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     s.epoch++;s.mode="releasing";s.sample=null;s.status.textContent="Releasing…";syncInertialListener();syncControls();tick();
   }
   function syncControls(){
-    syncCamera();pad.setAttribute("aria-disabled",String(!admitted||!caps?.touch||!workloadAllows("touch")));syncSections();syncDrums();syncPiano();syncPedals();syncCustom();syncWorkload();syncNavigation();syncPlayMode();syncLatency();syncLayout();
+    syncCamera();
+    const xyAvailable=currentView==="play"&&admitted&&caps?.touch&&workloadAllows("touch");
+    pad.setAttribute("aria-disabled",String(!xyAvailable));pad.setAttribute("tabindex",xyAvailable?"0":"-1");
+    pad.setAttribute("aria-pressed",String(pointer!==null));syncSections();syncDrums();syncPiano();syncPedals();syncCustom();syncWorkload();syncNavigation();syncPlayMode();syncLatency();syncLayout();
     releaseAll.disabled=!admitted||!caps||releasingAll;
     const asking=releasingAll||mode==="requesting"||streams.some(s=>s.mode==="requesting");
     if(releasingAll){drumEnable.disabled=true;pianoEnable.disabled=true;pedalEnable.disabled=true;}
@@ -2072,8 +2075,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     const rect=pad.getBoundingClientRect();
     if(![rect.width,rect.height,rect.left,rect.top,e.clientX,e.clientY].every(Number.isFinite)||rect.width<=0||rect.height<=0){close("Invalid touch geometry. Reconnect explicitly.");return false;}
     const clamp=v=>Math.max(0,Math.min(1,v));
-    position={x:clamp((e.clientX-rect.left)/rect.width),y:1-clamp((e.clientY-rect.top)/rect.height)};
-    dot.hidden=false;dot.style.left=(position.x*100)+"%";dot.style.top=((1-position.y)*100)+"%";return true;
+    setXY(clamp((e.clientX-rect.left)/rect.width),1-clamp((e.clientY-rect.top)/rect.height));return true;
+  }
+  function setXY(x,y){
+    position={x,y};dot.hidden=false;dot.style.left=(x*100)+"%";dot.style.top=((1-y)*100)+"%";
   }
   pad.addEventListener("pointerdown",e=>{
     if(currentView!=="play"||releasingAll||!admitted||!caps?.touch||pointer!==null||e.button!==0)return;
@@ -2087,6 +2092,25 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pointer=null;position=null;dot.hidden=true;syncControls();queueTouch("release");
   }
   pad.addEventListener("pointerup",lift);
+  const xyKeyOwner=key=>"keyboard:"+key;
+  const isXYKeyOwner=()=>typeof pointer==="string"&&pointer.startsWith("keyboard:");
+  pad.addEventListener("keydown",e=>{
+    if(e.key===" "||e.key==="Enter"){
+      if(currentView!=="play"||releasingAll||!admitted||!caps?.touch||!workloadAllows("touch"))return;
+      e.preventDefault();
+      if(e.repeat||pointer!==null||!requestWorkload("touch"))return;
+      pointer=xyKeyOwner(e.key);setXY(.5,.5);syncControls();queueTouch("touch",{...position});return;
+    }
+    const directions={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowDown:[0,-1],ArrowUp:[0,1]};
+    if(!Object.hasOwn(directions,e.key)||!isXYKeyOwner()||!position)return;
+    e.preventDefault();const [dx,dy]=directions[e.key],clamp=v=>Math.max(0,Math.min(1,Math.round(v*20)/20));
+    setXY(clamp(position.x+dx*.05),clamp(position.y+dy*.05));
+  });
+  pad.addEventListener("keyup",e=>{
+    if(pointer!==xyKeyOwner(e.key))return;
+    e.preventDefault();lift({pointerId:pointer});
+  });
+  pad.addEventListener("blur",()=>{if(isXYKeyOwner())close("Keyboard touch cancelled. Reconnect explicitly.");});
   // Cancellation is not a completed musical tap: discard unsent edges and
   // let host disconnect/watchdog release already delivered owners.
   for(const event of ["pointercancel","lostpointercapture"])pad.addEventListener(event,e=>{if(e.pointerId===pointer)close("Touch cancelled. Reconnect explicitly.");});
