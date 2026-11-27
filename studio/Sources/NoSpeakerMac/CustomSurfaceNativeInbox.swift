@@ -12,7 +12,15 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
     private let diagnosticOnly: Bool
     private var evidence = CustomSurfaceCaptureEvidence()
     private var samples: [CustomSurfaceNativeFrame] = []
-    private var faulted = false
+    public enum Fault: String, Sendable {
+        case invalidFrame = "Invalid or incomplete native contact frame"
+        case overflow = "Native contact FIFO overflow"
+        case unorderedFrame = "Native contact sequence or receipt regressed"
+    }
+    private var fault: Fault?
+    private var peakDepth = 0
+    private var previousSequence: UInt64?
+    private var previousReceipt: Int64?
     private var closed = false
     public init(surface: TouchSurfaceKind, orientation: SurfaceOrientation, notBefore: Int64,
                 diagnosticOnly: Bool = false) {
@@ -21,7 +29,7 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
     }
     public func submit(_ frame: SurfaceTouchFrame) {
         lock.lock(); defer { lock.unlock() }
-        guard !closed, !faulted, frame.surface == surface else { return }
+        guard !closed, fault == nil, frame.surface == surface else { return }
         // A previously admitted callback can still be completing while a
         // new subscription is attached. Never replay it into the new run.
         if let receipt = frame.acquisitionNS, receipt < notBefore { return }
@@ -32,21 +40,33 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
         // Diagnostics never publish contacts or admit MIDI, including after
         // an invalid frame. The ordinary live path still fails closed.
         guard !diagnosticOnly else { return }
-        guard samples.count < 64, let sample else {
-            faulted = true
-            samples.removeAll()
-            return
+        // Detect disorder on the producer side, even when the consumer
+        // is still emitting a previously drained batch.
+        guard let sample else { latch(.invalidFrame); return }
+        guard previousSequence.map({ sample.sequence > $0 }) ?? true,
+              previousReceipt.map({ sample.observedAt > $0 }) ?? true else {
+            latch(.unorderedFrame); return
         }
+        guard samples.count < 64 else { latch(.overflow); return }
+        previousSequence = sample.sequence
+        previousReceipt = sample.observedAt
         samples.append(sample)
+        peakDepth = max(peakDepth, samples.count)
+    }
+    private func latch(_ reason: Fault) {
+        fault = reason
+        samples.removeAll()
     }
     /// Drop all provisional samples when the actual output and emergency
     /// admission are ready. Do not revive an already faulted or closed inbox.
     @discardableResult
     public func begin(at receipt: Int64) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard !closed, !faulted, receipt >= notBefore else { return false }
+        guard !closed, fault == nil, receipt >= notBefore else { return false }
         notBefore = receipt
         evidence = .init()
+        peakDepth = 0
+        previousSequence = nil; previousReceipt = nil
         samples.removeAll(keepingCapacity: true)
         return true
     }
@@ -54,15 +74,19 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
     /// an older drained batch. Check this gate before every live send.
     public var admitsDelivery: Bool {
         lock.lock(); defer { lock.unlock() }
-        return !diagnosticOnly && !closed && !faulted
+        return !diagnosticOnly && !closed && fault == nil
     }
     public func captureEvidence() -> CustomSurfaceCaptureEvidence {
         lock.lock(); defer { lock.unlock() }
         return evidence
     }
+    public func queueEvidence() -> (peak: Int, fault: Fault?) {
+        lock.lock(); defer { lock.unlock() }
+        return (peakDepth, fault)
+    }
     public func drain() -> (samples: [CustomSurfaceNativeFrame], faulted: Bool) {
         lock.lock(); defer { lock.unlock() }
-        let result = (samples, faulted)
+        let result = (samples, fault != nil)
         samples.removeAll(keepingCapacity: true)
         return result
     }

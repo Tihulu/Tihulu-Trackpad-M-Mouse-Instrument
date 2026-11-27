@@ -93,3 +93,24 @@ private func inboxFrame(_ n: Int, surface: TouchSurfaceKind = .trackpad, valid: 
     #expect(inbox.captureEvidence().frames == 1)
 }
 #endif
+
+#if os(macOS)
+@Test func customNativeInboxUnorderedProducerFrameRevokesDrainedBatch() {
+    let inbox = CustomSurfaceNativeInbox(surface: .trackpad, orientation: .horizontal, notBefore: 0)
+    inbox.submit(inboxFrame(2))
+    #expect(inbox.drain().samples.count == 1)
+    inbox.submit(inboxFrame(1))
+    #expect(!inbox.admitsDelivery)
+    #expect(inbox.queueEvidence().fault == .unorderedFrame)
+    #expect(inbox.queueEvidence().peak == 1)
+    #expect(inbox.drain().faulted)
+}
+@Test func customNativeInboxReportsDistinctOverflowAndInvalidFaults() {
+    let full = CustomSurfaceNativeInbox(surface: .trackpad, orientation: .horizontal, notBefore: 0)
+    for n in 1...65 { full.submit(inboxFrame(n)) }
+    #expect(full.queueEvidence().peak == 64 && full.queueEvidence().fault == .overflow)
+    let invalid = CustomSurfaceNativeInbox(surface: .trackpad, orientation: .horizontal, notBefore: 0)
+    invalid.submit(inboxFrame(1, valid: false))
+    #expect(invalid.queueEvidence().peak == 0 && invalid.queueEvidence().fault == .invalidFrame)
+}
+#endif

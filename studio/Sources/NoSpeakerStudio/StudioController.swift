@@ -3635,7 +3635,9 @@ final class StudioController: ObservableObject {
         }
     }
     private func updateCustomPadEvidence(_ inbox: CustomSurfaceNativeInbox) {
-        let report = (customPadEvidenceSurface?.rawValue ?? "Unknown surface") + "\n" + inbox.captureEvidence().report
+        let queue = inbox.queueEvidence()
+        let report = (customPadEvidenceSurface?.rawValue ?? "Unknown surface") + "\n" + inbox.captureEvidence().report +
+            "\nPeak live FIFO depth: \(queue.peak)/64\nInput fault: \(queue.fault?.rawValue ?? "none")"
         if customPadEvidenceReport != report { customPadEvidenceReport = report }
         updateCustomPadMIDITiming()
     }
@@ -3731,7 +3733,7 @@ final class StudioController: ObservableObject {
                 }
                 let batch = inbox.drain()
                 guard !batch.faulted else {
-                    self.stopCustomPad(reason: "Native contact backlog or invalid frame. Restart explicitly.")
+                    self.stopCustomPad(reason: (inbox.queueEvidence().fault?.rawValue ?? "Native input fault") + ". Restart explicitly.")
                     return
                 }
                 for sample in batch.samples {
