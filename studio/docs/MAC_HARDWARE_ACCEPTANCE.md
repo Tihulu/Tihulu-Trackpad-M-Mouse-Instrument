@@ -88,6 +88,23 @@ Drop a short WAV and MP3. Test all four conversion profiles.
 6. Copy the report and verify it contains no typed text, individual keypress history, private recordings, user paths or device serial numbers.
 7. Verify every mode retains the same capture shortcut; inspect MIDI/Touch Instrument separately because cursor suppression alone does not start an instrument.
 
+### Timeout and permission-loss evidence
+
+Record the build SHA, input surface and foreground app alongside each snapshot.
+For each observed interruption, record the following rows as PASS, FAIL or NOT RUN.
+If macOS does not produce the interruption during the session, use NOT RUN.
+
+| Observation | Expected evidence |
+| --- | --- |
+| Cursor captured, before interruption | The foreground cursor stops moving and the snapshot shows **Event tap enabled** and **Pointer captured**. |
+| Tap disabled or Accessibility lost | The desktop cursor moves. A snapshot that shows the tap disabled or Accessibility untrusted also shows **Pointer captured: NO**, even if the disable callback has yet to arrive. |
+| Transient timeout recovered | The timeout counter advances during the same monitor lifetime. The desktop cursor remains free until the next explicit capture command. Record the recovered status and confirm that command works. |
+| Tap remains disabled or monitoring is retired | Record the last tap status and compare **Previous monitor timeouts** when Studio has retired the monitor. Verify cursor movement and explicit re-enablement after restoring permissions where needed. |
+| Concurrent MIDI and haptic playback | Record whether each was active before the interruption and whether it continued through the interruption. Confirm that an explicit **PANIC STOP** still stops output. |
+
+Compare counter deltas within one monitor lifetime. Save separate snapshots
+after explicit re-enablement, which can create a monitor with fresh counters.
+
 ## Release decision
 
 Record PASS/FAIL for every gate. Any private-framework crash, inability to panic-stop, or level-control regression blocks release.
