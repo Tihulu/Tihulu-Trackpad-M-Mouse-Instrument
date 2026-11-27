@@ -114,7 +114,10 @@ public enum HapticVoiceAnalyzer {
         let windowSize = Int(0.025 * sampleRate)
         let hopSize = Int(hopSeconds * sampleRate)
         let order = 18
-        guard input.count >= windowSize else { return [] }
+        guard input.count >= windowSize else {
+            guard input.allSatisfy({ $0.isFinite }) else { throw VoiceAnalysisError.invalidSample }
+            return []
+        }
         let hamming = (0..<windowSize).map {
             0.54 - 0.46 * cos(2 * .pi * Double($0) / Double(windowSize - 1))
         }
@@ -195,6 +198,16 @@ public enum HapticVoiceAnalyzer {
             previous = frame
             offset += hopSize
             onFrameProcessed(frames.count)
+        }
+
+        // The last complete window can leave a partial hop unexamined.
+        // Reject malformed PCM there too, without changing valid DSP output.
+        let processedEnd = offset + windowSize - hopSize
+        if processedEnd < input.count {
+            try cancellation?.check()
+            guard input[processedEnd...].allSatisfy({ $0.isFinite }) else {
+                throw VoiceAnalysisError.invalidSample
+            }
         }
 
         let peak = rmsValues.max() ?? 1
