@@ -3741,17 +3741,17 @@ final class StudioController: ObservableObject {
                     return
                 }
                 for sample in batch.samples {
-                    guard let status = self.customPadHost.frame(opened.id, surface: sample.surface,
-                        contacts: sample.contacts, sequence: sample.sequence, observedAt: sample.observedAt),
-                        status.phase == .live else {
-                        self.stopCustomPad(reason: "Custom Pad input expired or MIDI delivery failed.")
+                    let status = self.customPadHost.frame(opened.id, surface: sample.surface,
+                        contacts: sample.contacts, sequence: sample.sequence, observedAt: sample.observedAt)
+                    guard status?.phase == .live else {
+                        self.stopCustomPad(reason: self.customPadStopReason(status, inbox: inbox))
                         return
                     }
                 }
                 let ports = self.customPadHost.statuses
                 if self.customPadPorts != ports { self.customPadPorts = ports }
                 guard let live = ports.first(where: { $0.id == opened.id && $0.phase == .live }) else {
-                    self.stopCustomPad(reason: "Custom Pad watchdog stopped the session.")
+                    self.stopCustomPad(reason: self.customPadStopReason(ports.first(where: { $0.id == opened.id }), inbox: inbox))
                     return
                 }
                 if live.hasNeutralHandshake && self.customPadStatus != "Ready · play the frozen pad layout · Esc stops" {
@@ -3760,6 +3760,18 @@ final class StudioController: ObservableObject {
             }
         }
     }
+    private func customPadStopReason(_ status: NativeCustomSurfaceMIDIHost.Status?, inbox: CustomSurfaceNativeInbox) -> String {
+        if let fault = inbox.queueEvidence().fault { return fault.rawValue + ". Restart explicitly." }
+        if status?.phase == .identityLost { return "Original MIDI port identity lost. DAW reset and relaunch required." }
+        switch status?.retirement {
+        case .some(.expiredOrInvalid): return "Contact stream expired or invalid. Restart explicitly."
+        case .some(.admissionDenied): return "Performance admission revoked. Restart explicitly."
+        case .some(.sendFailed): return "Local MIDI send failed. Check recovery status."
+        case .some(.stopped): return "Custom Pad stopped."
+        case .none: return "Custom Pad session unavailable. Restart explicitly."
+        }
+    }
+
     func stopCustomPad(reason: String = "Custom Pad stopped", refresh: Bool = true) {
         captureMonitor?.setCustomPadEmergencyArmed(false)
         customPadTask?.cancel(); customPadTask = nil

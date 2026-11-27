@@ -56,13 +56,13 @@ struct CustomSurfacePadEditor:View {
     }
     var body:some View {
         VStack(alignment:.leading,spacing:8) {
+            Picker("Custom Pad surface",selection:$surface){
+                ForEach(Layout.Surface.allCases,id:\.self){Text($0.rawValue).tag($0)}
+            }
             performancePanel
             DisclosureGroup("Custom pad designer · offline draft",isExpanded:$expanded) {
             VStack(alignment:.leading,spacing:8) {
                 Text("Edit independent surface drafts, then explicitly save or load the selected surface. Saved layouts are offline designs, not active performance routes.").font(.caption).foregroundStyle(.secondary)
-                Picker("Surface",selection:$surface){
-                    ForEach(Layout.Surface.allCases,id:\.self){Text($0.rawValue).tag($0)}
-                }
                 HStack {
                     Stepper("Columns \(columns)",value:$columns,in:1...16)
                     if surface != .touchBar {Stepper("Rows \(rows)",value:$rows,in:1...16)}
@@ -247,7 +247,9 @@ struct CustomSurfacePadEditor:View {
                     Text("Arming explicitly enables the global Escape emergency monitor without pointer capture. Existing Accessibility/Input Monitoring permissions and a fresh physical lift are required. No automatic restart.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text("Create or load a compatible Trackpad or Magic Mouse draft first.").font(.caption)
+                    Text(surface == .trackpad || surface == .magicMouse ?
+                         "Create or load a compatible draft first." : "This surface supports offline layout editing only.").font(.caption)
+                    Button("Open layout designer") { expanded=true }
                 }
                 if studio.customPadRunID == nil && !studio.customPadDiagnosticRunning && studio.customPadPorts.isEmpty && (surface == .trackpad || surface == .magicMouse) {
                     Button("Run 20-second input diagnostic") { studio.startCustomPadDiagnostic(surface) }

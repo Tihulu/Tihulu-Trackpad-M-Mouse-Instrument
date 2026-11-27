@@ -239,3 +239,22 @@ private let hostContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5, 
     #expect(host.close(second.id)?.phase == .closed)
     #expect(host.timingEvidence(first.id) == nil && host.timingEvidence(second.id) != nil)
 }
+
+@Test func customSurfaceHostActivityNeverAppearsLiveWithUnconfirmedCleanup() throws {
+    var now: Int64 = 0
+    var failOff = false
+    let host = CustomSurfaceEndpointHost(backend: .init(create: { name in
+        .init(endpoint: .init(handle: 12, uniqueID: 42, name: name), succeeded: true)
+    }, owns: { _ in true }, send: { _, bytes in !failOff || bytes[0] != 0x82 },
+       dispose: { _ in true }))
+    let opened = try #require(host.open(plan: try hostPlan(), clock: { now }, admitsLive: { true }))
+    #expect(opened.activePadIDs.isEmpty)
+    _ = host.frame(opened.id, surface: .trackpad, contacts: [], sequence: 1, observedAt: 0)
+    now = 1
+    let live = try #require(host.frame(opened.id, surface: .trackpad, contacts: [hostContact], sequence: 2, observedAt: 1))
+    #expect(live.activePadIDs == Set(["note"]))
+    failOff = true
+    let stopped = try #require(host.close(opened.id))
+    #expect(stopped.phase == .cleanupPending && stopped.activePadIDs.isEmpty)
+    #expect(!stopped.outstanding.isEmpty)
+}
