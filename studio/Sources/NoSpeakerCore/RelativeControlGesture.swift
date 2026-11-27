@@ -5,12 +5,38 @@ import Foundation
 public struct RelativeControlSettings: Codable, Equatable, Sendable {
     public var reference: Double
     public var gain: Double
-    public init(reference: Double, gain: Double = 1) {
-        self.reference = reference; self.gain = gain
+    /// nil decodes legacy manual settings without changing their behavior.
+    public var referenceSource: RelativeReferenceSource?
+    public init(reference: Double, gain: Double = 1, referenceSource: RelativeReferenceSource? = nil) {
+        self.reference = reference; self.gain = gain; self.referenceSource = referenceSource
     }
+    public var effectiveSource: RelativeReferenceSource { referenceSource ?? .manual }
     public var isValid: Bool {
         reference.isFinite && (0...1).contains(reference) &&
         gain.isFinite && (0.25...4).contains(gain)
+    }
+}
+
+public enum RelativeReferenceSource: String, Codable, Equatable, Sendable {
+    case manual, lastDelivered, receiverConfirmed
+}
+
+/// Host-supplied evidence, not an automatic MIDI/DAW query. The adapter
+/// must prove destination endpoint identity and actual delivery or feedback
+/// before constructing this value. The router checks session/route scope.
+public struct RelativeReferenceEvidence: Equatable, Sendable {
+    public let source: RelativeReferenceSource
+    public let value: Int
+    public let observedAt: Double
+    public static let maximumAge: Double = 0.25
+    public init(source: RelativeReferenceSource, value: Int, observedAt: Double) {
+        self.source = source; self.value = value; self.observedAt = observedAt
+    }
+    public func permits(source expected: RelativeReferenceSource, lower: Int, upper: Int, now: Double) -> Bool {
+        source != .manual && source == expected && lower >= 0 && upper <= 16383 &&
+        lower <= upper && value >= lower && value <= upper &&
+        observedAt.isFinite && observedAt >= 0 && now.isFinite &&
+        now >= observedAt && now - observedAt <= Self.maximumAge
     }
 }
 

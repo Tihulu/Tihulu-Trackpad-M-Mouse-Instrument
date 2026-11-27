@@ -137,6 +137,45 @@ import Testing
     #expect(router.ingest(.init(session: b, signal: .x, value: 0.2, sequence: 1, timestamp: 1), now: 1).isEmpty)
     #expect(router.releaseSignal(session: a, signal: .x).isEmpty)
     #expect(router.ingest(.init(session: b, signal: .x, value: 0.4, sequence: 2, timestamp: 2), now: 2).isEmpty)
-    #expect(router.ingest(.init(session: b, signal: .x, value: 0.5, sequence: 3, timestamp: 3), now: 3) == [.init(target, value: 77)])
+    #expect(router.ingest(.init(session: b, signal: .x, value: 0.5, sequence: 3, timestamp: 3), now: 3).isEmpty)
+    #expect(router.releaseSignal(session: b, signal: .x).isEmpty)
+    #expect(router.ingest(.init(session: b, signal: .x, value: 0.4, sequence: 4, timestamp: 4), now: 4).isEmpty)
+    #expect(router.ingest(.init(session: b, signal: .x, value: 0.5, sequence: 5, timestamp: 5), now: 5) == [.init(target, value: 77)])
     #expect(router.panic() == [.init(target, value: 0)])
+}
+
+@Test func relativeReferenceEvidenceRejectsWrongSourceTimeAndRange() {
+    let sample = RelativeReferenceEvidence(source: .receiverConfirmed, value: 90, observedAt: 1)
+    #expect(sample.permits(source: .receiverConfirmed, lower: 0, upper: 127, now: 1.25))
+    #expect(!sample.permits(source: .receiverConfirmed, lower: 0, upper: 127, now: 1.251))
+    #expect(!sample.permits(source: .receiverConfirmed, lower: 0, upper: 127, now: 0.99))
+    #expect(!sample.permits(source: .receiverConfirmed, lower: 0, upper: 80, now: 1))
+    #expect(!sample.permits(source: .lastDelivered, lower: 0, upper: 127, now: 1))
+    #expect(!sample.permits(source: .receiverConfirmed, lower: 0, upper: 127, now: .nan))
+}
+
+@Test func relativeReferenceRequiresFreshScopedEvidenceAndNewClutch() throws {
+    let target = SensorDestination(.controlChange, number: 74)
+    let route = SensorMapping(id: "feedback", source: .magicMouse, signal: .x,
+        destination: target, response: .init(relative: .init(reference: 0.5, referenceSource: .receiverConfirmed)))
+    var router = SensorRouter()
+    try router.configure([route])
+    let id = try router.connect(.magicMouse, now: 0)
+    func event(_ x: Double, _ sequence: UInt64, _ time: Double) -> SensorEvent {
+        .init(session: id, signal: .x, value: x, sequence: sequence, timestamp: time)
+    }
+    func evidence(_ time: Double) -> RelativeReferenceEvidence {
+        .init(source: .receiverConfirmed, value: 90, observedAt: time)
+    }
+    #expect(router.ingest(event(0.5, 1, 1), now: 1).isEmpty)
+    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1), now: 1))
+    #expect(router.releaseSignal(session: id, signal: .x).isEmpty)
+    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: .init(.controlChange, number: 71), evidence: evidence(2), now: 2))
+    #expect(router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(2), now: 2))
+    #expect(router.ingest(event(0.5, 2, 2), now: 2).isEmpty)
+    #expect(router.ingest(event(0.6, 3, 2.1), now: 2.1) == [.init(target, value: 103)])
+    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(2.1), now: 2.1))
+    #expect(router.releaseSignal(session: id, signal: .x) == [.init(target, value: 0)])
+    #expect(router.ingest(event(0.5, 4, 3), now: 3).isEmpty)
+    #expect(router.ingest(event(0.8, 5, 3.1), now: 3.1).isEmpty)
 }

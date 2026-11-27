@@ -23,7 +23,7 @@ public struct ContinuousResponse: Codable, Equatable, Sendable {
         (0...1).contains(minimum) && (0...1).contains(maximum) && minimum <= maximum &&
         (0...250).contains(smoothingMS) &&
         (release.map { $0.isFinite && (0...1).contains($0) } ?? true) &&
-        (relative.map { $0.isValid && $0.reference >= minimum && $0.reference <= maximum } ?? true)
+        (relative.map { $0.isValid && ($0.effectiveSource != .manual || ($0.reference >= minimum && $0.reference <= maximum)) } ?? true)
     }
     public static func isContinuous(_ target: SensorDestination) -> Bool {
         target.kind == .controlChange || target.kind == .pitchBend

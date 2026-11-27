@@ -34,16 +34,32 @@ struct ContinuousResponsePanel: View {
                             Text("Relative").tag(true)
                         }.pickerStyle(.segmented)
                         if let relative = settings.relative {
-                            Text("Manual start: \(ContinuousResponse.wireValue(relative.reference, target: target))")
-                                .font(.caption.monospacedDigit())
-                            Slider(value: Binding(get: { response?.relative?.reference ?? 0 }, set: { value in
-                                if var next = response { next.relative?.reference = value; response = next }
-                            }), in: 0...1)
+                            if relative.effectiveSource == .manual {
+                                Text("Manual start: \(ContinuousResponse.wireValue(relative.reference, target: target))")
+                                    .font(.caption.monospacedDigit())
+                                Slider(value: Binding(get: { response?.relative?.reference ?? 0 }, set: { value in
+                                    if var next = response { next.relative?.reference = value; response = next }
+                                }), in: 0...1)
+                            } else {
+                                Text(relative.effectiveSource == .receiverConfirmed ? "Receiver-confirmed reference required" : "Last delivered reference required")
+                                    .font(.caption).foregroundStyle(.orange)
+                                Text("Live reference provider is not connected in this editor. This route remains silent without verified evidence.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Button("Use manual reference") {
+                                    if var next = response {
+                                        next.relative?.referenceSource = .manual
+                                        if let reference = next.relative?.reference {
+                                            next.relative?.reference = min(next.maximum, max(next.minimum, reference))
+                                        }
+                                        response = next
+                                    }
+                                }
+                            }
                             Text("Movement gain: \(relative.gain, specifier: "%.2f")×").font(.caption)
                             Slider(value: Binding(get: { response?.relative?.gain ?? 1 }, set: { value in
                                 if var next = response { next.relative?.gain = value; response = next }
                             }), in: 0.25...4, step: 0.25)
-                            Text("First contact anchors without sending MIDI. Move relative to that point. Manual reference, not DAW feedback. Continuous inputs and exclusive targets only. Existing release policy still applies.")
+                            Text("First contact anchors without sending MIDI. Move relative to that point. Manual reference is not DAW feedback. Continuous inputs and exclusive targets only. Existing release policy still applies.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }

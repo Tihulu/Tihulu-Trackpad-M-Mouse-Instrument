@@ -237,6 +237,9 @@ public struct SensorRouter: Sendable {
     private var sessions: [UUID: Session] = [:]
     private var contributions: [Owner: Contribution] = [:]
     private var relativeGestures: [Owner: RelativeControlGesture] = [:]
+    private var relativeReferences: [Owner: RelativeReferenceEvidence] = [:]
+    // An unsuccessful clutch requires a real release before retrying.
+    private var relativeBlocked: Set<Owner> = []
     private var emitted: [SensorDestination: Int] = [:]
     private var releaseValues: [SensorDestination: Int] = [:]
     private var sharedSwitches: Set<SensorDestination> = []
@@ -266,6 +269,8 @@ public struct SensorRouter: Sendable {
         sharedSwitches = switches.union(pedalSwitches)
         pedalPressed.removeAll()
         relativeGestures.removeAll()
+        relativeReferences.removeAll()
+        relativeBlocked.removeAll()
     }
 
     public mutating func connect(_ source: SensorSource, now: Double) throws -> UUID {
@@ -281,6 +286,25 @@ public struct SensorRouter: Sendable {
         guard var session = sessions[id], now.isFinite, now >= session.lastSeen else { return }
         session.lastSeen = now
         sessions[id] = session
+    }
+
+    /// Accept only explicitly attributed host evidence before a clutch.
+    /// Never infer feedback from router output or untrusted remote data.
+    @discardableResult
+    public mutating func provideRelativeReference(session id: UUID, mappingID: String,
+        destination: SensorDestination, evidence: RelativeReferenceEvidence, now: Double) -> Bool {
+        guard let session = sessions[id], now.isFinite, now >= session.lastSeen,
+              let mapping = mappings.first(where: { $0.id == mappingID && $0.source == session.source }),
+              mapping.destination == destination, let response = mapping.response,
+              let settings = response.relative else { return false }
+        let owner = Owner(session: id, mapping: mappingID)
+        guard relativeGestures[owner] == nil, !relativeBlocked.contains(owner),
+              evidence.permits(source: settings.effectiveSource,
+                lower: ContinuousResponse.wireValue(response.minimum, target: destination),
+                upper: ContinuousResponse.wireValue(response.maximum, target: destination), now: now),
+              relativeReferences[owner].map({ evidence.observedAt >= $0.observedAt }) ?? true else { return false }
+        relativeReferences[owner] = evidence
+        return true
     }
 
     public mutating func ingest(_ event: SensorEvent, now: Double) -> [SensorCommand] {
@@ -333,13 +357,33 @@ public struct SensorRouter: Sendable {
                     } else {
                         // Same source kind can have multiple sessions. Never
                         // let another session clutch an already owned lane.
-                        guard !relativeGestures.keys.contains(where: { $0.mapping == owner.mapping }) else { continue }
-                        relativeGestures[owner] = RelativeControlGesture(
-                            input: normalized, timestamp: event.timestamp,
-                            reference: ContinuousResponse.wireValue(relative.reference, target: mapping.destination),
-                            lower: ContinuousResponse.wireValue(response.minimum, target: mapping.destination),
-                            upper: ContinuousResponse.wireValue(response.maximum, target: mapping.destination),
-                            gain: relative.gain, smoothingMS: response.smoothingMS)
+                        guard !relativeBlocked.contains(owner) else { continue }
+                        guard !relativeGestures.keys.contains(where: { $0.mapping == owner.mapping }) else {
+                            relativeReferences.removeValue(forKey: owner)
+                            relativeBlocked.insert(owner)
+                            continue
+                        }
+                        let lower = ContinuousResponse.wireValue(response.minimum, target: mapping.destination)
+                        let upper = ContinuousResponse.wireValue(response.maximum, target: mapping.destination)
+                        let reference: Int
+                        if relative.effectiveSource == .manual {
+                            reference = ContinuousResponse.wireValue(relative.reference, target: mapping.destination)
+                        } else {
+                            guard let evidence = relativeReferences.removeValue(forKey: owner),
+                                  evidence.permits(source: relative.effectiveSource, lower: lower, upper: upper, now: now),
+                                  evidence.observedAt <= event.timestamp else {
+                                relativeBlocked.insert(owner)
+                                continue
+                            }
+                            reference = evidence.value
+                        }
+                        guard let gesture = RelativeControlGesture(
+                            input: normalized, timestamp: event.timestamp, reference: reference,
+                            lower: lower, upper: upper, gain: relative.gain, smoothingMS: response.smoothingMS) else {
+                            relativeBlocked.insert(owner)
+                            continue
+                        }
+                        relativeGestures[owner] = gesture
                         continue // anchor only; touching does not emit a value
                     }
                 } else {
@@ -438,6 +482,8 @@ public struct SensorRouter: Sendable {
         for id in removed { sessions.removeValue(forKey:id) }
         pedalPressed = pedalPressed.filter { !removed.contains($0.session) }
         relativeGestures = relativeGestures.filter { !removed.contains($0.key.session) }
+        relativeReferences = relativeReferences.filter { !removed.contains($0.key.session) }
+        relativeBlocked = relativeBlocked.filter { !removed.contains($0.session) }
         let departing = contributions.keys.filter { removed.contains($0.session) }
         for owner in departing { removeContribution(owner) }
         return reconcile()
@@ -456,11 +502,15 @@ public struct SensorRouter: Sendable {
         if !contributions.isEmpty { needsReconcile = true }
         contributions.removeAll()
         relativeGestures.removeAll()
+        relativeReferences.removeAll()
+        relativeBlocked.removeAll()
         return reconcile()
     }
 
     private mutating func removeContribution(_ owner: Owner) {
         relativeGestures.removeValue(forKey: owner)
+        relativeReferences.removeValue(forKey: owner)
+        relativeBlocked.remove(owner)
         if contributions.removeValue(forKey:owner) != nil { needsReconcile = true }
     }
 
