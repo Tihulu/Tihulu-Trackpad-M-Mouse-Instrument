@@ -1901,3 +1901,33 @@ test("MUSIC-WEB stale socket callbacks cannot admit a replacement connection",()
   assert.deepEqual(fresh.frames,[{version:7,sequence:1,kind:"capabilities"}]);
   a.elements.disconnect.emit("click");assert.equal(fresh.closed,true);
 });
+
+test("MUSIC-WEB cancelled queued drum onset never plays after another family ACK",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.drumEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.drum0.emit("pointerdown",drumEvent(2));
+  a.elements.drum0.emit("pointercancel",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+  a.step(250);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB lost capture on queued piano sustain never replays an attack",()=>{
+  const a=setup();a.elements.drumEnable.emit("click");a.elements.pianoEnable.emit("click");
+  a.elements.drum0.emit("pointerdown",drumEvent(1));
+  a.elements.pianoSustain.emit("pointerdown",drumEvent(2));
+  a.elements.pianoSustain.emit("lostpointercapture",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB cancelled queued held pedal fails closed without replay",()=>{
+  const a=setup();setHoldPedal(a,4);a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.pedalToggle4.emit("pointerdown",drumEvent(2));
+  a.elements.pedalToggle4.emit("pointercancel",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB cancellation of already delivered drum preserves other owners",()=>{
+  const a=setup();a.elements.drumEnable.emit("click");
+  a.elements.drum0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.drum1.emit("pointerdown",drumEvent(2));a.step();a.ack();
+  a.elements.drum0.emit("pointercancel",drumEvent(1));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,2);a.ack();assert.equal(a.socket.closed,undefined);
+});

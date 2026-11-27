@@ -1501,7 +1501,20 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(drumOwners.size>=16){close("Too many drum contacts. Reconnect explicitly.");return;}
     drumOwners.set(owner,index);drumChanged();
   }
+  // A cancelled contact must not replay a rising edge queued behind another ACK.
+  // Delivered notes keep normal scoped release; close only on ambiguous queued attacks.
+  function queuedAttack(sent,queue,bits,readMask){
+    for(const edge of queue){const next=readMask(edge);if((next&~sent&bits)!==0)return true;sent=next;}
+    return false;
+  }
   function drumUp(owner){if(drumOwners.delete(owner))drumChanged();}
+  function cancelDrum(owner){
+    const index=drumOwners.get(owner);
+    if(index!==undefined&&queuedAttack(drumSent,drumQueue,1<<index,e=>e.mask)){
+      close("Queued drum contact cancelled. Reconnect explicitly.");return;
+    }
+    drumUp(owner);
+  }
   function sendDrum(mask){send("drumPads",{mask});}
   const pianoButtons=Array.from({length:13},(_,i)=>get("piano"+i));
   const pianoPedal=get("pianoSustain"),pianoEnable=get("pianoEnable"),pianoRelease=get("pianoRelease"),pianoStatus=get("pianoStatus");
@@ -2041,7 +2054,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{close("Drum pointer capture failed.");return;}
       drumDown("p"+e.pointerId,index);
     });
-    for(const name of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(name,e=>drumUp("p"+e.pointerId));
+    b.addEventListener("pointerup",e=>drumUp("p"+e.pointerId));
+    for(const name of ["pointercancel","lostpointercapture"])b.addEventListener(name,e=>cancelDrum("p"+e.pointerId));
     b.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();if(!e.repeat)drumDown("k"+index,index);}});
     b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();drumUp("k"+index);}});
     b.addEventListener("blur",()=>drumUp("k"+index));
@@ -2087,8 +2101,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(i!==13)b.addEventListener("pointermove",moveStrip);
     b.addEventListener("pointerup",e=>pianoUp("p"+e.pointerId));
     for(const name of ["pointercancel","lostpointercapture"])b.addEventListener(name,e=>{
-      if(strips&&pianoOwners.has("p"+e.pointerId)){close("Note contact cancelled. Reconnect explicitly.");return;}
-      pianoUp("p"+e.pointerId);
+      const owner="p"+e.pointerId,index=pianoOwners.get(owner);
+      if(index!==undefined&&(strips||queuedAttack(pianoSent,pianoQueue,1<<index,e=>e.mask))){
+        close("Note contact cancelled. Reconnect explicitly.");return;
+      }
+      pianoUp(owner);
     });
     b.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();if(!e.repeat)pianoDown("k"+i,index());}});
     b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();pianoUp("k"+i);}});
@@ -2117,7 +2134,14 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       try{b.setPointerCapture(e.pointerId);}catch{close("Pedal pointer capture failed.");return;}
       pedalHoldDown(i,"p"+e.pointerId);
     });
-    for(const event of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(event,e=>pedalHoldUp(i,"p"+e.pointerId));
+    b.addEventListener("pointerup",e=>pedalHoldUp(i,"p"+e.pointerId));
+    for(const event of ["pointercancel","lostpointercapture"])b.addEventListener(event,e=>{
+      const owner="p"+e.pointerId;
+      if(pedalHoldOwners.get(owner)===i&&queuedAttack(pedalSentMask,pedalQueue,1<<i,edge=>edge.snapshot.mask)){
+        close("Queued pedal contact cancelled. Reconnect explicitly.");return;
+      }
+      pedalHoldUp(i,owner);
+    });
     b.addEventListener("keydown",e=>{
       if(isHoldPedal(i)&&(e.key===" "||e.key==="Enter")){
         e.preventDefault();if(!e.repeat)pedalHoldDown(i,"k"+i);
