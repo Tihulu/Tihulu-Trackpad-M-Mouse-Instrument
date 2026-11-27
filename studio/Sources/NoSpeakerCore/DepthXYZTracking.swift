@@ -43,10 +43,13 @@ public struct DepthXYZVolume: Codable, Equatable, Sendable {
     }
 
     public var isValid: Bool {
-        (0...1).contains(left) && (0...1).contains(right) && right - left >= 0.05 &&
-        (0...1).contains(bottom) && (0...1).contains(top) && top - bottom >= 0.05 &&
+        // Decimal UI steps can land one or two floating-point ULPs below
+        // the minimum spacing. Permit round-off only; retain strict bounds.
+        let epsilon = 1e-12
+        return (0...1).contains(left) && (0...1).contains(right) && right - left >= 0.05 - epsilon &&
+        (0...1).contains(bottom) && (0...1).contains(top) && top - bottom >= 0.05 - epsilon &&
         (0.1...3).contains(nearMeters) && (0.1...3).contains(farMeters) &&
-        farMeters - nearMeters >= 0.1
+        farMeters - nearMeters >= 0.1 - epsilon
     }
 
     public func normalize(_ point: DepthXYZPoint) -> DepthXYZLevels? {
@@ -101,6 +104,18 @@ public struct DepthXYZTracking: Sendable {
             return nil
         }
         let previous = candidate
+        // A delayed watchdog must not allow a buffered measurement from
+        // before the expired candidate's deadline to renew that candidate.
+        if let previous, receipt - previous >= MobileAirSendGate.freshNS {
+            let deadline = previous + MobileAirSendGate.freshNS
+            guard stamp >= deadline else {
+                reset()
+                return nil
+            }
+            observed = stamp
+            candidate = stamp
+            return nil
+        }
         observed = stamp
         candidate = stamp
         guard let previous, stamp - previous < MobileAirSendGate.freshNS else { return nil }

@@ -191,13 +191,21 @@ public final class NativeMIDIPlayback {
         // queue; OS scheduling can still delay delivery or actor resumption.
         _=try player.begin(now:Self.now())
         while player.state == .playing {
-            // Check the bound source even during initial/trailing rests.
-            guard gate.validate() else {
-                player.abort { gate.send($0) }
+            if stopRequested || Task.isCancelled {
+                // Preserve identity failure on cancellation; the final
+                // check below also covers a stop with no owned notes.
+                player.stop { gate.send($0) }
                 break
             }
-            if stopRequested || Task.isCancelled {
-                player.stop { gate.send($0) }
+            // Do not put an extra blocking property query in front of a
+            // due or imminent edge. Onsets authorize immediately before
+            // sending; offs independently validate; the terminal check
+            // below covers silent completion. During longer waits retain
+            // periodic identity probes, including initial/trailing rests.
+            if let deadline=player.nextDeadline,
+               Self.shouldProbeIdentity(deadline:deadline,current:Self.now()),
+               !gate.validate() {
+                player.abort { gate.send($0) }
                 break
             }
             let cancelled=stopRequested
@@ -362,6 +370,12 @@ public final class NativeMIDIPlayback {
               maximumSoundingWakeLatenessNS:maximumSoundingWakeLatenessNS,
               maximumAwaitingEventWakeLatenessNS:maximumAwaitingEventWakeLatenessNS,
               maximumTrailingRestWakeLatenessNS:maximumTrailingRestWakeLatenessNS)
+    }
+
+    // Avoid redundant polling IPC inside the final planned wake interval.
+    // Never use this decision as authorization for a native send.
+    nonisolated static func shouldProbeIdentity(deadline:UInt64,current:UInt64) -> Bool {
+        deadline>current && deadline-current>20_000_000
     }
 
     // Nil means a due deadline, not permission to sleep or yield.

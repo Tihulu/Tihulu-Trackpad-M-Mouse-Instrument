@@ -54,6 +54,12 @@ public struct CustomSurfacePadLayout: Codable, Equatable, Sendable {
         public func editingGeometry(label:String,x:Int,y:Int,width:Int,height:Int)->Self {
             .init(id:id,label:label,x:x,y:y,width:width,height:height,assignment:assignment)
         }
+        /// Field edits are staged until explicitly applied. An enabled
+        /// replacement toggle also requires a decision, even if its proposed
+        /// assignment is invalid or happens to equal the old assignment.
+        public func hasStagedEdit(label:String,x:Int,y:Int,width:Int,height:Int,replacingAssignment:Bool)->Bool {
+            replacingAssignment || self != editingGeometry(label:label,x:x,y:y,width:width,height:height)
+        }
         fileprivate func overlaps(_ other:Self)->Bool {
             x<other.x+other.width && other.x<x+width && y<other.y+other.height && other.y<y+height
         }
@@ -75,13 +81,55 @@ public struct CustomSurfacePadLayout: Codable, Equatable, Sendable {
         }
         return true
     }
+    public enum EditFailure: Error, Equatable, Sendable {
+        case unknownPad
+        case invalidLabel
+        case invalidGeometry
+        case invalidAssignment
+        case touchBarGeometry
+        case overlaps(String)
+    }
+    /// Deterministic, non-mutating feedback for an editor. Keep the same
+    /// exact bounds as layout validation and do not silently move neighbors.
+    public func replacementFailure(_ pad:Pad)->EditFailure? {
+        guard pads.contains(where:{$0.id==pad.id}) else{return .unknownPad}
+        guard pad.label.utf8.count<=64,
+              !pad.label.unicodeScalars.contains(where:{CharacterSet.controlCharacters.contains($0)}) else{return .invalidLabel}
+        guard (0..<10000).contains(pad.x),(0..<10000).contains(pad.y),
+              (1...10000).contains(pad.width),(1...10000).contains(pad.height),
+              pad.width<=10000-pad.x,pad.height<=10000-pad.y else{return .invalidGeometry}
+        guard pad.assignment.isValid else{return .invalidAssignment}
+        guard surface != .touchBar || (pad.y==0 && pad.height==10000) else{return .touchBarGeometry}
+        if let other=pads.first(where:{$0.id != pad.id && pad.overlaps($0)}) {
+            return .overlaps(other.id)
+        }
+        return nil
+    }
     /// Validated edits never mutate the original or silently resolve overlaps.
     public func replacing(_ pad:Pad)->Self? {
-        guard let index=pads.firstIndex(where:{$0.id==pad.id}) else{return nil}
+        guard replacementFailure(pad)==nil,
+              let index=pads.firstIndex(where:{$0.id==pad.id}) else{return nil}
         var next=pads;next[index]=pad
         return Self(surface:surface,pads:next)
     }
     public func adding(_ pad:Pad)->Self? {Self(surface:surface,pads:pads+[pad])}
+    /// Find a deterministic empty rectangle using exact integer boundaries.
+    /// No existing region is moved, resized or overwritten. Touch Bar
+    /// remains one dimensional; all candidates must span its full height.
+    public func addingInGap(id:String,label:String,width:Int,height:Int,assignment:Assignment)->Self? {
+        guard pads.count<64,(1...10000).contains(width),(1...10000).contains(height),
+              surface != .touchBar || height==10000 else{return nil}
+        let xs=Set([0]+pads.map{$0.x+$0.width}).sorted()
+        let ys=surface == .touchBar ? [0]:Set([0]+pads.map{$0.y+$0.height}).sorted()
+        for y in ys where y<=10000-height {
+            for x in xs where x<=10000-width {
+                let pad=Pad(id:id,label:label,x:x,y:y,width:width,height:height,assignment:assignment)
+                guard pad.isValid else{return nil}
+                if !pads.contains(where:{pad.overlaps($0)}) {return adding(pad)}
+            }
+        }
+        return nil
+    }
     public func removing(id:String)->Self? {
         guard pads.contains(where:{$0.id==id}) else{return nil}
         return Self(surface:surface,pads:pads.filter{$0.id != id})
@@ -113,7 +161,13 @@ public struct CustomSurfacePadLayout: Codable, Equatable, Sendable {
     /// own axis direction. Right/bottom edge belongs to the last cell.
     public func pad(x:Double,y:Double)->Pad? {
         guard x.isFinite,y.isFinite,(0...1).contains(x),(0...1).contains(y) else{return nil}
-        let px=min(9999,Int(x*10000)),py=min(9999,Int(y*10000))
-        return pads.first{px >= $0.x && px < $0.x+$0.width && py >= $0.y && py < $0.y+$0.height}
+        // Compare against normalized boundaries directly. Multiplying a
+        // decimal boundary by 10000 and truncating can move it one cell left.
+        func contains(_ value:Double,_ start:Int,_ size:Int)->Bool {
+            let end=start+size
+            return value>=Double(start)/10000 &&
+                (value<Double(end)/10000 || (end==10000 && value==1))
+        }
+        return pads.first{contains(x,$0.x,$0.width) && contains(y,$0.y,$0.height)}
     }
 }

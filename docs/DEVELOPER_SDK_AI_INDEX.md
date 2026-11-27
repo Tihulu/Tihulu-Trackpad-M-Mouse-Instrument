@@ -160,6 +160,8 @@ The SDK product is independent of the existing NoSpeakerStudio app. The installe
 
 ## AI retrieval / vector index
 
+For scoped engine/app/docs indices, hybrid ranking, revision-verified context envelopes and integration examples, see [Local RAG SDK](LOCAL_RAG_SDK.md). These are developer tools, not a live Studio feature or a trained model.
+
 Run from the repository root:
 
 ```sh

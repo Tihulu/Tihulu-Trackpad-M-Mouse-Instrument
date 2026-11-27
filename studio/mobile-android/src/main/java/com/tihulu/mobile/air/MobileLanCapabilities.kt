@@ -9,6 +9,8 @@ object MobileLanCapabilities {
         fun xyzLane(mask: Int): AirWireLane.XYZ? =
             if (piano == 0 && mask in 1..7 && (mask and pedals) == mask) AirWireLane.XYZ(mask, pedals) else null
         fun keysLane():AirWireLane.Keys?=if(piano>0&&pedals==0)AirWireLane.Keys(piano) else null
+        /** The independent touch piano must never adopt a Hybrid lane. */
+        fun touchPianoMask():Int? = piano.takeIf { keysLane()!=null }
         fun helperLane(index:Int):AirWireLane.Helper?=if(piano==0&&index in 0..2&&(pedals and (1 shl index))!=0)AirWireLane.Helper(index,pedals) else null
     }
     fun parseSingleFamily(input:String):Manifest? = parse(input,false)

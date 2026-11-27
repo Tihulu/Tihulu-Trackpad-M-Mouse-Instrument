@@ -1,9 +1,21 @@
-# TIHULU Universal Instrument Studio — Master development plan
+# Tihulu Instrument — Master development plan
 
-Status: design and development backlog, not a claim that all features are implemented. Existing app and repository name remain Tihulu Trackpad & M. Mouse Instrument. User communication in Turkish; repository, UI and code in English, except the approved Turkish spoken greeting. Based on os6/nospeaker (Cody Collier, MIT). Preserve attribution and third-party licenses.
+Status: design and development backlog, not a claim that all features are implemented. Product name approved by the maintainer: **Tihulu Instrument**. The previous name, Tihulu Trackpad & M. Mouse Instrument, remains a historical/compatibility name for existing releases and install paths. The GitHub repository slug is unchanged. User communication in Turkish; repository, UI and code in English, except the approved Turkish spoken greeting. Based on os6/nospeaker (Cody Collier, MIT). Preserve attribution and third-party licenses.
 
 ## 1. Product vision
 A local-first, modular musical environment that lets musicians invent new instruments from their available hardware, not merely use a catalog of presets. Native macOS remains the host. Trackpad, Magic Mouse, Touch Bar, lid angle, camera, microphone, phones, tablets and external MIDI/OSC controllers are independent optional sources. Hardware availability is detected, never assumed. UI navigation never owns a running session. The same engine supports a simple ready-to-play mode and an advanced instrument builder; all idle modules stay off.
+
+### Product identity and community mission (approved 2026-11-27)
+Tihulu Instrument is the umbrella name for the full open-source musical platform, not just two touch devices. The project aims to make creative music accessible to beginners and professionals, extend equipment people already own (including keyboards and organs) with microtonal tuning and expressive sound control, support experimental sound design and DAWs such as Logic Pro, and bring people together through collaborative jam sessions. Preserve local-first operation, MIT attribution, accessible UI, and extensibility for musicians, educators and developers. These are product goals, not claims of completed capabilities or established community adoption.
+
+### Branding migration and release gates
+- [x] Adopt the exact public product name **Tihulu Instrument** in the master plan and agent instructions.
+- [x] Apply the new name to draft Studio window, About and error alert titles, and the preview bundle display name (**Tihulu Instrument Preview**); update the preview verification expectation. Native acceptance is still required.
+- [ ] Inventory remaining user-visible labels, mobile/web companions, icons, documentation, installer/uninstaller text and release artifacts; use one consistent product identity while preserving historical release notes and upstream attribution.
+- [ ] Plan compatible transition of app filenames, DMG names, CLI aliases and update/download links before changing them; detect existing installations and avoid duplicates, destructive replacement or unintended launch.
+- [ ] Preserve existing stable/preview bundle identifiers, internal executable/package names, preferences, preset schemas, CoreMIDI endpoint identities and saved Logic/DAW routing unless a separately reviewed migration is required. No repository rename or identifier migration is authorized by this branding decision.
+- [ ] Verify clean install, upgrade from the previous name, rollback, uninstall, signing/notarization, permission prompts, settings and preset retention, MIDI/DAW routing and macOS/iOS/Android/web display consistency before publication.
+- [ ] Keep the current released stable artifact unchanged; do not automatically merge, install, publish, or alter old releases. Record verified evidence and unresolved migration risks.
 
 ## 2. Evidence and immediate baseline
 - Published v0.2.3 is the rollback reference, not the new feature version. Main at inspection: c504a8430e1a6d55573c8cd9f10f6a7465d3cbc6.
@@ -74,3 +86,15 @@ The additive [Expressive Controls plan](EXPRESSIVE_CONTROLS_PLAN.md) specifies r
 
 ## 14. Acceptance and work rules
 Each phase: inspect exact HEAD and current evidence, small branch, tests, draft PR, exact-head CI, real hardware acceptance where applicable, release candidate and rollback. Keep existing versions and user settings. Do not auto-enable Global Capture, remote server, camera, mic or experimental tilt. Check permissions after re-signing; no disabling OS security. Test on MacBook with/without Touch Bar, compatible Force Touch hardware and Magic Mouse, Logic Pro, Continuity Microphone, iOS Safari and Android browser where applicable. Test idle resource usage, device loss, sleep/wake, repeated Stop/Panic, conflicts and stale notes; no false PASS. Provide an auditable progress matrix with implemented vs CI verified vs physical verified vs planned. Publish stable DMG only after gates. 
+
+## 15. Public documentation portal and local RAG SDK
+
+The README is the product landing portal with audience-specific paths, stable/preview/roadmap boundaries, upstream attribution and links to evidence. Maintain accurate capability claims and add real screenshots only after runtime review. Developer retrieval uses separate engine, app and documentation scopes, genuine local embeddings with an explicitly trusted model, optional hybrid rank fusion, and bounded commit-verified context envelopes. Follow docs/LOCAL_RAG_SDK.md. This is offline developer retrieval, not real-time AI, not a native assistant and not evidence of successful model inference. Future work: evaluate real multilingual/code embedding models, benchmark ranking on musician/developer tasks, incremental cache with model/version identity, and optional isolated in-app help only after explicit consent and runtime acceptance. No source upload, hardware activation or new dependency in the live music path.
+
+The local RAG acceptance stage includes a dedicated Linux workflow, actual lexical corpus coverage, and a nine-query multilingual file-retrieval benchmark. The browser UI embedded in native HTTPS source belongs to both app and engine retrieval scopes. Real model quality, incremental vector caching and native in-app help remain separate open gates.
+
+### Parallel completion policy (maintainer direction, 2026-11-27)
+
+Product stabilization and retrieval/vector matrix maintenance proceed concurrently through P6, not after the product is finished. Every coherent development checkpoint retains exact-head product CI and independent lexical RAG evidence for engine/app/docs. Use a private local matrix run for real semantic and hybrid results whenever a trusted embedding model is explicitly available; preserve previous reports and refresh at release candidates. Keep measured/failed/NOT_RUN separate for each corpus and mode. The matrix is a developer aid and cannot replace physical MIDI, hardware, UI/UX or security acceptance. A missing optional local model must not prevent urgent product fixes; full vector quality acceptance remains open until genuine model evidence is available. Incremental reuse is implemented as an opt-in source candidate; deterministic cache mechanics pass, but real-model equivalence and performance remain unverified. Regenerate selected corpora at controlled checkpoints rather than every edit.
+
+Incremental embedding reuse candidate: identical path/text inputs from a trusted previous local semantic index may be reused only after model fingerprint, scope, versioned CPU/package recipe and source provenance checks; new/changed input is encoded and removed chunks omitted. The matrix can use a previous completed local directory, never overwrite it, and reports reused/encoded rows. Model-backed acceptance remains separate from deterministic cache tests.

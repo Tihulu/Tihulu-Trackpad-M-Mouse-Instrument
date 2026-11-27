@@ -11,6 +11,16 @@ class MobileLanCapabilitiesTest {
         assertNull(h.keysLane());assertNull(h.helperLane(0));assertNull(h.helperLane(3))
         assertTrue(h.helperLane(2)!!.encode(AirOutput(level=.5),1).decodeToString().contains("\"mask\":4"))
     }
+    @Test fun touchPianoRequiresExclusiveKeyFamilyEvenWithHybridGrant(){
+        val keys=MobileLanCapabilities.parseSingleFamily(manifest(piano="145"))!!
+        val helper=MobileLanCapabilities.parseSingleFamily(manifest(pedals="3"))!!
+        val hybrid=MobileLanCapabilities.parse(manifest(piano="145",pedals="3"),true)!!
+        assertEquals(145,keys.touchPianoMask())
+        assertNull(helper.touchPianoMask())
+        assertNull(hybrid.touchPianoMask())
+        assertNotNull(hybrid.hybridLane(3))
+        assertNull(hybrid.keysLane())
+    }
     @Test fun unsupportedAndNoncanonicalFieldsRejected(){
         for(s in listOf(manifest(),manifest("1","1"),manifest("1",touch="true"),manifest("1",drums="1"),manifest("33554432"),manifest(pedals="64"),manifest(pedals="8"),manifest("1.0"),manifest("-0"),manifest("01"),manifest("true"),manifest("1e0"),manifest("1",touch="0")))assertNull(s,MobileLanCapabilities.parseSingleFamily(s))
     }

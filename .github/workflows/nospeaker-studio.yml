@@ -85,8 +85,9 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
-      - name: Installer shell syntax
+      - name: Installer shell syntax and tracked entrypoint modes
         run: |
+          python3 ../tools/check_entrypoint_modes.py
           sh -n ../install-studio.sh
           sh -n scripts/build-app.sh
           sh -n scripts/verify-preview-dmg.sh

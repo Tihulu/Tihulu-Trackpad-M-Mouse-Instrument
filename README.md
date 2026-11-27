@@ -1,10 +1,51 @@
-# Tihulu Trackpad & M. Mouse Instrument
+# Tihulu Instrument
 
-**Turn a Force Touch trackpad and a Magic Mouse into expressive musical controllers for macOS and Logic Pro.**
+**Make music with the devices you already own. Build the instrument you imagine.**
 
-![TIHULU Trackpad & M. Mouse Instrument icon](studio/Resources/TihuluTrackpadMouseIcon.svg)
+![Tihulu Instrument icon](studio/Resources/TihuluTrackpadMouseIcon.svg)
 
-A native SwiftUI haptic music workstation with live surface maps, multi-touch MIDI/MPE, a drum-pad controller, Voice, sequencers and optional system-audio-to-trackpad playback. The app name and macOS icon are **Tihulu Trackpad & M. Mouse Instrument**.
+An open-source, local-first musical platform for beginners, performers, composers and developers. Turn touch surfaces into instruments and expressive MIDI controllers; explore new sounds, extend your existing gear and play together. Native macOS is the host. Phones, tablets, game controllers, cameras and motion sensors are part of the expanding experimental platform.
+
+[Download stable](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/releases/latest) · [User guide](#install) · [Logic Pro](#logic-pro-setup) · [Developer SDK](docs/DEVELOPER_SDK_AI_INDEX.md) · [Local RAG guide](docs/LOCAL_RAG_SDK.md) · [Roadmap](studio/docs/UNIVERSAL_INSTRUMENT_MASTER_PLAN.md) · [Report an issue](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/issues)
+
+> **Release status:** the existing published app uses the previous name, Tihulu Trackpad & M. Mouse Instrument. New branding and advanced features are under development. Install stable for the published experience; preview and planned features below are not promises of physical compatibility.
+
+## Find your starting point
+
+| I want to… | Start here |
+| --- | --- |
+| Play notes, chords or drums with my Mac | [Touch and expressive controls](studio/EXPRESSIVE_CONTROLS.md), [Logic setup](#logic-pro-setup) |
+| Enhance my keyboard or organ without extra controllers | [MIDI Helper](studio/LOGIC_DRUMS_MAGIC_MOUSE.md), [DAW setup](docs/PERFORMANCE_STUDIO_DAW_SETUP.md) |
+| Explore microtonal music | [Tuned MIDI export](docs/TUNED_MIDI_EXPORT.md), [Anatolia MPE candidate](docs/ANATOLIA_MELODIC_MPE.md) |
+| Play with a phone or tablet | [Remote preview guide](docs/REMOTE_R9_USER_GUIDE.md), [iOS](studio/mobile-ios/README.md), [Android](studio/mobile-android/README.md) |
+| Use Xbox-compatible gamepads, motion or camera | [Gamepad mapping candidate](docs/GAMEPAD_CUSTOM_MAPPING.md), [Motion](docs/MOTION_GRAVITY_PERFORMANCE.md), [Camera MIDI Helper](docs/CAMERA_MIDI_HELPER_DAW.md) |
+| Create my own layout and jam with friends | [Builder](docs/BUILDER_ROUTE_WORKSPACE.md), [Jam development checkpoint](docs/MULTI_DEVICE_PARTY_JAM.md) |
+| Build an instrument, plugin or external tool | [SDK](docs/DEVELOPER_SDK_AI_INDEX.md), [Swift example](examples/EngineConsumer/README.md), [capabilities](docs/ENGINE_CAPABILITIES.json) |
+| Use AI to understand the engine or app | [Local retrieval and RAG SDK](docs/LOCAL_RAG_SDK.md), [agent guide](AGENTS.md) |
+
+## What makes it different?
+
+- **Play:** touch maps, melodic and drum pads, fretted/fretless controls, haptic sound and expressive MIDI.
+- **Extend:** use existing musical equipment with sustain, bend, modulation and configurable mappings. Microtonal workflows and independent MPE routes are being developed and tested.
+- **Build:** create custom instruments from available inputs. The Builder, remote controls, gamepads, Air instruments and multi-device sessions are evolving candidates, not all stable features.
+- **Connect:** local collaborative jam and DAW workflows aim to make music more social without requiring expensive specialist hardware.
+- **Share:** reusable Swift libraries, documented offline CLI and local source retrieval help musicians and developers extend the project. No AI service is needed for real-time MIDI.
+
+## Trust and compatibility
+
+| Published / development boundary | What to expect |
+| --- | --- |
+| Published macOS release | See exact release notes; existing touch, MIDI, haptics and sequencer workflows |
+| Experimental candidates | Mobile, gamepad, camera, Touch Bar, custom pad and multi-device functionality; consult exact-head CI and acceptance evidence |
+| Vision and roadmap | Full collaborative, microtonal, cross-device and accessible platform; not a completed feature claim |
+
+Private multitouch APIs, haptic output, real DAW routing and device sensors require physical acceptance. Permissions are opt-in, remote pairing is explicit, and emergency stop is a core requirement. No automatic cloud upload is part of the local repository retrieval tool.
+
+[Known regressions](docs/REPORTED_PERFORMANCE_REGRESSIONS.md) · [Native MIDI acceptance](docs/NATIVE_MIDI_ACCEPTANCE.md) · [Hardware checklist](studio/docs/MAC_HARDWARE_ACCEPTANCE.md) · [UI/UX findings](docs/MUSIC_UX_FINDINGS.md)
+
+## Community
+
+Music should be limited by our imagination, not by the equipment we can afford. Contributions, reproducible bug reports, musical mapping ideas, accessibility feedback and independent hardware tests are welcome. Read the [contribution guide](studio/CONTRIBUTING.md) and retain the upstream MIT attribution. Share only sanitized diagnostics; never post private recordings, keys or sensitive device data.
 
 > Based on [os6/nospeaker](https://github.com/os6/nospeaker) by **Cody Collier** under the MIT license. We retain the original attribution and upstream source. TIHULU additions are downstream work, not an endorsement by the upstream author.
 

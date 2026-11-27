@@ -11,6 +11,7 @@ public enum HapticDriverError: LocalizedError {
     case noTrackpad
     case noHapticTrackpad
     case ambiguousExternalSurfaces
+    case ambiguousSurfaceIdentity
     case inventoryBusy
     case actuatorOpenFailed
     case actuationCreationFailed
@@ -24,6 +25,7 @@ public enum HapticDriverError: LocalizedError {
         case .noTrackpad: return "No compatible trackpad was found."
         case .noHapticTrackpad: return "A trackpad was found, but its haptic actuator could not be opened."
         case .ambiguousExternalSurfaces: return "More than one external touch device matches the legacy Magic Mouse route. Disconnect the extra devices and restart monitoring."
+        case .ambiguousSurfaceIdentity: return "Native touch inventory contains duplicate device identities. Reconnect the devices and restart monitoring."
         case .inventoryBusy: return "Native device inventory is busy or unavailable. Retry explicitly after the outstanding read finishes."
         case .actuatorOpenFailed: return "The trackpad haptic actuator could not be opened."
         case .actuationCreationFailed: return "The trackpad framework could not create a haptic frame."
@@ -73,17 +75,36 @@ public struct SurfaceTouchFrame: Sendable, Equatable {
     public var contacts: [SurfaceContact]
     public var timestamp: Double
     public var frameNumber: Int
+    /// Original callback receipt; nil for synthetic/legacy callers.
+    public let acquisitionNS: Int64?
+    public let validNativeEnvelope: Bool
+    /// Actual native record count, before the legacy state filter. nil is not evidence.
+    public let rawNativeContactCount: Int?
+    /// Bounded raw state codes only; no additional private record fields.
+    public let rawNativeStates: [Int]
+    /// Ephemeral registration identity, never a hardware serial or address.
+    public let nativeRegistration: UUID?
 
     public init(
         surface: TouchSurfaceKind,
         contacts: [SurfaceContact],
         timestamp: Double,
-        frameNumber: Int
+        frameNumber: Int,
+        acquisitionNS: Int64? = nil,
+        validNativeEnvelope: Bool = false,
+        rawNativeContactCount: Int? = nil,
+        rawNativeStates: [Int] = [],
+        nativeRegistration: UUID? = nil
     ) {
         self.surface = surface
         self.contacts = contacts
         self.timestamp = timestamp
         self.frameNumber = frameNumber
+        self.acquisitionNS = acquisitionNS
+        self.validNativeEnvelope = validNativeEnvelope
+        self.rawNativeContactCount = rawNativeContactCount
+        self.rawNativeStates = Array(rawNativeStates.prefix(NativeTouchFramePolicy.maximumContacts))
+        self.nativeRegistration = nativeRegistration
     }
 }
 
@@ -124,18 +145,30 @@ private final class TouchBridge: @unchecked Sendable {
     static let shared = TouchBridge()
     private var lock = os_unfair_lock()
     private var handler: (@Sendable (SurfaceTouchFrame) -> Void)?
-    private var surfaceByDevice: [UInt: TouchSurfaceKind] = [:]
+    private var surfaceByDevice: [UInt: (kind: TouchSurfaceKind, registration: UUID)] = [:]
 
     func configure(
         surfaces: [UnsafeMutableRawPointer: TouchSurfaceKind],
+        registrations: [TouchSurfaceKind: UUID],
         handler: (@Sendable (SurfaceTouchFrame) -> Void)?
     ) {
         os_unfair_lock_lock(&lock)
         self.handler = handler
-        surfaceByDevice = Dictionary(uniqueKeysWithValues: surfaces.map {
-            (UInt(bitPattern: $0.key), $0.value)
+        surfaceByDevice = Dictionary(uniqueKeysWithValues: surfaces.compactMap { device, kind in
+            registrations[kind].map { (UInt(bitPattern: device), (kind: kind, registration: $0)) }
         })
         os_unfair_lock_unlock(&lock)
+    }
+
+    func matchesRegistrations(_ required: [TouchSurfaceKind: UUID]) -> Bool {
+        os_unfair_lock_lock(&lock)
+        defer { os_unfair_lock_unlock(&lock) }
+        guard handler != nil else { return false }
+        var current: [TouchSurfaceKind: UUID] = [:]
+        for source in surfaceByDevice.values {
+            guard current.updateValue(source.registration, forKey: source.kind) == nil else { return false }
+        }
+        return NativeSurfaceAdmission.matchesRegistrations(required: required, current: current)
     }
 
     func clear() {
@@ -152,22 +185,27 @@ private final class TouchBridge: @unchecked Sendable {
         timestamp: Double,
         frame: Int32
     ) {
+        let acquisitionNS = Int64(clamping: DispatchTime.now().uptimeNanoseconds)
         os_unfair_lock_lock(&lock)
         let callback = handler
-        let surface = device.flatMap { surfaceByDevice[UInt(bitPattern: $0)] }
+        let source = device.flatMap { surfaceByDevice[UInt(bitPattern: $0)] }
         os_unfair_lock_unlock(&lock)
 
         // Never attribute an unregistered callback to the Trackpad.
-        guard let surface, let callback else { return }
+        guard let source, let callback else { return }
+        let surface = source.kind
         let decision = NativeTouchFramePolicy.decision(knownDevice:true,count:Int(count),hasData:data != nil)
         var contacts: [SurfaceContact] = []
+        var rawStates: [Int] = []
         if case let .decode(contactCount) = decision, let data {
             contacts.reserveCapacity(contactCount)
+            rawStates.reserveCapacity(contactCount)
             for index in 0..<contactCount {
                 // Canonical 96-byte MTTouch layout used by the existing upstream-derived path.
                 let record = data.advanced(by: index * 96)
                 let pathIndex = Int(record.load(fromByteOffset: 16, as: Int32.self))
                 let state = Int(record.load(fromByteOffset: 20, as: Int32.self))
+                rawStates.append(state)
                 guard (3...5).contains(state) else { continue }
                 contacts.append(.init(
                     id: pathIndex,
@@ -187,7 +225,12 @@ private final class TouchBridge: @unchecked Sendable {
             surface: surface,
             contacts: contacts,
             timestamp: timestamp,
-            frameNumber: Int(frame)
+            frameNumber: Int(frame),
+            acquisitionNS: acquisitionNS,
+            validNativeEnvelope: count == 0 || (count > 0 && count <= NativeTouchFramePolicy.maximumContacts && data != nil),
+            rawNativeContactCount: Int(count),
+            rawNativeStates: rawStates,
+            nativeRegistration: source.registration
         ))
     }
 }
@@ -218,6 +261,14 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
     private var touchDevicesInUse: [UnsafeMutableRawPointer] = []
     private var monitoredDeviceIDs: Set<UInt64> = []
     private var monitoredKinds: Set<TouchSurfaceKind> = []
+    private var monitoredRegistrations: [TouchSurfaceKind: UUID] = [:]
+    /// Short bridge-lock check only; no private API, actuator lock or IPC.
+    public static func matchesTouchRegistrations(_ required: [TouchSurfaceKind: UUID]) -> Bool {
+        TouchBridge.shared.matchesRegistrations(required)
+    }
+    public var registeredSurfaceTokens: [TouchSurfaceKind: UUID] {
+        lifetime.snapshot { monitoredRegistrations }
+    }
     public var registeredSurfaceKinds: Set<TouchSurfaceKind> {
         lifetime.snapshot { monitoredKinds }
     }
@@ -253,14 +304,14 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         guard let createList,let getID,let list=createList()?.takeRetainedValue() else { return nil }
         let count=CFArrayGetCount(list)
         guard (0...64).contains(count) else { return nil }
-        var available:Set<UInt64> = []
+        var available:[UInt64] = []
         for index in 0..<count {
             guard let raw=CFArrayGetValueAtIndex(list,index) else { return nil }
             var id:UInt64=0
             guard getID(UnsafeMutableRawPointer(mutating:raw),&id)==0 else { return nil }
-            available.insert(id)
+            available.append(id)
         }
-        return available
+        return NativeSurfaceAdmission.uniqueInventory(available)
     }
 
     private var createList: CreateList?
@@ -435,7 +486,9 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         // Re-enumerate on explicit start; the actuator's original list may
         // predate a Bluetooth device connection or disconnection.
         guard let deviceList = createList()?.takeRetainedValue() else { throw HapticDriverError.noTrackpad }
+        guard (0...64).contains(CFArrayGetCount(deviceList)) else { throw HapticDriverError.inventoryBusy }
         var selected: [UnsafeMutableRawPointer] = []
+        var enumeratedIDs: [UInt64] = []
         var selectedIDs:Set<UInt64> = []
         var kinds: [UnsafeMutableRawPointer: TouchSurfaceKind] = [:]
 
@@ -445,17 +498,19 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
             var id: UInt64 = 0
             guard getID(device, &id) == 0 else { continue }
 
+            enumeratedIDs.append(id)
             if id == motorDeviceID {
-                guard selectedIDs.insert(id).inserted else { continue }
+                guard selectedIDs.insert(id).inserted else { throw HapticDriverError.ambiguousSurfaceIdentity }
                 selected.append(device)
                 kinds[device] = .trackpad
             } else if includeExternalSurfaces, !(deviceIsBuiltIn?(device) ?? false) {
-                guard selectedIDs.insert(id).inserted else { continue }
+                guard selectedIDs.insert(id).inserted else { throw HapticDriverError.ambiguousSurfaceIdentity }
                 selected.append(device)
                 kinds[device] = .magicMouse
             }
         }
 
+        guard NativeSurfaceAdmission.uniqueInventory(enumeratedIDs) != nil else { throw HapticDriverError.ambiguousSurfaceIdentity }
         guard selectedIDs.contains(motorDeviceID) else { throw HapticDriverError.noTrackpad }
         // Legacy surface/contact identity cannot represent two external
         // devices as one Mouse without false releases and ID collisions.
@@ -465,7 +520,8 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         self.deviceList = deviceList
         monitoredDeviceIDs = selectedIDs
         monitoredKinds = Set(kinds.values)
-        TouchBridge.shared.configure(surfaces: kinds, handler: handler)
+        monitoredRegistrations = Dictionary(uniqueKeysWithValues: monitoredKinds.map { ($0, UUID()) })
+        TouchBridge.shared.configure(surfaces: kinds, registrations: monitoredRegistrations, handler: handler)
         for device in selected {
             registerCallback(device, trackpadFrameCallback)
             deviceStart(device, 0)
@@ -506,6 +562,7 @@ public final class HapticTrackpadDriver: @unchecked Sendable {
         touchDevicesInUse.removeAll()
         monitoredDeviceIDs.removeAll()
         monitoredKinds.removeAll()
+        monitoredRegistrations.removeAll()
     }
 }
 #endif

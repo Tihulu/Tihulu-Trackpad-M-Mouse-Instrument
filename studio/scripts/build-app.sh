@@ -17,7 +17,7 @@ case "$BUILD_CHANNEL" in
         ;;
     preview)
         BUNDLE_ID="com.tihulu.trackpadmmouseinstrument.preview"
-        DISPLAY_NAME="Tihulu Trackpad &amp; M. Mouse Instrument Preview"
+        DISPLAY_NAME="Tihulu Instrument Preview"
         APP_VERSION="0.3.0"
         BUILD_VERSION="6"
         ;;

@@ -1,0 +1,54 @@
+name: Tihulu local RAG checks
+
+on:
+  pull_request:
+    paths:
+      - 'tools/**'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'docs/**'
+      - 'studio/**'
+      - '.github/workflows/local-rag.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/**'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'docs/**'
+      - 'studio/**'
+      - '.github/workflows/local-rag.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-rag:
+    name: Local RAG portable tests and corpus coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact revision
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "Verified checkout: $EXPECTED_SHA"
+      - name: Verify tracked script modes
+        run: python3 tools/check_entrypoint_modes.py
+      - name: Portable RAG tests
+        run: python3 tools/test_repo_index.py
+      - name: Real repository lexical coverage and multilingual benchmark
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          rev="$(git rev-parse HEAD)"
+          python3 tools/rag_matrix.py --repo . --ref "$rev" --out-dir "$work/matrix"
+          # No models, index artifacts, or source chunks are uploaded.

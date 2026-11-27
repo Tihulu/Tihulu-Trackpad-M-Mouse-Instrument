@@ -1,0 +1,169 @@
+#if os(macOS)
+import Foundation
+import CoreMIDI
+import NoSpeakerCore
+
+/// Explicit, dedicated virtual sources only; never opens a physical MIDI
+/// destination or a shared legacy port. The process singleton retains recovery
+/// records. A source adapter must supply genuine complete contact snapshots
+/// with receipt timestamps in the same monotonic domain as monotonicNow().
+@MainActor
+public final class NativeCustomSurfaceMIDIHost {
+    public static let shared = NativeCustomSurfaceMIDIHost()
+    public typealias Status = CustomSurfaceEndpointHost.Status
+    private typealias Endpoint = CustomSurfaceEndpointHost.Endpoint
+    private let host: CustomSurfaceEndpointHost
+    private lazy var group = CustomSurfacePerformanceGroup(host: host)
+    private var watchdog: Task<Void, Never>?
+
+    private init() {
+        host = CustomSurfaceEndpointHost(backend: .init(
+            create: { Self.create($0) },
+            owns: { Self.matches($0) },
+            send: { Self.send($0, bytes: $1) },
+            dispose: { Self.dispose($0) }
+        ))
+    }
+    public nonisolated static func monotonicNow() -> Int64 {
+        Int64(clamping: DispatchTime.now().uptimeNanoseconds)
+    }
+    public var statuses: [Status] { host.statuses }
+    public func timingEvidence(_ id: UUID) -> CustomSurfaceEndpointHost.TimingEvidence? { host.timingEvidence(id) }
+
+    /// No input capture or automatic rearm. Non-live returned states are
+    /// recovery records, not successful activation.
+    public func open(plan: CustomSurfaceMixedPlan, permitsNeutralSilence: Bool = false, admitsLive: @escaping () -> Bool) -> Status? {
+        guard group.phase == .idle else { return nil }
+        let status = host.open(plan: plan, permitsNeutralSilence: permitsNeutralSilence, clock: { Self.monotonicNow() }, admitsLive: admitsLive)
+        reconcileWatchdog()
+        return status
+    }
+    public func frame(_ id: UUID, surface: CustomSurfacePadLayout.Surface,
+                      contacts: [CustomSurfaceContactProjection.Contact],
+                      sequence: UInt64, observedAt: Int64) -> Status? {
+        guard group.phase == .idle else { return nil }
+        let status = host.frame(id, surface: surface, contacts: contacts, sequence: sequence, observedAt: observedAt)
+        reconcileWatchdog()
+        return status
+    }
+    @discardableResult
+    public func close(_ id: UUID, retryPending: Bool = true) -> Status? {
+        guard group.phase == .idle else { return nil }
+        let status = host.close(id, retryPending: retryPending)
+        reconcileWatchdog()
+        return status
+    }
+    /// Explicit scoped cleanup, never a process-wide or DAW-wide panic.
+    /// Failed recovery records remain available through statuses.
+    public func closeAll() -> [Status] {
+        if group.phase != .idle {
+            // Close an active group without retrying failed debt. A later
+            // explicit recovery may retry only its own retained endpoints.
+            if group.phase == .live { group.stop() } else { group.retryRecovery() }
+            reconcileWatchdog()
+            return group.statuses
+        }
+        let ids = host.statuses.map(\.id)
+        let reports = ids.compactMap { host.close($0) }
+        reconcileWatchdog()
+        return reports
+    }
+
+    // Internal building blocks for the explicit Studio group integration.
+    // The same host is shared with single-pad sessions: never a second
+    // reservation registry that could claim the same native endpoint.
+    public var groupPhase: CustomSurfacePerformanceGroup.Phase { group.phase }
+    public var groupRunID: UUID? { group.runID }
+    public var groupStopReason: CustomSurfacePerformanceGroup.StopReason? { group.stopReason }
+    public var groupTimingEvidence: [CustomSurfacePadLayout.Surface: CustomSurfaceEndpointHost.TimingEvidence] { group.timingEvidence }
+    public func openGroup(_ members: [CustomSurfacePerformanceGroup.Member],
+                          admitsLive: @escaping () -> Bool) -> CustomSurfacePerformanceGroup.StartResult {
+        let result = group.start(members, clock: { Self.monotonicNow() }, admitsLive: admitsLive)
+        reconcileWatchdog()
+        return result
+    }
+    @discardableResult
+    public func groupFrame(run: UUID, surface: CustomSurfacePadLayout.Surface,
+                           contacts: [CustomSurfaceContactProjection.Contact],
+                           sequence: UInt64, observedAt: Int64) -> Status? {
+        let result = group.frame(run: run, surface: surface, contacts: contacts, sequence: sequence, observedAt: observedAt)
+        reconcileWatchdog()
+        return result
+    }
+    public func stopGroup(run: UUID) {
+        guard group.runID == run else { return }
+        group.stop()
+        reconcileWatchdog()
+    }
+    public func retryGroupRecovery() {
+        group.retryRecovery()
+        reconcileWatchdog()
+    }
+
+    private func reconcileWatchdog() {
+        guard host.statuses.contains(where: { $0.phase == .live }) else {
+            watchdog?.cancel()
+            watchdog = nil
+            return
+        }
+        guard watchdog == nil else { return }
+        // Main actor serialized with frame/close. A blocked main actor may
+        // delay cleanup; per-send freshness fences still prevent late attacks.
+        watchdog = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+                guard let self, !Task.isCancelled else { return }
+                if let run = self.group.runID { self.group.poll(run: run) }
+                else { self.host.poll() }
+                if !self.host.statuses.contains(where: { $0.phase == .live }) {
+                    self.watchdog = nil
+                    return
+                }
+            }
+        }
+    }
+
+    private static func create(_ name: String) -> CustomSurfaceEndpointHost.Creation? {
+        guard let client = try? MIDIProcessClient.shared.acquire() else { return nil }
+        var source = MIDIEndpointRef()
+        let result = MIDISourceCreate(client, name as CFString, &source)
+        guard source != 0 else { return nil }
+        // Exclude even partially created handles from automatic legacy
+        // input attachment. Do not unregister an uncertain handle.
+        MIDIProcessClient.shared.registerIsolatedSource(source)
+        var uid: Int32 = 0
+        let identified = MIDIObjectGetIntegerProperty(source, kMIDIPropertyUniqueID, &uid)
+        let endpoint = Endpoint(handle: source, uniqueID: uid, name: name)
+        return .init(endpoint: endpoint, succeeded: result == noErr && identified == noErr && matches(endpoint))
+    }
+    private static func matches(_ endpoint: Endpoint) -> Bool {
+        var actual: Int32 = 0
+        guard endpoint.handle != 0, endpoint.uniqueID != 0,
+              MIDIObjectGetIntegerProperty(endpoint.handle, kMIDIPropertyUniqueID, &actual) == noErr,
+              actual == endpoint.uniqueID else { return false }
+        var label: Unmanaged<CFString>?
+        guard MIDIObjectGetStringProperty(endpoint.handle, kMIDIPropertyName, &label) == noErr,
+              let label else { return false }
+        return label.takeRetainedValue() as String == endpoint.name
+    }
+    private static func send(_ endpoint: Endpoint, bytes: [UInt8]) -> Bool {
+        // Host has just checked original identity then per-send freshness.
+        // Do not insert a second slow identity query before native delivery.
+        guard endpoint.handle != 0, bytes.count == 3 else { return false }
+        var list = MIDIPacketList()
+        let packet = MIDIPacketListInit(&list)
+        let added = bytes.withUnsafeBufferPointer { buffer in
+            MIDIPacketListAdd(&list, MemoryLayout<MIDIPacketList>.size, packet,
+                              0, buffer.count, buffer.baseAddress!) != nil
+        }
+        return added && MIDIReceived(endpoint.handle, &list) == noErr
+    }
+    private static func dispose(_ endpoint: Endpoint) -> Bool {
+        // The host validates immediately before disposal. A failed native
+        // call retains its record and next retry revalidates the identity.
+        guard MIDIEndpointDispose(endpoint.handle) == noErr else { return false }
+        MIDIProcessClient.shared.unregisterIsolatedSource(endpoint.handle)
+        return true
+    }
+}
+#endif

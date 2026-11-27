@@ -42,6 +42,8 @@ private struct XYZSceneProbe: UIViewRepresentable {
     @State private var keyboard: DepthXYZKeys?
     @State private var activeKey: Int?
     @State private var name = ""
+    @State private var deletion: DepthXYZCalibrationProfiles.Profile?
+    @State private var updateTarget: DepthXYZCalibrationProfiles.Profile?
     @State private var paired = false
     @State private var address = ""
     @State private var invitation = ""
@@ -96,6 +98,28 @@ private struct XYZSceneProbe: UIViewRepresentable {
         .onReceive(tick) { _ in poll() }
         .onChange(of: scene) { _, phase in if phase != .active { stop("App inactive · restart required") } }
         .onDisappear { stop("Closed"); returnCapture(retiring) }
+        .confirmationDialog("Replace saved calibration with current settings?", isPresented: Binding(get: { updateTarget != nil }, set: { if !$0 { updateTarget = nil } }), presenting: updateTarget) { profile in
+            Button("Replace") {
+                guard !locked, var current = library else { return }
+                do {
+                    try current.replace(expected: profile, volume: volume, axisMask: usesControls ? axes : 7,
+                                        pitchAxis: instrument ? pitchAxis : nil, hybrid: role == .hybrid)
+                    stored = try JSONEncoder().encode(current)
+                    status = "Calibration updated"
+                } catch { status = "Calibration changed or settings invalid; load again" }
+                updateTarget = nil
+            }
+        }
+        .confirmationDialog("Delete saved calibration?", isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }), presenting: deletion) { profile in
+            Button("Delete", role: .destructive) {
+                guard !locked, var current = library,
+                      current.profiles.contains(profile) else { return }
+                current.remove(id: profile.id)
+                do { stored = try JSONEncoder().encode(current); status = "Calibration deleted" }
+                catch { status = "Could not save calibration library" }
+                deletion = nil
+            }
+        }
     }
 
     private var performance: some View {
@@ -115,6 +139,7 @@ private struct XYZSceneProbe: UIViewRepresentable {
                 Text(String(format: "Palm landmark confidence %.0f%%", palm.confidence*100)).font(.caption)
             }
             Text(axesDescription).font(.caption)
+            if !paired { Text("Local preview only · no MIDI or audio output").font(.caption) }
             if instrument { Text(activeKey.map { "Logical key " + String($0 + 1) } ?? "No active key") }
         }
     }
@@ -122,7 +147,7 @@ private struct XYZSceneProbe: UIViewRepresentable {
         var assignments = [String]()
         if instrument { assignments.append(pitchAxis.rawValue.uppercased() + (paired ? " → Mac-assigned keys" : " → preview keys")) }
         if usesControls { assignments += ["X", "Y", "Z"].enumerated().compactMap { index, axis in
-            axes & (1 << index) == 0 ? nil : "\(axis) → Mac control \(index + 1)"
+            axes & (1 << index) == 0 ? nil : "\(axis) → " + (paired ? "Mac control " : "preview axis ") + String(index + 1)
         } }
         return assignments.joined(separator: " · ")
     }
@@ -156,11 +181,20 @@ private struct XYZSceneProbe: UIViewRepresentable {
                     .disabled(!volume.isValid || (usesControls && axes == 0) || name.isEmpty || library == nil)
                 if let library {
                     ForEach(library.profiles) { profile in
-                        Button(profile.name) {
-                            volume = profile.volume; axes = profile.axisMask; name = profile.name
-                            role = profile.hybrid == true ? .hybrid : profile.pitchAxis == nil ? .helper : .instrument
-                            pitchAxis = profile.pitchAxis ?? .z
-                            status = "Loaded " + profile.name
+                        HStack {
+                            Button(profile.name) {
+                                volume = profile.volume; axes = profile.axisMask; name = profile.name
+                                role = profile.hybrid == true ? .hybrid : profile.pitchAxis == nil ? .helper : .instrument
+                                pitchAxis = profile.pitchAxis ?? .z
+                                status = "Loaded " + profile.name
+                            }
+                            Spacer()
+                            Button("Update") { updateTarget = profile }
+                                .disabled(!volume.isValid || (usesControls && axes == 0))
+                                .accessibilityLabel("Update calibration " + profile.name + " with current settings")
+                            Button(role: .destructive) { deletion = profile } label: {
+                                Image(systemName: "trash")
+                            }.accessibilityLabel("Delete calibration " + profile.name)
                         }
                     }
                 } else { Text("Saved calibration data could not be read.") }

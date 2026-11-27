@@ -46,3 +46,52 @@ struct DepthXYZCalibrationProfilesTests {
         }
     }
 }
+
+extension DepthXYZCalibrationProfilesTests {
+    @Test func malformedHybridRoleCannotBeRestored() throws {
+        var library = DepthXYZCalibrationProfiles()
+        try library.save(name: "Hybrid", volume: .init(), axisMask: 5, pitchAxis: .z, hybrid: true)
+        let bytes = try JSONEncoder().encode(library)
+        #expect(try JSONDecoder().decode(DepthXYZCalibrationProfiles.self, from: bytes) == library)
+        var root = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        var records = try #require(root["profiles"] as? [[String: Any]])
+        records[0].removeValue(forKey: "pitchAxis")
+        root["profiles"] = records
+        let invalid = try JSONSerialization.data(withJSONObject: root)
+        #expect(throws: DepthXYZCalibrationProfiles.Failure.invalidSettings) {
+            _ = try JSONDecoder().decode(DepthXYZCalibrationProfiles.self, from: invalid)
+        }
+        records[0]["pitchAxis"] = "z"
+        records[0]["name"] = " Hybrid "
+        root["profiles"] = records
+        let noncanonical = try JSONSerialization.data(withJSONObject: root)
+        #expect(throws: DepthXYZCalibrationProfiles.Failure.invalidName) {
+            _ = try JSONDecoder().decode(DepthXYZCalibrationProfiles.self, from: noncanonical)
+        }
+    }
+}
+
+extension DepthXYZCalibrationProfilesTests {
+    @Test func replacementPreservesIdentityAndRejectsStaleOrInvalidChanges() throws {
+        var library = DepthXYZCalibrationProfiles()
+        try library.save(name: "Desk", volume: .init(), axisMask: 7)
+        try library.save(name: "Stage", volume: .init(), axisMask: 3)
+        let old = library.profiles[0]
+        let other = library.profiles[1]
+        let volume = DepthXYZVolume(nearMeters: 0.3, farMeters: 1.2)
+        try library.replace(expected: old, volume: volume, axisMask: 5, pitchAxis: .z, hybrid: true)
+        #expect(library.profiles.count == 2)
+        #expect(library.profiles[0].name == old.name)
+        #expect(library.profiles[0].volume == volume)
+        #expect(library.profiles[0].hybrid == true)
+        #expect(library.profiles[1] == other)
+        let updated = library
+        #expect(throws: DepthXYZCalibrationProfiles.Failure.changed) {
+            try library.replace(expected: old, volume: .init(), axisMask: 7)
+        }
+        #expect(throws: DepthXYZCalibrationProfiles.Failure.invalidSettings) {
+            try library.replace(expected: updated.profiles[0], volume: .init(), axisMask: 0)
+        }
+        #expect(library == updated)
+    }
+}

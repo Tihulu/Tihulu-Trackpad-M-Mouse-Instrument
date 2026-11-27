@@ -72,3 +72,32 @@ private let palm = DepthXYZPoint(x: 0.4, y: 0.5, meters: 0.4, confidence: 0.8)
     #expect(keys.output(.init(x: 0,y: 1,z: 0)).keys == 1 << 15)
     #expect(DepthXYZKeys(authorized: RemotePiano.sustainBit, axis: .z) == nil)
 }
+
+@Test func depthXYZDelayedWatchdogRejectsBufferedReacquisition() throws {
+    var tracker = try #require(DepthXYZTracking())
+    #expect(tracker.observe(palm, at: 0, now: 0) == nil)
+    #expect(tracker.observe(palm, at: 0.01, now: 0.01) != nil)
+    // Both buffered stamps are individually fresh, but the old acquisition
+    // expired at 0.16 before the delayed UI drain.
+    #expect(tracker.observe(palm, at: 0.14, now: 0.17) == nil)
+    #expect(tracker.observe(palm, at: 0.15, now: 0.171) == nil)
+    #expect(tracker.observe(palm, at: 0.18, now: 0.18) == nil)
+    #expect(tracker.observe(palm, at: 0.19, now: 0.19) != nil)
+}
+
+@Test func depthXYZDecimalCalibrationStepsHonorMinimumSpacing() throws {
+    let exact = DepthXYZVolume(left: 0.3, right: 0.35, bottom: 0.7, top: 0.75,
+                               nearMeters: 0.2, farMeters: 0.3)
+    #expect(exact.isValid)
+    let normalized = try #require(exact.normalize(.init(x: 0.35, y: 0.75, meters: 0.3, confidence: 1)))
+    #expect(normalized == .init(x: 1, y: 1, z: 1))
+    var narrow = exact
+    narrow.right = 0.349999
+    #expect(!narrow.isValid)
+    narrow = exact
+    narrow.farMeters = 0.299999
+    #expect(!narrow.isValid)
+    narrow = exact
+    narrow.left = -.ulpOfOne
+    #expect(!narrow.isValid)
+}

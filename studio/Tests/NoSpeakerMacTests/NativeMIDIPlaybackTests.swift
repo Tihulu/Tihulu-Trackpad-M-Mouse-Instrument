@@ -475,3 +475,14 @@ private func makePlaybackFixturePort(_ client:MIDIClientRef,_ port:inout MIDIPor
     await #expect(throws:CancellationError.self) { _=try await task.value }
 }
 #endif
+
+#if os(macOS)
+@Test func nativePlaybackAvoidsRedundantIdentityProbeNearScheduledEdge() {
+    #expect(!NativeMIDIPlayback.shouldProbeIdentity(deadline:0,current:0))
+    #expect(!NativeMIDIPlayback.shouldProbeIdentity(deadline:0,current:1))
+    #expect(!NativeMIDIPlayback.shouldProbeIdentity(deadline:20_000_000,current:0))
+    #expect(NativeMIDIPlayback.shouldProbeIdentity(deadline:20_000_001,current:0))
+    #expect(!NativeMIDIPlayback.shouldProbeIdentity(deadline:UInt64.max,current:UInt64.max-1))
+    #expect(NativeMIDIPlayback.shouldProbeIdentity(deadline:UInt64.max,current:0))
+}
+#endif

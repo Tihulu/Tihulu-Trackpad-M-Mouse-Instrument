@@ -86,3 +86,69 @@ private func surfacePad(_ id:String,_ x:Int,_ y:Int,_ w:Int,_ h:Int,_ assignment
         #expect(updated.pads[0].label=="Renamed")
     }
 }
+
+@Test func customSurfaceGapInsertionPreservesExistingPadsAndTouchBarGeometry() throws {
+    let left=surfacePad("left",0,0,3333,10000,.chord([60,64,67]))
+    let right=surfacePad("right",6666,0,3334,10000,.helper(.init(.pitchBend)))
+    let bar=try #require(CustomSurfacePadLayout(surface:.touchBar,pads:[left,right]))
+    let added=try #require(bar.addingInGap(id:"middle",label:"Middle",width:3333,height:10000,assignment:.drum(38)))
+    #expect(Array(added.pads.prefix(2))==bar.pads)
+    #expect(added.pads.last?.x==3333)
+    #expect(added.pad(x:0.5,y:0.5)?.assignment == .drum(38))
+    #expect(bar.addingInGap(id:"large",label:"Large",width:3334,height:10000,assignment:.note(60))==nil)
+    #expect(bar.addingInGap(id:"half",label:"Half",width:1000,height:5000,assignment:.note(60))==nil)
+    #expect(bar.addingInGap(id:"left",label:"Duplicate",width:1000,height:10000,assignment:.note(60))==nil)
+    let grid=try #require(CustomSurfacePadLayout.grid(surface:.tablet,columns:2,rows:2))
+    let gap=try #require(grid.removing(id:"pad-4"))
+    let filled=try #require(gap.addingInGap(id:"new",label:"New",width:5000,height:5000,assignment:.degree(-2)))
+    #expect(filled.pads.last?.x==5000 && filled.pads.last?.y==5000)
+    #expect(grid.addingInGap(id:"full",label:"Full",width:1,height:1,assignment:.note(60))==nil)
+}
+
+@Test func customSurfaceHitTestingHonorsEveryDecimalBoundary() throws {
+    for edge in 1..<10000 {
+        let layout=try #require(CustomSurfacePadLayout(surface:.trackpad,pads:[
+            surfacePad("left",0,0,edge,10000),
+            surfacePad("right",edge,0,10000-edge,10000)
+        ]))
+        let x=Double(edge)/10000
+        #expect(layout.pad(x:x,y:0.5)?.id=="right")
+        #expect(layout.pad(x:x.nextDown,y:0.5)?.id=="left")
+    }
+    let y=Double(3)/10000
+    let vertical=try #require(CustomSurfacePadLayout(surface:.phone,pads:[
+        surfacePad("top",0,0,10000,3),surfacePad("bottom",0,3,10000,9997)
+    ]))
+    #expect(vertical.pad(x:1,y:y)?.id=="bottom")
+    #expect(vertical.pad(x:1,y:y.nextDown)?.id=="top")
+    #expect(vertical.pad(x:1,y:1)?.id=="bottom")
+}
+
+@Test func customSurfaceStagedGeometryAndReplacementRequireExplicitDecision() {
+    let pad=surfacePad("one",0,0,5000,10000,.chord([60,64,67]))
+    #expect(!pad.hasStagedEdit(label:"one",x:0,y:0,width:5000,height:10000,replacingAssignment:false))
+    #expect(pad.hasStagedEdit(label:"New label",x:0,y:0,width:5000,height:10000,replacingAssignment:false))
+    #expect(pad.hasStagedEdit(label:"one",x:100,y:0,width:5000,height:10000,replacingAssignment:false))
+    #expect(pad.hasStagedEdit(label:"one",x:0,y:0,width:5000,height:10000,replacingAssignment:true))
+    let changed=pad.editingGeometry(label:"New label",x:100,y:0,width:5000,height:10000)
+    #expect(changed.assignment==pad.assignment)
+    #expect(!changed.hasStagedEdit(label:"New label",x:100,y:0,width:5000,height:10000,replacingAssignment:false))
+}
+
+@Test func customSurfaceReplacementReasonsPreserveOriginalAndExactEdges() throws {
+    let left=surfacePad("left",0,0,9999,10000)
+    let right=surfacePad("right",9999,0,1,10000,.degree(-1408))
+    let layout=try #require(CustomSurfacePadLayout(surface:.trackpad,pads:[left,right]))
+    #expect(layout.replacementFailure(right)==nil)
+    #expect(layout.replacing(right)==layout)
+    #expect(layout.replacementFailure(surfacePad("other",0,0,1,1)) == .unknownPad)
+    #expect(layout.replacementFailure(right.editingGeometry(label:String(repeating:"é",count:33),x:9999,y:0,width:1,height:10000)) == .invalidLabel)
+    #expect(layout.replacementFailure(right.editingGeometry(label:"right",x:Int.max,y:0,width:1,height:10000)) == .invalidGeometry)
+    #expect(layout.replacementFailure(surfacePad("right",9999,0,1,10000,.note(128))) == .invalidAssignment)
+    let overlap=right.editingGeometry(label:"right",x:9998,y:0,width:2,height:10000)
+    #expect(layout.replacementFailure(overlap) == .overlaps("left"))
+    #expect(layout.replacing(overlap)==nil)
+    #expect(layout.pads==[left,right])
+    let bar=try #require(CustomSurfacePadLayout(surface:.touchBar,pads:[left,right]))
+    #expect(bar.replacementFailure(right.editingGeometry(label:"right",x:9999,y:0,width:1,height:9999)) == .touchBarGeometry)
+}

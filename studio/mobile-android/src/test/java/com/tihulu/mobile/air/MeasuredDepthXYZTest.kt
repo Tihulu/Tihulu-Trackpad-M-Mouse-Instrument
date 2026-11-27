@@ -36,6 +36,42 @@ class MeasuredDepthXYZTest {
         assertNotNull(t.observe(p,6,6).xyz)
         assertEquals(AirOutput(),t.observe(p,7,7+AirSendGate.FRESH_NS))
     }
+    @Test fun delayedWatchdogRejectsBufferedReacquisitionAndFencesSilence() {
+        val t=MeasuredXYZTracking(XYZVolume(),7)
+        val p=MeasuredXYZ(.4,.5,.55,1.0)
+        val ms=1_000_000L
+        assertEquals(AirOutput(),t.observe(p,0,0))
+        assertNotNull(t.observe(p,10*ms,10*ms).xyz)
+        assertEquals(AirOutput(),t.observe(p,140*ms,170*ms))
+        assertEquals(AirOutput(),t.observe(p,150*ms,171*ms))
+        assertEquals(AirOutput(),t.observe(p,180*ms,180*ms))
+        assertNotNull(t.observe(p,190*ms,190*ms).xyz)
+        assertFalse(t.expire(339*ms))
+        assertTrue(t.expire(340*ms))
+        assertFalse(t.expire(341*ms))
+        assertEquals(AirOutput(),t.observe(p,339*ms,342*ms))
+        assertEquals(AirOutput(),t.observe(p,350*ms,350*ms))
+        assertNotNull(t.observe(p,360*ms,360*ms).xyz)
+    }
+    @Test fun calibrationRecordRejectsFractionalAndNonfiniteRoleValues() {
+        for (value in listOf(-1.0,0.5,1.9,6.5,7.0,Double.NaN,Double.POSITIVE_INFINITY)) {
+            assertNull(XYZCalibrationRecord.roleIndex(value))
+        }
+        for (value in listOf(0.0,1.5,7.5,8.0,Double.NaN,Double.NEGATIVE_INFINITY)) {
+            assertNull(XYZCalibrationRecord.axisMask(value))
+        }
+        assertEquals(0,XYZCalibrationRecord.roleIndex(0.0))
+        assertEquals(6,XYZCalibrationRecord.roleIndex(6.0))
+        assertEquals(5,XYZCalibrationRecord.axisMask(5.0))
+    }
+    @Test fun decimalCalibrationStepsHonorMinimumSpacing() {
+        val exact=XYZVolume(.3,.35,.7,.75,.2,.3)
+        assertTrue(exact.valid)
+        assertEquals(listOf(1.0,1.0,1.0),exact.axes(MeasuredXYZ(.35,.75,.3,1.0),7))
+        assertFalse(exact.copy(right=.349999).valid)
+        assertFalse(exact.copy(far=.299999).valid)
+        assertFalse(exact.copy(left=-Math.ulp(1.0)).valid)
+    }
     @Test fun pitchRolesSkipUnassignedKeysAndResetBoundaryOnLoss() {
         val keys=MeasuredXYZKeys((1 shl 2) or (1 shl 19),2)
         assertEquals(1 shl 2,keys.output(listOf(1.0,1.0,.1)).keys)

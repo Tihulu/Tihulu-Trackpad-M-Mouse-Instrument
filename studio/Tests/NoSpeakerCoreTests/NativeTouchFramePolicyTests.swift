@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import NoSpeakerCore
 
@@ -133,4 +134,20 @@ import Testing
         #expect(evidence.observe(expected:[1,2],available:[1]) == .suspect)
         #expect(evidence.observe(expected:[1,2],available:[1,2]) == .healthy)
     }
+}
+
+@Test func nativeSurfaceInventoryRefusesDuplicateIdentityRatherThanCollapsingIt() {
+    #expect(NativeSurfaceAdmission.uniqueInventory([1,2]) == Set([UInt64(1),2]))
+    #expect(NativeSurfaceAdmission.uniqueInventory([1,1]) == nil)
+    #expect(NativeSurfaceAdmission.uniqueInventory(Array(0...64).map(UInt64.init)) == nil)
+    #expect(NativeSurfaceAdmission.uniqueInventory([]) == Set<UInt64>())
+}
+
+@Test func nativeSurfaceRegistrationFenceRejectsMissingChangedAndDuplicateTokens() {
+    let a=UUID(), b=UUID(), c=UUID()
+    #expect(NativeSurfaceAdmission.matchesRegistrations(required:["a":a],current:["a":a,"b":b]))
+    #expect(!NativeSurfaceAdmission.matchesRegistrations(required:["a":a,"b":b],current:["a":a]))
+    #expect(!NativeSurfaceAdmission.matchesRegistrations(required:["a":a,"b":b],current:["a":a,"b":c]))
+    #expect(!NativeSurfaceAdmission.matchesRegistrations(required:["a":a,"b":a],current:["a":a,"b":a]))
+    #expect(!NativeSurfaceAdmission.matchesRegistrations(required:[:],current:["a":a]))
 }

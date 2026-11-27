@@ -17,7 +17,7 @@ public struct DepthXYZCalibrationProfiles: Codable, Equatable, Sendable {
 
     public init() {}
 
-    public enum Failure: Error, Equatable { case invalidName, invalidSettings, duplicate, full }
+    public enum Failure: Error, Equatable { case invalidName, invalidSettings, duplicate, full, changed }
 
     /// Saving never overwrites an existing calibration.
     public mutating func save(name: String, volume: DepthXYZVolume, axisMask: Int, pitchAxis: DepthXYZPitchAxis? = nil, hybrid: Bool = false) throws {
@@ -32,6 +32,17 @@ public struct DepthXYZCalibrationProfiles: Codable, Equatable, Sendable {
         profiles.append(Profile(name: key, volume: volume, axisMask: axisMask, hybrid: hybrid ? true : nil, pitchAxis: pitchAxis))
     }
 
+    /// Compare the complete saved record before replacing it. A stale
+    /// confirmation must not overwrite an independently changed profile.
+    public mutating func replace(expected: Profile, volume: DepthXYZVolume, axisMask: Int,
+                                 pitchAxis: DepthXYZPitchAxis? = nil, hybrid: Bool = false) throws {
+        guard let index = profiles.firstIndex(of: expected) else { throw Failure.changed }
+        var validated = Self()
+        try validated.save(name: expected.name, volume: volume, axisMask: axisMask,
+                           pitchAxis: pitchAxis, hybrid: hybrid)
+        profiles[index] = validated.profiles[0]
+    }
+
     public mutating func remove(id: String) { profiles.removeAll { $0.id == id } }
 
     private enum CodingKeys: String, CodingKey { case profiles }
@@ -41,6 +52,7 @@ public struct DepthXYZCalibrationProfiles: Codable, Equatable, Sendable {
         while !list.isAtEnd {
             guard profiles.count < Self.capacity else { throw Failure.full }
             let profile = try list.decode(Profile.self)
+            guard profile.name == profile.name.trimmingCharacters(in: .whitespacesAndNewlines) else { throw Failure.invalidName }
             try save(name: profile.name, volume: profile.volume, axisMask: profile.axisMask, pitchAxis: profile.pitchAxis, hybrid: profile.hybrid == true)
         }
     }

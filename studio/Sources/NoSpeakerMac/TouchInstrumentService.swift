@@ -373,6 +373,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
     private var monitoring = false
     private var monitoringToken: UUID?
     private var patchMailbox: PatchSurfaceMailbox?
+    private var customSurfaceInboxes: [TouchSurfaceKind: CustomSurfaceNativeInbox] = [:]
     private var active = false
     private var performanceHandler: (@Sendable ([TouchPerformanceState],TouchSnapshotStamp) -> Void)?
     private var queuedInbox: OrderedTouchInbox<QueuedTouchSnapshot>?
@@ -481,6 +482,24 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.lock()
         patchMailbox = mailbox
         lock.unlock()
+    }
+
+    /// Separate raw subscriber; never replaces the existing Builder mailbox.
+    public func setCustomSurfaceInbox(_ inbox: CustomSurfaceNativeInbox?) {
+        // Preserve the existing single-surface API.
+        _ = setCustomSurfaceInboxes(inbox.map { [$0] } ?? [])
+    }
+
+    /// Atomically replace the complete subscription set. Each physical
+    /// kind keeps its own queue, receipt clock and sequence. Duplicate kinds
+    /// are refused without changing the currently installed subscription.
+    @discardableResult
+    public func setCustomSurfaceInboxes(_ inboxes: [CustomSurfaceNativeInbox]) -> Bool {
+        guard inboxes.count <= 2, Set(inboxes.map(\.surface)).count == inboxes.count else { return false }
+        lock.lock()
+        customSurfaceInboxes = Dictionary(uniqueKeysWithValues: inboxes.map { ($0.surface, $0) })
+        lock.unlock()
+        return true
     }
 
     public func update(configuration: TouchInstrumentConfiguration) {
@@ -619,6 +638,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         lock.lock()
         monitoring = false
         monitoringToken = nil
+        customSurfaceInboxes.removeAll()
         performanceHandler = nil
         queuedInbox = nil
         queuedReady = nil
@@ -664,6 +684,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         // Submit under the subscription lock to serialize detachment with
         // the bounded enqueue; no MIDI or actor dispatch in the subscriber.
         patchMailbox?.submit(frame)
+        customSurfaceInboxes[frame.surface]?.submit(frame)
 
         // Mapping is bounded by the native contact limit and has no I/O.
         // Keep it in the same critical section as the publication so an

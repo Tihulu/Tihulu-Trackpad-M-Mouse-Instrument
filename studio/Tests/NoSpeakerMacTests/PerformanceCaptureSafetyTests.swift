@@ -296,3 +296,15 @@ final class PerformanceCaptureSafetyTests: XCTestCase {
     }
 }
 #endif
+
+#if os(macOS)
+import Testing
+@Test func customPadEscapeIsExplicitAndOnlyAcceptsFreshDown() {
+    #expect(PerformanceCaptureSafety.shouldPanicCustomPad(armed: true, keyCode: 53, down: true, isRepeat: false))
+    #expect(!PerformanceCaptureSafety.shouldPanicCustomPad(armed: false, keyCode: 53, down: true, isRepeat: false))
+    #expect(!PerformanceCaptureSafety.shouldPanicCustomPad(armed: true, keyCode: 53, down: false, isRepeat: false))
+    #expect(!PerformanceCaptureSafety.shouldPanicCustomPad(armed: true, keyCode: 53, down: true, isRepeat: true))
+    #expect(!PerformanceCaptureSafety.shouldPanicCustomPad(armed: true, keyCode: 12, down: true, isRepeat: false))
+    #expect(!PerformanceCaptureSafety.shouldPanicOnGlobalEscape(isCaptured: false, keyCode: 53, isRepeat: false))
+}
+#endif

@@ -8,9 +8,11 @@ data class MeasuredXYZ(val x:Double, val y:Double, val metres:Double, val confid
 
 data class XYZVolume(val left:Double=0.0, val right:Double=1.0, val bottom:Double=0.0,
                      val top:Double=1.0, val near:Double=.25, val far:Double=.85) {
-    val valid get() = left in 0.0..1.0 && right in 0.0..1.0 && right-left >= .05 &&
-        bottom in 0.0..1.0 && top in 0.0..1.0 && top-bottom >= .05 &&
-        near in .1..3.0 && far in .1..3.0 && far-near >= .1
+    // Match Swift: decimal step round-off is not an invalid calibration.
+    // Strict coordinate and depth bounds remain unchanged.
+    val valid get() = left in 0.0..1.0 && right in 0.0..1.0 && right-left >= .05-1e-12 &&
+        bottom in 0.0..1.0 && top in 0.0..1.0 && top-bottom >= .05-1e-12 &&
+        near in .1..3.0 && far in .1..3.0 && far-near >= .1-1e-12
     fun axes(p:MeasuredXYZ,mask:Int):List<Double?>? {
         if(!valid || mask !in 1..7 || p.x !in left..right || p.y !in bottom..top ||
             p.metres !in near..far || p.confidence !in .65..1.0)return null
@@ -92,11 +94,35 @@ class MeasuredXYZTracking(private val volume:XYZVolume,private val mask:Int) {
         val axes=point?.let { volume.axes(it,mask) }
         if(!fresh || axes==null){candidate=null;watermark=maxOf(watermark,clock);return AirOutput()}
         val last=candidate
+        // Mirror Swift: a delayed drain cannot extend an expired acquisition
+        // with a buffered measurement captured before its expiry.
+        if(last!=null && now-last>=AirSendGate.FRESH_NS){
+            if(at-last<AirSendGate.FRESH_NS){
+                candidate=null;watermark=maxOf(watermark,clock);return AirOutput()
+            }
+            watermark=at;candidate=at;return AirOutput()
+        }
         watermark=at;candidate=at
         return if(last!=null && at-last<AirSendGate.FRESH_NS)AirOutput(xyz=axes) else AirOutput()
     }
+    /** Expire on silence and fence previously captured measurements. */
+    fun expire(now:Long):Boolean {
+        val last=candidate
+        val invalid=now<0 || now<clock
+        clock=maxOf(clock,now)
+        if(last==null)return false
+        if(!invalid && now-last<AirSendGate.FRESH_NS)return false
+        candidate=null;watermark=maxOf(watermark,clock)
+        return true
+    }
 }
 
+/** Numeric validation for saved UI role/mask values. JSON getters
+ * may truncate fractional numbers; reject rather than reinterpret. */
+internal object XYZCalibrationRecord {
+    fun roleIndex(raw:Double):Int? = raw.toInt().takeIf { raw.isFinite() && raw==it.toDouble() && it in 0..6 }
+    fun axisMask(raw:Double):Int? = raw.toInt().takeIf { raw.isFinite() && raw==it.toDouble() && it in 1..7 }
+}
 internal class MeasuredXYZKeys(mask:Int, private val axis:Int) {
     private val keys=(0..24).filter { mask and (1 shl it)!=0 }
     private var zone:Int?=null

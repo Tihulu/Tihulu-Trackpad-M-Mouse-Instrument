@@ -28,6 +28,12 @@
 - [x] English-only verification rule.
 - [x] Hardware acceptance checklist.
 
+## Product identity migration
+
+- [x] Adopt Tihulu Instrument as the new public name in the master plan.
+- [x] Update draft Studio titles and preview display name with matching verification expectation (native acceptance pending).
+- [ ] Complete remaining branding inventory and compatibility-preserving migration before release; see [master plan](UNIVERSAL_INSTRUMENT_MASTER_PLAN.md).
+
 ## Required before a public release claim
 
 - [ ] Compile the macOS-specific target on a real macOS/Xcode environment or fork CI.

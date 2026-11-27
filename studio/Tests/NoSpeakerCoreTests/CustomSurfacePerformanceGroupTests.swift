@@ -1,0 +1,280 @@
+import Foundation
+import Testing
+@testable import NoSpeakerCore
+
+private func groupMember(_ surface: CustomSurfacePadLayout.Surface) throws -> CustomSurfacePerformanceGroup.Member {
+    let layout = try #require(CustomSurfacePadLayout(surface: surface, pads: [
+        .init(id: "note", label: "Note", x: 0, y: 0, width: 10000, height: 10000, assignment: .note(60))
+    ]))
+    return .init(plan: try .init(layout: layout, melodicChannel: 2), permitsNeutralSilence: true)
+}
+private let groupContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5, y: 0.5)
+
+@Test func customSurfaceGroupIndependentSourcesAndGenerationFence() throws {
+    var next: UInt32 = 1
+    var now: Int64 = 0
+    var wire: [UInt32: [[UInt8]]] = [:]
+    let host = CustomSurfaceEndpointHost(backend: .init(create: { name in
+        defer { next += 1 }
+        return .init(endpoint: .init(handle: next, uniqueID: Int32(next), name: name), succeeded: true)
+    }, owns: { _ in true }, send: { e,b in wire[e.handle,default:[]].append(b); return true }, dispose: { _ in true }))
+    let group = CustomSurfacePerformanceGroup(host: host)
+    let members = try [groupMember(.trackpad), groupMember(.magicMouse)]
+    #expect(group.start([members[0],members[0]],clock:{now},admitsLive:{true}) == .refused)
+    #expect(next == 1)
+    guard case .started(let run) = group.start(members,clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not start"); return
+    }
+    group.frame(run:run,surface:.trackpad,contacts:[],sequence:1,observedAt:0)
+    group.frame(run:run,surface:.magicMouse,contacts:[],sequence:1,observedAt:0)
+    now=1
+    group.frame(run:run,surface:.trackpad,contacts:[groupContact],sequence:2,observedAt:now)
+    group.frame(run:run,surface:.magicMouse,contacts:[groupContact],sequence:2,observedAt:now)
+    now=2
+    #expect(group.frame(run:UUID(),surface:.trackpad,contacts:[],sequence:3,observedAt:now) == nil)
+    #expect(group.frame(run:run,surface:.phone,contacts:[],sequence:3,observedAt:now) == nil)
+    group.frame(run:run,surface:.trackpad,contacts:[],sequence:3,observedAt:now)
+    #expect(wire[1] == [[0x92,60,100],[0x82,60,0]])
+    #expect(wire[2] == [[0x92,60,100]])
+    group.stop()
+    #expect(wire[2] == [[0x92,60,100],[0x82,60,0]])
+    #expect(group.phase == .idle && host.statuses.isEmpty)
+}
+
+@Test func customSurfaceGroupPartialCreationRollsBackAndBlocksRecovery() throws {
+    var created = 0
+    var disposals = 0
+    var failDisposal = true
+    let host = CustomSurfaceEndpointHost(backend:.init(create:{ name in
+        created += 1
+        guard created == 1 else { return nil }
+        return .init(endpoint:.init(handle:1,uniqueID:1,name:name),succeeded:true)
+    },owns:{_ in true},send:{_,_ in Issue.record("Unexpected MIDI");return false},
+       dispose:{_ in disposals += 1;return !failDisposal}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    let members=try [groupMember(.trackpad),groupMember(.magicMouse)]
+    #expect(group.start(members,clock:{0},admitsLive:{true}) == .recoveryPending)
+    #expect(group.runID == nil && group.phase == .recoveryPending && disposals == 1)
+    group.stop()
+    #expect(disposals == 1)
+    #expect(group.start(members,clock:{0},admitsLive:{true}) == .refused)
+    failDisposal=false
+    group.retryRecovery()
+    #expect(disposals == 2 && group.phase == .idle && host.statuses.isEmpty)
+}
+
+@Test func customSurfaceGroupMissingNeutralRetiresAllAndReleasesOtherMember() throws {
+    var next: UInt32 = 1
+    var now: Int64 = 0
+    var wire: [UInt32: [[UInt8]]] = [:]
+    let host = CustomSurfaceEndpointHost(backend:.init(create:{name in
+        defer { next += 1 }
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{_ in true},send:{e,b in wire[e.handle,default:[]].append(b);return true},dispose:{_ in true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    guard case .started(let run)=group.start(try [groupMember(.trackpad),groupMember(.magicMouse)],clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not start");return
+    }
+    group.frame(run:run,surface:.trackpad,contacts:[],sequence:1,observedAt:0)
+    now=1
+    group.frame(run:run,surface:.trackpad,contacts:[groupContact],sequence:2,observedAt:now)
+    now=CustomSurfacePerformanceGroup.neutralTimeoutNS
+    group.poll(run:run)
+    #expect(group.phase == .idle && host.statuses.isEmpty)
+    #expect(group.stopReason == .neutralTimeout)
+    group.stop()
+    #expect(group.stopReason == .neutralTimeout)
+    #expect(wire[1] == [[0x92,60,100],[0x82,60,0]] && wire[2] == nil)
+    #expect(group.frame(run:run,surface:.trackpad,contacts:[groupContact],sequence:3,observedAt:now) == nil)
+}
+
+@Test func customSurfaceGroupFaultInOneMemberRevokesOtherAndRetainsDebt() throws {
+    var next:UInt32=1
+    var now:Int64=0
+    var failOff=true
+    var wire:[UInt32:[[UInt8]]]=[:]
+    let host=CustomSurfaceEndpointHost(backend:.init(create:{name in
+        defer {next+=1}
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{_ in true},send:{e,b in
+        wire[e.handle,default:[]].append(b)
+        return !(e.handle==1 && b[0]==0x82 && failOff)
+    },dispose:{_ in true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    guard case .started(let run)=group.start(try [groupMember(.trackpad),groupMember(.magicMouse)],clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not start");return
+    }
+    for surface in [CustomSurfacePadLayout.Surface.trackpad,.magicMouse] {
+        group.frame(run:run,surface:surface,contacts:[],sequence:1,observedAt:0)
+    }
+    now=1
+    for surface in [CustomSurfacePadLayout.Surface.trackpad,.magicMouse] {
+        group.frame(run:run,surface:surface,contacts:[groupContact],sequence:2,observedAt:now)
+    }
+    now=2
+    #expect(group.frame(run:run,surface:.trackpad,contacts:[],sequence:2,observedAt:now) == nil)
+    #expect(group.phase == .recoveryPending && group.runID == nil)
+    #expect(group.stopReason == .memberFault(.trackpad, .expiredOrInvalid))
+    #expect(group.statuses.count == 1 && group.statuses.first?.phase == .cleanupPending)
+    #expect(wire[1] == [[0x92,60,100],[0x82,60,0]])
+    #expect(wire[2] == [[0x92,60,100],[0x82,60,0]])
+    group.stop()
+    #expect(wire[1]?.count == 2)
+    failOff=false
+    group.retryRecovery()
+    #expect(group.phase == .idle && wire[1]?.count == 3)
+    #expect(group.stopReason == .memberFault(.trackpad, .expiredOrInvalid))
+}
+
+@Test func customSurfaceGroupAdmissionLossDuringSendCannotResumeOrAttackAnotherMember() throws {
+    var next: UInt32 = 1
+    var now: Int64 = 0
+    var allowed = true
+    var wire: [UInt32: [[UInt8]]] = [:]
+    let host = CustomSurfaceEndpointHost(backend:.init(create:{name in
+        defer { next += 1 }
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{_ in true},send:{e,b in
+        wire[e.handle,default:[]].append(b)
+        if b[0] == 0x92 { allowed=false }
+        return true
+    },dispose:{_ in true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    guard case .started(let run)=group.start(try [groupMember(.trackpad),groupMember(.magicMouse)],clock:{now},admitsLive:{allowed}) else {
+        Issue.record("Group did not start");return
+    }
+    for surface in [CustomSurfacePadLayout.Surface.trackpad,.magicMouse] {
+        group.frame(run:run,surface:surface,contacts:[],sequence:1,observedAt:0)
+    }
+    now=1
+    #expect(group.frame(run:run,surface:.trackpad,contacts:[groupContact],sequence:2,observedAt:now) == nil)
+    allowed=true
+    #expect(group.frame(run:run,surface:.magicMouse,contacts:[groupContact],sequence:2,observedAt:now) == nil)
+    #expect(group.phase == .idle && wire[1] == [[0x92,60,100],[0x82,60,0]] && wire[2] == nil)
+}
+
+@Test func customSurfaceGroupAdmissionLossDuringFinalArmClockRollsBackAllPorts() throws {
+    var next: UInt32=1
+    var allowed=true
+    var disposed:Set<UInt32>=[]
+    let host=CustomSurfaceEndpointHost(backend:.init(create:{name in
+        defer {next+=1}
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{_ in true},send:{_,_ in Issue.record("Unexpected MIDI");return false},
+       dispose:{e in disposed.insert(e.handle);return true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    #expect(group.start(try [groupMember(.trackpad),groupMember(.magicMouse)],clock:{allowed=false;return 0},
+                        admitsLive:{allowed}) == .rolledBack)
+    #expect(disposed==Set([1,2]) && group.phase == .idle && host.statuses.isEmpty)
+}
+
+@Test func customSurfaceGroupRetainsBothFinalTimingRecordsAcrossRecovery() throws {
+    var next: UInt32=1
+    var now: Int64=0
+    var failOff=true
+    let host=CustomSurfaceEndpointHost(backend:.init(create:{name in
+        defer {next+=1}
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{_ in true},send:{e,b in !(e.handle==1 && b[0]==0x82 && failOff)},dispose:{_ in true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    let members=try [groupMember(.trackpad),groupMember(.magicMouse)]
+    guard case .started(let run)=group.start(members,clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not start");return
+    }
+    for surface in [CustomSurfacePadLayout.Surface.trackpad,.magicMouse] {
+        group.frame(run:run,surface:surface,contacts:[],sequence:1,observedAt:0)
+    }
+    now=1
+    for surface in [CustomSurfacePadLayout.Surface.trackpad,.magicMouse] {
+        group.frame(run:run,surface:surface,contacts:[groupContact],sequence:2,observedAt:now)
+    }
+    group.stop()
+    #expect(group.phase == .recoveryPending)
+    #expect(group.timingEvidence[.trackpad]?.failedSends == 1)
+    #expect(group.timingEvidence[.magicMouse]?.sendAttempts == 2)
+    failOff=false
+    group.retryRecovery()
+    #expect(group.phase == .idle && group.timingEvidence.count == 2)
+    #expect(group.timingEvidence[.trackpad]?.sendAttempts == 3)
+    #expect(group.timingEvidence[.magicMouse]?.sendAttempts == 2)
+    guard case .started = group.start(members,clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not restart");return
+    }
+    #expect(group.timingEvidence.values.allSatisfy { $0.sendAttempts == 0 })
+    group.stop()
+}
+
+@Test func customSurfaceGroupClockRegressionPreservesFirstStopReason() throws {
+    var now:Int64=10
+    var next:UInt32=1
+    let host=CustomSurfaceEndpointHost(backend:.init(create:{name in
+        defer {next+=1}
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{_ in true},send:{_,_ in true},dispose:{_ in true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    let members=try [groupMember(.trackpad),groupMember(.magicMouse)]
+    guard case .started(let run)=group.start(members,clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not start");return
+    }
+    now=9
+    group.poll(run:run)
+    group.stop()
+    group.retryRecovery()
+    #expect(group.phase == .idle && group.stopReason == .clockInvalid)
+    guard case .started = group.start(members,clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not restart");return
+    }
+    #expect(group.stopReason == nil)
+    group.stop()
+    #expect(group.stopReason == .requested)
+}
+
+@Test func customSurfaceGroupExpiredPeerBlocksAnotherAttackBeforeWatchdogTick() throws {
+    var next:UInt32=1
+    var now:Int64=0
+    var wire:[UInt32:[[UInt8]]]=[:]
+    let host=CustomSurfaceEndpointHost(backend:.init(create:{name in
+        defer {next+=1}
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{_ in true},send:{e,b in wire[e.handle,default:[]].append(b);return true},dispose:{_ in true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    guard case .started(let run)=group.start(try [groupMember(.trackpad),groupMember(.magicMouse)],clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not start");return
+    }
+    for surface in [CustomSurfacePadLayout.Surface.trackpad,.magicMouse] {
+        group.frame(run:run,surface:surface,contacts:[],sequence:1,observedAt:0)
+    }
+    now=1
+    group.frame(run:run,surface:.trackpad,contacts:[groupContact],sequence:2,observedAt:now)
+    now=150_000_001
+    #expect(group.frame(run:run,surface:.magicMouse,contacts:[groupContact],sequence:2,observedAt:now) == nil)
+    #expect(group.stopReason == .memberFault(.trackpad,.expiredOrInvalid) && group.phase == .idle)
+    #expect(wire[1] == [[0x92,60,100],[0x82,60,0]] && wire[2] == nil)
+}
+
+@Test func customSurfaceGroupPeerExpiresDuringIdentityQueryBeforeOnset() throws {
+    var next: UInt32=1
+    var now:Int64=0
+    var stallMouse=false
+    var wire:[UInt32:[[UInt8]]]=[:]
+    let host=CustomSurfaceEndpointHost(backend:.init(create:{ name in
+        defer { next+=1 }
+        return .init(endpoint:.init(handle:next,uniqueID:Int32(next),name:name),succeeded:true)
+    },owns:{ endpoint in
+        if endpoint.handle==2 && stallMouse { now=150_000_001 }
+        return true
+    },send:{e,b in wire[e.handle,default:[]].append(b);return true},dispose:{_ in true}))
+    let group=CustomSurfacePerformanceGroup(host:host)
+    guard case .started(let run)=group.start(try [groupMember(.trackpad),groupMember(.magicMouse)],clock:{now},admitsLive:{true}) else {
+        Issue.record("Group did not start");return
+    }
+    for surface in [CustomSurfacePadLayout.Surface.trackpad,.magicMouse] {
+        group.frame(run:run,surface:surface,contacts:[],sequence:1,observedAt:0)
+    }
+    now=1
+    group.frame(run:run,surface:.trackpad,contacts:[groupContact],sequence:2,observedAt:now)
+    now=149_999_999;stallMouse=true
+    #expect(group.frame(run:run,surface:.magicMouse,contacts:[groupContact],sequence:2,observedAt:now) == nil)
+    #expect(group.stopReason == .memberFault(.trackpad,.expiredOrInvalid))
+    #expect(group.phase == .idle && wire[1] == [[0x92,60,100],[0x82,60,0]] && wire[2] == nil)
+}
