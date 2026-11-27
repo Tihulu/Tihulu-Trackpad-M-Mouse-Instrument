@@ -54,8 +54,8 @@ private fun perKind(kind: AirImportLifecycle.Kind) {
         repeat(32) { expect(start(kind) == denied) }
         if (early) runWorker()
         expect(runner.busy && discarded == 0); runUI()
-        expect(!runner.busy && accepted == 0 && discarded == 1 && retired == 1 && released == 1)
-        expect(start(kind) == started); runWorker(); runUI(); expect(accepted == 1 && discarded == 1)
+        expect(!runner.busy && accepted == 0 && discarded == (if (early) 0 else 1) && retired == 1 && released == 1)
+        expect(start(kind) == started); runWorker(); runUI(); expect(accepted == 1 && discarded == (if (early) 0 else 1))
     }
     // Worker error, cancelled error, and rejected submit.
     for (cancel in listOf(false, true)) Fixture().apply {
@@ -77,7 +77,7 @@ private fun perKind(kind: AirImportLifecycle.Kind) {
         runner.close(); runner.close(); expect(start(kind) == denied)
         if (phase != 1) runWorker()
         runUI(); expect(!runner.busy && !runner.cancellable && accepted == 0 && retired == 0)
-        expect(discarded == 1 && released == 1 && start(kind) == denied)
+        expect(discarded == (if (phase == 1) 1 else 0) && released == 1 && start(kind) == denied)
     }
     Fixture().apply {
         postRejected = true; expect(start(kind) == started); runWorker()

@@ -26,7 +26,7 @@ internal class AirImportRunner(
      * current token, to refresh controls without applying stale data. */
     fun <T> start(
         kind: AirImportLifecycle.Kind,
-        work: () -> T,
+        work: (AirImportLifecycle.Token) -> T,
         releaseInput: () -> Unit = {},
         discard: (T) -> Unit = {},
         retired: () -> Unit = {},
@@ -35,7 +35,7 @@ internal class AirImportRunner(
         val token = gate.begin(kind) ?: return Start.BUSY_OR_CLOSED
         try {
             executor.execute {
-                val result = try { runCatching(work) } finally { releaseInput() }
+                val result = try { runCatching { token.checkActive(); work(token) } } finally { releaseInput() }
                 // A false post means the UI dispatcher is unavailable. Never
                 // unlock the gate off-thread or admit a new task on that owner.
                 if (!post {
