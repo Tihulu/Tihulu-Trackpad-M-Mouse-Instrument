@@ -13,6 +13,7 @@ public final class NativeCustomSurfaceMIDIHost {
     public typealias Status = CustomSurfaceEndpointHost.Status
     private typealias Endpoint = CustomSurfaceEndpointHost.Endpoint
     private let host: CustomSurfaceEndpointHost
+    private lazy var group = CustomSurfacePerformanceGroup(host: host)
     private var watchdog: Task<Void, Never>?
 
     private init() {
@@ -32,6 +33,7 @@ public final class NativeCustomSurfaceMIDIHost {
     /// No input capture or automatic rearm. Non-live returned states are
     /// recovery records, not successful activation.
     public func open(plan: CustomSurfaceMixedPlan, permitsNeutralSilence: Bool = false, admitsLive: @escaping () -> Bool) -> Status? {
+        guard group.phase == .idle else { return nil }
         let status = host.open(plan: plan, permitsNeutralSilence: permitsNeutralSilence, clock: { Self.monotonicNow() }, admitsLive: admitsLive)
         reconcileWatchdog()
         return status
@@ -39,12 +41,14 @@ public final class NativeCustomSurfaceMIDIHost {
     public func frame(_ id: UUID, surface: CustomSurfacePadLayout.Surface,
                       contacts: [CustomSurfaceContactProjection.Contact],
                       sequence: UInt64, observedAt: Int64) -> Status? {
+        guard group.phase == .idle else { return nil }
         let status = host.frame(id, surface: surface, contacts: contacts, sequence: sequence, observedAt: observedAt)
         reconcileWatchdog()
         return status
     }
     @discardableResult
     public func close(_ id: UUID, retryPending: Bool = true) -> Status? {
+        guard group.phase == .idle else { return nil }
         let status = host.close(id, retryPending: retryPending)
         reconcileWatchdog()
         return status
@@ -52,10 +56,46 @@ public final class NativeCustomSurfaceMIDIHost {
     /// Explicit scoped cleanup, never a process-wide or DAW-wide panic.
     /// Failed recovery records remain available through statuses.
     public func closeAll() -> [Status] {
+        if group.phase != .idle {
+            // Close an active group without retrying failed debt. A later
+            // explicit recovery may retry only its own retained endpoints.
+            if group.phase == .live { group.stop() } else { group.retryRecovery() }
+            reconcileWatchdog()
+            return group.statuses
+        }
         let ids = host.statuses.map(\.id)
         let reports = ids.compactMap { host.close($0) }
         reconcileWatchdog()
         return reports
+    }
+
+    // Internal building blocks for the explicit Studio group integration.
+    // The same host is shared with single-pad sessions: never a second
+    // reservation registry that could claim the same native endpoint.
+    public var groupPhase: CustomSurfacePerformanceGroup.Phase { group.phase }
+    public var groupRunID: UUID? { group.runID }
+    public func openGroup(_ members: [CustomSurfacePerformanceGroup.Member],
+                          admitsLive: @escaping () -> Bool) -> CustomSurfacePerformanceGroup.StartResult {
+        let result = group.start(members, clock: { Self.monotonicNow() }, admitsLive: admitsLive)
+        reconcileWatchdog()
+        return result
+    }
+    @discardableResult
+    public func groupFrame(run: UUID, surface: CustomSurfacePadLayout.Surface,
+                           contacts: [CustomSurfaceContactProjection.Contact],
+                           sequence: UInt64, observedAt: Int64) -> Status? {
+        let result = group.frame(run: run, surface: surface, contacts: contacts, sequence: sequence, observedAt: observedAt)
+        reconcileWatchdog()
+        return result
+    }
+    public func stopGroup(run: UUID) {
+        guard group.runID == run else { return }
+        group.stop()
+        reconcileWatchdog()
+    }
+    public func retryGroupRecovery() {
+        group.retryRecovery()
+        reconcileWatchdog()
     }
 
     private func reconcileWatchdog() {
@@ -71,7 +111,8 @@ public final class NativeCustomSurfaceMIDIHost {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
                 guard let self, !Task.isCancelled else { return }
-                self.host.poll()
+                if let run = self.group.runID { self.group.poll(run: run) }
+                else { self.host.poll() }
                 if !self.host.statuses.contains(where: { $0.phase == .live }) {
                     self.watchdog = nil
                     return
