@@ -14,6 +14,7 @@ import repo_index
 CASES = Path(__file__).with_name("rag_benchmark_cases.json")
 HELDOUT_CASES = Path(__file__).with_name("rag_heldout_cases.json")
 RANKING_CASES = Path(__file__).with_name("rag_ranking_cases.json")
+MULTILINGUAL_CASES = Path(__file__).with_name("rag_multilingual_cases.json")
 
 
 def load_cases(path, group=None):
@@ -139,7 +140,7 @@ def main():
     parser.add_argument("--model-dir")
     parser.add_argument("--cases-file", help="Explicit independent JSON case set; default curated cases")
     parser.add_argument("--case-group", choices=("development", "evaluation"))
-    parser.add_argument("--lexical-profile", choices=("legacy", "file-first"), default="legacy")
+    parser.add_argument("--lexical-profile", choices=repo_index.LEXICAL_PROFILES, default="legacy")
     parser.add_argument("--compare-cache", action="store_true", help="Measure verified lexical cache and require exact result parity")
     parser.add_argument("--k", type=int, default=8)
     parser.add_argument("--max-per-file", type=int, default=3)
