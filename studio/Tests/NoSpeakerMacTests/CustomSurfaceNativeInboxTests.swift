@@ -114,3 +114,23 @@ private func inboxFrame(_ n: Int, surface: TouchSurfaceKind = .trackpad, valid: 
     #expect(invalid.queueEvidence().peak == 0 && invalid.queueEvidence().fault == .invalidFrame)
 }
 #endif
+
+#if os(macOS)
+@Test func customNativeInboxCannotResetAnAlreadyArmedGeneration() {
+    let inbox = CustomSurfaceNativeInbox(surface: .trackpad, orientation: .horizontal, notBefore: 0)
+    #expect(inbox.begin(at: 1))
+    inbox.submit(inboxFrame(2))
+    #expect(!inbox.begin(at: 3))
+    #expect(inbox.drain().samples.map(\.observedAt) == [2])
+}
+@Test func customNativeIndependentSurfaceInboxesDoNotMixSequences() {
+    let trackpad = CustomSurfaceNativeInbox(surface: .trackpad, orientation: .horizontal, notBefore: 0)
+    let mouse = CustomSurfaceNativeInbox(surface: .magicMouse, orientation: .horizontal, notBefore: 0)
+    #expect(trackpad.begin(at: 1) && mouse.begin(at: 1))
+    trackpad.submit(inboxFrame(3))
+    mouse.submit(inboxFrame(3, surface: .magicMouse))
+    trackpad.submit(inboxFrame(2))
+    #expect(!trackpad.admitsDelivery && mouse.admitsDelivery)
+    #expect(mouse.drain().samples.map(\.observedAt) == [3])
+}
+#endif

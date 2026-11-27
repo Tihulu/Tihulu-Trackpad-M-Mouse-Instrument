@@ -6,7 +6,7 @@ import NoSpeakerCore
 /// monitor. Never calls MIDI or dispatches actor tasks in the native callback.
 public final class CustomSurfaceNativeInbox: @unchecked Sendable {
     private let lock = NSLock()
-    private let surface: TouchSurfaceKind
+    public let surface: TouchSurfaceKind
     private let orientation: SurfaceOrientation
     private var notBefore: Int64
     private let diagnosticOnly: Bool
@@ -22,6 +22,7 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
     private var previousSequence: UInt64?
     private var previousReceipt: Int64?
     private var closed = false
+    private var began = false
     public init(surface: TouchSurfaceKind, orientation: SurfaceOrientation, notBefore: Int64,
                 diagnosticOnly: Bool = false) {
         self.surface = surface; self.orientation = orientation; self.notBefore = notBefore
@@ -62,7 +63,8 @@ public final class CustomSurfaceNativeInbox: @unchecked Sendable {
     @discardableResult
     public func begin(at receipt: Int64) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard !closed, fault == nil, receipt >= notBefore else { return false }
+        guard !closed, !began, fault == nil, receipt >= notBefore else { return false }
+        began = true
         notBefore = receipt
         evidence = .init()
         peakDepth = 0
