@@ -203,10 +203,15 @@ class AirPreviewActivity: ComponentActivity() {
         status.text=if(granted)"Camera permission granted. Press Start." else "Camera permission denied."
         controls()
     }
+    private fun cameraPermitted() = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    private fun captureFailure() = AirCaptureLifecycle.failure(captureRotation, displayDegrees(),
+        lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED), cameraPermitted())
     private val pulse=object:Runnable {
         override fun run() {
-            if(captureRotation?.let { it!=displayDegrees() }==true) {
-                end("Display rotation changed · restart required");handler.postDelayed(this,50);return
+            if(pending||source!=null||depthSource!=null||xyzSource!=null) {
+                captureFailure()?.let {
+                    end(it.message);handler.postDelayed(this,50);return
+                }
             }
             lan?.let {client->
                 val state=client.status()
@@ -223,7 +228,7 @@ class AirPreviewActivity: ComponentActivity() {
                     controls()
                 }
             }
-            if((xyzSource!=null||source!=null||depthSource!=null||(lan!=null&&!wantsTouchPair))&&ContextCompat.checkSelfPermission(this@AirPreviewActivity,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
+            if(lan!=null&&!wantsTouchPair&&!cameraPermitted()) {
                 end("Camera permission lost");handler.postDelayed(this,50);return
             }
             if(retiring?.isStopped==true) {retiring=null;controls()}
@@ -528,8 +533,9 @@ class AirPreviewActivity: ComponentActivity() {
             handler.post {
                 if(destroyed||epoch!=ticket||!importing)return@post
                 importing=false
-                if(trust==null||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)){
-                    connectionStatus.text="Root fingerprint or certificate invalid, or app inactive";controls();return@post
+                if(trust==null||!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||
+                    (!wantsTouchPair&&!cameraPermitted())){
+                    connectionStatus.text="Root fingerprint or certificate invalid, app inactive or camera permission lost";controls();return@post
                 }
                 val client=BoundedMobileLanSocket(endpoint,selection,trust)
                 lan=client;lastPhase=null
@@ -563,7 +569,7 @@ class AirPreviewActivity: ComponentActivity() {
                 if(allowed !in 1 until (1 shl 25)){end("No assigned keys");return}
                 MeasuredXYZKeys(allowed,axis)
             }
-            xyzRotation=displayDegrees();xyzVolume=volume;xyzLastAt=null
+            xyzRotation=displayDegrees();captureRotation=xyzRotation;xyzVolume=volume;xyzLastAt=null
             xyzTracking=MeasuredXYZTracking(volume,mask)
             observationFence=if(wantsPair)PairedObservationFence(SystemClock.elapsedRealtimeNanos()) else null
             val measured=Camera2XYZSource(applicationContext,camera,xyzRotation,volume)
@@ -587,8 +593,8 @@ class AirPreviewActivity: ComponentActivity() {
         val epoch=++ticket;pending=true;controls();status.text="Opening camera"
         val future=ProcessCameraProvider.getInstance(this)
         future.addListener({
-            if(epoch==ticket&&pending&&lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                if(captureRotation!=displayDegrees()){end("Display rotation changed · restart required");return@addListener}
+            if(epoch==ticket&&pending) {
+                captureFailure()?.let {end(it.message);return@addListener}
                 try {
                     if(wantsPair&&lan?.status()?.phase!=MobileLanSession.Phase.READY){end("Mac assignment ended");return@addListener}
                     val s=RgbHandSource(this,this,future.get(),"hand_landmarker.task",model) { message ->
@@ -609,7 +615,9 @@ class AirPreviewActivity: ComponentActivity() {
                 ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {installRequested=true;status.text="Complete ARCore installation, then press Start again";return}
                 ArCoreApk.InstallStatus.INSTALLED -> installRequested=false
             }
-            if(!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))return
+            if(!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||!cameraPermitted()){
+                end("App inactive or camera permission lost");return
+            }
             val range=selectedRange()?:run{status.text="Invalid depth range";return}
             val keys=if(wantsPair){
                 if(pairedProjection()==null){end("Mac assignment ended");return}
