@@ -105,6 +105,14 @@ public enum MIDIFileParser {
                     let type = bytes[cursor]; cursor += 1
                     let metaLength = try readVariableLength()
                     guard cursor + metaLength <= trackEnd else { throw MIDIFileError.truncated }
+                    if type == 0x2F {
+                        guard metaLength == 0 else {
+                            throw MIDIFileError.malformed("End of Track must have zero length")
+                        }
+                        guard cursor == trackEnd else {
+                            throw MIDIFileError.malformed("Events after End of Track")
+                        }
+                    }
                     if type == 0x51, metaLength == 3 {
                         let tempo = (Int(bytes[cursor]) << 16) | (Int(bytes[cursor + 1]) << 8) | Int(bytes[cursor + 2])
                         allEvents.append(.init(tick: tick, order: eventOrder, kind: .tempo(microsecondsPerQuarter: tempo)))
