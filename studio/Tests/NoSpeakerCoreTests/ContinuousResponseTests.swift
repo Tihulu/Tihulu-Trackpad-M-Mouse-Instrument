@@ -78,3 +78,65 @@ import Testing
     let pan = try ExpressivePreset.pan.appending(to: .init(), source: .trackpad, signal: .x, channel: 0)
     #expect(pan.routes.first?.response?.releaseValue(for: .init(.controlChange, number: 10)) == 64)
 }
+
+@Test func relativeControlAnchorsWithoutSendingAndReturnsToOrigin() throws {
+    let target = SensorDestination(.pitchBend)
+    var router = SensorRouter()
+    try router.configure([.init(id: "relative", source: .magicMouse, signal: .x,
+        destination: target, response: .init(relative: .init(reference: 8192.0 / 16383)))])
+    let id = try router.connect(.magicMouse, now: 1)
+    func event(_ x: Double, _ sequence: UInt64) -> SensorEvent {
+        .init(session: id, signal: .x, value: x, sequence: sequence, timestamp: Double(sequence))
+    }
+    #expect(router.ingest(event(0.75, 1), now: 1).isEmpty)
+    #expect(router.ingest(event(0.875, 2), now: 2) == [.init(target, value: 10240)])
+    #expect(router.ingest(event(0.75, 3), now: 3) == [.init(target, value: 8192)])
+    #expect(router.releaseSignal(session: id, signal: .x).isEmpty)
+    #expect(router.ingest(event(0.25, 4), now: 4).isEmpty)
+    #expect(router.ingest(event(0.125, 5), now: 5) == [.init(target, value: 6144)])
+    #expect(router.disconnect(id) == [.init(target, value: 8192)])
+}
+
+@Test func relativeControlClampsWithoutDriftAndRejectsInvalidReferences() throws {
+    var gesture = try #require(RelativeControlGesture(input: 0.5, timestamp: 0,
+        reference: 90, lower: 0, upper: 127, gain: 2))
+    #expect(gesture.update(input: 1, timestamp: 1) == 127)
+    #expect(gesture.update(input: 0.9, timestamp: 2) == nil)
+    #expect(gesture.update(input: .nan, timestamp: 3) == nil)
+    #expect(gesture.update(input: 0.5, timestamp: 3) == 90)
+    #expect(gesture.update(input: 0, timestamp: 4) == 0)
+    #expect(gesture.update(input: 0.5, timestamp: 5) == 90)
+    #expect(RelativeControlGesture(input: 0, timestamp: 0, reference: 128, lower: 0, upper: 127) == nil)
+}
+
+@Test func relativeControlRejectsSwitchesAndSharedDestinationsAndRoundTrips() throws {
+    let target = SensorDestination(.controlChange, number: 74)
+    let route = SensorMapping(id: "delta", source: .camera, signal: .x,
+        destination: target, response: .init(relative: .init(reference: 0.7, gain: 2)))
+    let patch = InstrumentPatch(routes: [route])
+    #expect(patch.isValid)
+    #expect(try InstrumentPatch.read(patch.archive()) == patch)
+    #expect(try PatchGraph(patch: patch).compile(name: patch.name) == patch)
+    var other = route
+    other.id = "other"; other.source = .phone
+    #expect(!InstrumentPatch(routes: [route, other]).isValid)
+    other.destination = .init(.controlChange, number: 65)
+    #expect(!other.isValid)
+    other.destination = target; other.signal = .contact
+    #expect(!other.isValid)
+}
+
+@Test func relativeControlAnchorOnlyReleaseAndSecondSessionIsolation() throws {
+    let target = SensorDestination(.controlChange, number: 74)
+    var router = SensorRouter()
+    try router.configure([.init(id: "relative", source: .trackpad, signal: .x,
+        destination: target, response: .init(relative: .init(reference: 0.5)))])
+    let a = try router.connect(.trackpad, now: 0)
+    let b = try router.connect(.trackpad, now: 0)
+    #expect(router.ingest(.init(session: a, signal: .x, value: 0.8, sequence: 1, timestamp: 1), now: 1).isEmpty)
+    #expect(router.ingest(.init(session: b, signal: .x, value: 0.2, sequence: 1, timestamp: 1), now: 1).isEmpty)
+    #expect(router.releaseSignal(session: a, signal: .x).isEmpty)
+    #expect(router.ingest(.init(session: b, signal: .x, value: 0.4, sequence: 2, timestamp: 2), now: 2).isEmpty)
+    #expect(router.ingest(.init(session: b, signal: .x, value: 0.5, sequence: 3, timestamp: 3), now: 3) == [.init(target, value: 77)])
+    #expect(router.panic() == [.init(target, value: 0)])
+}
