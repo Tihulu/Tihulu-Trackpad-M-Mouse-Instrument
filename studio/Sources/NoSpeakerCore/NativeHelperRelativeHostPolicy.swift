@@ -76,4 +76,16 @@ public enum NativeHelperRelativeHostPolicy {
             transportReady: transportReady, recoveryRequired: recoveryRequired)
         return .init(finished: finished, neutralPermitted: neutralPermitted)
     }
+
+    /// Terminal disposal is distinct from genuine-neutral authorization.
+    /// Only the current serialized host may request it after permanent input
+    /// closure and scoped release. Dirty closure keeps the reservation.
+    public static func finishTerminalClosure(transaction: inout NativeHelperRelativeOutputTransaction,
+        owners: inout LegacyContinuousOwners, reservedTargets: Set<SensorDestination>,
+        debt: LegacyControllerReleaseDebt, transportReady: Bool, recoveryRequired: Bool) -> Bool {
+        let clean = permitsCleanupConfirmation(plannedTargets: transaction.cleanupTargets,
+            reservedTargets: reservedTargets, debt: debt, transportReady: transportReady,
+            recoveryRequired: recoveryRequired)
+        return transaction.confirmTerminalClosure(owners: &owners, transportClean: clean)
+    }
 }

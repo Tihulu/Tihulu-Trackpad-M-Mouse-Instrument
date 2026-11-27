@@ -888,6 +888,25 @@ public final class MIDIHapticService: @unchecked Sendable {
         return result.neutralPermitted
     }
 
+    /// Call only from the current serialized Controller owner AFTER the
+    /// input host has permanently closed and retired its scoped output.
+    /// This is a logical disposal check: no new sends or neutral evidence.
+    /// Failure retains the transaction; retry after actual debt recovery.
+    @discardableResult
+    public func finishClosedRelativeHelperOutput() -> Bool {
+        guard var state = relativeHelperOutput else {
+            return continuousOwners.relativeReservedTargets.isEmpty
+        }
+        var staged = continuousOwners
+        let reserved = staged.relativeReservedTargets
+        let finished = NativeHelperRelativeHostPolicy.finishTerminalClosure(transaction: &state,
+            owners: &staged, reservedTargets: reserved, debt: controllerDebt,
+            transportReady: relativeTransportReady, recoveryRequired: controllerRecoveryRequired)
+        continuousOwners = staged
+        relativeHelperOutput = finished ? nil : state
+        return finished
+    }
+
     public func sendHelperControls(
         x: Double, y: Double, contactSize: Double, assignments: MIDIHelperAssignments,
         channel: Int, pitchBendRange: Int, vibratoCC: Int, expressionCC: Int,
@@ -897,7 +916,10 @@ public final class MIDIHapticService: @unchecked Sendable {
         lock.lock()
         let canSend = enabled && virtualSource != 0
         lock.unlock()
-        guard canSend,let values = HelperPerformancePolicy.controls(x:x,y:y,size:contactSize,
+        // Never fall back to untokened Absolute while a Relative transaction
+        // remains active or awaits terminal cleanup (even without a lease).
+        guard canSend, relativeHelperOutput == nil,
+              let values = HelperPerformancePolicy.controls(x:x,y:y,size:contactSize,
             assignments:assignments,channel:channel,bendRange:pitchBendRange,
             vibratoCC:vibratoCC,expressionCC:expressionCC,
             configureReceiverBendRange:configureReceiverBendRange) else { return }

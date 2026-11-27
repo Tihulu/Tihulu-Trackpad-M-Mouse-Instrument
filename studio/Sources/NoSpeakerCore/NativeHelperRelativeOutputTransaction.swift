@@ -9,7 +9,7 @@ public struct NativeHelperRelativeOutputTransaction: Sendable {
     public enum Result: Equatable, Sendable {
         case anchored, accepted, releaseRequired, blocked
     }
-    private enum Phase: Sendable { case ready, active, retired }
+    private enum Phase: Sendable { case ready, active, retired, closing, closed }
     private let plan: NativeHelperRelativeOutputPlan
     private var phase = Phase.ready
     private var lease: UUID?
@@ -34,7 +34,7 @@ public struct NativeHelperRelativeOutputTransaction: Sendable {
         case .active:
             if let lease { owners.invalidateRelativeHelper(lease) }
             return retire()
-        case .retired: return .blocked
+        case .retired, .closing, .closed: return .blocked
         case .ready: break
         }
         guard permits(), plan.permitsAnchor(owners: owners, reservedChannels: reservedChannels),
@@ -67,6 +67,8 @@ public struct NativeHelperRelativeOutputTransaction: Sendable {
 
     /// No new movement or automatic retry after any fault or ordinary lift.
     public mutating func retire() -> Result {
+        if case .closing = phase { return .blocked }
+        if case .closed = phase { return .blocked }
         let wasActive: Bool
         if case .active = phase { wasActive = true } else { wasActive = false }
         phase = .retired
@@ -78,13 +80,32 @@ public struct NativeHelperRelativeOutputTransaction: Sendable {
     @discardableResult
     public mutating func confirmCleanup(owners: inout LegacyContinuousOwners,
         genuineNeutral: Bool, transportClean: Bool) -> Bool {
-        guard case .retired = phase, genuineNeutral, transportClean,
-              owners.values(for: .helper).isEmpty else { return false }
+        guard case .retired = phase, genuineNeutral else { return false }
+        return finish(owners: &owners, transportClean: transportClean, next: .ready)
+    }
+
+    /// Only after the serialized owner permanently closes the input session.
+    /// This disposes a clean lease, never supplies neutral or rearm evidence.
+    /// A failed terminal close cannot be reversed into an ordinary clutch.
+    @discardableResult
+    public mutating func confirmTerminalClosure(owners: inout LegacyContinuousOwners,
+        transportClean: Bool) -> Bool {
+        switch phase {
+        case .retired, .closing: phase = .closing
+        case .closed: return true
+        case .ready, .active: return false
+        }
+        guard lease != nil || owners.relativeReservedTargets.isEmpty else { return false }
+        return finish(owners: &owners, transportClean: transportClean, next: .closed)
+    }
+
+    private mutating func finish(owners: inout LegacyContinuousOwners, transportClean: Bool, next: Phase) -> Bool {
+        guard transportClean, owners.values(for: .helper).isEmpty else { return false }
         if let lease {
             owners.invalidateRelativeHelper(lease)
             guard owners.finishRelativeHelper(lease, transportClean: transportClean) else { return false }
         }
-        lease = nil; expected = [:]; phase = .ready
+        lease = nil; expected = [:]; phase = next
         return true
     }
 }
