@@ -123,18 +123,23 @@ public struct SequencerPatternArchive: Equatable, Sendable {
         }
         let decoded = try JSONDecoder().decode(Payload.self, from: data)
         guard decoded.version == 1 else { throw ArchiveError.unsupportedVersion }
+        let archive: Self
         switch decoded.kind {
         case .notes:
             guard let cells = decoded.notes, let channel = decoded.channel else { throw ArchiveError.invalidSchema }
-            return try .init(notes: .init(bpm: decoded.bpm, stepsPerBeat: decoded.stepsPerBeat,
+            archive = try .init(notes: .init(bpm: decoded.bpm, stepsPerBeat: decoded.stepsPerBeat,
                                           length: decoded.length, steps: cells.map(\.step)),
                              channel: channel, loop: decoded.loop, groove: decoded.groove)
         case .drums:
             guard let cells = decoded.hits else { throw ArchiveError.invalidSchema }
-            return try .init(drums: .init(bpm: decoded.bpm, stepsPerBeat: decoded.stepsPerBeat,
+            archive = try .init(drums: .init(bpm: decoded.bpm, stepsPerBeat: decoded.stepsPerBeat,
                                           length: decoded.length, hits: cells.map(\.hit)),
                              loop: decoded.loop, groove: decoded.groove)
         }
+        // Compact input can expand when canonicalized. A successful import
+        // must also fit the existing export limit.
+        _ = try archive.encoded()
+        return archive
     }
 
     // JSONSerialization and JSONDecoder may resolve duplicate keys differently.
