@@ -101,7 +101,15 @@ public enum HapticVoiceAnalyzer {
         try analyzeImpl(input,cancellation:cancellation)
     }
 
-    private static func analyzeImpl(_ input: [Float], cancellation: VoiceRenderCancellation?) throws -> [HapticVoiceFrame] {
+    // Internal observation point for deterministic cancellation tests. Public
+    // callers use the same DSP path with no observer and no new deadline.
+    static func analyze(_ input: [Float], cancellation: VoiceRenderCancellation,
+                        onFrameProcessed: (Int) -> Void) throws -> [HapticVoiceFrame] {
+        try analyzeImpl(input,cancellation:cancellation,onFrameProcessed:onFrameProcessed)
+    }
+
+    private static func analyzeImpl(_ input: [Float], cancellation: VoiceRenderCancellation?,
+                                    onFrameProcessed: (Int) -> Void = { _ in }) throws -> [HapticVoiceFrame] {
         try cancellation?.check()
         let windowSize = Int(0.025 * sampleRate)
         let hopSize = Int(hopSeconds * sampleRate)
@@ -186,6 +194,7 @@ public enum HapticVoiceAnalyzer {
             frames.append(frame)
             previous = frame
             offset += hopSize
+            onFrameProcessed(frames.count)
         }
 
         let peak = rmsValues.max() ?? 1
