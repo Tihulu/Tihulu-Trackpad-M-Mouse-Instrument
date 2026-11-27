@@ -53,9 +53,10 @@ import NoSpeakerCore
     private var playableAssignment: Bool {
         guard useMac else { return true }
         guard !touchOnlyPairing else { return false }
-        guard let assignment, mode.isHelper == (assignment.piano == 0) else { return false }
+        guard let assignment, mode.isHelper == (assignment.piano == 0),
+              let range = effectiveRange(for: mode) else { return false }
         return MobileAirCaptureProjection(mode: mode, keys: assignment.piano, role: role,
-            orientation: musicalOrientation, mirrorX: mirror, near: near, far: far) != nil
+            orientation: musicalOrientation, mirrorX: mirror, near: range.near, far: range.far) != nil
     }
     private var selectedCamera:MobileAirSensorSource.CameraChoice? {cameras.first {$0.id==cameraID}}
     private func refreshCameras() {
@@ -63,12 +64,17 @@ import NoSpeakerCore
         cameraID=cameras.first?.id ?? ""
         zoom=selectedCamera?.zoom.defaultFactor ?? 1
     }
+    private func effectiveRange(for candidate: MobileAirMode) -> MobileAirEffectiveRange? {
+        MobileAirEffectiveRange.resolve(usesDepth: candidate.usesDepth, near: near, far: far)
+    }
     private func sensorIssue(for candidate: MobileAirMode) -> String? {
         if candidate.usesDepth && backend != .lidar { return "Requires rear LiDAR" }
         if backend == .lidar && !MobileAirSensorSource.hasLiDAR { return "LiDAR unavailable" }
         if backend != .lidar && selectedCamera?.zoom.contains(zoom) != true { return "Select a supported camera and zoom" }
         if candidate == .chords && role == .single { return "Choose left or right performing hand" }
-        if !(near.isFinite && far.isFinite && far-near >= 0.1) { return "Near and far must differ by at least 0.10 m" }
+        if effectiveRange(for: candidate) == nil {
+            return "Set valid depth bounds at least 0.10 m apart. If an exact 0.10 m gap is rejected, increase it by one slider step."
+        }
         return nil
     }
     private func assignmentIssue(for candidate: MobileAirMode) -> String? {
@@ -214,7 +220,7 @@ import NoSpeakerCore
                         ForEach(AirControlOrientation.allCases) {o in Text(o.rawValue).tag(o)}
                     }
                     Toggle("Mirror control X",isOn:$mirror)
-                    if backend == .lidar {
+                    if backend == .lidar && mode.usesDepth {
                         VStack(alignment:.leading) {
                             Text("Near: \(near,format:.number.precision(.fractionLength(2))) m")
                             Slider(value:$near,in:0.1...1.5,step:0.05)
@@ -425,8 +431,9 @@ import NoSpeakerCore
                 guard let assigned = socket?.status().assignment else { stop("Mac assignment ended"); return }
                 keys = assigned.piano
             } else { keys = (1 << 25) - 1 }
-            guard let next=MobileAirCaptureProjection(mode:mode,keys:keys,role:role,
-                orientation:musicalOrientation,mirrorX:mirror,near:near,far:far) else {stop("Invalid setup");return}
+            guard valid, playableAssignment, let range = effectiveRange(for: mode),
+                  let next=MobileAirCaptureProjection(mode:mode,keys:keys,role:role,
+                orientation:musicalOrientation,mirrorX:mirror,near:range.near,far:range.far) else {stop("Invalid setup");return}
             let capture=MobileAirSensorSource()
             projection=next;source=capture;pending=false;status="Starting sensors"
             capture.start(backend:backend,orientation:sensorOrientation,cameraID:backend == .lidar ? nil:cameraID,zoom:backend == .lidar ? 1:zoom)
