@@ -13,7 +13,7 @@ function setup(permission="granted",manifest=fullManifest,experimental=true,auto
     setAttribute(n,v){this.attributes[n]=v},replaceChildren(...children){this.children=children},
     appendChild(child){if(child.parent)child.parent.children=child.parent.children.filter(x=>x!==child);this.children=this.children.filter(x=>x!==child);this.children.push(child);child.parent=this;return child},addEventListener(n,f){this.events.set(n,f)},removeEventListener(n,f){if(this.events.get(n)===f)this.events.delete(n)},
     emit(n,e={}){return this.events.get(n)?.(e)},setPointerCapture(){},getBoundingClientRect(){return {width:100,height:100,left:0,top:0}}};}
-  const elements=Object.fromEntries(["webCameraGain","webCameraExtraGain1","webCameraExtraGain2","webCameraExtraInvert1","webCameraExtraInvert2","webCameraSave","webCameraLoad","webCameraReset","webCameraProfileStatus","webCameraExtra1","webCameraExtra2","webCameraExtraMetric1","webCameraExtraMetric2","webCameraDesiredZoom","webCameraCalibration","webCameraMetric","webCameraSensitivity","webCameraRegion","webCameraLight","webCameraInvert","webCameraSummary","webCameraDescription","webCameraPlayHost","webCameraConnectionHost","webCameraTarget","webCameraMotionStatus","webCameraPanel","webCameraFacing","webCameraDevice","webCameraStart","webCameraStop","webCameraVideo","webCameraZoom","webCameraStatus","synthCompact","synthChoices","synthChoiceGrid","pianoArp","pianoChord","pianoSynth","arpKeyboardTools","arpClear","arpDirection","arpRate","arpSwing","arpSelected","kitBoard","kitEdit","kitEditor","kitPart","kitAdd","kitRemove","kitX","kitY","kitSize","kitSave","kitReset","kitStatus","pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
+  const elements=Object.fromEntries(["webCameraGain","webCameraExtraGain1","webCameraExtraGain2","webCameraExtraInvert1","webCameraExtraInvert2","webCameraSave","webCameraLoad","webCameraReset","webCameraProfileStatus","webCameraExtra1","webCameraExtra2","webCameraExtraMetric1","webCameraExtraMetric2","webCameraDesiredZoom","webCameraCalibration","webCameraMetric","webCameraSensitivity","webCameraRegion","webCameraLight","webCameraInvert","webCameraSummary","webCameraDescription","webCameraPlayHost","webCameraConnectionHost","webCameraTarget","webCameraMotionStatus","webCameraPanel","webCameraFacing","webCameraDevice","webCameraStart","webCameraStop","webCameraVideo","webCameraZoom","webCameraStatus","synthCompact","synthChoices","synthChoiceGrid","pianoArp","pianoChord","pianoSynth","arpKeyboardTools","arpClear","arpDirection","arpRate","arpSwing","arpSelected","kitBoard","kitEdit","kitEditor","kitPart","kitAdd","kitRemove","kitX","kitY","kitSize","kitSave","kitReset","kitStatus","pianoManualHint","phraseSection","phraseTitle","chordGrid","phraseTransport","phraseTempo","arpLabel","arpChoice","sequenceSteps","phraseStart","phraseStop","phraseStatus",...Array.from({length:4},(_,i)=>"chord"+i),...Array.from({length:8},(_,i)=>"phraseStep"+i),"airStickSection","airStickPad","airStickStart","airStickStop","airStickStatus","playMode","playModeStatus","sliderEditor","sliderChoice","sliderDirection","sliderDefault","sliderApply","customEditor","customAlias","customAliasApply","customAliasClear","customColumns","customAddChoice","customChoice","customAdd","customRemove","customUp","customDown","customSection","customGrid","customDrumEnable","customPedalEnable","customDrumRelease","customPedalRelease","gridOrderEditor","gridControl","gridControlUp","gridControlDown",...Array.from({length:6},(_,i)=>"pedalCell"+i),"pedalBehavior","pedalMode3","pedalMode4","pedalMode5","panelSize","panelColumns","drumGrid","pedalGrid","layoutSection","layoutDragList","layoutPanel","layoutUp","layoutDown","layoutWide","layoutSize","layoutSave","layoutReset","layoutStatus","playWorkloadStatus","navPlay","navSetup","navConnection","navStatus","playView","setupView","connectionView","ackLatency","releaseAll","mappingSection","mappingStatus","responseModeStatus","mappingDetails","pianoBoard","pianoStrips","pianoStripHint","workloadSection","workloadMode","workloadStatus","touchSection","drumSection","pianoSection","pedalSection","tiltSection","inertialSection","accelSection","rotationSection","airDrumNotice","pad","dot","xyClutch","xyInputStatus","secret","connect","disconnect","status","motionStart","motionStop","tiltMeter","motionStatus","accelStart","accelStop","accelMeter","accelStatus","rotationStart","rotationStop","rotationMeter","rotationStatus","drumEnable","drumRelease","drumStatus",...Array.from({length:8},(_,i)=>"drum"+i),"pianoEnable","pianoRelease","pianoStatus","pianoSustain","octaveDown","octaveUp","octaveLabel","pianoScale","pianoRoot","scaleGuideStatus","pianoScaleLabel","pianoRootLabel",...Array.from({length:13},(_,i)=>"piano"+i),"pedalEnable","pedalRelease","pedalStatus",...Array.from({length:6},(_,i)=>"pedalToggle"+i),...Array.from({length:3},(_,i)=>"pedalLevel"+i),...Array.from({length:3},(_,i)=>"pedalValue"+i)].map(k=>[k,target()]));
   let videoCallback=null,videoId=0,pixel=0;
   elements.webCameraCalibration.value="direct";
   elements.webCameraVideo.requestVideoFrameCallback=f=>{videoCallback=f;return ++videoId};elements.webCameraVideo.cancelVideoFrameCallback=()=>{videoCallback=null};
@@ -1883,4 +1883,488 @@ test("reported stale capture timestamp closes before motion activation",async()=
   a.elements.playMode.value="camera";a.elements.playMode.emit("change");
   await a.elements.webCameraStart.emit("click");a.step(200);a.video(255,1,{captureTime:0});
   assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
+});
+
+test("MUSIC-WEB stale socket callbacks cannot admit a replacement connection",()=>{
+  const a=setup("granted",fullManifest,false,true,false,new Map(),true);
+  a.elements.secret.value="aa".repeat(32);a.elements.connect.emit("click");
+  const old=a.getSocket(),staleMessage=old.onmessage,staleClose=old.onclose;
+  old.onopen();old.onmessage({data:"admitted"});
+  a.elements.disconnect.emit("click");assert.equal(old.closed,true);
+  a.elements.secret.value="bb".repeat(32);a.elements.connect.emit("click");
+  const fresh=a.getSocket();assert.notEqual(fresh,old);
+  staleMessage({data:JSON.stringify(fullManifest)});staleClose();
+  a.elements.pad.emit("pointerdown",xyEvent(1));
+  assert.equal(fresh.frames.length,0);assert.equal(fresh.closed,undefined);
+  assert.equal(a.elements.playView.hidden,true);
+  fresh.onopen();fresh.onmessage({data:"admitted"});
+  assert.deepEqual(fresh.frames,[{version:7,sequence:1,kind:"capabilities"}]);
+  a.elements.disconnect.emit("click");assert.equal(fresh.closed,true);
+});
+
+test("MUSIC-WEB cancelled queued drum onset never plays after another family ACK",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.drumEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.drum0.emit("pointerdown",drumEvent(2));
+  a.elements.drum0.emit("pointercancel",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+  a.step(250);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB lost capture on queued piano sustain never replays an attack",()=>{
+  const a=setup();a.elements.drumEnable.emit("click");a.elements.pianoEnable.emit("click");
+  a.elements.drum0.emit("pointerdown",drumEvent(1));
+  a.elements.pianoSustain.emit("pointerdown",drumEvent(2));
+  a.elements.pianoSustain.emit("lostpointercapture",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB cancelled queued held pedal fails closed without replay",()=>{
+  const a=setup();setHoldPedal(a,4);a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.pedalToggle4.emit("pointerdown",drumEvent(2));
+  a.elements.pedalToggle4.emit("pointercancel",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB cancellation of already delivered drum preserves other owners",()=>{
+  const a=setup();a.elements.drumEnable.emit("click");
+  a.elements.drum0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.drum1.emit("pointerdown",drumEvent(2));a.step();a.ack();
+  a.elements.drum0.emit("pointercancel",drumEvent(1));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,2);a.ack();assert.equal(a.socket.closed,undefined);
+});
+
+test("MUSIC-WEB pedal accessible names identify mapped control and action",()=>{
+  const a=setup();a.elements.pedalEnable.emit("click");
+  const p=a.elements.pedalToggle0;
+  assert.match(p.attributes["aria-label"],/Expression.*Activate/i);
+  p.emit("click");
+  assert.match(p.attributes["aria-label"],/Expression.*Release/i);
+  assert.equal(p.attributes["aria-pressed"],"true");
+  assert.match(a.elements.pedalToggle3.attributes["aria-label"],/Sustain/i);
+});
+
+test("MUSIC-WEB chord cancellation rejects queued overlapping chord attacks",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:33554431},false);
+  a.elements.playMode.value="chord";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.chord1.emit("pointerdown",drumEvent(1));
+  a.elements.chord2.emit("pointerdown",drumEvent(2));
+  a.elements.chord2.emit("pointercancel",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB delivered chord cancellation retains shared note owners",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:33554431},false);
+  a.elements.playMode.value="chord";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.chord1.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.chord2.emit("pointerdown",drumEvent(2));a.step();a.ack();
+  a.elements.chord1.emit("pointercancel",drumEvent(1));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<5)|(1<<9)|(1<<12));a.ack();
+  assert.equal(a.socket.closed,undefined);
+});
+test("MUSIC-WEB focus loss cancels queued keyboard drum piano and held pedal attacks",()=>{
+  for(const family of ["drum","piano","pedal"]){
+    const a=setup();const key={key:" ",preventDefault(){}};
+    let b;
+    if(family==="drum"){a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));a.elements.drumEnable.emit("click");b=a.elements.drum0;}
+    else if(family==="piano"){a.elements.drumEnable.emit("click");a.elements.drum0.emit("pointerdown",drumEvent(1));a.elements.pianoEnable.emit("click");b=a.elements.piano0;}
+    else{setHoldPedal(a,4);a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));b=a.elements.pedalToggle4;}
+    b.emit("keydown",key);b.emit("blur");assert.equal(a.socket.closed,true,family);assert.equal(a.socket.frames.length,1);
+  }
+});
+test("MUSIC-WEB chord repeated keyboard event suppresses browser default",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:145},false);
+  a.elements.playMode.value="chord";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  let prevented=0;const key={key:" ",preventDefault(){prevented++;}};
+  a.elements.chord0.emit("keydown",key);a.elements.chord0.emit("keydown",{...key,repeat:true});
+  assert.equal(prevented,2);assert.equal(a.socket.frames.length,1);a.ack();
+  a.elements.chord0.emit("keyup",key);a.step();assert.equal(a.socket.frames.at(-1).mask,0);
+});
+
+function classicGeometry(a){
+  const white=[0,2,4,5,7,9,11,12],black=[1,3,6,8,10];
+  white.forEach((i,n)=>a.elements["piano"+i].getBoundingClientRect=()=>({left:n*12.5,top:0,width:12.5,height:100}));
+  [9,21.5,46.5,59,71.5].forEach((left,n)=>a.elements["piano"+black[n]].getBoundingClientRect=()=>({left,top:0,width:7,height:60}));
+}
+test("MUSIC-WEB classic piano slides prioritize black key and preserve sustain and second finger",()=>{
+  const a=setup();classicGeometry(a);a.elements.pianoEnable.emit("click");
+  a.elements.pianoSustain.emit("pointerdown",drumEvent(8));a.ack();
+  a.elements.piano0.emit("pointerdown",drumEvent(1));a.step();a.ack();
+  a.elements.piano4.emit("pointerdown",drumEvent(2));a.step();a.ack();
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<25)|16|2);a.ack();
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,80));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<25)|16|1);a.ack();
+  a.elements.piano0.emit("pointerup",drumEvent(1));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<25)|16);a.ack();
+  a.elements.piano4.emit("pointerup",drumEvent(2));a.step();a.ack();
+  a.elements.pianoSustain.emit("pointerup",drumEvent(8));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,0);
+});
+test("MUSIC-WEB classic slide onto unauthorized black key retires without white fallback",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:5},false);classicGeometry(a);
+  a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  const n=a.socket.frames.length;a.elements.piano0.emit("pointermove",xyEvent(1,20,80));a.step();
+  assert.equal(a.socket.frames.length,n);assert.equal(a.socket.closed,undefined);
+});
+test("MUSIC-WEB cancellation after several classic slide targets cannot replay visited attacks",()=>{
+  const a=setup();classicGeometry(a);a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,80));
+  a.elements.piano0.emit("pointercancel",drumEvent(1));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB classic slide leaving board discards queued attack",()=>{
+  const a=setup();classicGeometry(a);a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));
+  a.elements.piano0.emit("pointermove",xyEvent(1,120,50));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+
+test("MUSIC-WEB all-rest and unmapped sequence explain disabled start and emit nothing",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="seq";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseTempo.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,true);assert.match(a.elements.phraseStatus.textContent,/all-rest/);
+  a.elements.phraseStart.emit("click");assert.equal(a.socket.frames.length,0);
+  a.elements.phraseStep0.value="1";a.elements.phraseStep0.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,true);assert.match(a.elements.phraseStatus.textContent,/unavailable/);
+  a.elements.phraseStep0.value="0";a.elements.phraseStep0.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,false);assert.match(a.elements.phraseStatus.textContent,/Ready/);
+  a.elements.phraseStart.emit("click");a.step();assert.equal(a.socket.frames.at(-1).mask,1);
+});
+test("MUSIC-WEB sparse arpeggio requires an explicit mapped note before starting",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="arp";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseTempo.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,true);assert.match(a.elements.phraseStatus.textContent,/Choose mapped notes/);
+  a.elements.piano0.emit("pointerdown",drumEvent(1));a.elements.piano0.emit("pointerup",drumEvent(1));
+  assert.equal(a.elements.phraseStart.disabled,false);assert.equal(a.socket.frames.length,0);
+});
+
+test("MUSIC-WEB incomplete chord assignment cannot select chord via menu or toolbar",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false),e=a.elements;
+  assert.equal(e.playMode.children.find(x=>x.value==="chord").disabled,true);
+  assert.equal(e.pianoChord.disabled,true);
+  e.playMode.value="chord";e.playMode.emit("change");e.pianoChord.emit("click");
+  assert.equal(e.playMode.value,"all");assert.equal(a.socket.frames.length,0);
+  assert.equal(e.playMode.children.find(x=>x.value==="arp").disabled,false);
+});
+test("MUSIC-WEB toolbar and menu use identical release and neutral ACK barriers",()=>{
+  for(const path of ["toolbar","menu"]){
+    const a=setup("granted",{...touchOnly,touch:false,piano:145},false),e=a.elements;
+    e.pianoEnable.emit("click");e.piano0.emit("pointerdown",drumEvent(1));
+    if(path==="toolbar")e.pianoChord.emit("click");else{e.playMode.value="chord";e.playMode.emit("change");}
+    assert.equal(e.playMode.disabled,true);assert.equal(e.chordGrid.hidden,true);
+    a.ack();a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);assert.equal(e.playMode.disabled,true);
+    a.ack();assert.equal(e.playMode.value,"chord");assert.equal(e.chordGrid.hidden,false);
+    assert.equal(e.chord0.disabled,true);const n=a.socket.frames.length;
+    e.chord0.emit("pointerdown",drumEvent(2));assert.equal(a.socket.frames.length,n);
+    e.pianoEnable.emit("click");e.chord0.emit("pointerdown",drumEvent(3));a.step();
+    assert.equal(a.socket.frames.at(-1).mask,145);
+  }
+});
+
+function xyKey(key,repeat=false){return {key,repeat,preventDefault(){}};}
+test("MUSIC-WEB keyboard XY shares one contact and sends bounded paced axes",()=>{
+  const a=setup(),e=a.elements,p=e.pad;
+  assert.equal(p.attributes.tabindex,"0");
+  p.emit("keydown",xyKey("ArrowUp"));assert.equal(a.socket.frames.length,0);
+  p.emit("keydown",xyKey(" "));assert.equal(a.socket.frames.at(-1).kind,"touch");
+  assert.equal(a.socket.frames.at(-1).x,.5);assert.equal(a.socket.frames.at(-1).y,.5);
+  assert.equal(p.attributes["aria-pressed"],"true");
+  p.emit("keydown",xyKey(" ",true));p.emit("pointerdown",xyEvent(7));p.emit("pointerup",xyEvent(7));
+  p.emit("keyup",xyKey("Enter"));a.ack();
+  for(let i=0;i<25;i++){p.emit("keydown",xyKey("ArrowRight",true));p.emit("keydown",xyKey("ArrowDown",true));}
+  a.step(50);assert.equal(a.socket.frames.at(-1).x,1);assert.equal(a.socket.frames.at(-1).y,0);a.ack();
+  p.emit("keyup",xyKey(" "));a.step(50);assert.equal(a.socket.frames.at(-1).kind,"release");a.ack();
+  assert.equal(p.attributes["aria-pressed"],"false");assert.equal(a.socket.closed,undefined);
+});
+test("MUSIC-WEB XY keyboard cancellation discards queued onset on blur",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.pad.emit("keydown",xyKey("Enter"));a.elements.pad.emit("blur");
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB keyboard XY mode switch retires key and waits for release ACK",()=>{
+  const a=setup(),e=a.elements,p=e.pad;
+  p.emit("keydown",xyKey("Enter"));e.playMode.value="piano";e.playMode.emit("change");
+  a.ack();a.step(50);assert.equal(a.socket.frames.at(-1).kind,"release");assert.equal(e.playMode.disabled,true);
+  a.ack();assert.equal(p.attributes.tabindex,"-1");const n=a.socket.frames.length;
+  p.emit("keyup",xyKey("Enter"));p.emit("keydown",xyKey(" ",true));a.step(50);
+  assert.equal(a.socket.frames.length,n);assert.equal(e.pianoEnable.disabled,false);
+});
+test("MUSIC-WEB keyboard XY cannot steal pointer ownership or arm from setup",()=>{
+  const a=setup(),e=a.elements,p=e.pad;
+  p.emit("pointerdown",xyEvent(1));p.emit("keydown",xyKey(" "));p.emit("keyup",xyKey(" "));
+  assert.equal(a.socket.frames.length,1);a.ack();p.emit("pointerup",xyEvent(1));a.step(50);a.ack();
+  e.navSetup.emit("click");assert.equal(p.attributes.tabindex,"-1");
+  const n=a.socket.frames.length;p.emit("keydown",xyKey("Enter"));assert.equal(a.socket.frames.length,n);
+});
+
+test("MUSIC-WEB removed air stick target cannot arm or select; restoring permits explicit start",async()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:2},false),e=a.elements;
+  e.playMode.value="stick";e.playMode.emit("change");e.kitEdit.emit("click");e.kitRemove.emit("click");
+  assert.equal(e.airStickPad.children.length,0);assert.equal(e.airStickStart.disabled,true);
+  e.airStickPad.value="1";e.airStickPad.emit("change");assert.equal(e.airStickPad.value,"");
+  await e.airStickStart.emit("click");assert.equal(a.window.events.has("devicemotion"),false);
+  e.kitAdd.emit("click");assert.equal(e.airStickStart.disabled,false);
+  assert.equal(e.airStickPad.value,"1");assert.equal(a.socket.frames.length,0);
+});
+test("MUSIC-WEB overlapping kit elements expose deterministic selected state without striking",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:3},false),e=a.elements;
+  e.playMode.value="stick";e.playMode.emit("change");e.kitEdit.emit("click");
+  e.kitPart.value="1";e.kitPart.emit("change");
+  e.kitX.value="50";e.kitX.emit("input");e.kitY.value="78";e.kitY.emit("input");
+  assert.equal(e.kitBoard.children[1].attributes["aria-pressed"],"true");
+  assert.equal(e.kitBoard.children[0].attributes["aria-pressed"],"false");
+  e.kitEdit.emit("click");e.airStickPad.value="1";e.airStickPad.emit("change");
+  assert.equal(e.kitBoard.children[1].attributes["data-selected"],"true");
+  assert.equal(a.socket.frames.length,0);
+});
+
+for(const [bad,mask] of [[-32,1],[-31,3]]){
+  test("MUSIC-WEB independently reported negative sequence index "+bad+" is not a rest",()=>{
+    const a=setup("granted",{...touchOnly,touch:false,piano:mask},false),e=a.elements;
+    e.playMode.value="seq";e.playMode.emit("change");e.pianoEnable.emit("click");
+    e.phraseTempo.value="120";e.phraseStep0.value="0";e.phraseStep1.value=String(bad);e.phraseStep1.emit("change");
+    assert.equal(e.phraseStart.disabled,true);assert.match(e.phraseStatus.textContent,/unavailable/);
+    e.phraseStart.emit("click");a.step(25);assert.equal(a.socket.frames.length,0);
+    e.phraseStep1.value="-1";e.phraseStep1.emit("change");assert.equal(e.phraseStart.disabled,false);
+    e.phraseStart.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,1);
+  });
+}
+
+test("REL-WEB scoped XY clutch discards queued contact without replay",()=>{
+  const a=setup(),e=a.elements;e.pianoEnable.emit("click");e.piano0.emit("pointerdown",drumEvent(1));
+  e.pad.emit("pointerdown",xyEvent(2));e.xyClutch.emit("click");
+  assert.equal(a.socket.frames.length,1);a.ack();a.step(50);
+  assert.equal(a.socket.frames.every(f=>f.kind==="pianoKeys"),true);
+  assert.equal(e.piano0.attributes["aria-pressed"],"true");
+  e.pad.emit("pointermove",xyEvent(2,80,50));e.pad.emit("pointerup",xyEvent(2));a.step(25);
+  assert.equal(a.socket.frames.every(f=>f.kind==="pianoKeys"),true);
+});
+test("REL-WEB clutch waits for release ACK before new pointer or key contact",()=>{
+  const a=setup(),e=a.elements;
+  e.pad.emit("pointerdown",xyEvent(1));e.xyClutch.emit("click");
+  assert.equal(e.pad.attributes["aria-disabled"],"true");
+  e.pad.emit("pointerdown",xyEvent(2));e.pad.emit("keydown",xyKey(" "));
+  a.ack();a.step(25);assert.equal(a.socket.frames.at(-1).kind,"release");
+  assert.equal(e.xyClutch.disabled,true);e.pad.emit("pointerdown",xyEvent(3));a.ack();
+  assert.equal(e.pad.attributes["aria-disabled"],"false");assert.equal(a.socket.frames.length,2);
+  e.pad.emit("pointerdown",xyEvent(4,80,20));assert.equal(a.socket.frames.at(-1).kind,"touch");
+  assert.equal(a.socket.frames.at(-1).x,.8);assert.equal(a.socket.frames.at(-1).y,.8);
+});
+test("REL-WEB keyboard Escape releases only XY and stale activation cannot rearm",()=>{
+  const a=setup(),e=a.elements;e.pad.emit("keydown",xyKey("Enter"));a.ack();
+  e.pad.emit("keydown",xyKey("Escape"));a.step(25);assert.equal(a.socket.frames.at(-1).kind,"release");
+  e.pad.emit("keydown",xyKey("Enter",true));e.pad.emit("keyup",xyKey("Enter"));a.ack();
+  const n=a.socket.frames.length;e.pad.emit("keydown",xyKey("ArrowUp"));a.step(25);
+  assert.equal(a.socket.frames.length,n);assert.equal(e.pad.attributes["aria-pressed"],"false");
+});
+test("REL-WEB missing XY clutch release ACK retains existing timeout",()=>{
+  const a=setup(),e=a.elements;e.pad.emit("pointerdown",xyEvent(1));a.ack();
+  e.xyClutch.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).kind,"release");
+  a.step(220);assert.equal(a.socket.closed,true);assert.equal(e.xyClutch.disabled,true);
+});
+
+test("REL-WEB paired source status does not infer current MIDI value or mode from ACK",()=>{
+  const a=setup(),e=a.elements;
+  assert.match(e.responseModeStatus.textContent,/does not report the applied mode or current instrument value/);
+  e.pad.emit("pointerdown",xyEvent(1,25,25));a.ack();
+  assert.match(e.responseModeStatus.textContent,/not Logic feedback/);
+  assert.equal(a.socket.frames[0].x,.25);assert.equal(a.socket.frames[0].y,.75);
+  a.window.emit("pagehide");assert.equal(e.responseModeStatus.textContent,"");
+});
+test("REL-WEB camera helper labels its source calibration rather than receiver feedback",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,pedals:1},false),e=a.elements;
+  e.playMode.value="camera";e.playMode.emit("change");
+  assert.match(e.webCameraDescription.textContent,/Camera calibration is not MIDI feedback/);
+  assert.match(e.webCameraDescription.textContent,/No recording, hand recognition or depth/);
+  assert.equal(a.socket.frames.length,0);
+});
+
+test("REL-WEB clutch never extends existing queued release deadline",()=>{
+  const a=setup(),e=a.elements;
+  e.pad.emit("pointerdown",xyEvent(1));e.pad.emit("pointerup",xyEvent(1));
+  a.step(100);e.xyClutch.emit("click");a.step(50);
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("REL-WEB focus transfer to explicit release control retires keyboard XY without disconnect",()=>{
+  const a=setup(),e=a.elements;e.pad.emit("keydown",xyKey("Enter"));a.ack();
+  e.pad.emit("blur",{relatedTarget:e.xyClutch});a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"release");assert.equal(a.socket.closed,undefined);
+  a.ack();e.xyClutch.emit("click");assert.equal(e.pad.attributes["aria-pressed"],"false");
+  assert.equal(a.socket.frames.length,2);
+});
+test("REL-WEB focus transfer to unrelated control still fails closed",()=>{
+  const a=setup(),e=a.elements;e.pad.emit("keydown",xyKey("Enter"));
+  e.pad.emit("blur",{relatedTarget:e.pianoEnable});
+  assert.equal(a.socket.closed,true);
+});
+
+test("MUSIC-WEB sparse verified scale highlights only mapped keys",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false,false);
+  mappingResponse(a,[[17,0,0,48,1]]);const e=a.elements;
+  e.pianoScale.value="major";e.pianoRoot.value="0";e.pianoScale.emit("change");
+  assert.equal(e.piano0.attributes["data-scale"],"true");
+  assert.equal(e.piano2.attributes["data-scale"],"false");
+  const n=a.socket.frames.length;
+  for(const invalid of ["__proto__","constructor","invalid"]){
+    e.pianoScale.value=invalid;e.pianoScale.emit("change");
+    assert.equal(e.piano0.attributes["data-scale"],"false");
+  }
+  e.pianoScale.value="major";e.pianoRoot.value="12";e.pianoRoot.emit("change");
+  assert.equal(e.piano0.attributes["data-scale"],"false");assert.equal(a.socket.frames.length,n);
+});
+test("MUSIC-WEB verified scale guide matches 12-TET Dorian and Hicaz collections without remapping",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:31},false,false);
+  mappingResponse(a,Array.from({length:5},(_,i)=>[17+i,0,0,48+i,1]));const e=a.elements,n=a.socket.frames.length;
+  e.pianoRoot.value="0";
+  for(const [name,expected] of [["dorian",[true,false,true,true,false]],["hicaz",[true,true,false,false,true]]]){
+    e.pianoScale.value=name;e.pianoScale.emit("change");
+    assert.deepEqual(Array.from({length:5},(_,i)=>e["piano"+i].attributes["data-scale"]==="true"),expected);
+  }
+  assert.equal(a.socket.frames.length,n);
+});
+
+test("MUSIC-WEB scale guide explains unavailable custom mapping and does not imply tuning",()=>{
+  for(const note of [48,62]){
+    const a=setup("granted",{...touchOnly,touch:false,piano:1},false,false);mappingResponse(a,[[17,0,0,note,1]]);
+    assert.match(a.elements.scaleGuideStatus.textContent,note===48?/Does not change MIDI, tuning or makam/:/not shared a verified standard note mapping/);
+  }
+});
+
+test("MUSIC-WEB strip exit cannot replay a queued visited note",()=>{
+  const a=setup();const e=a.elements;
+  e.pianoStrips.emit("click");e.pianoEnable.emit("click");
+  e.drumEnable.emit("click");e.drum0.emit("pointerdown",drumEvent(2));
+  e.piano0.emit("pointerdown",drumEvent(1));e.piano0.emit("pointermove",xyEvent(1,50,50));
+  e.piano0.emit("pointermove",xyEvent(1,120,50));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB delivered strip exit retains second contact",()=>{
+  const a=setup();const e=a.elements;
+  e.pianoStrips.emit("click");e.pianoEnable.emit("click");
+  e.piano0.emit("pointerdown",drumEvent(1));a.ack();
+  e.piano4.emit("pointerdown",drumEvent(2));a.step(25);a.ack();
+  e.piano0.emit("pointermove",xyEvent(1,120,50));a.step(25);
+  assert.equal(a.socket.frames.at(-1).mask,16);a.ack();
+  assert.equal(a.socket.closed,undefined);
+  e.piano0.emit("pointermove",xyEvent(1,50,50));a.step(25);
+  assert.equal(a.socket.frames.at(-1).mask,16);
+});
+
+test("MUSIC-WEB alternate activation key cannot release drum piano chord or held pedal",()=>{
+  for(const family of ["drum","piano","chord","pedal"]){
+    const a=setup(),e=a.elements;
+    let b;
+    if(family==="drum"){e.drumEnable.emit("click");b=e.drum0;}
+    if(family==="piano"){e.pianoEnable.emit("click");b=e.piano0;}
+    if(family==="chord"){e.pianoChord.emit("click");e.pianoEnable.emit("click");b=e.chord0;}
+    if(family==="pedal"){setHoldPedal(a,4);b=e.pedalToggle4;}
+    b.emit("keydown",xyKey(" "));a.ack();
+    const n=a.socket.frames.length;assert.equal(n,1);
+    b.emit("keydown",xyKey("Enter"));b.emit("keyup",xyKey("Enter"));a.step(25);
+    assert.equal(a.socket.frames.length,n);
+    b.emit("keyup",xyKey(" "));a.step(25);
+    assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  }
+});
+test("MUSIC-WEB second activation key cannot toggle arpeggio selection twice",()=>{
+  const a=setup(),e=a.elements;e.pianoArp.emit("click");e.pianoEnable.emit("click");
+  e.piano0.emit("keydown",xyKey(" "));
+  e.piano0.emit("keydown",xyKey("Enter"));e.piano0.emit("keyup",xyKey("Enter"));
+  assert.equal(e.piano0.attributes["data-arp-selected"],"true");
+  e.piano0.emit("keyup",xyKey(" "));
+  e.piano0.emit("keydown",xyKey("Enter"));e.piano0.emit("keyup",xyKey("Enter"));
+  assert.equal(e.piano0.attributes["data-arp-selected"],"false");assert.equal(a.socket.frames.length,0);
+});
+
+test("MUSIC-WEB phrase modes hide scale labels with controls and restore them for piano",()=>{
+  const a=setup(),e=a.elements;
+  e.pianoChord.emit("click");
+  for(const id of ["pianoScale","pianoRoot","pianoScaleLabel","pianoRootLabel","scaleGuideStatus"])assert.equal(e[id].hidden,true);
+  e.pianoChord.emit("click");
+  for(const id of ["pianoScale","pianoRoot","pianoScaleLabel","pianoRootLabel","scaleGuideStatus"])assert.equal(e[id].hidden,false);
+});
+
+test("MUSIC-WEB global release and mode change never renew an existing XY release deadline",()=>{
+  for(const action of ["global","mode"]){
+    const a=setup(),e=a.elements;e.pad.emit("pointerdown",xyEvent(1));e.pad.emit("pointerup",xyEvent(1));
+    a.step(100);
+    if(action==="global")e.releaseAll.emit("click");else{e.playMode.value="piano";e.playMode.emit("change");}
+    a.step(50);
+    assert.equal(a.socket.closed,true,action);assert.equal(a.socket.frames.length,1);
+  }
+});
+test("MUSIC-WEB global release retains timely XY release and waits for acknowledgment",()=>{
+  const a=setup(),e=a.elements;e.pad.emit("pointerdown",xyEvent(1));e.pad.emit("pointerup",xyEvent(1));
+  a.step(75);e.releaseAll.emit("click");a.ack();
+  assert.equal(a.socket.frames.at(-1).kind,"release");a.ack();
+  assert.equal(a.socket.closed,undefined);assert.match(e.status.textContent,/My controls released locally/);
+});
+
+test("MUSIC-WEB explicit release clears stale local activation without rearming held keys",()=>{
+  for(const family of ["drum","piano","chord","pedal"]){
+    const a=setup(),e=a.elements;let b,release;
+    if(family==="drum"){e.drumEnable.emit("click");b=e.drum0;release=e.drumRelease;}
+    if(family==="piano"){e.pianoEnable.emit("click");b=e.piano0;release=e.pianoRelease;}
+    if(family==="chord"){e.pianoChord.emit("click");e.pianoEnable.emit("click");b=e.chord0;release=e.pianoRelease;}
+    if(family==="pedal"){setHoldPedal(a,4);b=e.pedalToggle4;release=e.pedalRelease;}
+    b.emit("keydown",xyKey(" "));a.ack();release.emit("click");a.step(25);
+    assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+    const n=a.socket.frames.length;b.emit("keydown",xyKey(" ",true));a.step(25);assert.equal(a.socket.frames.length,n);
+    b.emit("keydown",xyKey("Enter"));a.step(25);assert.equal(a.socket.frames.length,n+1,family);
+    const mask=a.socket.frames.at(-1).mask;assert.notEqual(mask,0);a.ack();
+    b.emit("keyup",xyKey(" "));a.step(25);
+    // Periodic refresh is allowed, but must retain the new owner's mask.
+    assert.equal(a.socket.frames.at(-1).mask,mask,family);
+    if(a.socket.frames.length>n+1)a.ack();
+    b.emit("keyup",xyKey("Enter"));a.step(25);assert.equal(a.socket.frames.at(-1).mask,0,family);
+  }
+});
+test("MUSIC-WEB global release retires local keyboard owner across mode transition",()=>{
+  const a=setup(),e=a.elements;e.pianoEnable.emit("click");e.piano0.emit("keydown",xyKey(" "));a.ack();
+  e.playMode.value="xy";e.playMode.emit("change");a.step(25);a.ack();
+  e.playMode.value="piano";e.playMode.emit("change");e.pianoEnable.emit("click");
+  const n=a.socket.frames.length;e.piano0.emit("keydown",xyKey(" ",true));a.step(25);assert.equal(a.socket.frames.length,n);
+  e.piano0.emit("keydown",xyKey("Enter"));a.step(25);assert.equal(a.socket.frames.at(-1).mask,1);
+});
+
+test("REL-WEB source labels do not claim relative capability from camera or gyro assignments",()=>{
+  const a=setup(),e=a.elements;
+  assert.match(e.responseModeStatus.textContent,/Some source modes are ineligible/);
+  e.playMode.value="camera";e.playMode.emit("change");
+  assert.match(e.webCameraDescription.textContent,/does not establish relative capability/);
+  assert.equal(a.socket.frames.length,0);
+});
+
+test("MUSIC-WEB global release retires synth dial contact before re-enable",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1,pedals:1},false),e=a.elements;
+  e.playMode.value="piano";e.playMode.emit("change");e.pianoSynth.emit("click");e.pedalEnable.emit("click");
+  const toggle=()=>{e.pedalToggle0.emit("click");a.step(25);a.ack();};
+  const finger=(id,y)=>({pointerId:id,clientY:y,button:0,preventDefault(){}});
+  const dial=e.pedalValue0,initial=Number(e.pedalLevel0.value),delta=initial<=80?10:-10;
+  toggle();dial.emit("pointerdown",finger(1,50));
+  e.releaseAll.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  e.pedalEnable.emit("click");toggle();
+  dial.emit("pointermove",finger(1,50-delta));assert.equal(Number(e.pedalLevel0.value),initial);
+  dial.emit("pointerdown",finger(2,50));dial.emit("pointermove",finger(2,50-delta));
+  assert.equal(Number(e.pedalLevel0.value),initial+delta);
+  dial.emit("pointerup",finger(1,50));dial.emit("pointermove",finger(2,50-2*delta));
+  assert.equal(Number(e.pedalLevel0.value),initial+2*delta);
+});
+test("MUSIC-WEB global release cancels all active synth dials without affecting saved defaults",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1,pedals:3},false),e=a.elements;
+  e.playMode.value="piano";e.playMode.emit("change");e.pianoSynth.emit("click");e.pedalEnable.emit("click");
+  const toggle=i=>{e["pedalToggle"+i].emit("click");a.step(25);a.ack();};
+  const finger=(id,y)=>({pointerId:id,clientY:y,button:0,preventDefault(){}});
+  for(const i of [0,1]){toggle(i);e["pedalValue"+i].emit("pointerdown",finger(i+1,50));}
+  const before=[e.pedalLevel0.value,e.pedalLevel1.value];
+  e.releaseAll.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  e.pedalEnable.emit("click");for(const i of [0,1])toggle(i);
+  for(const i of [0,1])e["pedalValue"+i].emit("pointermove",finger(i+1,Number(before[i])<50?20:80));
+  assert.deepEqual([e.pedalLevel0.value,e.pedalLevel1.value],before);
+  assert.equal(a.socket.closed,undefined);
 });

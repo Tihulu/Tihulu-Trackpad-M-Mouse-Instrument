@@ -129,3 +129,129 @@ python3 tools/rag_matrix.py --repo . --ref HEAD --model-dir "$model" --reuse-dir
 ```
 
 Matrix cells report reused_embeddings and encoded_embeddings (semantic and hybrid share one build; do not sum those cells). No model download or inference is performed by the default lexical CI. Cache tests use a deterministic model double and validate reuse and provenance mechanics only. Real model speed, numerical equivalence and retrieval quality require local acceptance.
+
+
+## Independent evaluation and matrix reuse consistency
+
+The independent evaluation file `tools/rag_heldout_cases.json` contains a separate frozen set of nine EN/TR/DE file-retrieval targets (three per scope), authored before ranking was measured. The normal matrix CLI reports these separately from the original curated nine. The case files live in tools rather than the three evaluated corpora. Do not optimize on held-out outcomes and then claim independent quality; freeze a new evaluation set if tuning against these queries. Each report records the SHA-256 of the exact case-file bytes. Compare only like-for-like revision, dataset digest, ranking limits and model recipe. `--curated-only` reproduces the original benchmark format of three queries per scope (with added dataset fingerprint).
+
+```sh
+python3 tools/rag_matrix.py --repo . --ref HEAD --out-dir "$work/independent"
+python3 tools/rag_matrix.py --repo . --ref HEAD --out-dir "$work/original" --curated-only
+```
+
+The second suite reopens the verified index for each measured mode; setup costs are separate from query timing. A missing expected source in either suite is COVERAGE_FAIL; a rank miss is measured quality evidence, not a coverage failure. Six vector cells remain NOT_RUN if no explicitly trusted local model is selected. No model is downloaded. The fixed suite is small, author-judged and file-level, not answer or hardware correctness.
+
+For matrix reuse, the completed local manifest must declare all nine measured cells, the matching model fingerprint and one committed source revision. Each of the three semantic indices must match that revision, scope, mode and model before reuse; existing recipe, Git-source and unit-vector checks still apply during build. A syntactically valid index from a different matrix revision is refused. This is consistency checking, not a signature or proof that cached vector values are authentic; use only trusted local snapshots. Rebuild from scratch when incompatible. Do not publish indices or vectors.
+
+
+## Experimental lexical file discovery profile (RAG-02)
+
+The existing lexical score and ordering remain the default (`--lexical-profile legacy`). For file discovery, opt in to `--lexical-profile file-first`: the best ranked chunk from every distinct file precedes additional chunks, with existing deterministic tie breaking, total chunk and per-file bounds unchanged. Scores themselves are unchanged, so output order may not be descending by score in this profile. This is not a new embedding method or a default change; collecting multiple adjacent chunks from a known file may benefit from legacy ordering. Semantic and hybrid modes reject a nonlegacy lexical profile.
+
+```sh
+python3 tools/repo_index.py search --repo . --expect-ref HEAD --index "$work/engine.json" --query "MIDI owner cleanup" --lexical-profile file-first
+python3 tools/rag_benchmark.py --repo . --expect-ref HEAD --index "$work/engine.json" --scope engine --cases-file tools/rag_ranking_cases.json --case-group development --lexical-profile file-first
+```
+
+The ordinary matrix runs paired legacy/file-first lexical comparisons for a distinct development group and a fresh evaluation group (nine queries each, three per scope; frozen before the candidate change). The original curated and first held-out measurements stay separate and use legacy ranking. Group fingerprints hash the selected canonical JSON array; standalone case-file fingerprints still hash exact bytes. Both profiles use the same pinned corpus, cases, cutoff and per-file cap. Reports are private; the CI summary contains aggregates only. Treat the small author-judged evaluation as evidence, not broad generalization. Do not select new parameters against evaluation outcomes and then call those results held-out. The optional `--curated-only` flag disables the extra evaluations.
+
+Matrix cache reuse now carries the validated previous commit into the actual index read, rather than trusting only the earlier manifest check. Cache entries with the same path and exact text but conflicting vectors are rejected; rebuild without reuse on inconsistency, including possible nondeterministic model output. This is an additional fail-closed consistency check, not vector authenticity or real model equivalence. No model acquisition, source transfer, real-time inference or native behavior is introduced.
+
+
+## Verified lexical session reuse (RAG-03)
+
+For repeated queries over an already verified lexical session, call `prepare_lexical(prepared)` once after `prepare_search(args)`, then pass its result as `lexical_cache=cache` to `search_prepared(prepared, args, lexical_cache=cache)`. No disk cache or model is created. A None result means the retained-statistics budget was exceeded; use ordinary uncached retrieval. The optional cache is bound to the exact commit, scope and ordered source rows (including path, blob, line range and text). Changes require a new verified session and new cache. It is not a public trust boundary for arbitrary Python code or mutated private internals. Unverified sessions and model-backed searches cannot use this cache.
+
+The retained term-entry budget is 300,000 and aggregate encoded term bytes are capped at 16 MiB, including filename terms. These are logical limits, not an RSS bound; the transient per-row tokenization and Python object overhead still exist. Ranking formulas, query validation, provenance, cutoffs, deterministic ordering and default one-shot behavior are unchanged. No embeddings, hardware or real-time code are involved.
+
+```sh
+python3 tools/rag_benchmark.py --repo . --expect-ref HEAD --index "$work/engine.json" --scope engine --cases-file tools/rag_ranking_cases.json --case-group development --compare-cache
+```
+
+The matrix includes paired cold/warm measurements on the existing development/legacy cases only. Exact equality of complete search responses is mandatory; discrepancies fail the benchmark. Cache setup, logical size, parity count and warm median are reported separately. Budget exhaustion is BUDGET_FALLBACK, not a warm pass. Timings run cold then warm in a single process, without randomized ordering, and exclude cache construction from per-query timing; do not infer a platform-independent speedup or memory profile. Development-only case IDs, languages and first-file ranks appear in the matrix summary; evaluation cases and source text are not logged as new diagnostics. The original curated and independent datasets are unchanged; this refactor does not attempt relevance tuning, so a new independent evaluation is deferred until a ranking change is proposed.
+
+
+## Optional multilingual lexical queries (RAG-04)
+
+`--lexical-profile multilingual` adds a small explicit Turkish/German-to-English technical glossary to existing lexical search. It preserves original tokens at weight 1, adds only distinct English aliases at weight 0.55, and caps additions at 64. Unicode decomposition/diacritic folding is for glossary lookup only; source text, provenance, original tokens, and the underlying BM25-style scoring remain intact. This is a deliberately limited, deterministic domain aid, not translation, stemming, semantic embeddings, or a language model. Ambiguity and missing inflections can reduce quality. The legacy default and file-first profile are unchanged. The same verified lexical statistics may serve either profile. Model-backed modes cannot use this experimental profile.
+
+The new grouped fixture `tools/rag_multilingual_cases.json` contains separate, harder development and evaluation cases (nine each) frozen before implementing the profile. The default matrix reports paired legacy/multilingual metrics on each group separately, not blended with the previous held-out scores. Neither the glossary nor ranking should be tuned to the evaluation group after viewing results; further experiments require a fresh frozen evaluation. Tests are author-judged and small, not independent reviewer acceptance.
+
+## Relative versus absolute control retrieval handoff (REL-RAG)
+
+**Coordinator candidate only; not integrated into this branch.** At coordinator [revision 770cf9de](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/tree/770cf9defd3f18417113d740022a5365c5791659), the relevant source entry points are:
+
+- [RelativeControlGesture.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/770cf9defd3f18417113d740022a5365c5791659/studio/Sources/NoSpeakerCore/RelativeControlGesture.swift): clutched signed displacement from the first valid input, manual reference, gain, range, smoothing, duplicate suppression; the first sample only anchors. A supplied manual value is not verified receiver feedback.
+- [ContinuousResponse.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/770cf9defd3f18417113d740022a5365c5791659/studio/Sources/NoSpeakerCore/ContinuousResponse.swift): optional relative settings preserve legacy absolute default, restrict eligible continuous targets, reject duplicate relative target ownership, and retain the release policy.
+- [SensorRouter.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/770cf9defd3f18417113d740022a5365c5791659/studio/Sources/NoSpeakerCore/SensorRouter.swift): coordinator-owned router integration and route/source lifecycle. [ContinuousResponsePanel.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/770cf9defd3f18417113d740022a5365c5791659/studio/Sources/NoSpeakerStudio/ContinuousResponsePanel.swift): explicit position mode and manual starting value.
+
+The six separate development-only queries in `tools/rag_relative_development_cases.json` must be evaluated on a fresh verified index of a revision containing the above implementation, not on an older RAG-only tree. Run `tools/rag_benchmark.py` with that explicit case file and the engine/app scope (no docs cases). They are not part of either independent evaluation. Missing expected files are coverage failure, not retrieval success. Never construct an index by mixing source files from these two revisions. No inference of actual DAW feedback, universal hardware availability, or safe hold-last policy from this draft: receiver feedback provenance, target identity, re-anchor/loss, gyro wrapping, MPE composition, and hardware verification remain coordinator/assigned-agent responsibilities. See coordination PR #172 feature comment 7208806755.
+
+
+## Context-aware lexical experiment and dataset independence (RAG-05)
+
+The optional `multilingual-context` profile retains the earlier multilingual glossary and weights, except that ambiguous standalone forms (for example Turkish geri, bildirimi, yeniden and çubuk) do not inject aliases without a recognized adjacent-token phrase. Examples: geri bildirim → feedback; geri yükleme → restore; geri dönüş → return; yeniden başlatma → restart. This is deliberately a small rule set, not a translation engine. English terms, existing aliases, 64-alias cap, source verification and original token weights remain intact. Legacy and multilingual profiles are preserved unchanged. The separate `tools/rag_contextual_cases.json` grouped fixture compares multilingual against multilingual-context on six new development and six new evaluation queries. Do not interpret the development score as independent acceptance. Earlier evaluation outcomes remain historical, not tuning inputs. Exact normalized query/ID overlap between groups and repeated normalized queries within a group are now rejected before scoring; normalization is NFKC, casefold and whitespace collapse, not paraphrase detection. Every report must also match the initial group digest. This is a test-integrity guard, not proof of blind evaluation or semantic non-overlap.
+
+## Relative reference evidence — successor handoff (REL-RAG-02)
+
+The earlier 770cf9de record above remains a historical snapshot. The coordinator's [7e85ad90 candidate](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/tree/7e85ad90f5e63b66d088553ff6d53cbddf2667fe) extends it; the authoritative candidate contract is [studio/docs/RELATIVE_CONTINUOUS_CONTROL.md](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/7e85ad90f5e63b66d088553ff6d53cbddf2667fe/studio/docs/RELATIVE_CONTINUOUS_CONTROL.md), not this RAG index note.
+
+- [RelativeControlGesture.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/7e85ad90f5e63b66d088553ff6d53cbddf2667fe/studio/Sources/NoSpeakerCore/RelativeControlGesture.swift): explicit manual, lastDelivered and receiverConfirmed reference sources; host evidence maximum age 250 ms.
+- [SensorRouter.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/7e85ad90f5e63b66d088553ff6d53cbddf2667fe/studio/Sources/NoSpeakerCore/SensorRouter.swift): host-only evidence admission, session/mapping/destination scope, one-shot consumption and watermark, missing evidence/contended gesture requires actual release; no manual fallback for requested live reference. Actual delivery/receiver and endpoint/channel/parameter identity must be verified by the host adapter, not inferred from transport ACK or output intent.
+- [ContinuousResponsePanel.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/7e85ad90f5e63b66d088553ff6d53cbddf2667fe/studio/Sources/NoSpeakerStudio/ContinuousResponsePanel.swift) and [InstrumentBuilderView.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/7e85ad90f5e63b66d088553ff6d53cbddf2667fe/studio/Sources/NoSpeakerStudio/InstrumentBuilderView.swift): capability-aware editor, reference-range validation and accessibility candidate.
+
+No actual feedback provider, negotiated client transform, angular seam resolution or physical acceptance is inferred. New source-specific retrieval queries belong to a separate development-only suite and must run on a single verified source tree containing the successor. Candidate-only paths remain NOT_RUN on this RAG branch; do not manufacture a combined index. The 250 ms reference evidence limit is distinct from all existing live source freshness, neutral and cleanup deadlines.
+
+
+### Exact-revision development feature probe (REL-RAG-03)
+
+The local `tools/rag_feature_probe.py` utility builds only the scopes requested by an explicit development case list at a **full existing Git commit SHA**. It does not check out, merge, fetch, download models or combine source from the tool's working tree with the target corpus. It uses the existing source verification, limits and lexical profiles, binds all reports to one case-file digest and target commit, and refuses an existing output directory. A missing expected source path is COVERAGE_FAIL, not a successful retrieval; any interrupted or identity-mismatched run lacks the completed summary. The output directory is created with mode 0700. It contains private indices and per-case reports; do not upload it automatically.
+
+For the separate, nine-query reference evidence development suite, run from a trusted local checkout that contains the tool and the exact coordinator commit object:
+
+```sh
+python3 tools/rag_feature_probe.py --repo . \
+  --ref 7e85ad90f5e63b66d088553ff6d53cbddf2667fe \
+  --cases-file tools/rag_relative_reference_development_cases.json \
+  --out-dir /tmp/tihulu-relative-reference-probe
+```
+
+Use a new private path for each attempt. The target commit need not contain the tool or development fixture; the committed source tree is exclusively the specified revision. This fixture covers reference provenance/age, replay watermark, contention, capability gating, manual range correction, and the source contract in engine/app/docs scopes. The older six-query fixture remains separate. Neither is part of independent held-out evaluation. Feature measurement on the actual coordinator tree remains NOT_RUN until a trusted local Git object is available; the fixture tests verify mechanics, not feature/runtime or receiver acceptance. No vector measurement is provided by this lexical-only probe.
+
+
+### Canonical lexical coverage and matrix-wide fixture identity (RAG-06)
+
+Source provenance alone does not prove completeness: a subset of authentic rows, repeated authentic chunks, or an altered skipped inventory can satisfy ordinary source verification. For a local lexical index use `python3 tools/repo_index.py verify --repo . --index /path/to/index.json --require-complete-lexical`. This opt-in verification reconstructs the canonical chunk inventory of the exact commit and scope, compares row multiplicities and skipped records, and rejects missing or unexpected chunks. It ignores chunk order, which does not change canonical coverage. It cannot prove inclusion of deliberately excluded files, semantic vector correctness, or answer quality. Reconstruction adds a full source traversal; normal provenance-only verification remains available. Feature probes now require canonical coverage and distinguish it from missing expected feature paths; a complete older corpus can still be COVERAGE_FAIL for a newer feature. The matrix freezes all fixture digests before building its first scope and rejects changes between scopes or modes. These are consistency checks of local inputs, not external authenticity.
+
+### Native clutch development handoff (REL-RAG-04)
+
+Historical candidate [8daa5644](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/tree/8daa564402f682c3a21e6e86e39cc0164449f9e6), coordinator draft #196:
+- [NativeHelperRelativeClutch.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/8daa564402f682c3a21e6e86e39cc0164449f9e6/studio/Sources/NoSpeakerCore/NativeHelperRelativeClutch.swift) is a portable planner, requires genuine neutral, a complete strictly ordered single-contact frame and unchanged contact identity. Independent x/y/contact size lanes anchor without output, invalid input or contact replacement retires the clutch, and host cleanup remains mandatory.
+- [SensorRouter.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/8daa564402f682c3a21e6e86e39cc0164449f9e6/studio/Sources/NoSpeakerCore/SensorRouter.swift) temporarily fences ambiguous pedal lanes and wrapped yaw/pitch; [GamepadMappingPanel.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/8daa564402f682c3a21e6e86e39cc0164449f9e6/studio/Sources/NoSpeakerStudio/GamepadMappingPanel.swift) limits editor eligibility to supported analog joystick routes. Do not infer analog trigger support or universal relative capability.
+- [RELATIVE_CONTINUOUS_CONTROL.md](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/8daa564402f682c3a21e6e86e39cc0164449f9e6/studio/docs/RELATIVE_CONTINUOUS_CONTROL.md) records the source contract and remaining host adapter dependencies.
+
+Six new development-only queries in `tools/rag_native_clutch_development_cases.json` are intended for the exact-revision feature probe with `--ref 8daa564402f682c3a21e6e86e39cc0164449f9e6`. Never substitute a later moving branch or combine source trees. Actual candidate retrieval, native runtime, DAW feedback and physical acceptance remain separate; no native helper service integration is claimed. Prior feature and independent evaluation fixtures are unchanged.
+
+
+### Original Git object identity (RAG-07)
+
+Every Git read issued by the retrieval tools now uses `git --no-replace-objects`. A local replace ref can otherwise cause Git to return a replacement tree or blob while reporting the original object ID. This can invalidate exact-commit source claims even when both build and verification use the same local repository. The guard applies to all index builds, source checks, canonical coverage, feature probes and cache provenance reads through the shared helper. Replacement refs are not deleted, and the user's repository is not modified. Tests use temporary local repositories with both commit and blob replacement refs; this is not a claim of defense against a compromised Git executable, filesystem, or arbitrarily hostile runtime environment.
+
+
+### Development-only ranking diagnostics (RAG-08)
+
+The grouped lexical benchmark supports `--diagnose-development` only with `--case-group development`. The matrix automatically records aggregate counts for each compared profile's development group. Diagnostics distinguish COVERAGE_FAIL (any expected file is absent from the index), NO_POSITIVE_MATCH (all expected files indexed, none receives a positive lexical score), CUTOFF (at least one expected file receives a positive score but none is returned), and HIT (at least one expected file returned, no missing expected files). HIT does not imply all expected files were returned; expected-file counts expose partial coverage. Raw first-chunk rank is before result diversity and cutoff; returned first-chunk rank is after them. Unique-file and chunk counts reveal result crowding. The diagnostic recomputes ranking outside the timed query and checks exact selected row identity and rounded score equality. It is not an answer-quality judgment or a new ranking algorithm. No diagnostic is attached to held-out or independent evaluation rows; previous datasets, metrics and default retrieval remain unchanged. Use these development-only counts to choose subsequent hypotheses, not to tune to independent evaluation outcomes.
+
+### Angle and native output handoff (REL-RAG-05)
+
+The coordinator's exact #205 candidate [c0040273](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/tree/c0040273b24f60046fb0ec30dd53788df8458440) extends the earlier #196 source map. [RelativeAngularClutch.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/c0040273b24f60046fb0ec30dd53788df8458440/studio/Sources/NoSpeakerCore/RelativeAngularClutch.swift) preprocesses one raw wrapped degree axis with explicit clutch and ordered receipt; motion aliasing, freshness and physical admission remain host responsibilities. [NativeHelperRelativeOutputPlan.swift](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/c0040273b24f60046fb0ec30dd53788df8458440/studio/Sources/NoSpeakerCore/NativeHelperRelativeOutputPlan.swift) checks hidden competing owners and reserved channels, retains sparse lanes and returns a pure snapshot, not a wire write or atomic lease. [The candidate contract](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/c0040273b24f60046fb0ec30dd53788df8458440/studio/docs/RELATIVE_CONTINUOUS_CONTROL.md) distinguishes preprocessing defaults from unchanged live deadlines and requires debt-aware serialized host binding. Remote yaw/pitch and ambiguous pedal lanes remain fenced. No receiver-confirmed DAW reference or native integration is inferred.
+
+Six development-only queries in `tools/rag_relative_angle_development_cases.json` cover engine and docs. Run the exact-revision feature probe only with `--ref c0040273b24f60046fb0ec30dd53788df8458440` in a trusted local repo containing that commit. Actual probe NOT_RUN here because a complete local Git checkout is unavailable. Do not combine files from this candidate with other revisions. The independent UX review (#172 comment 7209125486) reports an angular diagnostic failure; this source map does not certify that defect closed. Keep source discovery distinct from native/physical acceptance.
+
+
+### Domain terminology experiment (RAG-09)
+
+The exact RAG-08 CI development diagnostics showed that the multilingual profile eliminated five no-positive-match cases and one cutoff in the nine-query multilingual development set. The harder contextual development set retained one engine cutoff even though all eight returned chunks per case were distinct files. This supports a limited hypothesis about terminology coverage rather than another file-diversity change. The optional `multilingual-domain` profile extends `multilingual-context` with explicit Turkish/German technical morphology for continuous controls, ownership, priorities, scoped release, output, and smoothing; e.g. sürekli → continuous, sahipliği → ownership/owner, öncelik → priority. It uses the same original weights, 0.55 alias weight, 64-alias ceiling and phrase safeguards. It is not generic stemming, full translation, semantic retrieval or a default change. The small aliases may introduce ambiguity; all earlier profiles stay available.
+
+The separate `tools/rag_domain_cases.json` dataset contains six development and six evaluation cases (two per scope), committed before profile changes. The earlier owner development query is deliberately reused in development only; the new evaluation queries differ, but some source files recur across suites, so this is not a disjoint corpus or independent external review. Compare the contextual and domain profiles only on this new paired set; no older evaluation dataset is edited or used as tuning input. The normal matrix also records diagnostic status counts on the development group. Do not promote the experimental profile just because development improves. A new evaluation and independent review are required before changing defaults.

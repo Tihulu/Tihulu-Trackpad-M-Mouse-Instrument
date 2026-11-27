@@ -1,0 +1,7 @@
+# UXV-06 — web key ownership and scale guide parity
+
+Exact #188 10e4b638983ce82db7d0c5d3770a70d65b7b81c0, RemoteLoopbackPageServer.swift blob 3b7b748355728997673238a1091cf7286273eb3b. Extract exact bindMomentaryKeys lines 2166–2185, V8 mocked button/listeners, callback counters, enabled/eligibility. 11/11 PASS: Space, Enter, repeats, other activation key cannot steal/release, blur once, disabled and ineligible start, eligibility lost while held, unrelated key, repeat without prior down, new contact after blur. Initial harness extraction included following function header and failed syntax; corrected extraction to closing brace, no product failure. No real DOM, focus or transport.
+
+Source data parity: web line1540 scaleDegrees parsed as JSON; same-pin ChordPads.swift blob e5f288ee9471902bc0e3a678214523bebe5dbb45:24–39 switch interval arrays parsed, alias mappings naturalMinor→minor, majorPentatonic→pentatonic. All 16/16 arrays exactly equal, plus browser chromatic all. Guide is 12-TET visual assistance, not verified sounding tuning, makam authenticity or custom scale parity. UX-048 candidate improvement, no integrated closure.
+
+Actual CI independently inspected: 45934089786 job 140293171244 core PASS, checkout synthetic merge c7bdee6cb9dd97ee111d901735c08d19cc15d6d8, tree equals head 80fc00e6f92d640846ccab4d5bc30ab3d4bcdb53. Logs 209/209 Node, 57 XCTest, 1031 Swift Testing PASS. RAG 45934089793 PASS, macOS queued at inspection, mobile skipped. Existing CI separate from independent diagnostics. No source modification or CI retrigger. 

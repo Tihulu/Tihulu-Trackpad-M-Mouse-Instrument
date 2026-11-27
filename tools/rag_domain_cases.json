@@ -1,0 +1,114 @@
+{
+  "development": [
+    {
+      "id": "dev9-owner",
+      "scope": "engine",
+      "language": "tr",
+      "query": "Sürekli kontrol sahipliği: eski kaynak bırakma işlemi, geri yükleme ve öncelik",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/LegacyContinuousOwners.swift"
+      ]
+    },
+    {
+      "id": "dev9-sustain",
+      "scope": "engine",
+      "language": "de",
+      "query": "Gemeinsame Sustain-Kanalbesitzer: der letzte Besitzer gibt frei, bei weiteren Besitzern bleibt das Pedal aktiv",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/LegacySustainOwners.swift"
+      ]
+    },
+    {
+      "id": "dev9-response",
+      "scope": "app",
+      "language": "tr",
+      "query": "Çıkış kontrolü için minimum maksimum yumuşatma ve özel bırakma konumu",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/ContinuousResponsePanel.swift"
+      ]
+    },
+    {
+      "id": "dev9-pad",
+      "scope": "app",
+      "language": "en",
+      "query": "Which gamepad mapping editor copies a selected pad profile to another device with optional channel remapping?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/GamepadMappingPanel.swift"
+      ]
+    },
+    {
+      "id": "dev9-render",
+      "scope": "docs",
+      "language": "de",
+      "query": "Konflikt zwischen gerenderter Wiedergabe und aktiver Live-Steuerung; unabhängiger Sequencer bleibt aktiv",
+      "expected_paths": [
+        "docs/STUDIO_RENDERED_OUTPUT_OWNERSHIP.md"
+      ]
+    },
+    {
+      "id": "dev9-sustain-doc",
+      "scope": "docs",
+      "language": "tr",
+      "query": "Ortak MIDI çıkışında sustain pedal sahipliği kanal başına ilk ve son sahip",
+      "expected_paths": [
+        "docs/STUDIO_LEGACY_SUSTAIN_OWNERSHIP.md"
+      ]
+    }
+  ],
+  "evaluation": [
+    {
+      "id": "eval9-debt",
+      "scope": "engine",
+      "language": "de",
+      "query": "Fehlgeschlagene neutrale Controller-Nachricht und unvollständiger Bend-Bereich werden getrennt gespeichert",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/LegacyControllerReleaseDebt.swift"
+      ]
+    },
+    {
+      "id": "eval9-note",
+      "scope": "engine",
+      "language": "tr",
+      "query": "Aynı nota kanalında ikinci basış tekrar tetiklenmez, son sahip bırakınca note off",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/LegacyNoteOwners.swift"
+      ]
+    },
+    {
+      "id": "eval9-lab",
+      "scope": "app",
+      "language": "en",
+      "query": "Which isolated sensor lab exposes two simulated sources and target selection without CoreMIDI side effects?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/SensorMappingLabView.swift"
+      ]
+    },
+    {
+      "id": "eval9-layout",
+      "scope": "app",
+      "language": "de",
+      "query": "Gespeicherte inaktive Bedienelemente behalten, Reihenfolge und Beschriftung einer Performance-Anordnung ändern",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/PerformanceControlsView.swift"
+      ]
+    },
+    {
+      "id": "eval9-pulse",
+      "scope": "docs",
+      "language": "tr",
+      "query": "Ters kalibrasyon ile ortak etkinleştirme noktası ve manuel giriş eski pad zamanlayıcısını iptal eder",
+      "expected_paths": [
+        "docs/BUILDER_PULSE_OWNERSHIP.md"
+      ]
+    },
+    {
+      "id": "eval9-snapshot",
+      "scope": "docs",
+      "language": "en",
+      "query": "Which publication fence rejects an earlier calculated surface snapshot before it reaches the main actor?",
+      "expected_paths": [
+        "docs/STUDIO_TOUCH_SNAPSHOT_FENCE.md"
+      ]
+    }
+  ]
+}
