@@ -76,6 +76,16 @@ public struct SequencerTakePresentation: Sendable {
         return position?.gridStep
     }
 
+    /// The nominal take is not the only MIDI path. Legacy/tuned playback
+    /// and failed endpoint cleanup remain authoritative even without a take.
+    public func permitsMIDIStart(running: Bool, cleanupPending: Bool) -> Bool {
+        phase == .idle && !running && !cleanupPending
+    }
+
+    public func needsMIDIStopControl(running: Bool, cleanupPending: Bool) -> Bool {
+        phase != .idle || running || cleanupPending
+    }
+
     /// Report terminal host evidence after startup failure, cancellation or
     /// natural end. No worker may still start or send notes under this token.
     /// Keep the take until matching cleanup succeeds.
