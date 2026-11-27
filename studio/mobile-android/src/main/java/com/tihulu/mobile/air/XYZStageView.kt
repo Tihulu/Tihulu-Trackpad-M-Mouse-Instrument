@@ -21,6 +21,7 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
     val pitchAxis:Int? get()=role.selectedItemPosition.takeIf {it in 1..6}?.let {(it-1)%3}
     private val name=EditText(context)
     private val message=TextView(context)
+    private val eligibility=TextView(context)
     var selectionChanged: (() -> Unit)? = null
     val mask:Int get()=if(pitchAxis!=null&&!hybrid)7 else enabledAxes.foldIndexed(0){i,m,box->if(box.isChecked)m or (1 shl i) else m}
     fun volume():XYZVolume? {
@@ -71,6 +72,10 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
         addView(Button(context).apply{text="Update named calibration";setOnClickListener {update()}})
         addView(Button(context).apply{text="Delete named calibration";setOnClickListener {delete()}})
         addView(message)
+        addView(eligibility)
+    }
+    fun describeEligibility(reason:String?) {
+        eligibility.text=reason ?: "Calibration and role valid."
     }
     private fun save(){
         val key=name.text.toString().trim()

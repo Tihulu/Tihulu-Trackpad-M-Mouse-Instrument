@@ -501,7 +501,12 @@ class AirPreviewActivity: ComponentActivity() {
         if(measuredMode){
             val validVolume=xyzSettings.volume()!=null && xyzSettings.mask in 1..7
             start.isEnabled=!busy&&!qrRequested&&measuredCamera()!=null&&validVolume&&(!wantsPair||xyzAssigned())
-            if(!busy&&!validVolume)status.text="Set valid XYZ bounds and enable at least one helper axis for Helper or Hybrid."
+            xyzSettings.describeEligibility(when {
+                measuredCamera()==null -> "Select a rear camera with advertised DEPTH16."
+                !validVolume -> "Set valid XYZ bounds and enable at least one helper axis for Helper or Hybrid."
+                wantsPair&&!xyzAssigned() -> "Wait for a compatible Mac assignment; reconnect to change role or axes."
+                else -> null
+            })
             modelButton.isEnabled=false
         }
         stopButton.isEnabled=xyzSource!=null||pending||source!=null||depthSource!=null||lan!=null
@@ -673,7 +678,8 @@ class AirPreviewActivity: ComponentActivity() {
         }
         livePiano=piano
         touchPanel.addView(hint)
-        touchPanel.addView(piano,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,(240*resources.displayMetrics.density).toInt()))
+        val stageDp=(resources.configuration.screenHeightDp*0.38f).coerceIn(110f,240f)
+        touchPanel.addView(piano,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,(stageDp*resources.displayMetrics.density).toInt()))
         touchPanel.addView(arm)
         touchPanel.addView(leave)
         arm.setOnClickListener{
