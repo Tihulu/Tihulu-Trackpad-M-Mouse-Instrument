@@ -35,8 +35,11 @@ public enum ScalaKeyboardImport {
         // the unmodified source; only parsing removes the marker.
         let source = text.unicodeScalars.first?.value == 0xFEFF
             ? String(text.unicodeScalars.dropFirst()) : text
-        guard source.unicodeScalars.first?.value != 0xFEFF else { throw Failure.malformed }
-        let rows = source.split(whereSeparator: \.isNewline).compactMap { raw -> String? in
+        guard source.unicodeScalars.first?.value != 0xFEFF,
+              !source.unicodeScalars.contains(where: { [0x0B, 0x0C, 0x85, 0x2028, 0x2029].contains($0.value) }) else {
+            throw Failure.malformed
+        }
+        let rows = source.split(whereSeparator: { $0 == "\r" || $0 == "\n" || $0 == "\r\n" }).compactMap { raw -> String? in
             let line = raw.prefix(while: { $0 != "!" }).trimmingCharacters(in: .whitespaces)
             return line.isEmpty ? nil : line
         }
