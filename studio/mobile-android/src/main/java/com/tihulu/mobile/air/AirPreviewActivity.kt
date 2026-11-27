@@ -469,7 +469,7 @@ class AirPreviewActivity: ComponentActivity() {
         feedback.visibility=if(measuredMode||wantsTouchPair||touchStage)View.GONE else View.VISIBLE
         if(!busy&&!measuredMode&&!wantsTouchPair&&!touchStage)showOutput(AirOutput())
         modeGuide.text=when {
-            depth&&selectedRange()==null -> "Enter a valid near/far range: near 10–150 cm, far 20–300 cm, at least 10 cm apart."
+            depth&&selectedRange()==null -> "Enter a valid near/far range: near 10–150 cm, far 20–300 cm, at least 10 cm apart. If an exact 10 cm gap is rejected, increase the gap by 1 cm."
             !validRole() -> "Choose left or right performing hand for chords."
             else -> when(selectedMode()) {
                 AirMode.PINCH_KEYS -> "Move horizontally to choose a key; open then pinch to hold, open to release."
