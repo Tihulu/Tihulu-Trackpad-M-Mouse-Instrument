@@ -2304,3 +2304,30 @@ test("MUSIC-WEB global release retains timely XY release and waits for acknowled
   assert.equal(a.socket.frames.at(-1).kind,"release");a.ack();
   assert.equal(a.socket.closed,undefined);assert.match(e.status.textContent,/My controls released locally/);
 });
+
+test("MUSIC-WEB explicit release clears stale local activation without rearming held keys",()=>{
+  for(const family of ["drum","piano","chord","pedal"]){
+    const a=setup(),e=a.elements;let b,release;
+    if(family==="drum"){e.drumEnable.emit("click");b=e.drum0;release=e.drumRelease;}
+    if(family==="piano"){e.pianoEnable.emit("click");b=e.piano0;release=e.pianoRelease;}
+    if(family==="chord"){e.pianoChord.emit("click");e.pianoEnable.emit("click");b=e.chord0;release=e.pianoRelease;}
+    if(family==="pedal"){setHoldPedal(a,4);b=e.pedalToggle4;release=e.pedalRelease;}
+    b.emit("keydown",xyKey(" "));a.ack();release.emit("click");a.step(25);
+    assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+    const n=a.socket.frames.length;b.emit("keydown",xyKey(" ",true));a.step(25);assert.equal(a.socket.frames.length,n);
+    b.emit("keydown",xyKey("Enter"));a.step(25);assert.equal(a.socket.frames.length,n+1,family);
+    const mask=a.socket.frames.at(-1).mask;assert.notEqual(mask,0);a.ack();
+    b.emit("keyup",xyKey(" "));a.step(25);
+    // Periodic refresh is allowed, but must retain the new owner's mask.
+    assert.equal(a.socket.frames.at(-1).mask,mask,family);
+    if(a.socket.frames.length>n+1)a.ack();
+    b.emit("keyup",xyKey("Enter"));a.step(25);assert.equal(a.socket.frames.at(-1).mask,0,family);
+  }
+});
+test("MUSIC-WEB global release retires local keyboard owner across mode transition",()=>{
+  const a=setup(),e=a.elements;e.pianoEnable.emit("click");e.piano0.emit("keydown",xyKey(" "));a.ack();
+  e.playMode.value="xy";e.playMode.emit("change");a.step(25);a.ack();
+  e.playMode.value="piano";e.playMode.emit("change");e.pianoEnable.emit("click");
+  const n=a.socket.frames.length;e.piano0.emit("keydown",xyKey(" ",true));a.step(25);assert.equal(a.socket.frames.length,n);
+  e.piano0.emit("keydown",xyKey("Enter"));a.step(25);assert.equal(a.socket.frames.at(-1).mask,1);
+});

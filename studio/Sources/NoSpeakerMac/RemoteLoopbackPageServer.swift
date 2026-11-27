@@ -1059,6 +1059,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
   function releaseMyControls(){
     if(!admitted||!caps||releasingAll)return;
     releasingAll=true;const now=performance.now();
+    for(const group of ["drum","piano","pedal"])clearMomentaryKeys(group);
     if(cameraHelper){if(pedalSentMask!==0||pendingKind==="pedalboard")cameraReleaseAt??=now;stopCamera("Camera stopped; releasing controls.");}
     // Cancel unsent onsets; retain the state of every already sent owner.
     const touchReleaseAt=touchQueue.find(edge=>edge.kind==="release")?.at??now;
@@ -1500,7 +1501,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     drumButtons.forEach((b,i)=>{b.hidden=playMode==="stick"||!has("drums",i);b.disabled=playMode==="stick"||!admitted||!drumEnabled||!has("drums",i)||drumEmergency;b.setAttribute("aria-pressed",String(Boolean(drumDesired&(1<<i))));});
     drumEnable.hidden=playMode==="stick";syncStick();
   }
-  function resetDrums(){resetStick();drumEnabled=false;drumOwners.clear();drumQueue=[];drumDesired=0;drumSent=0;lastDrumSend=-Infinity;drumEmergency=false;drumStatus.textContent="Off.";syncDrums();}
+  function resetDrums(){clearMomentaryKeys("drum");resetStick();drumEnabled=false;drumOwners.clear();drumQueue=[];drumDesired=0;drumSent=0;lastDrumSend=-Infinity;drumEmergency=false;drumStatus.textContent="Off.";syncDrums();}
   function drumChanged(){
     let mask=0;for(const index of drumOwners.values())mask|=1<<index;
     if(mask===drumDesired)return;
@@ -1509,6 +1510,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     drumQueue.push({mask,at:performance.now()});syncDrums();tick();
   }
   function releaseDrums(){
+    clearMomentaryKeys("drum");
     if(stickState!=="idle"){resetStick();drumEnabled=false;}
     drumOwners.clear();drumDesired=0;drumQueue=[];
     drumEmergency=drumSent!==0;syncControls();tick();
@@ -1694,7 +1696,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     pianoPedal.hidden=!has("piano",25);pianoPedal.disabled=!admitted||!pianoEnabled||!has("piano",25)||pianoEmergency;
     pianoPedal.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<25))));syncPhrase();
   }
-  function resetPiano(){resetPhrase();arpSelected.clear();synthOpen=false;dialDrags.clear();synthHidden.clear();strips=false;pianoEnabled=false;pianoOctave=0;pianoOwners.clear();pianoVisited.clear();pianoQueue=[];pianoDesired=0;pianoSent=0;lastPianoSend=-Infinity;pianoEmergency=false;pianoStatus.textContent="Off.";syncPiano();}
+  function resetPiano(){clearMomentaryKeys("piano");resetPhrase();arpSelected.clear();synthOpen=false;dialDrags.clear();synthHidden.clear();strips=false;pianoEnabled=false;pianoOctave=0;pianoOwners.clear();pianoVisited.clear();pianoQueue=[];pianoDesired=0;pianoSent=0;lastPianoSend=-Infinity;pianoEmergency=false;pianoStatus.textContent="Off.";syncPiano();}
   function pianoChanged(runTick=true){
     let mask=phraseMask;for(const index of pianoOwners.values())mask|=1<<index;
     for(const index of chordOwners.values())mask|=chordMask(index);
@@ -1704,7 +1706,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     pianoQueue.push({mask,at:performance.now()});syncPiano();if(runTick)tick();
   }
   function releasePiano(){
-    resetPhrase();pianoOwners.clear();pianoVisited.clear();pianoDesired=0;pianoQueue=[];
+    clearMomentaryKeys("piano");resetPhrase();pianoOwners.clear();pianoVisited.clear();pianoDesired=0;pianoQueue=[];
     pianoEmergency=pianoSent!==0;syncControls();tick();
   }
   function pianoDown(owner,index){
@@ -1809,7 +1811,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     return {mask:pedalMask,levels:Array.from({length:6},(_,i)=>(pedalMask&(1<<i))?(i<3?pedalPositions[i]/100:1):0)};
   }
   function resetPedals(){
-    pedalEnabled=false;pedalHoldOwners.clear();pedalMask=0;pedalSentMask=0;pedalPositions=[...details.sliderDefaults];pedalQueue=[];pedalDirty=false;lastPedalSend=-Infinity;pedalEmergency=false;
+    clearMomentaryKeys("pedal");pedalEnabled=false;pedalHoldOwners.clear();pedalMask=0;pedalSentMask=0;pedalPositions=[...details.sliderDefaults];pedalQueue=[];pedalDirty=false;lastPedalSend=-Infinity;pedalEmergency=false;
     pedalStatus.textContent="Off.";syncPedals();
   }
   function pedalAdmitted(i){
@@ -1850,7 +1852,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     pedalPositions[i]=Math.round(n);pedalDirty=true;syncPedals();tick();
   }
   function releasePedals(){
-    dialDrags.clear();pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;syncControls();tick();
+    clearMomentaryKeys("pedal");dialDrags.clear();pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;syncControls();tick();
   }
   function sendPedals(snapshot){send("pedalboard",snapshot);}
   function inertialState(kind,prefix,limit,scale){return {kind,start:get(prefix+"Start"),stop:get(prefix+"Stop"),meter:get(prefix+"Meter"),status:get(prefix+"Status"),limit,scale,mode:"idle",epoch:0,sample:null,at:0,sent:-1,last:-Infinity,waiting:0};}
@@ -2164,8 +2166,11 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
   for(const event of ["pointercancel","lostpointercapture"])pad.addEventListener(event,e=>{if(e.pointerId===pointer)close("Touch cancelled. Reconnect explicitly.");});
   // A momentary button has one keyboard activation owner. Do not let a
   // second activation key release it or toggle an arpeggio selection twice.
-  function bindMomentaryKeys(b,down,up,cancel,eligible=()=>true){
+  const momentaryKeyResets={drum:[],piano:[],pedal:[]};
+  function clearMomentaryKeys(group){for(const reset of momentaryKeyResets[group])reset();}
+  function bindMomentaryKeys(group,b,down,up,cancel,eligible=()=>true){
     let held=null;
+    momentaryKeyResets[group].push(()=>{held=null;});
     const activation=e=>e.key===" "||e.key==="Enter";
     b.addEventListener("keydown",e=>{
       if(!activation(e)||!eligible())return;
@@ -2207,7 +2212,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     });
     b.addEventListener("pointerup",e=>drumUp("p"+e.pointerId));
     for(const name of ["pointercancel","lostpointercapture"])b.addEventListener(name,e=>cancelDrum("p"+e.pointerId));
-    bindMomentaryKeys(b,()=>drumDown("k"+index,index),()=>drumUp("k"+index),()=>cancelDrum("k"+index));
+    bindMomentaryKeys("drum",b,()=>drumDown("k"+index,index),()=>drumUp("k"+index),()=>cancelDrum("k"+index));
   });
   pianoEnable.addEventListener("click",()=>{
     if(currentView!=="play"||releasingAll||!admitted||!caps?.piano)return;
@@ -2231,7 +2236,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     b.addEventListener("pointerdown",e=>{if(e.button!==0||b.disabled)return;e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{close("Chord pointer capture failed.");return;}chordDown("c"+i+":"+e.pointerId,i);});
     b.addEventListener("pointerup",e=>chordUp("c"+i+":"+e.pointerId));
     for(const event of ["pointercancel","lostpointercapture"])b.addEventListener(event,e=>cancelChord("c"+i+":"+e.pointerId));
-    bindMomentaryKeys(b,()=>chordDown("k"+i,i),()=>chordUp("k"+i),()=>cancelChord("k"+i));
+    bindMomentaryKeys("piano",b,()=>chordDown("k"+i,i),()=>chordUp("k"+i),()=>cancelChord("k"+i));
   }
   pianoStrips.addEventListener("click",()=>{
     if(currentView!=="play"||!admitted||releasingAll||pianoBusy()||!Boolean(caps?.piano&33554431))return;
@@ -2250,7 +2255,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     if(i!==13)b.addEventListener("pointermove",moveStrip);
     b.addEventListener("pointerup",e=>pianoUp("p"+e.pointerId));
     for(const name of ["pointercancel","lostpointercapture"])b.addEventListener(name,e=>cancelPiano("p"+e.pointerId));
-    bindMomentaryKeys(b,()=>pianoDown("k"+i,index()),()=>pianoUp("k"+i),()=>cancelPiano("k"+i));
+    bindMomentaryKeys("piano",b,()=>pianoDown("k"+i,index()),()=>pianoUp("k"+i),()=>cancelPiano("k"+i));
   });
   function togglePedals(){
     if(currentView!=="play"||releasingAll||!admitted||!caps?.pedals||cameraHelper||!modeAllows("pedals"))return;
@@ -2277,7 +2282,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     });
     b.addEventListener("pointerup",e=>pedalHoldUp(i,"p"+e.pointerId));
     for(const event of ["pointercancel","lostpointercapture"])b.addEventListener(event,e=>cancelHeldPedal(i,"p"+e.pointerId));
-    bindMomentaryKeys(b,()=>pedalHoldDown(i,"k"+i),()=>pedalHoldUp(i,"k"+i),()=>cancelHeldPedal(i,"k"+i),()=>isHoldPedal(i));
+    bindMomentaryKeys("pedal",b,()=>pedalHoldDown(i,"k"+i),()=>pedalHoldUp(i,"k"+i),()=>cancelHeldPedal(i,"k"+i),()=>isHoldPedal(i));
   });
   pedalSliders.forEach((b,i)=>b.addEventListener("input",()=>pedalMove(i)));
   pedalOutputs.forEach((dial,i)=>{
