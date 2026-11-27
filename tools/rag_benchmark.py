@@ -8,6 +8,7 @@ import statistics
 import subprocess
 import sys
 import time
+import unicodedata
 from types import SimpleNamespace
 import repo_index
 
@@ -15,6 +16,7 @@ CASES = Path(__file__).with_name("rag_benchmark_cases.json")
 HELDOUT_CASES = Path(__file__).with_name("rag_heldout_cases.json")
 RANKING_CASES = Path(__file__).with_name("rag_ranking_cases.json")
 MULTILINGUAL_CASES = Path(__file__).with_name("rag_multilingual_cases.json")
+CONTEXTUAL_CASES = Path(__file__).with_name("rag_contextual_cases.json")
 
 
 def load_cases(path, group=None):
@@ -52,6 +54,22 @@ def load_cases(path, group=None):
             raise ValueError("Invalid or duplicate benchmark case")
         seen.add(identifier)
     return cases, hashlib.sha256(data).hexdigest()
+
+
+def validate_case_groups(path):
+    """Reject exact query/ID leakage even when different JSON yields different digests."""
+    dev, dev_digest = load_cases(path, "development")
+    evaluation, eval_digest = load_cases(path, "evaluation")
+    def normalized_query(case):
+        return " ".join(unicodedata.normalize("NFKC", case["query"]).casefold().split())
+    for cases in (dev, evaluation):
+        if len({normalized_query(case) for case in cases}) != len(cases):
+            raise ValueError("Duplicate normalized query within benchmark group")
+    if ({case["id"] for case in dev} & {case["id"] for case in evaluation}
+            or {normalized_query(case) for case in dev} &
+               {normalized_query(case) for case in evaluation}):
+        raise ValueError("Development/evaluation case overlap")
+    return {"development": dev_digest, "evaluation": eval_digest}
 
 
 def run(args):
