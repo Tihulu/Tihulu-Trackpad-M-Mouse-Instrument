@@ -86,12 +86,22 @@ public final class CustomSurfaceEndpointHost {
         let name = "TIHULU Custom Pad " + plan.layout.surface.rawValue + " " + id.uuidString
         guard let created = backend.create(name), created.endpoint.handle != 0 else { return nil }
         let endpoint = created.endpoint
-        let duplicate = entries.values.contains {
+        let collisions = entries.values.filter {
             $0.endpoint.handle == endpoint.handle || $0.endpoint.uniqueID == endpoint.uniqueID
+        }
+        // A duplicate native handle or UID undermines both incarnations.
+        // Quarantine the previous record as well; neither may send or dispose
+        // an ambiguous endpoint, even if a later property query succeeds.
+        for collision in collisions {
+            collision.phase = .identityLost
+            if let lease = collision.lease, let report = registry.close(lease) {
+                collision.record(report)
+                if report.outstanding.isEmpty { collision.lease = nil }
+            }
         }
         let entry = Entry(id: id, endpoint: endpoint, surface: plan.layout.surface)
         entries[id] = entry
-        guard created.succeeded, endpoint.uniqueID != 0, endpoint.name == name, !duplicate,
+        guard created.succeeded, endpoint.uniqueID != 0, endpoint.name == name, collisions.isEmpty,
               entry.validate(backend) else {
             entry.phase = .identityLost
             return entry.status

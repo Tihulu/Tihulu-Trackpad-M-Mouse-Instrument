@@ -177,3 +177,28 @@ private let hostContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5, 
     #expect(host.close(opened.id)?.phase == .closed)
     #expect(wire.count == 3 && disposals == 1)
 }
+
+@Test func customSurfaceHostQuarantinesBothIncarnationsOnDuplicateEndpoint() throws {
+    var now: Int64 = 0
+    var wire: [[UInt8]] = []
+    var disposals = 0
+    let host = CustomSurfaceEndpointHost(backend: .init(create: { name in
+        .init(endpoint: .init(handle: 12, uniqueID: 42, name: name), succeeded: true)
+    }, owns: { _ in true }, send: { _, bytes in wire.append(bytes); return true },
+       dispose: { _ in disposals += 1; return true }))
+    let plan = try hostPlan()
+    let first = try #require(host.open(plan: plan, clock: { now }, admitsLive: { true }))
+    _ = host.frame(first.id, surface: .trackpad, contacts: [], sequence: 1, observedAt: 0)
+    now = 1
+    _ = host.frame(first.id, surface: .trackpad, contacts: [hostContact], sequence: 2, observedAt: 1)
+    let second = try #require(host.open(plan: plan, clock: { now }, admitsLive: { true }))
+    #expect(second.phase == .identityLost)
+    #expect(host.statuses.allSatisfy { $0.phase == .identityLost })
+    #expect(host.statuses.first(where: { $0.id == first.id })?.outstanding == Set([SensorDestination(.note, channel: 2, number: 60)]))
+    now = 2
+    _ = host.frame(first.id, surface: .trackpad, contacts: [], sequence: 3, observedAt: now)
+    host.poll()
+    #expect(host.close(first.id)?.phase == .identityLost)
+    #expect(host.close(second.id)?.phase == .identityLost)
+    #expect(wire == [[0x92,60,100]] && disposals == 0)
+}
