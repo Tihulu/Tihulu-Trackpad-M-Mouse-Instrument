@@ -71,6 +71,15 @@ def run(args):
     meta, rows, verified, _, _ = prepared
     if not verified or meta.get("scope", "all") != args.scope:
         raise ValueError("Benchmark requires a verified index of the requested scope")
+    compare_cache = getattr(args, "compare_cache", False)
+    cache = None
+    cache_setup_ms = None
+    if compare_cache:
+        if args.mode != "lexical":
+            raise ValueError("Cache comparison requires lexical mode")
+        started = time.monotonic()
+        cache = repo_index.prepare_lexical(prepared)
+        cache_setup_ms = round((time.monotonic() - started) * 1000, 2)
     indexed = {row["path"] for row in rows}
     results = []
     for case in selected:
@@ -80,6 +89,13 @@ def run(args):
         started = time.monotonic()
         response = repo_index.search_prepared(prepared, options)
         elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+        warm_ms = None
+        if cache is not None:
+            started = time.monotonic()
+            warm_response = repo_index.search_prepared(prepared, options, lexical_cache=cache)
+            warm_ms = round((time.monotonic() - started) * 1000, 2)
+            if warm_response != response:
+                raise ValueError("Prepared lexical ranking differs from uncached search: " + case["id"])
         if response["lexical_profile"] != (options.lexical_profile if args.mode == "lexical" else None):
             raise ValueError("Benchmark ranking profile mismatch")
         # Count distinct files, not repeated chunks of one file. The
@@ -89,9 +105,9 @@ def run(args):
         results.append({"id": case["id"], "language": case["language"],
                         "expected_paths": case["expected_paths"], "missing_paths": missing,
                         "returned_paths": paths, "first_file_rank": rank,
-                        "query_ms": elapsed_ms})
+                        "query_ms": elapsed_ms, **({"warm_query_ms": warm_ms} if compare_cache else {})})
     count = len(results)
-    return {"schema": 1, "commit": meta["commit"], "scope": args.scope,
+    report = {"schema": 1, "commit": meta["commit"], "scope": args.scope,
             "mode": args.mode, "model_sha256": meta["model_sha256"] if args.model_dir else None,
             "source_verified": True, "lexical_profile": options.lexical_profile if args.mode == "lexical" else None,
             "case_group": getattr(args, "case_group", None), "cases_sha256": cases_sha256, "k_chunks": args.k, "max_per_file": args.max_per_file, "cases": count,
@@ -101,6 +117,16 @@ def run(args):
             "missing_paths": sum(len(r["missing_paths"]) for r in results),
             "notice": "Small curated file-level retrieval benchmark; not answer correctness or hardware acceptance.",
             "results": results}
+    if compare_cache:
+        report["cache_comparison"] = {
+            "status": "MEASURED" if cache is not None else "BUDGET_FALLBACK",
+            "setup_ms": cache_setup_ms, "entries": cache.entries if cache is not None else None,
+            "term_bytes": cache.term_bytes if cache is not None else None,
+            "parity_cases": count if cache is not None else 0,
+            "warm_median_query_ms": statistics.median(r["warm_query_ms"] for r in results)
+            if cache is not None else None,
+            "notice": "Paired cold-then-warm process timings; setup excluded from query medians; no RSS or speed guarantee."}
+    return report
 
 
 def main():
@@ -114,6 +140,7 @@ def main():
     parser.add_argument("--cases-file", help="Explicit independent JSON case set; default curated cases")
     parser.add_argument("--case-group", choices=("development", "evaluation"))
     parser.add_argument("--lexical-profile", choices=("legacy", "file-first"), default="legacy")
+    parser.add_argument("--compare-cache", action="store_true", help="Measure verified lexical cache and require exact result parity")
     parser.add_argument("--k", type=int, default=8)
     parser.add_argument("--max-per-file", type=int, default=3)
     args = parser.parse_args()
