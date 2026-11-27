@@ -63,7 +63,8 @@ def compare_lexical_profiles(repo, revision, index, scope, args, out, cases_file
             report = rag_benchmark.run(SimpleNamespace(repo=repo, expect_ref=revision,
                 index=index, scope=scope, mode="lexical", k=args.k,
                 max_per_file=args.max_per_file, model_dir=None, cases_file=cases_file,
-                case_group=group, lexical_profile=profile))
+                case_group=group, lexical_profile=profile,
+                compare_cache=group == "development" and profile == "legacy"))
             if (report["commit"] != revision or report["scope"] != scope
                     or report["mode"] != "lexical" or not report["source_verified"]
                     or report["model_sha256"] is not None
@@ -76,6 +77,11 @@ def compare_lexical_profiles(repo, revision, index, scope, args, out, cases_file
                 ("cases", "cases_sha256", "file_hit_rate", "file_mrr",
                  "missing_paths", "median_query_ms")}
             comparison[group][profile]["report"] = name
+            if group == "development" and profile == "legacy":
+                comparison[group][profile]["cache_comparison"] = report["cache_comparison"]
+                comparison[group][profile]["development_ranks"] = [
+                    {"id": row["id"], "language": row["language"],
+                     "first_file_rank": row["first_file_rank"]} for row in report["results"]]
         if (comparison[group]["legacy"]["cases_sha256"]
                 != comparison[group]["file-first"]["cases_sha256"]):
             raise ValueError("Ranking comparison dataset changed")

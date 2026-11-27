@@ -18,6 +18,8 @@ MAX_FILE = 512 * 1024
 MAX_SOURCE = 32 * 1024 * 1024
 MAX_CHUNKS = 12000
 MAX_INDEX = 256 * 1024 * 1024
+MAX_LEXICAL_ENTRIES = 300000
+MAX_LEXICAL_TERM_BYTES = 16 * 1024 * 1024
 EXTENSIONS = {".swift", ".md", ".py", ".sh", ".js", ".ts", ".html", ".css", ".json", ".yml", ".yaml", ".toml", ".c", ".h", ".m", ".mm", ".kt", ".kts", ".xml", ".gradle", ".plist", ".pbxproj"}
 ROOTS = {"studio", "docs", "scripts", "tools", "web", "remote", "Sources", "Tests", "src", "examples"}
 ROOT_FILES = {"README.md", "LICENSE", "NOTICE", "ATTRIBUTION.md", "CONTRIBUTING.md", "AGENTS.md", "Package.swift", "install-studio.sh", "uninstall-studio.sh"}
@@ -418,10 +420,16 @@ def prepare_search(args):
     return meta, rows, verified, model, identity
 
 
-def search_prepared(prepared, args):
+def search_prepared(prepared, args, lexical_cache=None):
     meta, rows, verified, model, identity = prepared
     if not 1 <= args.limit <= 50 or not args.query.strip() or len(args.query) > 4096:
         raise ValueError("Invalid query or result limit")
+    if lexical_cache is not None:
+        if model is not None or not verified:
+            raise ValueError("Lexical cache requires a verified lexical session")
+        if (lexical_cache.commit != meta["commit"]
+                or lexical_cache.scope != meta.get("scope", "all")):
+            raise ValueError("Lexical cache revision or scope differs; prepare again")
     if args.hybrid and model is None:
         raise ValueError("Hybrid search requires a genuine local embedding model")
     if bool(args.model_dir) != (model is not None):
@@ -448,7 +456,7 @@ def search_prepared(prepared, args):
             ranked = fuse_rankings(ranked, lexical_ranking(rows, args.query))
             mode = "hybrid"
     else:
-        ranked = lexical_ranking(rows, args.query)
+        ranked = lexical_ranking(rows, args.query, lexical_cache)
         mode = "lexical"
     ranked.sort(key=lambda item: (-item[0], item[1]["path"], item[1]["start"], item[1]["end"]))
     per_file = getattr(args, "max_per_file", 3)
@@ -467,26 +475,78 @@ def search(args):
     return search_prepared(prepare_search(args), args)
 
 
-def lexical_ranking(rows, query):
+def _lexical_signature(row):
+    return tuple(row[key] for key in ("path", "blob", "start", "end", "text"))
+
+
+def _lexical_row(row):
+    body = Counter(tokens(row["text"]))
+    name = frozenset(tokens(Path(row["path"]).stem))
+    return body, name, sum(body.values())
+
+
+class LexicalCache:
+    """Private, in-process statistics for one verified source snapshot."""
+    def __init__(self, meta, rows, stats, entries, term_bytes):
+        self.commit = meta["commit"]
+        self.scope = meta.get("scope", "all")
+        self._signatures = tuple(_lexical_signature(row) for row in rows)
+        self._stats = tuple(stats)
+        self.entries = entries
+        self.term_bytes = term_bytes
+
+    def checked_stats(self, rows):
+        if (len(rows) != len(self._signatures)
+                or any(_lexical_signature(row) != signature
+                       for row, signature in zip(rows, self._signatures))):
+            raise ValueError("Lexical cache source snapshot differs; prepare again")
+        return self._stats
+
+
+def prepare_lexical(prepared, max_entries=MAX_LEXICAL_ENTRIES,
+                    max_term_bytes=MAX_LEXICAL_TERM_BYTES):
+    """Opt-in bounded token reuse; return None when retained-statistics budget is exceeded.
+
+    Never persist these counters, and never reuse them across source snapshots.
+    The bounds count retained terms, not an exact Python RSS guarantee.
+    """
+    meta, rows, verified, model, _ = prepared
+    if not verified or model is not None:
+        raise ValueError("Lexical cache requires a verified lexical session")
+    if (type(max_entries) is not int or not 1 <= max_entries <= MAX_LEXICAL_ENTRIES
+            or type(max_term_bytes) is not int or not 1 <= max_term_bytes <= MAX_LEXICAL_TERM_BYTES):
+        raise ValueError("Invalid lexical cache budget")
+    stats = []
+    entries = term_bytes = 0
+    for row in rows:
+        body, name, length = _lexical_row(row)
+        entries += len(body) + len(name)
+        term_bytes += sum(len(term.encode("utf-8")) for term in body)
+        term_bytes += sum(len(term.encode("utf-8")) for term in name)
+        if entries > max_entries or term_bytes > max_term_bytes:
+            return None
+        stats.append((body, name, length))
+    return LexicalCache(meta, rows, stats, entries, term_bytes)
+
+
+def lexical_ranking(rows, query, lexical_cache=None):
     """Bound repeated common words and reward discriminative filename terms."""
     terms = set(tokens(query))
     if not terms:
         raise ValueError("No searchable terms")
-    prepared = []
+    stats = ([_lexical_row(row) for row in rows] if lexical_cache is None
+             else lexical_cache.checked_stats(rows))
     frequencies = Counter()
     total_words = 0
-    for row in rows:
-        body = Counter(tokens(row["text"]))
-        name = set(tokens(Path(row["path"]).stem))
-        length = sum(body.values())
+    for body, name, length in stats:
         total_words += length
-        frequencies.update(terms.intersection(body.keys() | name))
-        prepared.append((row, body, name, length))
+        # Iterate query terms instead of allocating a union of every body term.
+        frequencies.update(term for term in terms if term in body or term in name)
     average = max(1, total_words / max(1, len(rows)))
     idf = {term: math.log1p((len(rows) - frequencies[term] + 0.5) /
                            (frequencies[term] + 0.5)) for term in terms}
     ranked = []
-    for row, body, name, length in prepared:
+    for row, (body, name, length) in zip(rows, stats):
         score = 0.0
         for term in sorted(terms):
             count = body[term]
