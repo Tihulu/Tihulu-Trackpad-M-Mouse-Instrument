@@ -80,3 +80,62 @@ Native acceptance (not established by portable tests):
 
 No independent acceptance of UX-039 through UX-042 is implied by these
 portable engine checks or the isolated panel changes.
+
+## Transactional next-pattern editing
+
+`SequencerDraftEditor` owns an offline next draft only. It reuses the
+canonical archive and the existing 16-entry `ComposerDraft` undo bound.
+A caller explicitly requests a same-kind replacement, import, note/drum
+batch edit or options edit. The entire candidate must validate and fit
+the archive byte limit before the current draft or undo history changes.
+A throwing callback or invalid candidate cannot partially change the
+editor. No-op musical changes do not consume history even when restored
+cell UUIDs differ. An explicit clear is undoable, but an empty draft
+still cannot be frozen for playback.
+
+Tempo, subdivision, per-cell velocity and note gate remain editable.
+Shortening a grid with cells outside the new length is rejected until
+the caller explicitly deletes those cells in the same batch. Changing
+away from sixteenth-note subdivision requires clearing incompatible
+groove settings. Drum channel remains fixed; note channel is zero-based.
+Options changes are explicit and undoable. The editor may hold up to
+16 previous validated documents, so keep this work off the real-time path.
+It encodes a changed candidate once to enforce the byte bound; no real-time
+or UI latency acceptance is implied.
+
+A previously frozen take remains an immutable value. The editor cannot
+stop or start an active take, assert playback state, release a MIDI route
+or provide a scheduler playhead. The host must wire these independently.
+
+## REL-SEQ: offline continuous automation compatibility audit
+
+Reviewed sequencer predecessor `ef8ee9b7a52c4f98800d940bdd6d85807f2301db`
+and coordinator relative-control candidate
+`7e85ad90f5e63b66d088553ff6d53cbddf2667fe` (REL-02). No recorded
+continuous automation lane was found in the sequencer archive or nominal
+clip model at those inspected boundaries.
+
+| Existing boundary | Current representation | Relative automation readiness |
+|---|---|---|
+| SequencerPatternArchive v1 | Note cells, drum hits, tempo, loop and seeded groove | Unsupported automation/reference/endpoint fields rejected |
+| FrozenSequencerPattern / MIDIClip | Nominal note on/off timing, pitch, channel, velocity | No CC/pitch-bend lane; no gesture replay |
+| MIDIFileParser | Note projection and tempo-derived timing | CC and pitch bend discarded; cannot round-trip recorded automation |
+| BoundedMIDIPlanInput | Strict bounded nominal clip JSON | Unsupported continuous fields rejected |
+| TunedMIDIClip | Fixed MPE member setup and note events | Tuning setup is not expressive recorded automation |
+
+No live relative transform, receiver reference, endpoint mapping, or
+automation schema has been added by this slot. Ordinary SMF note projection
+must not be advertised as preserving a complete MIDI performance. In
+particular, importing a relative recording through the note-only parser
+would lose its automation; this limitation must remain explicit.
+
+If a future coordinator-approved automation format is needed, distinguish
+absolute output events from raw gesture samples and reference provenance.
+Do not apply relative displacement twice to already resolved output events.
+Receiver-confirmed values require an authorized adapter with matching
+endpoint/channel/parameter, freshness and ownership; no outgoing intent or
+remote ACK may be promoted to feedback. Preserve per-lane identity,
+ordering, range, cancellation and cleanup, and never overwrite MPE member
+base bends. A recorded reference is historical data, not fresh authorization
+for a new clutch. A new schema, host integration and actual DAW tests are
+separate future work; no physical or real-time acceptance is claimed.
