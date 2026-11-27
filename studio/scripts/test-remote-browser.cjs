@@ -2400,3 +2400,20 @@ test("WEB-09 ordinary piano and sustain retain sounding pressed state",()=>{
  assert.equal(e.piano0.attributes["aria-pressed"],"false");assert.equal(e.piano0.attributes["data-sounding"],"false");
  assert.equal(e.pianoSustain.attributes["aria-pressed"],"true");
 });
+
+test("WEB-10 arpeggio live status changes only when selection changes",()=>{
+  const a=setup(),e=a.elements;e.pianoArp.emit("click");e.pianoEnable.emit("click");
+  const status=e.arpSelected;
+  let value=status.textContent,writes=0;
+  Object.defineProperty(status,"textContent",{get(){return value;},set(next){value=next;writes++;}});
+  e.piano0.emit("pointerdown",drumEvent(1));e.piano0.emit("pointerup",drumEvent(1));
+  assert.equal(writes,1);
+  e.pianoRoot.value="2";e.pianoRoot.emit("change");
+  e.pianoScale.value="major";e.pianoScale.emit("change");
+  assert.equal(writes,1);
+  e.phraseTempo.value="120";e.phraseStart.emit("click");a.ack();
+  e.phraseStop.emit("click");a.step(25);a.ack();
+  assert.equal(writes,1);
+  e.arpClear.emit("click");assert.equal(writes,2);
+  e.arpClear.emit("click");assert.equal(writes,2);
+});

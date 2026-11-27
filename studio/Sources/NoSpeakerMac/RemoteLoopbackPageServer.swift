@@ -1592,7 +1592,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     get("arpChoice").hidden=get("arpLabel").hidden=playMode!=="arp";
     get("sequenceSteps").hidden=playMode!=="seq";
     get("arpKeyboardTools").hidden=playMode!=="arp";get("arpClear").disabled=playing;get("arpDirection").disabled=playing;get("arpRate").disabled=playing;get("arpSwing").disabled=playing;
-    get("arpSelected").textContent=arpSelected.size?"Selected keys: "+[...arpSelected].sort((a,b)=>a-b).map(k=>labelFor(17+k)).join(", "):"Tap keys to select a custom arpeggio, or use the chord menu.";
+    textIfChanged("arpSelected",arpSelected.size?"Selected keys: "+[...arpSelected].sort((a,b)=>a-b).map(k=>labelFor(17+k)).join(", "):"Tap keys to select a custom arpeggio, or use the chord menu.");
     for(let i=0;i<4;i++){
       const b=get("chord"+i);b.textContent=chordLabel(i);b.disabled=playMode!=="chord"||!pianoEnabled||!admitted||releasingAll||!chordAvailable(i);
       b.setAttribute("aria-pressed",String([...chordOwners.values()].includes(i)));
