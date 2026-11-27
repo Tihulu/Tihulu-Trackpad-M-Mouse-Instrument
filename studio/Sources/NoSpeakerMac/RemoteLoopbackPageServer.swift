@@ -2103,8 +2103,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   // the existing host release ACK. This is not a hold-last/recenter command.
   function releaseXY(){
     if(!admitted||currentView!=="play"||!caps?.touch||!modeAllows("touch")||releasingAll||xyClutchPending||!touchBusy())return;
+    // A clutch press must not renew the age of an already queued release.
+    const releaseAt=touchQueue.find(edge=>edge.kind==="release")?.at??performance.now();
     xyClutchPending=true;pointer=null;position=null;dot.hidden=true;
-    touchQueue=touchSent?[{kind:"release",at:performance.now()}]:[];
+    touchQueue=touchSent?[{kind:"release",at:releaseAt}]:[];
     syncControls();tick();
   }
   get("xyClutch").addEventListener("click",releaseXY);
@@ -2127,7 +2129,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(pointer!==xyKeyOwner(e.key))return;
     e.preventDefault();lift({pointerId:pointer});
   });
-  pad.addEventListener("blur",()=>{if(isXYKeyOwner())close("Keyboard touch cancelled. Reconnect explicitly.");});
+  pad.addEventListener("blur",e=>{
+    if(!isXYKeyOwner())return;
+    if(e.relatedTarget===get("xyClutch")){releaseXY();return;}
+    close("Keyboard touch cancelled. Reconnect explicitly.");
+  });
   // Cancellation is not a completed musical tap: discard unsent edges and
   // let host disconnect/watchdog release already delivered owners.
   for(const event of ["pointercancel","lostpointercapture"])pad.addEventListener(event,e=>{if(e.pointerId===pointer)close("Touch cancelled. Reconnect explicitly.");});

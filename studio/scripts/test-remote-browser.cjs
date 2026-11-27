@@ -2183,3 +2183,22 @@ test("REL-WEB camera helper labels its source calibration rather than receiver f
   assert.match(e.webCameraDescription.textContent,/No recording, hand recognition or depth/);
   assert.equal(a.socket.frames.length,0);
 });
+
+test("REL-WEB clutch never extends existing queued release deadline",()=>{
+  const a=setup(),e=a.elements;
+  e.pad.emit("pointerdown",xyEvent(1));e.pad.emit("pointerup",xyEvent(1));
+  a.step(100);e.xyClutch.emit("click");a.step(50);
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("REL-WEB focus transfer to explicit release control retires keyboard XY without disconnect",()=>{
+  const a=setup(),e=a.elements;e.pad.emit("keydown",xyKey("Enter"));a.ack();
+  e.pad.emit("blur",{relatedTarget:e.xyClutch});a.step(25);
+  assert.equal(a.socket.frames.at(-1).kind,"release");assert.equal(a.socket.closed,undefined);
+  a.ack();e.xyClutch.emit("click");assert.equal(e.pad.attributes["aria-pressed"],"false");
+  assert.equal(a.socket.frames.length,2);
+});
+test("REL-WEB focus transfer to unrelated control still fails closed",()=>{
+  const a=setup(),e=a.elements;e.pad.emit("keydown",xyKey("Enter"));
+  e.pad.emit("blur",{relatedTarget:e.pianoEnable});
+  assert.equal(a.socket.closed,true);
+});
