@@ -42,11 +42,15 @@ public final class CustomSurfaceExclusiveDelivery {
         lastClock=now
         return now
     }
-    private func liveFailure(observedAt:Int64)->Retirement? {
-        guard admits(),ownsCleanupEndpoint(),admits() else{return .admissionDenied}
+    private func freshnessFailure(observedAt:Int64)->Retirement? {
+        guard admits() else{return .admissionDenied}
         guard let now=tick(),observedAt>=0,now>=observedAt,
               now-observedAt<MobileAirSendGate.freshNS else{return .expiredOrInvalid}
-        return nil
+        return admits() ? nil : .admissionDenied
+    }
+    private func liveFailure(observedAt:Int64)->Retirement? {
+        guard admits(),ownsCleanupEndpoint() else{return .admissionDenied}
+        return freshnessFailure(observedAt:observedAt)
     }
     private func report(_ count:Int)->Report {
         .init(accepted:count,retirement:retirement,outstanding:ledger.outstanding,
@@ -82,7 +86,9 @@ public final class CustomSurfaceExclusiveDelivery {
     public func frame(_ contacts:[CustomSurfaceContactProjection.Contact],
                       sequence:UInt64,observedAt:Int64)->Report {
         guard retirement==nil else{return report(0)}
-        if let reason=liveFailure(observedAt:observedAt){return retire(reason)}
+        // Projection is pure and local. Avoid redundant identity IPC here;
+        // every actual send and the final publication still validate identity.
+        if let reason=freshnessFailure(observedAt:observedAt){return retire(reason)}
         guard let now=lastClock else{return retire(.expiredOrInvalid)}
         let snapshot=projection.frame(contacts,sequence:sequence,observedAt:observedAt,now:now)
         guard !snapshot.retired,let output=plan.output(for:snapshot) else{return retire(.expiredOrInvalid)}

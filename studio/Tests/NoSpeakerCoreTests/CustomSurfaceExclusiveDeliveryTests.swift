@@ -228,3 +228,36 @@ private let sustain=SensorDestination(.sustain,channel:2)
     #expect(d.frame([note],sequence:4,observedAt:now).retired)
     #expect(wire.count==4)
 }
+
+@Test func customPadExclusiveDeliveryAvoidsRedundantIdentityIPCOnUnchangedFrames() throws {
+    var now:Int64=0
+    var checks=0
+    var wire:[SensorCommand]=[]
+    let d=CustomSurfaceExclusiveDelivery(plan:try deliveryPlan(),clock:{now},
+        admitsExclusiveEndpoint:{true},ownsCleanupEndpoint:{checks+=1;return true},send:{wire.append($0);return true})
+    _=d.frame([],sequence:1,observedAt:0)
+    #expect(checks==1)
+    now=1
+    _=d.frame([note],sequence:2,observedAt:1)
+    #expect(checks==3 && wire==[.init(n60,value:100)])
+    now=2
+    _=d.frame([note],sequence:3,observedAt:2)
+    #expect(checks==4 && wire.count==1)
+}
+@Test func customPadExclusiveDeliveryFinalClockRevocationCannotAdmitOnset() throws {
+    var now:Int64=0
+    var allowed=true
+    var revokeOnClock=false
+    var wire:[SensorCommand]=[]
+    let d=CustomSurfaceExclusiveDelivery(plan:try deliveryPlan(),clock:{
+        if revokeOnClock {allowed=false}
+        return now
+    },admitsExclusiveEndpoint:{allowed},ownsCleanupEndpoint:{
+        if now>0 {revokeOnClock=true}
+        return true
+    },send:{wire.append($0);return true})
+    _=d.frame([],sequence:1,observedAt:0)
+    now=1
+    let result=d.frame([note],sequence:2,observedAt:1)
+    #expect(result.retirement == .admissionDenied && result.outstanding.isEmpty && wire.isEmpty)
+}
