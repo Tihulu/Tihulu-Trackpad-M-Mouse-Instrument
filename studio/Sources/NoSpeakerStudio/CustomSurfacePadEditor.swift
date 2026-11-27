@@ -21,6 +21,46 @@ struct CustomSurfacePadEditor:View {
     private var groupTrackpadChannel:Int { melodicChannel(.trackpad) }
     private var groupMouseChannel:Int { melodicChannel(.magicMouse) }
     @State private var groupConfirmation:GroupConfirmation?
+    @State private var pairConfirmation:PairConfirmation?
+    private typealias NativePair = CustomSurfaceLayoutLibrary.NativePair
+    private struct PairConfirmation {
+        enum Action { case save, load }
+        let action: Action
+        let trackpad: Layout?
+        let mouse: Layout?
+        let trackpadChannel: Int
+        let mouseChannel: Int
+        let storedData: Data
+    }
+    private var draftPair: NativePair? {
+        guard let trackpad=layouts[.trackpad], let mouse=layouts[.magicMouse] else { return nil }
+        return .init(trackpad:trackpad,mouse:mouse,trackpadChannel:groupTrackpadChannel,mouseChannel:groupMouseChannel)
+    }
+    private func requestPair(_ action:PairConfirmation.Action) {
+        pending=nil;groupConfirmation=nil
+        pairConfirmation = .init(action:action,trackpad:layouts[.trackpad],mouse:layouts[.magicMouse],
+            trackpadChannel:groupTrackpadChannel,mouseChannel:groupMouseChannel,storedData:storage)
+    }
+    private func applyPair(_ operation:PairConfirmation) {
+        guard layouts[.trackpad]==operation.trackpad, layouts[.magicMouse]==operation.mouse,
+              groupTrackpadChannel==operation.trackpadChannel, groupMouseChannel==operation.mouseChannel,
+              storage==operation.storedData, var current=library else {
+            feedback="Draft or saved library changed; repeat the pair operation.";return
+        }
+        switch operation.action {
+        case .save:
+            guard let pair=draftPair else {feedback="Both drafts are required.";return}
+            current.saveNativePair(pair)
+            guard let data=try? JSONEncoder().encode(current) else {feedback="Could not encode the pair.";return}
+            storage=data;feedback="Both layouts and channels saved."
+        case .load:
+            guard let pair=current.nativePair else {feedback="No complete saved pair.";return}
+            layouts[.trackpad]=pair.trackpad;layouts[.magicMouse]=pair.mouse
+            draftChannels[.trackpad]=pair.trackpadChannel;draftChannels[.magicMouse]=pair.mouseChannel
+            if surface == .trackpad || surface == .magicMouse {select(layouts[surface]?.pads.first)}
+            feedback="Both layouts and channels loaded. Nothing armed."
+        }
+    }
     private struct GroupConfirmation: Identifiable {
         let id=UUID()
         let trackpad:Layout
@@ -39,15 +79,16 @@ struct CustomSurfacePadEditor:View {
         var id: String {action.rawValue+surface.rawValue}
     }
     private enum Confirmation {
-        case single(Pending), group(GroupConfirmation)
+        case single(Pending), group(GroupConfirmation), pair(PairConfirmation)
     }
     private var confirmation: Confirmation? {
+        if let pairConfirmation { return .pair(pairConfirmation) }
         if let groupConfirmation { return .group(groupConfirmation) }
         if let pending { return .single(pending) }
         return nil
     }
     private func request(_ action:Pending.Action) {
-        groupConfirmation=nil
+        groupConfirmation=nil;pairConfirmation=nil
         pending=Pending(action:action,surface:surface,draft:layouts[surface],saved:library?.layout(for:surface),savedChannel:library?.melodicChannel(for:surface),channel:previewChannel)
     }
     private var library:CustomSurfaceLayoutLibrary? {
@@ -224,14 +265,16 @@ struct CustomSurfacePadEditor:View {
                         }
                     }
                 }
-                if !feedback.isEmpty {Text(feedback).font(.caption)}
             }.padding(.vertical,6)
             }
+            if !feedback.isEmpty {Text(feedback).font(.caption).textSelection(.enabled)}
         }.onChange(of:surface){value in select(layouts[value]?.pads.first);feedback=""}
         .confirmationDialog("Confirm Custom Pad action",
-            isPresented:Binding(get:{confirmation != nil},set:{if !$0 {pending=nil;groupConfirmation=nil}}),
+            isPresented:Binding(get:{confirmation != nil},set:{if !$0 {pending=nil;groupConfirmation=nil;pairConfirmation=nil}}),
             titleVisibility:.visible,presenting:confirmation) { operation in
             switch operation {
+            case .pair(let request):
+                Button(request.action == .save ? "Save both layouts and channels" : "Replace both drafts from saved pair") { applyPair(request) }
             case .group(let request):
                 Button("Arm both · Esc stops group") {
                     guard layouts[.trackpad]==request.trackpad,layouts[.magicMouse]==request.mouse,
@@ -278,6 +321,8 @@ struct CustomSurfacePadEditor:View {
         } message: { operation in
             if case .group = operation {
                 Text("Route each dedicated MIDI source independently in your DAW. Both devices require a fresh lift; a fault stops the entire group. No cursor capture.")
+            } else if case .pair(let request) = operation {
+                Text(request.action == .save ? "This replaces the two saved surface profiles only." : "This replaces the two current drafts, including unsaved changes. It does not start MIDI.")
             }
         }
     }
@@ -319,12 +364,19 @@ struct CustomSurfacePadEditor:View {
                 }
                 if studio.customPadRunID == nil && !studio.customPadDiagnosticRunning && studio.customPadPorts.isEmpty {
                     DisclosureGroup("Two-device performance · experimental") {
+                        HStack {
+                            Button("Load saved pair…") { requestPair(.load) }
+                                .disabled(library?.nativePair == nil)
+                            Button("Save both drafts…") { requestPair(.save) }
+                                .disabled(library == nil || draftPair == nil)
+                        }
+                        if library == nil {Text("Saved library is unreadable; original data preserved.").font(.caption).foregroundStyle(.orange)}
                         if let trackpad=layouts[.trackpad],let mouse=layouts[.magicMouse] {
                             Stepper("Trackpad MIDI channel \(groupTrackpadChannel+1)",value:channelBinding(.trackpad),in:0...15)
                             Stepper("Magic Mouse MIDI channel \(groupMouseChannel+1)",value:channelBinding(.magicMouse),in:0...15)
                             groupRoutingAdvisory(trackpad:trackpad,mouse:mouse)
                             Button("Arm both drafts…") {
-                                pending=nil
+                                pending=nil;pairConfirmation=nil
                                 groupConfirmation=GroupConfirmation(trackpad:trackpad,mouse:mouse,
                                     trackpadChannel:groupTrackpadChannel,mouseChannel:groupMouseChannel)
                             }.disabled((try? CustomSurfaceMixedPlan(layout:trackpad,melodicChannel:groupTrackpadChannel)) == nil ||
