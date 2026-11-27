@@ -11,14 +11,17 @@ public struct NativeHelperRelativeInputBinding: Sendable {
     public let plan: NativeHelperRelativeOutputPlan
     private let orientation: NativeHelperRelativeOrientation
     private var session: NativeHelperRelativeSession
+    private var lastSequence: UInt64
+    private var lastClockNS: Int64?
 
     public init?(boundary: NativeHelperRelativeArmBoundary, monitor: UUID,
                  configuration: NativeHelperRelativeSingleChannel, orientation: SurfaceOrientation) {
         guard let session = NativeHelperRelativeSession(source: boundary.source, monitor: monitor,
             registration: boundary.registration, afterSequence: boundary.afterSequence,
-            afterAcquisitionNS: boundary.afterAcquisitionNS, maximumAge: TouchPublicationAdmission.maximumAge,
+            afterAcquisitionNS: boundary.afterAcquisitionNS, maximumAgeNS: NativeHelperRelativeAcquisitionFence.maximumAgeNS,
             lanes: configuration.configuration.lanes) else { return nil }
         self.boundary = boundary; self.monitor = monitor; self.session = session
+        self.lastSequence = boundary.afterSequence
         self.plan = configuration.configuration.plan
         self.orientation = .init(selectedSurface: boundary.source, magicMouseOrientation: orientation)
     }
@@ -32,20 +35,37 @@ public struct NativeHelperRelativeInputBinding: Sendable {
         begin: (NativeHelperRelativeOutputPlan, () -> Bool) -> Bool,
         move: ([Clutch.Axis: Int], () -> Bool) -> Bool,
         retire: (Bool, NativeHelperRelativeOutputPlan) -> Bool) -> Result {
-        guard token == monitor, source == boundary.source else { return .ignored }
+        guard token == monitor, source == boundary.source, sequence > lastSequence else { return .ignored }
+        lastSequence = sequence
         let frozenPlan = plan
         guard let frame, frame.surface == source else {
             return session.close(retire: { retire($0, frozenPlan) })
         }
         var fence = boundary.fence(for: frame, sequence: sequence)
+        // Preserve the trusted clock across the initial read, every send
+        // permit and subsequent observations/polls, even after rejection.
+        var highWater = lastClockNS
+        var clockRejected = false
+        func sampleClock() -> Int64 {
+            let now = clock()
+            guard (0..<Int64.max).contains(now), highWater.map({ now >= $0 }) ?? true else {
+                clockRejected = true
+                return -1
+            }
+            highWater = now
+            return clockRejected ? -1 : now
+        }
         func permits() -> Bool {
             let admitted = live()
-            return fence.permits(nowNS: clock(), live: admitted)
+            return fence.permits(nowNS: sampleClock(), live: admitted)
         }
-        return session.receive(orientation.project(frame), monitor: token, sequence: sequence,
-            now: Double(clock()) / 1_000_000_000, permits: permits, activeLeaseValid: activeLeaseValid,
+        let initialNow = sampleClock()
+        let result = session.receive(orientation.project(frame), monitor: token, sequence: sequence,
+            nowNS: initialNow, permits: permits, activeLeaseValid: activeLeaseValid,
             begin: { begin(frozenPlan, permits) }, move: { move($0, permits) },
             retire: { retire($0, frozenPlan) })
+        lastClockNS = highWater
+        return result
     }
 
     /// Call even without frames. Loss of the source/host is terminal; an
@@ -56,7 +76,9 @@ public struct NativeHelperRelativeInputBinding: Sendable {
         guard live, (0..<Int64.max).contains(nowNS) else {
             return session.close(retire: { retire($0, frozenPlan) })
         }
-        return session.expire(now: Double(nowNS) / 1_000_000_000,
+        let clockValid = lastClockNS.map({ nowNS >= $0 }) ?? true
+        if clockValid { lastClockNS = nowNS }
+        return session.expire(nowNS: clockValid ? nowNS : -1,
                               retire: { retire($0, frozenPlan) })
     }
 
