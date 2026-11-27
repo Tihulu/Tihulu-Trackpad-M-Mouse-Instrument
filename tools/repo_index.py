@@ -5,6 +5,7 @@ import hashlib
 import importlib.metadata
 import json
 import math
+import unicodedata
 import os
 import platform
 from pathlib import Path
@@ -305,6 +306,56 @@ def tokens(text):
     return re.findall(r"[^\W_]+", text.casefold(), flags=re.UNICODE)
 
 
+# Explicit small, general-purpose domain glossary; no source paths or case IDs.
+# Keys are folded *only* for alias lookup. Original tokens remain unchanged.
+LEXICAL_PROFILES = ("legacy", "file-first", "multilingual")
+MAX_QUERY_ALIASES = 64
+QUERY_ALIAS_WEIGHT = 0.55
+QUERY_ALIASES = {
+    "dokunus": ("touch",), "dokunmatik": ("touch",), "dokunma": ("touch",),
+    "cubugun": ("bar",), "cubuk": ("bar",), "kuyruk": ("queue", "inbox"),
+    "sirayla": ("ordered", "fifo"), "tasmasi": ("overflow",), "olaylari": ("events",),
+    "kisa": ("short",), "kayitli": ("saved",), "profil": ("profile",),
+    "profili": ("profile",), "yuklenince": ("load",), "oturum": ("session",),
+    "eski": ("old",), "birakiliyor": ("release",), "birakma": ("release",),
+    "gonderim": ("delivery", "send"), "hatasindan": ("failure",), "hata": ("error",),
+    "bekleyen": ("pending",), "nota": ("note",), "pedal": ("pedal",),
+    "temizlik": ("cleanup",), "yeniden": ("retry",), "deneniyor": ("retry",),
+    "kalibrasyon": ("calibration",), "sahiplik": ("ownership",),
+    "kaynak": ("source",), "hedef": ("target",), "mutlak": ("absolute",),
+    "goreli": ("relative",), "referans": ("reference",), "kazanc": ("gain",),
+    "baslangic": ("start",), "temas": ("contact",), "sinirlandirma": ("clamp",),
+    "geri": ("feedback",), "bildirimi": ("feedback",), "hareket": ("movement",),
+    "kalibrierung": ("calibration",), "tiefenkamera": ("depth", "camera"),
+    "zugangsdaten": ("credentials",), "speichert": ("save",),
+    "akkordfolgen": ("chord", "progression"), "akkord": ("chord",),
+    "leeren": ("empty",), "schritten": ("steps",), "abspielen": ("play",),
+    "bearbeiten": ("edit",), "ungultige": ("invalid",), "koordinaten": ("coordinates",),
+    "druckwerte": ("pressure",), "quantisierung": ("quantization",),
+    "verworfen": ("reject",), "freigabe": ("release",), "freigabewerte": ("release",),
+    "ziele": ("targets",), "zielzuordnung": ("mapping", "destination"),
+    "doppelte": ("duplicate",), "gemeinsame": ("shared",), "exklusiv": ("exclusive",),
+    "ablehnen": ("reject",), "startposition": ("reference", "start"),
+    "bewegungsempfindlichkeit": ("gain",), "ausgabeeinstellungen": ("output", "settings"),
+    "absolut": ("absolute",), "relativ": ("relative",), "ruckmeldung": ("feedback",),
+}
+
+
+def query_weights(query, profile="legacy"):
+    if profile not in LEXICAL_PROFILES:
+        raise ValueError("Invalid lexical ranking profile")
+    weights = dict.fromkeys(tokens(query), 1.0)
+    if not weights:
+        raise ValueError("No searchable terms")
+    if profile == "multilingual":
+        folded = "".join(c for c in unicodedata.normalize("NFKD", query)
+                         if not unicodedata.combining(c)).replace("ı", "i")
+        aliases = sorted({alias for term in tokens(folded)
+                          for alias in QUERY_ALIASES.get(term, ()) if alias not in weights})
+        weights.update((alias, QUERY_ALIAS_WEIGHT) for alias in aliases[:MAX_QUERY_ALIASES])
+    return weights
+
+
 def read_index(path):
     with Path(path).open("rb") as stream:
         data = stream.read(MAX_INDEX + 1)
@@ -434,6 +485,9 @@ def search_prepared(prepared, args, lexical_cache=None):
         raise ValueError("Hybrid search requires a genuine local embedding model")
     if bool(args.model_dir) != (model is not None):
         raise ValueError("Prepared model mode differs from query")
+    profile = getattr(args, "lexical_profile", "legacy")
+    if profile not in LEXICAL_PROFILES or (profile != "legacy" and model is not None):
+        raise ValueError("Invalid lexical ranking profile for retrieval mode")
     ranked = []
     if model is not None:
         if len(model.tokenizer.encode(args.query, add_special_tokens=True, truncation=False)) > int(model.max_seq_length) - 16:
@@ -456,15 +510,12 @@ def search_prepared(prepared, args, lexical_cache=None):
             ranked = fuse_rankings(ranked, lexical_ranking(rows, args.query))
             mode = "hybrid"
     else:
-        ranked = lexical_ranking(rows, args.query, lexical_cache)
+        ranked = lexical_ranking(rows, args.query, lexical_cache, profile=profile)
         mode = "lexical"
     ranked.sort(key=lambda item: (-item[0], item[1]["path"], item[1]["start"], item[1]["end"]))
     per_file = getattr(args, "max_per_file", 3)
     if not 1 <= per_file <= 50:
         raise ValueError("Invalid per-file result limit")
-    profile = getattr(args, "lexical_profile", "legacy")
-    if profile not in ("legacy", "file-first") or (profile != "legacy" and mode != "lexical"):
-        raise ValueError("Invalid lexical ranking profile for retrieval mode")
     ranked = diverse_results(ranked, args.limit, per_file, file_first=profile == "file-first")
     return {"commit": meta["commit"], "mode": mode, "scope": meta.get("scope", "all"), "lexical_profile": profile if mode == "lexical" else None, "source_verified": verified, "results": [
         {**{k: row[k] for k in ("path", "blob", "start", "end", "text")}, "score": round(score, 6)}
@@ -529,11 +580,10 @@ def prepare_lexical(prepared, max_entries=MAX_LEXICAL_ENTRIES,
     return LexicalCache(meta, rows, stats, entries, term_bytes)
 
 
-def lexical_ranking(rows, query, lexical_cache=None):
+def lexical_ranking(rows, query, lexical_cache=None, profile="legacy"):
     """Bound repeated common words and reward discriminative filename terms."""
-    terms = set(tokens(query))
-    if not terms:
-        raise ValueError("No searchable terms")
+    weights = query_weights(query, profile)
+    terms = set(weights)
     stats = ([_lexical_row(row) for row in rows] if lexical_cache is None
              else lexical_cache.checked_stats(rows))
     frequencies = Counter()
@@ -553,7 +603,7 @@ def lexical_ranking(rows, query, lexical_cache=None):
             # BM25-style term saturation and length normalization; filename
             # matches are a separate bounded signal, not repeated path text.
             denominator = count + 1.2 * (0.25 + 0.75 * length / average)
-            score += idf[term] * (count * 2.2 / denominator + (1.5 if term in name else 0))
+            score += weights[term] * idf[term] * (count * 2.2 / denominator + (1.5 if term in name else 0))
         if score > 0:
             ranked.append((score, row))
     return ranked
@@ -644,8 +694,8 @@ def main(argv=None):
         q.add_argument("--limit", type=int, default=8)
         q.add_argument("--max-per-file", type=int, default=3,
                        help="Maximum ranked chunks per source file (1–50)")
-        q.add_argument("--lexical-profile", choices=("legacy", "file-first"), default="legacy",
-                       help="Opt-in file-discovery diversity; legacy ranking remains default")
+        q.add_argument("--lexical-profile", choices=LEXICAL_PROFILES, default="legacy",
+                       help="Opt-in diversity or bounded multilingual query aliases; legacy remains default")
         q.add_argument("--model-dir")
         q.add_argument("--hybrid", action="store_true")
         q.add_argument("--repo", required=command=="context",

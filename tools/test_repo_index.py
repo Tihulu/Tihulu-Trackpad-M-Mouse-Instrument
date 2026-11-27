@@ -469,6 +469,75 @@ class RepositoryIndexTests(unittest.TestCase):
         for query in ("note note sustain", "Müzik", "Router", "cleanup missing", "absent"):
             self.assertEqual(lexical_ranking(rows, query), reference(query))
 
+    def test_multilingual_query_aliases_are_bounded_and_preserve_originals(self):
+        weights = repo_index.query_weights("KALİBRASYON kalibrasyon Tiefenkamera camera", "multilingual")
+        self.assertEqual(weights["camera"], 1.0)
+        self.assertEqual(weights["calibration"], repo_index.QUERY_ALIAS_WEIGHT)
+        self.assertEqual(weights["depth"], repo_index.QUERY_ALIAS_WEIGHT)
+        self.assertEqual(weights["kalibrasyon"], 1.0)
+        self.assertEqual(repo_index.query_weights("Tiefenkamera", "legacy"), {"tiefenkamera": 1.0})
+        self.assertEqual(repo_index.query_weights("unlisted", "multilingual"), {"unlisted": 1.0})
+        with patch.object(repo_index, "QUERY_ALIASES", {"test": tuple("alias" + str(i) for i in range(100))}):
+            expanded = repo_index.query_weights("test", "multilingual")
+            self.assertEqual(len(expanded), 1 + repo_index.MAX_QUERY_ALIASES)
+            self.assertEqual(expanded["test"], 1.0)
+        for query in ("", "!?"):
+            with self.assertRaisesRegex(ValueError, "No searchable"):
+                repo_index.query_weights(query, "multilingual")
+        with self.assertRaisesRegex(ValueError, "Invalid lexical"):
+            repo_index.query_weights("test", "unknown")
+
+    def test_multilingual_profile_search_cache_and_scope_parity(self):
+        self.build()
+        args = SimpleNamespace(repo=self.repo, expect_ref=self.commit, index=self.index,
+                               model_dir=None, hybrid=False, limit=5,
+                               query="nota temizlik", lexical_profile="multilingual")
+        prepared = prepare_search(args)
+        cache = repo_index.prepare_lexical(prepared)
+        self.assertIsNotNone(cache)
+        expanded = search_prepared(prepared, args)
+        self.assertTrue(expanded["results"])
+        self.assertEqual(expanded["lexical_profile"], "multilingual")
+        self.assertTrue(expanded["source_verified"])
+        self.assertEqual(search_prepared(prepared, args, lexical_cache=cache), expanded)
+        args.lexical_profile = "legacy"
+        self.assertEqual(search_prepared(prepared, args)["results"], [])
+        result = self.cli("context", "--repo", self.repo, "--expect-ref", self.commit,
+                          "--index", self.index, "--query", "nota temizlik",
+                          "--lexical-profile", "multilingual")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        context = json.loads(result.stdout)
+        self.assertTrue(context["sources"])
+        self.assertEqual(context["lexical_profile"], "multilingual")
+
+    def test_multilingual_matrix_preserves_separate_case_groups(self):
+        path = self.repo / "README.md"
+        path.write_text("# Camera depth calibration profile")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "multilingual fixture")
+        rev = self.git("rev-parse", "HEAD").stdout.strip()
+        index = self.root / "docs-index.json"
+        repo_index.build(SimpleNamespace(repo=self.repo, ref=rev, scope="docs",
+                                         out=index, model_dir=None))
+        case = {"id": "de", "scope": "docs", "language": "de",
+                "query": "Tiefenkamera", "expected_paths": ["README.md"]}
+        dataset = self.root / "multilingual.json"
+        dataset.write_text(json.dumps({"development": [case], "evaluation": [
+            dict(case, id="tr", language="tr", query="kalibrasyon")]}))
+        out = self.root / "multilingual"
+        out.mkdir()
+        comparison = rag_matrix.compare_lexical_profiles(self.repo, rev, index, "docs",
+            SimpleNamespace(k=8, max_per_file=3), out, dataset,
+            candidate="multilingual", prefix="multilingual-", compare_cache=False)
+        for group in comparison.values():
+            self.assertEqual(group["legacy"]["file_hit_rate"], 0)
+            self.assertEqual(group["multilingual"]["file_hit_rate"], 1)
+            self.assertEqual(group["legacy"]["cases_sha256"],
+                             group["multilingual"]["cases_sha256"])
+            self.assertNotIn("cache_comparison", group["legacy"])
+        self.assertNotEqual(comparison["development"]["legacy"]["cases_sha256"],
+                            comparison["evaluation"]["legacy"]["cases_sha256"])
+
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
         document = json.loads(self.index.read_text())
