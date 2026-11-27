@@ -1884,3 +1884,253 @@ test("reported stale capture timestamp closes before motion activation",async()=
   await a.elements.webCameraStart.emit("click");a.step(200);a.video(255,1,{captureTime:0});
   assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
 });
+
+test("MUSIC-WEB stale socket callbacks cannot admit a replacement connection",()=>{
+  const a=setup("granted",fullManifest,false,true,false,new Map(),true);
+  a.elements.secret.value="aa".repeat(32);a.elements.connect.emit("click");
+  const old=a.getSocket(),staleMessage=old.onmessage,staleClose=old.onclose;
+  old.onopen();old.onmessage({data:"admitted"});
+  a.elements.disconnect.emit("click");assert.equal(old.closed,true);
+  a.elements.secret.value="bb".repeat(32);a.elements.connect.emit("click");
+  const fresh=a.getSocket();assert.notEqual(fresh,old);
+  staleMessage({data:JSON.stringify(fullManifest)});staleClose();
+  a.elements.pad.emit("pointerdown",xyEvent(1));
+  assert.equal(fresh.frames.length,0);assert.equal(fresh.closed,undefined);
+  assert.equal(a.elements.playView.hidden,true);
+  fresh.onopen();fresh.onmessage({data:"admitted"});
+  assert.deepEqual(fresh.frames,[{version:7,sequence:1,kind:"capabilities"}]);
+  a.elements.disconnect.emit("click");assert.equal(fresh.closed,true);
+});
+
+test("MUSIC-WEB cancelled queued drum onset never plays after another family ACK",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.drumEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.drum0.emit("pointerdown",drumEvent(2));
+  a.elements.drum0.emit("pointercancel",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+  a.step(250);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB lost capture on queued piano sustain never replays an attack",()=>{
+  const a=setup();a.elements.drumEnable.emit("click");a.elements.pianoEnable.emit("click");
+  a.elements.drum0.emit("pointerdown",drumEvent(1));
+  a.elements.pianoSustain.emit("pointerdown",drumEvent(2));
+  a.elements.pianoSustain.emit("lostpointercapture",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB cancelled queued held pedal fails closed without replay",()=>{
+  const a=setup();setHoldPedal(a,4);a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.pedalToggle4.emit("pointerdown",drumEvent(2));
+  a.elements.pedalToggle4.emit("pointercancel",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB cancellation of already delivered drum preserves other owners",()=>{
+  const a=setup();a.elements.drumEnable.emit("click");
+  a.elements.drum0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.drum1.emit("pointerdown",drumEvent(2));a.step();a.ack();
+  a.elements.drum0.emit("pointercancel",drumEvent(1));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,2);a.ack();assert.equal(a.socket.closed,undefined);
+});
+
+test("MUSIC-WEB pedal accessible names identify mapped control and action",()=>{
+  const a=setup();a.elements.pedalEnable.emit("click");
+  const p=a.elements.pedalToggle0;
+  assert.match(p.attributes["aria-label"],/Expression.*Activate/i);
+  p.emit("click");
+  assert.match(p.attributes["aria-label"],/Expression.*Release/i);
+  assert.equal(p.attributes["aria-pressed"],"true");
+  assert.match(a.elements.pedalToggle3.attributes["aria-label"],/Sustain/i);
+});
+
+test("MUSIC-WEB chord cancellation rejects queued overlapping chord attacks",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:33554431},false);
+  a.elements.playMode.value="chord";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.chord1.emit("pointerdown",drumEvent(1));
+  a.elements.chord2.emit("pointerdown",drumEvent(2));
+  a.elements.chord2.emit("pointercancel",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB delivered chord cancellation retains shared note owners",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:33554431},false);
+  a.elements.playMode.value="chord";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.chord1.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.chord2.emit("pointerdown",drumEvent(2));a.step();a.ack();
+  a.elements.chord1.emit("pointercancel",drumEvent(1));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<5)|(1<<9)|(1<<12));a.ack();
+  assert.equal(a.socket.closed,undefined);
+});
+test("MUSIC-WEB focus loss cancels queued keyboard drum piano and held pedal attacks",()=>{
+  for(const family of ["drum","piano","pedal"]){
+    const a=setup();const key={key:" ",preventDefault(){}};
+    let b;
+    if(family==="drum"){a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));a.elements.drumEnable.emit("click");b=a.elements.drum0;}
+    else if(family==="piano"){a.elements.drumEnable.emit("click");a.elements.drum0.emit("pointerdown",drumEvent(1));a.elements.pianoEnable.emit("click");b=a.elements.piano0;}
+    else{setHoldPedal(a,4);a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));b=a.elements.pedalToggle4;}
+    b.emit("keydown",key);b.emit("blur");assert.equal(a.socket.closed,true,family);assert.equal(a.socket.frames.length,1);
+  }
+});
+test("MUSIC-WEB chord repeated keyboard event suppresses browser default",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:145},false);
+  a.elements.playMode.value="chord";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  let prevented=0;const key={key:" ",preventDefault(){prevented++;}};
+  a.elements.chord0.emit("keydown",key);a.elements.chord0.emit("keydown",{...key,repeat:true});
+  assert.equal(prevented,2);assert.equal(a.socket.frames.length,1);a.ack();
+  a.elements.chord0.emit("keyup",key);a.step();assert.equal(a.socket.frames.at(-1).mask,0);
+});
+
+function classicGeometry(a){
+  const white=[0,2,4,5,7,9,11,12],black=[1,3,6,8,10];
+  white.forEach((i,n)=>a.elements["piano"+i].getBoundingClientRect=()=>({left:n*12.5,top:0,width:12.5,height:100}));
+  [9,21.5,46.5,59,71.5].forEach((left,n)=>a.elements["piano"+black[n]].getBoundingClientRect=()=>({left,top:0,width:7,height:60}));
+}
+test("MUSIC-WEB classic piano slides prioritize black key and preserve sustain and second finger",()=>{
+  const a=setup();classicGeometry(a);a.elements.pianoEnable.emit("click");
+  a.elements.pianoSustain.emit("pointerdown",drumEvent(8));a.ack();
+  a.elements.piano0.emit("pointerdown",drumEvent(1));a.step();a.ack();
+  a.elements.piano4.emit("pointerdown",drumEvent(2));a.step();a.ack();
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<25)|16|2);a.ack();
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,80));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<25)|16|1);a.ack();
+  a.elements.piano0.emit("pointerup",drumEvent(1));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<25)|16);a.ack();
+  a.elements.piano4.emit("pointerup",drumEvent(2));a.step();a.ack();
+  a.elements.pianoSustain.emit("pointerup",drumEvent(8));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,0);
+});
+test("MUSIC-WEB classic slide onto unauthorized black key retires without white fallback",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:5},false);classicGeometry(a);
+  a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  const n=a.socket.frames.length;a.elements.piano0.emit("pointermove",xyEvent(1,20,80));a.step();
+  assert.equal(a.socket.frames.length,n);assert.equal(a.socket.closed,undefined);
+});
+test("MUSIC-WEB cancellation after several classic slide targets cannot replay visited attacks",()=>{
+  const a=setup();classicGeometry(a);a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,80));
+  a.elements.piano0.emit("pointercancel",drumEvent(1));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB classic slide leaving board discards queued attack",()=>{
+  const a=setup();classicGeometry(a);a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));
+  a.elements.piano0.emit("pointermove",xyEvent(1,120,50));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+
+test("MUSIC-WEB all-rest and unmapped sequence explain disabled start and emit nothing",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="seq";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseTempo.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,true);assert.match(a.elements.phraseStatus.textContent,/all-rest/);
+  a.elements.phraseStart.emit("click");assert.equal(a.socket.frames.length,0);
+  a.elements.phraseStep0.value="1";a.elements.phraseStep0.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,true);assert.match(a.elements.phraseStatus.textContent,/unavailable/);
+  a.elements.phraseStep0.value="0";a.elements.phraseStep0.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,false);assert.match(a.elements.phraseStatus.textContent,/Ready/);
+  a.elements.phraseStart.emit("click");a.step();assert.equal(a.socket.frames.at(-1).mask,1);
+});
+test("MUSIC-WEB sparse arpeggio requires an explicit mapped note before starting",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="arp";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseTempo.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,true);assert.match(a.elements.phraseStatus.textContent,/Choose mapped notes/);
+  a.elements.piano0.emit("pointerdown",drumEvent(1));a.elements.piano0.emit("pointerup",drumEvent(1));
+  assert.equal(a.elements.phraseStart.disabled,false);assert.equal(a.socket.frames.length,0);
+});
+
+test("MUSIC-WEB incomplete chord assignment cannot select chord via menu or toolbar",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false),e=a.elements;
+  assert.equal(e.playMode.children.find(x=>x.value==="chord").disabled,true);
+  assert.equal(e.pianoChord.disabled,true);
+  e.playMode.value="chord";e.playMode.emit("change");e.pianoChord.emit("click");
+  assert.equal(e.playMode.value,"all");assert.equal(a.socket.frames.length,0);
+  assert.equal(e.playMode.children.find(x=>x.value==="arp").disabled,false);
+});
+test("MUSIC-WEB toolbar and menu use identical release and neutral ACK barriers",()=>{
+  for(const path of ["toolbar","menu"]){
+    const a=setup("granted",{...touchOnly,touch:false,piano:145},false),e=a.elements;
+    e.pianoEnable.emit("click");e.piano0.emit("pointerdown",drumEvent(1));
+    if(path==="toolbar")e.pianoChord.emit("click");else{e.playMode.value="chord";e.playMode.emit("change");}
+    assert.equal(e.playMode.disabled,true);assert.equal(e.chordGrid.hidden,true);
+    a.ack();a.step(25);assert.equal(a.socket.frames.at(-1).mask,0);assert.equal(e.playMode.disabled,true);
+    a.ack();assert.equal(e.playMode.value,"chord");assert.equal(e.chordGrid.hidden,false);
+    assert.equal(e.chord0.disabled,true);const n=a.socket.frames.length;
+    e.chord0.emit("pointerdown",drumEvent(2));assert.equal(a.socket.frames.length,n);
+    e.pianoEnable.emit("click");e.chord0.emit("pointerdown",drumEvent(3));a.step();
+    assert.equal(a.socket.frames.at(-1).mask,145);
+  }
+});
+
+function xyKey(key,repeat=false){return {key,repeat,preventDefault(){}};}
+test("MUSIC-WEB keyboard XY shares one contact and sends bounded paced axes",()=>{
+  const a=setup(),e=a.elements,p=e.pad;
+  assert.equal(p.attributes.tabindex,"0");
+  p.emit("keydown",xyKey("ArrowUp"));assert.equal(a.socket.frames.length,0);
+  p.emit("keydown",xyKey(" "));assert.equal(a.socket.frames.at(-1).kind,"touch");
+  assert.equal(a.socket.frames.at(-1).x,.5);assert.equal(a.socket.frames.at(-1).y,.5);
+  assert.equal(p.attributes["aria-pressed"],"true");
+  p.emit("keydown",xyKey(" ",true));p.emit("pointerdown",xyEvent(7));p.emit("pointerup",xyEvent(7));
+  p.emit("keyup",xyKey("Enter"));a.ack();
+  for(let i=0;i<25;i++){p.emit("keydown",xyKey("ArrowRight",true));p.emit("keydown",xyKey("ArrowDown",true));}
+  a.step(50);assert.equal(a.socket.frames.at(-1).x,1);assert.equal(a.socket.frames.at(-1).y,0);a.ack();
+  p.emit("keyup",xyKey(" "));a.step(50);assert.equal(a.socket.frames.at(-1).kind,"release");a.ack();
+  assert.equal(p.attributes["aria-pressed"],"false");assert.equal(a.socket.closed,undefined);
+});
+test("MUSIC-WEB XY keyboard cancellation discards queued onset on blur",()=>{
+  const a=setup();a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.pad.emit("keydown",xyKey("Enter"));a.elements.pad.emit("blur");
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB keyboard XY mode switch retires key and waits for release ACK",()=>{
+  const a=setup(),e=a.elements,p=e.pad;
+  p.emit("keydown",xyKey("Enter"));e.playMode.value="piano";e.playMode.emit("change");
+  a.ack();a.step(50);assert.equal(a.socket.frames.at(-1).kind,"release");assert.equal(e.playMode.disabled,true);
+  a.ack();assert.equal(p.attributes.tabindex,"-1");const n=a.socket.frames.length;
+  p.emit("keyup",xyKey("Enter"));p.emit("keydown",xyKey(" ",true));a.step(50);
+  assert.equal(a.socket.frames.length,n);assert.equal(e.pianoEnable.disabled,false);
+});
+test("MUSIC-WEB keyboard XY cannot steal pointer ownership or arm from setup",()=>{
+  const a=setup(),e=a.elements,p=e.pad;
+  p.emit("pointerdown",xyEvent(1));p.emit("keydown",xyKey(" "));p.emit("keyup",xyKey(" "));
+  assert.equal(a.socket.frames.length,1);a.ack();p.emit("pointerup",xyEvent(1));a.step(50);a.ack();
+  e.navSetup.emit("click");assert.equal(p.attributes.tabindex,"-1");
+  const n=a.socket.frames.length;p.emit("keydown",xyKey("Enter"));assert.equal(a.socket.frames.length,n);
+});
+
+test("MUSIC-WEB removed air stick target cannot arm or select; restoring permits explicit start",async()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:2},false),e=a.elements;
+  e.playMode.value="stick";e.playMode.emit("change");e.kitEdit.emit("click");e.kitRemove.emit("click");
+  assert.equal(e.airStickPad.children.length,0);assert.equal(e.airStickStart.disabled,true);
+  e.airStickPad.value="1";e.airStickPad.emit("change");assert.equal(e.airStickPad.value,"");
+  await e.airStickStart.emit("click");assert.equal(a.window.events.has("devicemotion"),false);
+  e.kitAdd.emit("click");assert.equal(e.airStickStart.disabled,false);
+  assert.equal(e.airStickPad.value,"1");assert.equal(a.socket.frames.length,0);
+});
+test("MUSIC-WEB overlapping kit elements expose deterministic selected state without striking",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:3},false),e=a.elements;
+  e.playMode.value="stick";e.playMode.emit("change");e.kitEdit.emit("click");
+  e.kitPart.value="1";e.kitPart.emit("change");
+  e.kitX.value="50";e.kitX.emit("input");e.kitY.value="78";e.kitY.emit("input");
+  assert.equal(e.kitBoard.children[1].attributes["aria-pressed"],"true");
+  assert.equal(e.kitBoard.children[0].attributes["aria-pressed"],"false");
+  e.kitEdit.emit("click");e.airStickPad.value="1";e.airStickPad.emit("change");
+  assert.equal(e.kitBoard.children[1].attributes["data-selected"],"true");
+  assert.equal(a.socket.frames.length,0);
+});
+
+for(const [bad,mask] of [[-32,1],[-31,3]]){
+  test("MUSIC-WEB independently reported negative sequence index "+bad+" is not a rest",()=>{
+    const a=setup("granted",{...touchOnly,touch:false,piano:mask},false),e=a.elements;
+    e.playMode.value="seq";e.playMode.emit("change");e.pianoEnable.emit("click");
+    e.phraseTempo.value="120";e.phraseStep0.value="0";e.phraseStep1.value=String(bad);e.phraseStep1.emit("change");
+    assert.equal(e.phraseStart.disabled,true);assert.match(e.phraseStatus.textContent,/unavailable/);
+    e.phraseStart.emit("click");a.step(25);assert.equal(a.socket.frames.length,0);
+    e.phraseStep1.value="-1";e.phraseStep1.emit("change");assert.equal(e.phraseStart.disabled,false);
+    e.phraseStart.emit("click");a.step(25);assert.equal(a.socket.frames.at(-1).mask,1);
+  });
+}
