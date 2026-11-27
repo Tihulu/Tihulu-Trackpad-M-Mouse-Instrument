@@ -164,4 +164,61 @@ final class SequencerPatternArchiveTests: XCTestCase {
         playback.advance(now: 125_001_000, send: { sent.append($0); return true })
         XCTAssertEqual(sent.count, 2)
     }
+
+    func testDuplicateJSONKeysRejectedAtEveryObjectLevel() throws {
+        let cases = [
+            #"{"version":1,"kind":"notes","bpm":120,"bpm":0,"stepsPerBeat":4,"length":16,"loop":false,"channel":0,"notes":[]}"#,
+            #"{"version":1,"kind":"notes","bpm":0,"bpm":120,"stepsPerBeat":4,"length":16,"loop":false,"channel":0,"notes":[]}"#,
+            #"{"version":1,"kind":"notes","bpm":120,"\u0062pm":0,"stepsPerBeat":4,"length":16,"loop":false,"channel":0,"notes":[]}"#,
+            #"{"version":1,"kind":"notes","bpm":120,"stepsPerBeat":4,"length":16,"loop":false,"channel":0,"notes":[{"index":0,"midi":60,"midi":128,"velocity":1,"gate":1}]}"#,
+            #"{"version":1,"kind":"notes","bpm":120,"stepsPerBeat":4,"length":16,"loop":false,"channel":0,"notes":[{"index":0,"midi":128,"midi":60,"velocity":1,"gate":1}]}"#,
+            #"{"version":1,"kind":"notes","bpm":120,"stepsPerBeat":4,"length":16,"loop":false,"channel":0,"notes":[{"index":0,"midi":60,"velocity":1,"gate":1,"\u0067ate":0}]}"#,
+            #"{"version":1,"kind":"drums","bpm":120,"stepsPerBeat":4,"length":16,"loop":false,"hits":[{"index":0,"voice":"kick","voice":"unknown","velocity":1}]}"#,
+            #"{"version":1,"kind":"notes","bpm":120,"stepsPerBeat":4,"length":16,"loop":false,"channel":0,"notes":[],"groove":{"swing":50,"humanize":0,"intensity":100,"accent":0,"probability":100,"seed":1,"seed":0}}"#
+        ]
+        for input in cases {
+            XCTAssertThrowsError(try SequencerPatternArchive.decode(Data(input.utf8)), input) {
+                XCTAssertEqual($0 as? SequencerPatternArchive.ArchiveError, .duplicateKey)
+            }
+        }
+    }
+
+    func testUniqueEscapedKeysAndRepeatedKeysAcrossCellsAccepted() throws {
+        let input = #"{"version":1,"kind":"notes","\u0062pm":120,"stepsPerBeat":4,"length":16,"loop":false,"channel":0,"notes":[{"index":0,"midi":60,"velocity":1,"gate":1},{"index":1,"midi":61,"velocity":1,"gate":1}]}"#
+        let archive = try SequencerPatternArchive.decode(Data(input.utf8))
+        XCTAssertEqual(archive.noteDraft()?.steps.map(\.midi), [60, 61])
+        XCTAssertEqual(archive.noteDraft()?.bpm, 120)
+        XCTAssertEqual(archive, try SequencerPatternArchive.decode(archive.encoded()))
+    }
+
+    func testArchivePreflightRejectsDepthEncodingAndExcessFields() throws {
+        let base = #"{"version":1,"kind":"notes","bpm":120,"stepsPerBeat":4,"length":16,"loop":false,"channel":0,"notes":[]}"#
+        let inputs = [
+            base.replacingOccurrences(of: #""notes":[]"#, with: #""notes":[[[[]]]]"#),
+            base.replacingOccurrences(of: #""notes":[]"#, with: #""notes":[{"index":0,"midi":60,"velocity":1,"gate":1,"unknown":"\\\"{}[]:"}]"#),
+            base.replacingOccurrences(of: #""notes":[]"#, with: #""notes":[],"unknown":0,"extra":1"#),
+            String(repeating: "[", count: 2000) + String(repeating: "]", count: 2000)
+        ]
+        for input in inputs {
+            XCTAssertThrowsError(try SequencerPatternArchive.decode(Data(input.utf8))) {
+                XCTAssertEqual($0 as? SequencerPatternArchive.ArchiveError, .invalidSchema)
+            }
+        }
+        let utf16 = try XCTUnwrap(base.data(using: .utf16LittleEndian))
+        XCTAssertThrowsError(try SequencerPatternArchive.decode(utf16)) {
+            XCTAssertEqual($0 as? SequencerPatternArchive.ArchiveError, .invalidSchema)
+        }
+    }
+
+    func testMaximumHitCountRoundTripRemainsWithinArchiveByteLimit() throws {
+        let hits = (0..<4096).flatMap { index in
+            DrumVoice.allCases.map { DrumStep(index: index, voice: $0, velocity: 0.12345678901234567) }
+        }.prefix(16_384)
+        let archive = try SequencerPatternArchive(drums: .init(length: 4096, hits: Array(hits)))
+        let data = try archive.encoded()
+        XCTAssertLessThanOrEqual(data.count, SequencerPatternArchive.maximumBytes)
+        let restored = try SequencerPatternArchive.decode(data)
+        XCTAssertEqual(restored, archive)
+        XCTAssertEqual(restored.drumDraft()?.hits.count, 16_384)
+    }
 }
