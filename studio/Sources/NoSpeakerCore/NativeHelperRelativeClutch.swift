@@ -22,6 +22,26 @@ public struct NativeHelperRelativeClutch: Sendable {
             id >= 0 && [x,y,contactSize].allSatisfy { $0.isFinite && (0...1).contains($0) }
         }
     }
+    /// Complete physical observation before invalid contacts are discarded.
+    /// An empty projected contact list alone is not evidence of release.
+    public struct SourceFrame: Sendable {
+        public let surface: Surface
+        public let rawDownCount: Int
+        public let sourceConsistent: Bool
+        public let contacts: [Contact]
+        public let receipt: Double
+        public init(surface: Surface, rawDownCount: Int, sourceConsistent: Bool,
+                    contacts: [Contact], receipt: Double) {
+            self.surface = surface; self.rawDownCount = rawDownCount
+            self.sourceConsistent = sourceConsistent; self.contacts = contacts
+            self.receipt = receipt
+        }
+        public var isComplete: Bool {
+            sourceConsistent && rawDownCount >= 0 && rawDownCount == contacts.count &&
+            contacts.allSatisfy { $0.surface == surface && $0.valid }
+        }
+        public var isGenuineNeutral: Bool { isComplete && rawDownCount == 0 }
+    }
     public struct Lane: Sendable {
         public let reference, lower, upper: Int
         public let gain: Double
@@ -57,13 +77,23 @@ public struct NativeHelperRelativeClutch: Sendable {
         phase = .blocked
         return wasActive ? .releaseRequired : .blocked
     }
-    /// Complete source-local frame, not a cached multi-surface snapshot.
-    /// A second finger or changed contact ID invalidates the entire clutch.
+    /// Only for already verified complete source-local observations.
+    /// Native adapters must use the SourceFrame overload, not filtered caches.
     public mutating func frame(_ contacts: [Contact], receipt: Double) -> Result {
+        frame(.init(surface: surface, rawDownCount: contacts.count,
+                    sourceConsistent: true, contacts: contacts, receipt: receipt))
+    }
+
+    /// A second finger, incomplete frame or changed contact ID invalidates
+    /// the whole clutch. Retire invalid advancing receipts as well.
+    public mutating func frame(_ observation: SourceFrame) -> Result {
+        let receipt = observation.receipt
         guard receipt.isFinite, receipt >= 0,
               lastReceipt.map({ receipt > $0 }) ?? true else { return invalidate() }
         lastReceipt = receipt
-        guard contacts.count <= 1, contacts.allSatisfy({ $0.surface == surface && $0.valid }) else { return invalidate() }
+        guard observation.surface == surface, observation.isComplete,
+              observation.rawDownCount <= 1 else { return invalidate() }
+        let contacts = observation.contacts
         guard let contact = contacts.first else {
             let wasActive: Bool
             if case .active = phase { wasActive = true } else { wasActive = false }
