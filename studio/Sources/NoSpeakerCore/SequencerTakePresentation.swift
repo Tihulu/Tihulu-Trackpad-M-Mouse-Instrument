@@ -69,6 +69,13 @@ public struct SequencerTakePresentation: Sendable {
         return true
     }
 
+    /// A grid may display only its own active take's confirmed position.
+    /// Draft cells may have changed; this is transport location, not note activity.
+    public func confirmedGridStep(for kind: FrozenSequencerPattern.Kind) -> Int? {
+        guard phase == .playing, take?.kind == kind else { return nil }
+        return position?.gridStep
+    }
+
     /// Report terminal host evidence after startup failure, cancellation or
     /// natural end. No worker may still start or send notes under this token.
     /// Keep the take until matching cleanup succeeds.
