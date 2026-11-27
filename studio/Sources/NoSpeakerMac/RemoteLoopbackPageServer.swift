@@ -2149,6 +2149,28 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   // Cancellation is not a completed musical tap: discard unsent edges and
   // let host disconnect/watchdog release already delivered owners.
   for(const event of ["pointercancel","lostpointercapture"])pad.addEventListener(event,e=>{if(e.pointerId===pointer)close("Touch cancelled. Reconnect explicitly.");});
+  // A momentary button has one keyboard activation owner. Do not let a
+  // second activation key release it or toggle an arpeggio selection twice.
+  function bindMomentaryKeys(b,down,up,cancel,eligible=()=>true){
+    let held=null;
+    const activation=e=>e.key===" "||e.key==="Enter";
+    b.addEventListener("keydown",e=>{
+      if(!activation(e)||!eligible())return;
+      e.preventDefault();
+      if(e.repeat||held!==null||b.disabled)return;
+      held=e.key;down();
+    });
+    b.addEventListener("keyup",e=>{
+      if(!activation(e)||(!eligible()&&held===null))return;
+      e.preventDefault();
+      if(held!==e.key)return;
+      held=null;up();
+    });
+    b.addEventListener("blur",()=>{
+      if(held===null)return;
+      held=null;cancel();
+    });
+  }
   function toggleDrums(){
     if(currentView!=="play"||releasingAll||!admitted||!caps?.drums||playMode==="stick")return;
     if(!drumEnabled&&!requestWorkload("drums"))return;
@@ -2172,9 +2194,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     });
     b.addEventListener("pointerup",e=>drumUp("p"+e.pointerId));
     for(const name of ["pointercancel","lostpointercapture"])b.addEventListener(name,e=>cancelDrum("p"+e.pointerId));
-    b.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();if(!e.repeat)drumDown("k"+index,index);}});
-    b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();drumUp("k"+index);}});
-    b.addEventListener("blur",()=>cancelDrum("k"+index));
+    bindMomentaryKeys(b,()=>drumDown("k"+index,index),()=>drumUp("k"+index),()=>cancelDrum("k"+index));
   });
   pianoEnable.addEventListener("click",()=>{
     if(currentView!=="play"||releasingAll||!admitted||!caps?.piano)return;
@@ -2198,9 +2218,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     b.addEventListener("pointerdown",e=>{if(e.button!==0||b.disabled)return;e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{close("Chord pointer capture failed.");return;}chordDown("c"+i+":"+e.pointerId,i);});
     b.addEventListener("pointerup",e=>chordUp("c"+i+":"+e.pointerId));
     for(const event of ["pointercancel","lostpointercapture"])b.addEventListener(event,e=>cancelChord("c"+i+":"+e.pointerId));
-    b.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();if(!e.repeat)chordDown("k"+i,i);}});
-    b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();chordUp("k"+i);}});
-    b.addEventListener("blur",()=>cancelChord("k"+i));
+    bindMomentaryKeys(b,()=>chordDown("k"+i,i),()=>chordUp("k"+i),()=>cancelChord("k"+i));
   }
   pianoStrips.addEventListener("click",()=>{
     if(currentView!=="play"||!admitted||releasingAll||pianoBusy()||!Boolean(caps?.piano&33554431))return;
@@ -2219,9 +2237,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(i!==13)b.addEventListener("pointermove",moveStrip);
     b.addEventListener("pointerup",e=>pianoUp("p"+e.pointerId));
     for(const name of ["pointercancel","lostpointercapture"])b.addEventListener(name,e=>cancelPiano("p"+e.pointerId));
-    b.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();if(!e.repeat)pianoDown("k"+i,index());}});
-    b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();pianoUp("k"+i);}});
-    b.addEventListener("blur",()=>cancelPiano("k"+i));
+    bindMomentaryKeys(b,()=>pianoDown("k"+i,index()),()=>pianoUp("k"+i),()=>cancelPiano("k"+i));
   });
   function togglePedals(){
     if(currentView!=="play"||releasingAll||!admitted||!caps?.pedals||cameraHelper||!modeAllows("pedals"))return;
@@ -2248,15 +2264,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     });
     b.addEventListener("pointerup",e=>pedalHoldUp(i,"p"+e.pointerId));
     for(const event of ["pointercancel","lostpointercapture"])b.addEventListener(event,e=>cancelHeldPedal(i,"p"+e.pointerId));
-    b.addEventListener("keydown",e=>{
-      if(isHoldPedal(i)&&(e.key===" "||e.key==="Enter")){
-        e.preventDefault();if(!e.repeat)pedalHoldDown(i,"k"+i);
-      }
-    });
-    b.addEventListener("keyup",e=>{
-      if(isHoldPedal(i)&&(e.key===" "||e.key==="Enter")){e.preventDefault();pedalHoldUp(i,"k"+i);}
-    });
-    b.addEventListener("blur",()=>cancelHeldPedal(i,"k"+i));
+    bindMomentaryKeys(b,()=>pedalHoldDown(i,"k"+i),()=>pedalHoldUp(i,"k"+i),()=>cancelHeldPedal(i,"k"+i),()=>isHoldPedal(i));
   });
   pedalSliders.forEach((b,i)=>b.addEventListener("input",()=>pedalMove(i)));
   pedalOutputs.forEach((dial,i)=>{

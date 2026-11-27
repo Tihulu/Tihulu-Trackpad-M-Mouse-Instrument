@@ -2254,3 +2254,29 @@ test("MUSIC-WEB delivered strip exit retains second contact",()=>{
   e.piano0.emit("pointermove",xyEvent(1,50,50));a.step(25);
   assert.equal(a.socket.frames.at(-1).mask,16);
 });
+
+test("MUSIC-WEB alternate activation key cannot release drum piano chord or held pedal",()=>{
+  for(const family of ["drum","piano","chord","pedal"]){
+    const a=setup(),e=a.elements;
+    let b;
+    if(family==="drum"){e.drumEnable.emit("click");b=e.drum0;}
+    if(family==="piano"){e.pianoEnable.emit("click");b=e.piano0;}
+    if(family==="chord"){e.pianoChord.emit("click");e.pianoEnable.emit("click");b=e.chord0;}
+    if(family==="pedal"){setHoldPedal(a,4);b=e.pedalToggle4;}
+    b.emit("keydown",xyKey(" "));a.ack();
+    const n=a.socket.frames.length;assert.equal(n,1);
+    b.emit("keydown",xyKey("Enter"));b.emit("keyup",xyKey("Enter"));a.step(25);
+    assert.equal(a.socket.frames.length,n);
+    b.emit("keyup",xyKey(" "));a.step(25);
+    assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  }
+});
+test("MUSIC-WEB second activation key cannot toggle arpeggio selection twice",()=>{
+  const a=setup(),e=a.elements;e.pianoArp.emit("click");e.pianoEnable.emit("click");
+  e.piano0.emit("keydown",xyKey(" "));
+  e.piano0.emit("keydown",xyKey("Enter"));e.piano0.emit("keyup",xyKey("Enter"));
+  assert.equal(e.piano0.attributes["data-arp-selected"],"true");
+  e.piano0.emit("keyup",xyKey(" "));
+  e.piano0.emit("keydown",xyKey("Enter"));e.piano0.emit("keyup",xyKey("Enter"));
+  assert.equal(e.piano0.attributes["data-arp-selected"],"false");assert.equal(a.socket.frames.length,0);
+});
