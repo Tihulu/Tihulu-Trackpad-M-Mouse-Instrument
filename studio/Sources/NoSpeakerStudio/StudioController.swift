@@ -3447,11 +3447,49 @@ final class StudioController: ObservableObject {
                 }
                 let period = offset(schedule.length)
                 var origin = clock.now
+                // Use the existing scheduler clock and deadlines. Sample the
+                // active grid, with at least 1/30 s between sampled boundaries.
+                // Legacy and tuned playback do not acquire additional wakes.
+                let clockStride: Int = presentationTake.map { take in
+                    let step = MIDIClip.ppq / take.stepsPerBeat
+                    let sampleSteps = max(1, Int(ceil((1.0 / 30.0) / schedule.seconds(at: step))))
+                    return step * sampleSteps
+                } ?? 0
+                var nextClockTick = 0
+                @MainActor func waitForTick(_ target: Int) async throws -> Bool {
+                    let deadline = origin.advanced(by: offset(target))
+                    while clockStride > 0 && nextClockTick < target {
+                        guard !Task.isCancelled, self?.sequenceToken == token else { return false }
+                        if clock.now >= deadline { break }
+                        let wake = origin.advanced(by: offset(nextClockTick))
+                        if clock.now < wake { try await clock.sleep(until: wake) }
+                        guard !Task.isCancelled, self?.sequenceToken == token else { return false }
+                        let observed = clock.now
+                        if observed >= deadline { break }
+                        // Coalesce missed samples rather than replay old UI
+                        // positions. Compare rounded deadlines, not a new timebase.
+                        var low = nextClockTick / clockStride
+                        var high = (target - 1) / clockStride
+                        while low < high {
+                            let mid = low + (high - low + 1) / 2
+                            if origin.advanced(by: offset(mid * clockStride)) <= observed { low = mid }
+                            else { high = mid - 1 }
+                        }
+                        let tick = low * clockStride
+                        nextClockTick = tick + clockStride
+                        if let cycle = progress?.cycle,
+                           let receipt = progress?.confirmClock(token: token, cycle: cycle, tick: tick) {
+                            self?.showSequenceProgress(receipt)
+                        }
+                    }
+                    try await clock.sleep(until: deadline)
+                    return !Task.isCancelled && self?.sequenceToken == token
+                }
                 do {
                     repeat {
+                        nextClockTick = 0
                         for (index, event) in schedule.events.enumerated() {
-                            try await clock.sleep(until: origin.advanced(by: offset(event.tick)))
-                            guard !Task.isCancelled, let self, self.sequenceToken == token else { return }
+                            guard try await waitForTick(event.tick), let self, self.sequenceToken == token else { return }
                             // Skip notes whose entire gate has expired.
                             if event.isNoteOn && clock.now >= origin.advanced(by: offset(event.endTick)) {
                                 if let cycle = progress?.cycle,
@@ -3472,8 +3510,7 @@ final class StudioController: ObservableObject {
                             }
                         }
                         let boundary = origin.advanced(by: period)
-                        try await clock.sleep(until: boundary)
-                        guard !Task.isCancelled, self?.sequenceToken == token else { return }
+                        guard try await waitForTick(schedule.length), self?.sequenceToken == token else { return }
                         if let cycle = progress?.cycle {
                             _ = progress?.confirmBoundary(token: token, cycle: cycle)
                         }
