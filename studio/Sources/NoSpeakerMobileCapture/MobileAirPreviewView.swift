@@ -59,11 +59,40 @@ import NoSpeakerCore
         cameraID=cameras.first?.id ?? ""
         zoom=selectedCamera?.zoom.defaultFactor ?? 1
     }
-    private var valid:Bool {
-        (backend == .lidar || selectedCamera?.zoom.contains(zoom) == true) &&
-        (!mode.usesDepth || backend == .lidar) &&
-        (backend != .lidar || MobileAirSensorSource.hasLiDAR) &&
-        (mode != .chords || role != .single) && far-near >= 0.1
+    private func sensorIssue(for candidate: MobileAirMode) -> String? {
+        if candidate.usesDepth && backend != .lidar { return "Requires rear LiDAR" }
+        if backend == .lidar && !MobileAirSensorSource.hasLiDAR { return "LiDAR unavailable" }
+        if backend != .lidar && selectedCamera?.zoom.contains(zoom) != true { return "Select a supported camera and zoom" }
+        if candidate == .chords && role == .single { return "Choose left or right performing hand" }
+        if far-near < 0.1 { return "Near and far must differ by at least 0.10 m" }
+        return nil
+    }
+    private func assignmentIssue(for candidate: MobileAirMode) -> String? {
+        guard useMac else { return nil }
+        if touchOnlyPairing { return "Touch-only session; disconnect and pair for Air" }
+        guard let assignment else { return "Connect and wait for the Mac assignment" }
+        if candidate.isHelper != (assignment.piano == 0) { return "Different assigned family; disconnect and pair again" }
+        if candidate == .strings && assignment.piano.nonzeroBitCount < 3 { return "Requires at least three assigned keys" }
+        if candidate == .chords && !MobileAirInstrument.chordOffsets.contains(where: { notes in
+            notes.allSatisfy { assignment.piano & (1 << $0) != 0 }
+        }) { return "Requires an assigned complete chord shape" }
+        return nil
+    }
+    private var valid: Bool { sensorIssue(for: mode) == nil }
+    private var modeGuide: String {
+        switch mode {
+        case .pinchKeys: return "Move horizontally to choose a logical key; open then pinch to hold it. Open to release."
+        case .chords: return "Use the other hand to select a chord; open then pinch with the performing hand. Losing either hand releases."
+        case .strings: return "Cross the three vertical string regions; notes are short pulses, not sustained holds."
+        case .horizontal: return "Horizontal hand position controls the assigned helper."
+        case .vertical: return "Vertical hand position controls the assigned helper."
+        case .aperture: return "Thumb-to-index aperture controls the assigned helper."
+        case .speed: return "Hand motion speed controls the assigned helper."
+        case .pinchHelper: return "Open then pinch to engage; open to disengage."
+        case .toggleHelper: return "Open then pinch to toggle; tracking loss clears the latch."
+        case .depthKeys: return "Move within the calibrated near/far range to choose a depth zone."
+        case .depthControl: return "Near/far distance controls the assigned helper; invalid depth releases."
+        }
     }
 
     public var body:some View {
@@ -121,7 +150,10 @@ import NoSpeakerCore
                         }
                     } else {Text("LiDAR: native calibrated field of view · zoom locked").font(.caption)}
                     Picker("Instrument / helper",selection:$mode) {
-                        ForEach(MobileAirMode.allCases) {m in Text(m.rawValue).tag(m)}
+                        ForEach(MobileAirMode.allCases) { m in
+                            let reason = sensorIssue(for: m) ?? (assignment != nil ? assignmentIssue(for: m) : nil)
+                            Text(reason.map { m.rawValue + " · " + $0 } ?? m.rawValue).tag(m)
+                        }
                     }
                     Picker("Performing hand",selection:$role) {
                         ForEach(MobileAirHandRole.allCases) {r in Text(r.rawValue.capitalized).tag(r)}
@@ -145,8 +177,11 @@ import NoSpeakerCore
                         }
                     }
                 }.disabled(instrumentLocked || (useMac && touchOnlyPairing))
-                if !valid && !(useMac && touchOnlyPairing) {
-                    Text("Select a supported sensor, valid range and a distinct performing hand for chords.").foregroundStyle(.orange)
+                if !touchOnlyPairing || !useMac {
+                    if let issue = sensorIssue(for: mode) ?? assignmentIssue(for: mode) {
+                        Text(issue).foregroundStyle(.orange)
+                    }
+                    Text(modeGuide).font(.caption).foregroundStyle(.secondary)
                 }
                 GeometryReader {geo in
                     ZStack {
@@ -346,6 +381,10 @@ import NoSpeakerCore
     }
     private func poll() {
         if retiring?.isStopped == true {retiring=nil}
+        if (source != nil || (socket != nil && !touchOnlyPairing)),
+           MobileAirSensorSource.authorization != .authorized {
+            stop("Camera permission lost"); return
+        }
         if let socket {
             let state = socket.status()
             if state.phase == .closed { stop(state.message); return }
