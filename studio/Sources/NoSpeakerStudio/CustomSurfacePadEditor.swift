@@ -30,7 +30,16 @@ struct CustomSurfacePadEditor:View {
         let channel:Int
         var id: String {action.rawValue+surface.rawValue}
     }
+    private enum Confirmation {
+        case single(Pending), group(GroupConfirmation)
+    }
+    private var confirmation: Confirmation? {
+        if let groupConfirmation { return .group(groupConfirmation) }
+        if let pending { return .single(pending) }
+        return nil
+    }
     private func request(_ action:Pending.Action) {
+        groupConfirmation=nil
         pending=Pending(action:action,surface:surface,draft:layouts[surface],saved:library?.layout(for:surface),channel:previewChannel)
     }
     private var library:CustomSurfaceLayoutLibrary? {
@@ -199,46 +208,52 @@ struct CustomSurfacePadEditor:View {
             }.padding(.vertical,6)
             }
         }.onChange(of:surface){value in select(layouts[value]?.pads.first);feedback=""}
-        .confirmationDialog("Arm two independent MIDI sources?",isPresented:Binding(get:{groupConfirmation != nil},set:{if !$0 {groupConfirmation=nil}}),titleVisibility:.visible,presenting:groupConfirmation) { request in
-            Button("Arm both · Esc stops group") {
-                guard layouts[.trackpad]==request.trackpad,layouts[.magicMouse]==request.mouse,
-                      groupTrackpadChannel==request.trackpadChannel,groupMouseChannel==request.mouseChannel else {
-                    feedback="Group drafts or channels changed; repeat Arm.";return
+        .confirmationDialog("Confirm Custom Pad action",
+            isPresented:Binding(get:{confirmation != nil},set:{if !$0 {pending=nil;groupConfirmation=nil}}),
+            titleVisibility:.visible,presenting:confirmation) { operation in
+            switch operation {
+            case .group(let request):
+                Button("Arm both · Esc stops group") {
+                    guard layouts[.trackpad]==request.trackpad,layouts[.magicMouse]==request.mouse,
+                          groupTrackpadChannel==request.trackpadChannel,groupMouseChannel==request.mouseChannel else {
+                        feedback="Group drafts or channels changed; repeat Arm.";return
+                    }
+                    studio.startCustomPadGroup(trackpad:request.trackpad,trackpadChannel:request.trackpadChannel,
+                        mouse:request.mouse,mouseChannel:request.mouseChannel)
                 }
-                studio.startCustomPadGroup(trackpad:request.trackpad,trackpadChannel:request.trackpadChannel,
-                    mouse:request.mouse,mouseChannel:request.mouseChannel)
+            case .single(let operation):
+                Button(operation.action == .arm ? "Arm dedicated MIDI + Escape stop" : operation.action == .reset ? "Reset draft":operation.action == .save ? "Save layout":"Load layout",
+                       role:operation.action == .reset ? .destructive:nil){
+                    guard surface==operation.surface,layouts[surface]==operation.draft else{
+                        feedback="Draft changed; repeat the operation.";return
+                    }
+                    switch operation.action {
+                    case .arm:
+                        guard let layout=operation.draft,previewChannel==operation.channel else {
+                            feedback="Draft or channel changed; repeat Arm.";return
+                        }
+                        studio.startCustomPad(layout,channel:operation.channel)
+                    case .reset:
+                        layouts.removeValue(forKey:surface);selected=nil;feedback="Draft cleared."
+                    case .save:
+                        guard var current=library,let layout=operation.draft,
+                              current.layout(for:surface)==operation.saved else{
+                            feedback="Saved layout changed or cannot be read; repeat the operation.";return
+                        }
+                        current.save(layout)
+                        guard let data=try? JSONEncoder().encode(current) else{feedback="Could not encode layout.";return}
+                        storage=data;feedback="Layout saved."
+                    case .load:
+                        guard let layout=operation.saved,library?.layout(for:surface)==layout else{
+                            feedback="Saved layout changed; repeat the operation.";return
+                        }
+                        layouts[surface]=layout;select(layout.pads.first);feedback="Saved layout loaded."
+                    }
+                }
             }
-        } message: { _ in
-            Text("Route each dedicated MIDI source independently in your DAW. Both devices require a fresh lift; a fault stops the entire group. No cursor capture.")
-        }
-        .confirmationDialog("Confirm Custom Pad action",isPresented:Binding(get:{pending != nil},set:{if !$0 {pending=nil}}),titleVisibility:.visible,presenting:pending){operation in
-            Button(operation.action == .arm ? "Arm dedicated MIDI + Escape stop" : operation.action == .reset ? "Reset draft":operation.action == .save ? "Save layout":"Load layout",
-                   role:operation.action == .reset ? .destructive:nil){
-                guard surface==operation.surface,layouts[surface]==operation.draft else{
-                    feedback="Draft changed; repeat the operation.";return
-                }
-                switch operation.action {
-                case .arm:
-                    guard let layout=operation.draft,previewChannel==operation.channel else {
-                        feedback="Draft or channel changed; repeat Arm.";return
-                    }
-                    studio.startCustomPad(layout,channel:operation.channel)
-                case .reset:
-                    layouts.removeValue(forKey:surface);selected=nil;feedback="Draft cleared."
-                case .save:
-                    guard var current=library,let layout=operation.draft,
-                          current.layout(for:surface)==operation.saved else{
-                        feedback="Saved layout changed or cannot be read; repeat the operation.";return
-                    }
-                    current.save(layout)
-                    guard let data=try? JSONEncoder().encode(current) else{feedback="Could not encode layout.";return}
-                    storage=data;feedback="Layout saved."
-                case .load:
-                    guard let layout=operation.saved,library?.layout(for:surface)==layout else{
-                        feedback="Saved layout changed; repeat the operation.";return
-                    }
-                    layouts[surface]=layout;select(layout.pads.first);feedback="Saved layout loaded."
-                }
+        } message: { operation in
+            if case .group = operation {
+                Text("Route each dedicated MIDI source independently in your DAW. Both devices require a fresh lift; a fault stops the entire group. No cursor capture.")
             }
         }
     }
@@ -284,6 +299,7 @@ struct CustomSurfacePadEditor:View {
                             Stepper("Trackpad MIDI channel \(groupTrackpadChannel+1)",value:$groupTrackpadChannel,in:0...15)
                             Stepper("Magic Mouse MIDI channel \(groupMouseChannel+1)",value:$groupMouseChannel,in:0...15)
                             Button("Arm both drafts…") {
+                                pending=nil
                                 groupConfirmation=GroupConfirmation(trackpad:trackpad,mouse:mouse,
                                     trackpadChannel:groupTrackpadChannel,mouseChannel:groupMouseChannel)
                             }.disabled((try? CustomSurfaceMixedPlan(layout:trackpad,melodicChannel:groupTrackpadChannel)) == nil ||

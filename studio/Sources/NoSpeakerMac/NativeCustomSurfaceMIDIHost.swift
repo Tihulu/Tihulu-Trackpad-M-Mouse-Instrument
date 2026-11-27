@@ -74,6 +74,7 @@ public final class NativeCustomSurfaceMIDIHost {
     // reservation registry that could claim the same native endpoint.
     public var groupPhase: CustomSurfacePerformanceGroup.Phase { group.phase }
     public var groupRunID: UUID? { group.runID }
+    public var groupStopReason: CustomSurfacePerformanceGroup.StopReason? { group.stopReason }
     public var groupTimingEvidence: [CustomSurfacePadLayout.Surface: CustomSurfaceEndpointHost.TimingEvidence] { group.timingEvidence }
     public func openGroup(_ members: [CustomSurfacePerformanceGroup.Member],
                           admitsLive: @escaping () -> Bool) -> CustomSurfacePerformanceGroup.StartResult {

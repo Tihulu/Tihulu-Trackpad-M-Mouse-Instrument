@@ -3827,19 +3827,19 @@ final class StudioController: ObservableObject {
                       self.customPadRunID == run, self.engineGeneration == generation else { return }
                 guard self.customPadHost.groupRunID == run,
                       self.captureMonitor?.customPadEmergencyOperational == true else {
-                    self.stopCustomPad(reason: "Group watchdog or emergency monitor stopped performance."); return
+                    self.stopCustomPad(reason: self.customPadGroupStopReason(input)); return
                 }
                 let result = input.drain { sample in
                     self.customPadHost.groupFrame(run: run, surface: sample.surface, contacts: sample.contacts,
                         sequence: sample.sequence, observedAt: sample.observedAt)?.phase == .live
                 }
                 guard case .delivered = result else {
-                    self.stopCustomPad(reason: "Group input or MIDI delivery fault. Restart explicitly."); return
+                    self.stopCustomPad(reason: self.customPadGroupStopReason(input)); return
                 }
                 let ports = self.customPadHost.statuses
                 if self.customPadPorts != ports { self.customPadPorts = ports }
                 guard ports.count == 2, ports.allSatisfy({ $0.phase == .live }) else {
-                    self.stopCustomPad(reason: "Group source unavailable."); return
+                    self.stopCustomPad(reason: self.customPadGroupStopReason(input)); return
                 }
                 let ready = ports.filter { $0.hasNeutralHandshake }.count
                 let status = "Group ready: " + String(ready) + "/2 physical lifts · Esc stops"
@@ -3852,6 +3852,26 @@ final class StudioController: ObservableObject {
             }
         }
     }
+    private func customPadGroupStopReason(_ input: CustomSurfaceNativeGroupInput) -> String {
+        for inbox in input.inboxes {
+            if let fault = inbox.queueEvidence().fault {
+                return inbox.surface.rawValue + ": " + fault.rawValue + ". Restart explicitly."
+            }
+        }
+        switch customPadHost.groupStopReason {
+        case .some(.neutralTimeout): return "Both devices did not confirm physical lift within 10 seconds."
+        case .some(.clockInvalid): return "Group monotonic clock invalid. Restart explicitly."
+        case .some(.admissionLost): return "Group performance admission revoked. Restart explicitly."
+        case .some(.portCreation): return "Group MIDI source creation failed."
+        case .some(.identityLost(let surface)): return surface.rawValue + ": original MIDI source identity lost. DAW reset and relaunch required."
+        case .some(.memberUnavailable(let surface)): return surface.rawValue + ": group source unavailable."
+        case .some(.memberFault(let surface, let fault)):
+            return surface.rawValue + ": " + (fault.map { String(describing: $0) } ?? "MIDI source fault") + ". Group stopped."
+        case .some(.requested): return "Custom Pad group stopped."
+        case .none: return "Group input or emergency monitor unavailable. Restart explicitly."
+        }
+    }
+
     private func updateCustomPadGroupEvidence(_ input: CustomSurfaceNativeGroupInput) {
         let report = input.inboxes.map { inbox in
             let queue = inbox.queueEvidence()
