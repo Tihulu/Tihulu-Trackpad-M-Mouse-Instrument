@@ -1,0 +1,56 @@
+[
+  {
+    "id": "rel6-clock",
+    "scope": "engine",
+    "language": "en",
+    "query": "RelativeAngularClutch observe receipt retired invalid angle blocked update duplicate begin watermark",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/RelativeAngularClutch.swift"
+    ]
+  },
+  {
+    "id": "rel6-prefix",
+    "scope": "engine",
+    "language": "tr",
+    "query": "NativeHelperRelativeOutputTransaction replaceAdmitted successful prefix failed send transport cleanup debt",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/NativeHelperRelativeOutputTransaction.swift"
+    ]
+  },
+  {
+    "id": "rel6-clean",
+    "scope": "engine",
+    "language": "de",
+    "query": "NativeHelperRelativeOutputTransaction confirmCleanup genuineNeutral transportClean empty helper ownership",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/NativeHelperRelativeOutputTransaction.swift"
+    ]
+  },
+  {
+    "id": "rel6-interlock",
+    "scope": "docs",
+    "language": "en",
+    "query": "Competing legacy producers acquire and release between helper frames restoring stale values serialized interlock",
+    "expected_paths": [
+      "studio/docs/RELATIVE_CONTINUOUS_CONTROL.md"
+    ]
+  },
+  {
+    "id": "rel6-frame",
+    "scope": "docs",
+    "language": "tr",
+    "query": "Relative native frame source local admitted receipt fence no combined cached contacts",
+    "expected_paths": [
+      "studio/docs/RELATIVE_CONTINUOUS_CONTROL.md"
+    ]
+  },
+  {
+    "id": "rel6-feedback",
+    "scope": "docs",
+    "language": "de",
+    "query": "Receiver confirmed feedback versus last local delivery manual reference no fallback",
+    "expected_paths": [
+      "studio/docs/RELATIVE_CONTINUOUS_CONTROL.md"
+    ]
+  }
+]

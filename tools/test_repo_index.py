@@ -871,6 +871,63 @@ class RepositoryIndexTests(unittest.TestCase):
         for scope in ("engine", "app", "docs"):
             self.assertFalse(in_scope("tools/rag_domain_cases.json", scope))
 
+    def test_cross_suite_separation_rejects_evaluation_reuse_before_output(self):
+        base = {"id": "curated", "scope": "docs", "language": "en", "query": "MIDI sustain",
+                "expected_paths": ["README.md"]}
+        curated = self.root / "curated.json"
+        heldout = self.root / "heldout.json"
+        grouped = self.root / "grouped.json"
+        curated.write_text(json.dumps([base]))
+        independent = dict(base, id="held", query="release")
+        heldout.write_text(json.dumps([independent]))
+        dev = dict(base, id="dev")
+        evaluation = dict(base, id="eval", query="calibration")
+        def save(development, test):
+            grouped.write_text(json.dumps({"development": [development], "evaluation": [test]}))
+        save(dev, evaluation)
+        result = rag_benchmark.validate_suite_separation(curated, heldout, {"group": grouped})
+        self.assertEqual(result["repeated_development_queries"], 1)
+        self.assertEqual(result["unique_evaluation_queries"], 2)
+        for development, test in ((dict(dev, query=" RELEASE "), evaluation),
+                                  (dev, dict(evaluation, query="ＲＥＬＥＡＳＥ")),
+                                  (dev, dict(evaluation, id="held")),
+                                  (dev, dict(evaluation, query="MIDI sustain", id="other"))):
+            save(development, test)
+            with self.assertRaisesRegex(ValueError, "overlap"):
+                rag_benchmark.validate_suite_separation(curated, heldout, {"group": grouped})
+        save(dict(dev, query="release"), evaluation)
+        args = SimpleNamespace(repo=self.repo, ref=self.commit, out_dir=self.root / "rejected",
+            model_dir=None, k=8, max_per_file=3, heldout_cases=heldout, domain_cases=grouped)
+        with patch.object(rag_benchmark, "CASES", curated):
+            with self.assertRaisesRegex(ValueError, "Cross-suite evaluation overlap"):
+                rag_matrix.run(args)
+        self.assertFalse(args.out_dir.exists())
+
+    def test_strict_context_rejects_authentic_incomplete_index_and_requires_pin(self):
+        self.build()
+        original = json.loads(self.index.read_text())
+        opts = ("--repo", self.repo, "--expect-ref", self.commit, "--index", self.index,
+                "--query", "Sustain")
+        for command in ("search", "context"):
+            result = self.cli(command, *opts, "--require-complete-lexical")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(json.loads(result.stdout)["canonical_lexical_complete"])
+            ordinary = self.cli(command, *opts)
+            self.assertNotIn("canonical_lexical_complete", json.loads(ordinary.stdout))
+        # Keep the matching first chunk; ordinary verification is still valid.
+        self.index.write_text(json.dumps(dict(original, chunks=original["chunks"][:1])))
+        self.assertEqual(self.cli("context", *opts).returncode, 0)
+        for command in ("search", "context"):
+            failed = self.cli(command, *opts, "--require-complete-lexical")
+            self.assertEqual(failed.returncode, 2)
+            self.assertIn("missing=1", failed.stderr)
+            self.assertFalse(failed.stdout)
+        self.index.write_text(json.dumps(original))
+        unpinned = self.cli("search", "--index", self.index, "--query", "sustain",
+                            "--repo", self.repo, "--require-complete-lexical")
+        self.assertEqual(unpinned.returncode, 2)
+        self.assertIn("requires lexical index", unpinned.stderr)
+
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
         document = json.loads(self.index.read_text())

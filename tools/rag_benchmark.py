@@ -57,12 +57,14 @@ def load_cases(path, group=None):
     return cases, hashlib.sha256(data).hexdigest()
 
 
+def normalized_query(case):
+    return " ".join(unicodedata.normalize("NFKC", case["query"]).casefold().split())
+
+
 def validate_case_groups(path):
     """Reject exact query/ID leakage even when different JSON yields different digests."""
     dev, dev_digest = load_cases(path, "development")
     evaluation, eval_digest = load_cases(path, "evaluation")
-    def normalized_query(case):
-        return " ".join(unicodedata.normalize("NFKC", case["query"]).casefold().split())
     for cases in (dev, evaluation):
         if len({normalized_query(case) for case in cases}) != len(cases):
             raise ValueError("Duplicate normalized query within benchmark group")
@@ -71,6 +73,54 @@ def validate_case_groups(path):
                {normalized_query(case) for case in evaluation}):
         raise ValueError("Development/evaluation case overlap")
     return {"development": dev_digest, "evaluation": eval_digest}
+
+
+def validate_suite_separation(curated, heldout=None, grouped=None):
+    """Freeze inputs and reject cross-suite evaluation leakage.
+
+    Development queries may deliberately recur in another development suite.
+    Evaluation queries/IDs must not recur in development or another evaluation
+    suite. Multiple scopes in one flat suite may ask the same question.
+    """
+    dev_queries, dev_ids = set(), set()
+    eval_queries, eval_ids = set(), set()
+    digests = {}
+    repeated_development_queries = 0
+
+    def register(cases, evaluation):
+        nonlocal repeated_development_queries
+        queries = {normalized_query(case) for case in cases}
+        identifiers = {case["id"] for case in cases}
+        if evaluation:
+            if queries & (dev_queries | eval_queries) or identifiers & (dev_ids | eval_ids):
+                raise ValueError("Cross-suite evaluation overlap")
+            eval_queries.update(queries)
+            eval_ids.update(identifiers)
+        else:
+            if queries & eval_queries or identifiers & eval_ids:
+                raise ValueError("Cross-suite evaluation overlap")
+            repeated_development_queries += len(queries & dev_queries)
+            dev_queries.update(queries)
+            dev_ids.update(identifiers)
+
+    cases, digests["curated"] = load_cases(curated)
+    register(cases, False)
+    if heldout:
+        cases, digests["heldout"] = load_cases(heldout)
+        register(cases, True)
+    for name, path in (grouped or {}).items():
+        if not path:
+            continue
+        expected = validate_case_groups(path)
+        for group in ("development", "evaluation"):
+            cases, digest = load_cases(path, group)
+            if digest != expected[group]:
+                raise ValueError("Benchmark group changed during suite preflight")
+            register(cases, group == "evaluation")
+        digests[name] = expected
+    return {"digests": digests, "repeated_development_queries": repeated_development_queries,
+            "unique_development_queries": len(dev_queries),
+            "unique_evaluation_queries": len(eval_queries)}
 
 
 def diagnose_lexical(rows, query, expected, response, profile, limit, per_file, cache=None):

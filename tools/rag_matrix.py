@@ -132,12 +132,16 @@ def run(args):
     domain_cases = getattr(args, "domain_cases", None)
     # Freeze all input digests before building any scope; pairwise checks alone
     # cannot detect a replaced fixture between otherwise consistent scopes.
-    curated_digest = rag_benchmark.load_cases(rag_benchmark.CASES)[1]
-    heldout_digest = rag_benchmark.load_cases(heldout_cases)[1] if heldout_cases else None
-    ranking_digests = rag_benchmark.validate_case_groups(ranking_cases) if ranking_cases else None
-    multilingual_digests = rag_benchmark.validate_case_groups(multilingual_cases) if multilingual_cases else None
-    contextual_digests = rag_benchmark.validate_case_groups(contextual_cases) if contextual_cases else None
-    domain_digests = rag_benchmark.validate_case_groups(domain_cases) if domain_cases else None
+    separation = rag_benchmark.validate_suite_separation(rag_benchmark.CASES, heldout_cases,
+        {"ranking": ranking_cases, "multilingual": multilingual_cases,
+         "contextual": contextual_cases, "domain": domain_cases})
+    digests = separation["digests"]
+    curated_digest = digests["curated"]
+    heldout_digest = digests.get("heldout")
+    ranking_digests = digests.get("ranking")
+    multilingual_digests = digests.get("multilingual")
+    contextual_digests = digests.get("contextual")
+    domain_digests = digests.get("domain")
     out = Path(args.out_dir).resolve()
     # A matrix contains source text and possibly vectors. Never overwrite
     # previous evidence or create a public/shared directory by default.
@@ -241,6 +245,7 @@ def run(args):
     summary = {"schema": 1, "commit": revision, "k_chunks": args.k,
                "max_per_file": args.max_per_file, "model_sha256": identity,
                "notice": "Measured means retrieval ran, not a quality or hardware pass. NOT_RUN is not success.",
+               "suite_separation": separation,
                "cells": cells}
     # Only a completed matrix gets a summary. Failed partial directories
     # must not be interpreted as successful snapshots.
