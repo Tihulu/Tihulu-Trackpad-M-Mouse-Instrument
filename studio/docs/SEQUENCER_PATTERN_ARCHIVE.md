@@ -9,6 +9,10 @@ pitch (rest when absent), velocity and gate; drum cells store index, voice and
 velocity. Tempo, subdivision, length, loop and optional complete seeded groove
 are retained. Note channels are zero-based; drum playback remains channel 10.
 Cell order and transient UI UUIDs are not part of the archive identity.
+Signed zero velocity is normalized to positive zero during validated archive
+construction, including import. Both forms remain muted; equal musical
+cells have the same encoded representation and do not consume an undo
+entry. Nonzero velocity precision and the v1 schema are unchanged.
 The encoder emits sorted JSON keys, canonical cell ordering, and a 1 MiB
 limit. Unknown fields, mixed note/drum payloads, unsupported versions,
 malformed grids and duplicate cells are rejected. The preflight requires

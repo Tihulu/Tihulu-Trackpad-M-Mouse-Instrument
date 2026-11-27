@@ -48,7 +48,7 @@ public struct SequencerPatternArchive: Equatable, Sendable {
                         stepsPerBeat: notes.stepsPerBeat, length: notes.length,
                         loop: loop, groove: groove, channel: channel,
                         notes: notes.steps.sorted { $0.index < $1.index }.map {
-                            .init(index: $0.index, midi: $0.midi, velocity: $0.velocity, gate: $0.gate)
+                            .init(index: $0.index, midi: $0.midi, velocity: $0.velocity == 0 ? 0 : $0.velocity, gate: $0.gate)
                         }, hits: nil)
     }
 
@@ -59,7 +59,7 @@ public struct SequencerPatternArchive: Equatable, Sendable {
                         loop: loop, groove: groove, channel: nil, notes: nil,
                         hits: drums.hits.sorted {
                             $0.index == $1.index ? $0.voice.rawValue < $1.voice.rawValue : $0.index < $1.index
-                        }.map { .init(index: $0.index, voice: $0.voice, velocity: $0.velocity) })
+                        }.map { .init(index: $0.index, voice: $0.voice, velocity: $0.velocity == 0 ? 0 : $0.velocity) })
     }
 
     /// Each call creates new transient step IDs. Musical cells are preserved.

@@ -221,4 +221,53 @@ final class SequencerPatternArchiveTests: XCTestCase {
         XCTAssertEqual(restored, archive)
         XCTAssertEqual(restored.drumDraft()?.hits.count, 16_384)
     }
+
+    func testSignedZeroVelocityHasCanonicalIdentityForNotesAndDrums() throws {
+        let precision = 0.12345678901234567
+        let negativeNote = try SequencerPatternArchive(notes: .init(steps: [
+            .init(index: 0, midi: 60, velocity: -0.0),
+            .init(index: 1, midi: 62, velocity: precision)
+        ]))
+        let positiveNote = try SequencerPatternArchive(notes: .init(steps: [
+            .init(index: 0, midi: 60, velocity: 0.0),
+            .init(index: 1, midi: 62, velocity: precision)
+        ]))
+        let negativeDrum = try SequencerPatternArchive(drums: .init(hits: [
+            .init(index: 0, voice: .kick, velocity: -0.0),
+            .init(index: 1, voice: .snare, velocity: precision)
+        ]))
+        let positiveDrum = try SequencerPatternArchive(drums: .init(hits: [
+            .init(index: 0, voice: .kick, velocity: 0.0),
+            .init(index: 1, voice: .snare, velocity: precision)
+        ]))
+        for (negative, positive) in [(negativeNote, positiveNote), (negativeDrum, positiveDrum)] {
+            XCTAssertEqual(negative, positive)
+            XCTAssertEqual(try negative.encoded(), try positive.encoded())
+            XCTAssertEqual(try negative.frozen(), try positive.frozen())
+            var editor = try SequencerDraftEditor(draft: positive)
+            XCTAssertFalse(try editor.replace(with: negative))
+            XCTAssertFalse(editor.canUndo)
+        }
+        XCTAssertEqual(negativeNote.noteDraft()?.steps.first?.velocity.sign, .plus)
+        XCTAssertEqual(negativeDrum.drumDraft()?.hits.first?.velocity.sign, .plus)
+        XCTAssertEqual(negativeNote.noteDraft()?.steps.last?.velocity, precision)
+        XCTAssertEqual(negativeDrum.drumDraft()?.hits.last?.velocity, precision)
+    }
+
+    func testImportedNegativeZeroVelocityNormalizesWithoutChangingOtherValues() throws {
+        let note = try SequencerPatternArchive(notes: .init(steps: [.init(index: 0, midi: 60, velocity: 0)]))
+        let drum = try SequencerPatternArchive(drums: .init(hits: [.init(index: 0, voice: .kick, velocity: 0)]))
+        for archive in [note, drum] {
+            let expected = try archive.encoded()
+            let json = String(decoding: expected, as: UTF8.self)
+            for literal in ["-0", "-0.0", "-0e0"] {
+                let input = json.replacingOccurrences(of: #""velocity":0"#, with: "\"velocity\":" + literal)
+                XCTAssertNotEqual(json, input)
+                let decoded = try SequencerPatternArchive.decode(Data(input.utf8))
+                XCTAssertEqual(decoded, archive)
+                XCTAssertEqual(try decoded.encoded(), expected)
+                XCTAssertThrowsError(try decoded.frozen())
+            }
+        }
+    }
 }
