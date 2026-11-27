@@ -132,6 +132,33 @@ final class TakePresentationTests: XCTestCase {
         XCTAssertNil(p.confirmedGridStep(for: .drums))
     }
 
+    func testMIDIControlsRemainAvailableWithoutNominalTake() throws {
+        var p = SequencerTakePresentation()
+        for running in [false, true] {
+            for cleanup in [false, true] {
+                XCTAssertEqual(p.permitsMIDIStart(running: running, cleanupPending: cleanup), !running && !cleanup)
+                XCTAssertEqual(p.needsMIDIStopControl(running: running, cleanupPending: cleanup), running || cleanup)
+            }
+        }
+        let t = try take(loop: true)
+        let token = try XCTUnwrap(p.reserve(t))
+        func assertBlocked(_ state: SequencerTakePresentation) {
+            for running in [false, true] {
+                for cleanup in [false, true] {
+                    XCTAssertFalse(state.permitsMIDIStart(running: running, cleanupPending: cleanup))
+                    XCTAssertTrue(state.needsMIDIStopControl(running: running, cleanupPending: cleanup))
+                }
+            }
+        }
+        assertBlocked(p)
+        XCTAssertTrue(p.confirmStarted(token: token)); assertBlocked(p)
+        XCTAssertTrue(p.requestStop(token: token)); assertBlocked(p)
+        XCTAssertTrue(p.stopped(token: token, cleanupConfirmed: false)); assertBlocked(p)
+        XCTAssertTrue(p.confirmCleanup(token: token, succeeded: true))
+        XCTAssertTrue(p.permitsMIDIStart(running: false, cleanupPending: false))
+        XCTAssertFalse(p.needsMIDIStopControl(running: false, cleanupPending: false))
+    }
+
     func testStopDuringStartupCannotResurrect() throws {
         var p = SequencerTakePresentation()
         let t = try take(loop: false)
