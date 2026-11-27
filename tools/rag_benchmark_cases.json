@@ -1,0 +1,83 @@
+[
+  {
+    "id": "sustain-en",
+    "scope": "engine",
+    "language": "en",
+    "query": "How are CC64 sustain owners released on a shared MIDI endpoint?",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/LegacySustainOwners.swift"
+    ]
+  },
+  {
+    "id": "tuning-tr",
+    "scope": "engine",
+    "language": "tr",
+    "query": "Mikrotonal MIDI dosyasında her MPE kanalının pitch bend değeri nasıl korunuyor?",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/TunedMIDIClip.swift"
+    ]
+  },
+  {
+    "id": "cleanup-de",
+    "scope": "engine",
+    "language": "de",
+    "query": "Wie wird die Identität der MIDI-Quelle bei einem Playback-Fehler und Cleanup geprüft?",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerMac/NativeMIDIPlayback.swift"
+    ]
+  },
+  {
+    "id": "pad-en",
+    "scope": "app",
+    "language": "en",
+    "query": "Where are unapplied custom pad edits blocked before arming a performance?",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerStudio/CustomSurfacePadEditor.swift"
+    ]
+  },
+  {
+    "id": "browser-tr",
+    "scope": "app",
+    "language": "tr",
+    "query": "Telefon tarayıcısında Play Setup Connection ekranları ve mode selection nerede?",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerMac/RemoteLoopbackPageServer.swift"
+    ]
+  },
+  {
+    "id": "mobile-de",
+    "scope": "app",
+    "language": "de",
+    "query": "Wo wird das Android Manifest für Piano und Pedal LAN capabilities validiert?",
+    "expected_paths": [
+      "studio/mobile-android/src/main/java/com/tihulu/mobile/air/MobileLanCapabilities.kt"
+    ]
+  },
+  {
+    "id": "mpe-en",
+    "scope": "docs",
+    "language": "en",
+    "query": "How does tuned MPE MIDI export preserve release-tail tuning?",
+    "expected_paths": [
+      "docs/TUNED_MIDI_EXPORT.md"
+    ]
+  },
+  {
+    "id": "pair-tr",
+    "scope": "docs",
+    "language": "tr",
+    "query": "Telefon tablet TLS pairing ve trusted certificate ile nasıl bağlanır?",
+    "expected_paths": [
+      "docs/REMOTE_R9_USER_GUIDE.md"
+    ]
+  },
+  {
+    "id": "hardware-de",
+    "scope": "docs",
+    "language": "de",
+    "query": "Welche Hardware-Tests für Force Touch, Panic Stop und Logic Pro sind erforderlich?",
+    "expected_paths": [
+      "studio/docs/MAC_HARDWARE_ACCEPTANCE.md"
+    ]
+  }
+]

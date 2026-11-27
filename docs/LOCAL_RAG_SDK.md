@@ -11,7 +11,7 @@ Status: experimental developer tooling. No dependency in the real-time engine or
 | docs | Allowed Markdown and capability manifest |
 | all | All allowlisted tracked files, including tools |
 
-Scopes overlap deliberately at the package manifest. Android Kotlin, XML and Gradle, iOS plist and project text are supported when tracked and allowlisted. Generated build directories, binaries, model files, private paths and symlinks are excluded; source is not scanned for secrets. Review source before sharing. The older schema-1 index without a scope is interpreted as all.
+Scopes overlap deliberately at the package manifest and the native HTTPS server source (`RemoteLoopbackPageServer.swift`), which embeds the actual browser controller UI. Android Kotlin, XML and Gradle, iOS plist and project text are supported when tracked and allowlisted. Generated build directories, binaries, model files, private paths and symlinks are excluded; source is not scanned for secrets. Review source before sharing. The older schema-1 index without a scope is interpreted as all.
 
 ## 2. Start without dependencies
 
@@ -87,7 +87,19 @@ For app work, retrieve the app corpus first and engine separately when a routing
 
 Retrieve each corpus at the same explicit revision. Keep the provenance on every result when merging context in your own SDK client. Do not infer release status from draft source or from retrieval rank. Compare queries in English, Turkish and German when evaluating model quality. A lexical Unicode tokenizer is not a translation system.
 
-## 6. Acceptance and follow-up
+## 6. Measure retrieval quality on the actual repository
+
+The local benchmark uses nine curated file-level targets across engine, app and docs, with English, Turkish and German queries. It verifies commit/source provenance once per scope, loads a selected local model once per run, and reports file hit rate, reciprocal rank, missing expected files, setup time and median query time. Top-k is a chunk limit; repeated files are deduplicated for file rank. These metrics are preliminary retrieval evidence, not answer accuracy or native acceptance.
+
+```sh
+python3 tools/rag_benchmark.py --repo . --expect-ref "$rev" --index "$work/engine.json" --scope engine
+python3 tools/rag_benchmark.py --repo . --expect-ref "$rev" --index "$work/engine-vector.json" --scope engine --mode semantic --model-dir "$model"
+python3 tools/rag_benchmark.py --repo . --expect-ref "$rev" --index "$work/app-vector.json" --scope app --mode hybrid --model-dir "$model"
+```
+
+The independent Linux RAG workflow runs the portable unit tests and builds/benchmarks actual commit-pinned lexical corpora. Missing target coverage fails; score reports are not a claim that a real model passed. No model download, GPU dependency, index upload or native build is required for this check. Compare semantic/hybrid results separately using an explicitly selected local model. Keep the benchmark revision and model fingerprint with any result.
+
+## 7. Acceptance and follow-up
 
 - Portable tests: `python3 tools/test_repo_index.py`; CI includes the suite.
 - Verify scoped source inclusion, old index compatibility, stale revision refusal, bounded context, malformed metadata and forged source checks.

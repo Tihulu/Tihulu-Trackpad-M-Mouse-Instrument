@@ -4,7 +4,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from repo_index import normalized, semantic_windows, fuse_rankings, in_scope, tokens
+from repo_index import normalized, semantic_windows, fuse_rankings, in_scope, tokens, prepare_search, search_prepared
+from types import SimpleNamespace
 
 TOOL = Path(__file__).resolve().with_name("repo_index.py")
 
@@ -169,6 +170,21 @@ class RepositoryIndexTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("Invalid source row", result.stderr)
 
+    def test_prepared_lexical_session_reuses_verified_rows(self):
+        self.build()
+        args = SimpleNamespace(repo=self.repo, expect_ref=self.commit, index=self.index,
+                               model_dir=None, hybrid=False, limit=5, query="sustain")
+        prepared = prepare_search(args)
+        first = search_prepared(prepared, args)
+        args.query = "cleanup"
+        second = search_prepared(prepared, args)
+        self.assertTrue(first["source_verified"] and second["source_verified"])
+        self.assertEqual(first["commit"], self.commit)
+        self.assertTrue(second["results"])
+        args.hybrid = True
+        with self.assertRaisesRegex(ValueError, "genuine local"):
+            search_prepared(prepared, args)
+
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
         document = json.loads(self.index.read_text())
@@ -223,6 +239,9 @@ class SemanticContractTests(unittest.TestCase):
         self.assertGreater(scores["b.swift"], scores["a.swift"])
         self.assertAlmostEqual(scores["b.swift"], 1/62+1/61)
         self.assertTrue(in_scope("studio/mobile-ios/Pad.swift", "app"))
+        browser = "studio/Sources/NoSpeakerMac/RemoteLoopbackPageServer.swift"
+        self.assertTrue(in_scope(browser, "app"))
+        self.assertTrue(in_scope(browser, "engine"))
         self.assertFalse(in_scope("studio/mobile-ios/Pad.swift", "engine"))
         self.assertIn("müzik", tokens("Müzik"))
 

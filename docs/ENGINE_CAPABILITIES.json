@@ -149,6 +149,8 @@
       "source": [
         "tools/repo_index.py",
         "tools/test_repo_index.py",
+        "tools/rag_benchmark.py",
+        "tools/rag_benchmark_cases.json",
         "docs/LOCAL_RAG_SDK.md"
       ],
       "cli": [

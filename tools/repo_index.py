@@ -54,6 +54,9 @@ def in_scope(path, scope):
             "studio/Sources/TihuluEngineCLI/", "studio/Sources/TihuluNativeCLI/",
             "studio/Tests/NoSpeakerCoreTests/", "studio/Tests/NoSpeakerMacTests/", "examples/"))
     if scope == "app":
+        # The browser UI is embedded in a native HTTPS server source.
+        if path == "studio/Sources/NoSpeakerMac/RemoteLoopbackPageServer.swift":
+            return True
         return path.startswith(("studio/Sources/NoSpeakerStudio/", "studio/mobile-ios/",
                                 "studio/mobile-android/", "studio/Resources/", "studio/scripts/",
                                 ".github/workflows/", "web/", "remote/")) or path in {
@@ -328,14 +331,13 @@ def verify(args):
     return verify_sources(args.repo, meta, rows)
 
 
-def search(args):
+def prepare_search(args):
+    """Load and verify once for a pinned, local retrieval session."""
     meta, rows = read_index(args.index)
     verified = False
     if args.repo:
         verify_sources(args.repo, meta, rows)
         verified = True
-    if not 1 <= args.limit <= 50 or not args.query.strip() or len(args.query) > 4096:
-        raise ValueError("Invalid query or result limit")
     if args.expect_ref:
         if not args.repo:
             raise ValueError("--expect-ref requires --repo")
@@ -345,13 +347,26 @@ def search(args):
             raise ValueError("Index commit differs from expected revision; rebuild")
     if args.hybrid and not args.model_dir:
         raise ValueError("Hybrid search requires a genuine local embedding model")
-    ranked = []
+    model = identity = None
     if args.model_dir:
         if meta["mode"] != "semantic":
             raise ValueError("This index has no embeddings; rebuild with a local model")
         model, identity = model_for(args.model_dir)
         if identity != meta["model_sha256"]:
             raise ValueError("Embedding model differs from index")
+    return meta, rows, verified, model, identity
+
+
+def search_prepared(prepared, args):
+    meta, rows, verified, model, identity = prepared
+    if not 1 <= args.limit <= 50 or not args.query.strip() or len(args.query) > 4096:
+        raise ValueError("Invalid query or result limit")
+    if args.hybrid and model is None:
+        raise ValueError("Hybrid search requires a genuine local embedding model")
+    if bool(args.model_dir) != (model is not None):
+        raise ValueError("Prepared model mode differs from query")
+    ranked = []
+    if model is not None:
         if len(model.tokenizer.encode(args.query, add_special_tokens=True, truncation=False)) > int(model.max_seq_length) - 16:
             raise ValueError("Query exceeds embedding model context")
         vectors = model.encode([args.query], show_progress_bar=False, convert_to_numpy=True)
@@ -378,6 +393,10 @@ def search(args):
     return {"commit": meta["commit"], "mode": mode, "scope": meta.get("scope", "all"), "source_verified": verified, "results": [
         {**{k: row[k] for k in ("path", "blob", "start", "end", "text")}, "score": round(score, 6)}
         for score, row in ranked[:args.limit]]}
+
+
+def search(args):
+    return search_prepared(prepare_search(args), args)
 
 
 def lexical_ranking(rows, query):
