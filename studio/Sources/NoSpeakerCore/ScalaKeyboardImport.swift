@@ -40,7 +40,7 @@ public enum ScalaKeyboardImport {
             let line = raw.prefix(while: { $0 != "!" }).trimmingCharacters(in: .whitespaces)
             return line.isEmpty ? nil : line
         }
-        guard rows.allSatisfy({ $0.utf8.count <= 256 && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }) else { throw Failure.malformed }
+        guard rows.allSatisfy({ $0.utf8.count <= 256 && !$0.unicodeScalars.contains(where: { ($0.value != 9 && CharacterSet.controlCharacters.contains($0)) || $0.value == 0xFEFF }) }) else { throw Failure.malformed }
         return rows
     }
     private static func integer(_ s: String) -> Int? {
@@ -63,10 +63,14 @@ public enum ScalaKeyboardImport {
     }
     public static func scale(_ text: String) throws -> Scale {
         let rows = try lines(text)
-        guard rows.count >= 2, let n = integer(rows[1]), rows[0].utf8.count <= 64 else { throw Failure.malformed }
+        guard rows.count >= 2, let n = integer(rows[1]), rows[0].utf8.count <= 64, !rows[0].unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw Failure.malformed }
         guard (2...128).contains(n) else { throw Failure.unsupported }
         guard rows.count == n + 2 else { throw Failure.malformed }
-        let pitches = rows.dropFirst(2).compactMap(cents)
+        // Only the first whitespace-separated token is a pitch; labels
+        // cannot change its ratio/cents interpretation.
+        let pitches = rows.dropFirst(2).compactMap { row in
+            row.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.flatMap { cents(String($0)) }
+        }
         guard pitches.count == n, pitches[0] > 0,
               zip(pitches, pitches.dropFirst()).allSatisfy({ $0 < $1 }) else { throw Failure.malformed }
         // Exact octave only; never silently normalize a non-octave period.
@@ -79,9 +83,10 @@ public enum ScalaKeyboardImport {
               let size = integer(rows[0]), let first = integer(rows[1]),
               let last = integer(rows[2]), let middle = integer(rows[3]),
               let reference = integer(rows[4]), let hz = decimal(rows[5]),
-              let period = integer(rows[6]) else { throw Failure.malformed }
+              let declaredPeriod = integer(rows[6]) else { throw Failure.malformed }
+        let period = declaredPeriod == 0 ? scale.degrees.count : declaredPeriod
         guard (0...128).contains(size), period == scale.degrees.count else { throw Failure.unsupported }
-        guard rows.count == 7 + size, (0...127).contains(first), (first...127).contains(last),
+        guard rows.count <= 7 + size, (0...127).contains(first), (first...127).contains(last),
               (0...127).contains(middle), (first...last).contains(reference),
               (1...20_000).contains(hz) else { throw Failure.malformed }
         var entries: [Int?] = []
@@ -90,6 +95,9 @@ public enum ScalaKeyboardImport {
             guard let degree = integer(row), degree < period else { throw Failure.unsupported }
             entries.append(degree)
         }
+        // Omitted trailing entries are unmapped; never shorten the pattern
+        // or fill a missing entry with the original MIDI note.
+        entries += Array(repeating: nil, count: size - entries.count)
         let map = Mapping(first: first, last: last, middle: middle, reference: reference,
                           referenceHz: hz, entries: entries, period: period)
         guard map.step(reference) != nil else { throw Failure.malformed }

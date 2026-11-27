@@ -54,7 +54,7 @@ private let kbm = "3\n48\n84\n60\n64\n432.0\n3\n0\nx\n2\n"
 
 @Test func scalaMappingRejectsInvalidReferenceBoundsAndUnsupportedPeriod() throws {
     let scale = try ScalaKeyboardImport.scale(just)
-    for text in [kbm, "0\n0\n127\n60\n69\n440\n0", "0\n80\n60\n60\n69\n440\n3",
+    for text in [kbm, "0\n0\n127\n60\n69\n440\n2", "0\n80\n60\n60\n69\n440\n3",
                  "0\n0\n128\n60\n69\n440\n3", "0\n0\n127\n60\n69\ninf\n3",
                  "1\n0\n127\n60\n60\n440\n3\n3", "1\n0\n127\n60\n60\n440\n3\nx",
                  "129\n0\n127\n60\n60\n440\n3"] {

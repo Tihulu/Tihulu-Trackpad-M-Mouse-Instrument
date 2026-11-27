@@ -66,3 +66,23 @@ ScalaKeyboardReadiness is a bounded, deterministic offline report of all 128 inp
 Relative evidence source audit at coordinator 7e85ad90f5e63b66d088553ff6d53cbddf2667fe: RelativeReferenceEvidence is host supplied (lastDelivered or receiverConfirmed, not manual), bound in SensorRouter to session/mapping/destination with 250 ms age, consumed once and watermark retained across ordinary release; missing/mismatched evidence or contention blocks clutch until release. Session removal/reset clears watermarks. Adapter still must verify physical endpoint, zone, channel, parameter, delivery and fresh post-cleanup evidence. A master bend reference is not a member base bend; never use one to restore the other. Existing fixed-bend members must remain immutable. No shared relative-control changes made by TUN-05.
 
 Local Linux Swift 6.2.1 minimal exact-source package: 22/22 PASS (18 predecessor tests plus 4 new methods). The initial readiness fixture assumed all 25 mapped keys through MIDI key 84 were representable, but the 3-degree octave map exceeded nominal MIDI pitch range at high keys; corrected the valid-range fixture to 48–72 (17 projected, 8 holes, 103 outside); separate wide-range negative fixture retains unavailablePitch checks. No production defect inferred from the fixture error. Exact repository CI, native UI and physical acceptance remain separate.
+
+## TUN-06: bounded Scala syntax compatibility and handoff
+
+Reference: https://www.huygens-fokker.org/scala/scl_format.html and https://www.huygens-fokker.org/scala/help.htm#mappings. The Scala format permits text after a pitch value, a formal octave field of zero meaning the final degree of the scale, and omitted trailing keyboard mapping entries. The bounded importer now accepts whitespace-separated pitch labels (space or tab), normalizes a zero formal octave to the existing scale degree count, and pads missing trailing mapping positions with nil up to the declared map size. It never uses labels to determine ratio versus cents, changes the repeating key pattern size, or treats holes as original MIDI. The profile retains source text unchanged. A missing reference key is still invalid; invalid numeric tokens, extra rows, non-octave scales, nonzero incompatible periods, out-of-range degrees and repeated/misplaced BOM in data fields remain rejected. This intentionally remains a subset: empty scale descriptions, unseparated pitch suffixes, arbitrary formal periods, negative mapped degrees, nonascending/non-octave pitches, larger ratios and alternate source encodings are not supported. No automatic normalization beyond the defined zero period.
+
+Reproduction using exact predecessor importer blob 96aecfd967966559d6bdfc202de05225cf8a51af: four new Swift Testing methods gave 1 PASS and 3 FAIL (labelled pitches, zero period, omitted holes); final isolated package 26/26 PASS. The previous negative fixture for period 0 is replaced with incompatible period 2 for a three-degree scale because 0 is now intentionally defined by the official format; positive equivalence and negative period cases remain tested. Preserve original failing log. No hardware or native UI claim.
+
+### Coordinator integration acceptance checklist (not executed here)
+
+| Gate | Evidence needed |
+| --- | --- |
+| Import action | Select SCL and KBM explicitly, validate before replacing draft, show bounded-format error; invalid import leaves current draft unchanged. |
+| Readiness display | Show all 128 input dispositions, reference pitch, quantization and per-member headroom; do not label theoretical values measured or claim available channels from coincident anchors. |
+| Active/draft separation | Imported profile remains draft while notes/pedal held; no retune or route mutation until separately reviewed neutral release and explicit rearm. |
+| Receiver contract | Confirm actual endpoint and separate channel/zone ownership, master/member bend ranges and receiver semantics; no automatic fallback. |
+| Original-note lane | Explicit legacy unlock only; imported holes remain silent; separate approved lane required if original note must be unaffected by global expression. |
+| Relative gesture | Verified provenance for master reference, no stale/foreign reference, no member-base overwrite, neutral master release; fixed-member allocator not repurposed. |
+| Physical acceptance | Verify real Logic/MPE/USB output frequency, simultaneous notes, sustain, loss, Stop/Panic and failed release retry; all NOT_RUN by this agent. |
+
+Coordinator owns UI and live integration. Independent UX and native/receiver acceptance remain separate. No new route, activation, port access, live allocator, shared protocol or timing changes.
