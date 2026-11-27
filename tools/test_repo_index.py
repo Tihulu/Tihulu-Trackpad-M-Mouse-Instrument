@@ -725,6 +725,41 @@ class RepositoryIndexTests(unittest.TestCase):
                     expected_digests=digests)
             run.assert_not_called()
 
+    def test_git_replacement_refs_cannot_relabel_committed_source(self):
+        original = self.commit
+        source = "studio/Sources/Router.swift"
+        self.git("add", source)
+        self.git("commit", "-qm", "replacement commit fixture")
+        replacement = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("replace", original, replacement)
+        try:
+            self.assertEqual(self.git("rev-parse", original + "^{commit}").stdout.strip(),
+                             original)
+            self.assertIn("dirty working tree marker", self.git("show", original + ":" + source).stdout)
+            self.build()
+            meta, rows = repo_index.read_index(self.index)
+            self.assertEqual(meta["commit"], original)
+            self.assertIn("Sustain ownership", rows[0]["text"])
+            self.assertNotIn("dirty working tree marker", self.index.read_text())
+            self.assertTrue(repo_index.verify_complete_lexical(self.repo, meta, rows)
+                            ["canonical_lexical_complete"])
+        finally:
+            self.git("replace", "-d", original)
+        old_blob = self.git("rev-parse", original + ":" + source).stdout.strip()
+        new_blob = self.git("rev-parse", replacement + ":" + source).stdout.strip()
+        self.git("replace", old_blob, new_blob)
+        try:
+            self.assertIn("dirty working tree marker", self.git("cat-file", "blob", old_blob).stdout)
+            self.assertTrue(repo_index.verify_complete_lexical(self.repo, meta, rows)
+                            ["canonical_lexical_complete"])
+            forged = [{"path": source, "blob": old_blob, "start": 1, "end": 1,
+                       "text": "dirty working tree marker"}]
+            with self.assertRaisesRegex(ValueError, "text/line mismatch"):
+                repo_index.verify_sources(self.repo, meta, forged)
+            self.assertIn("Sustain ownership", repo_index.git(self.repo, "cat-file", "blob", old_blob).decode())
+        finally:
+            self.git("replace", "-d", old_blob)
+
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
         document = json.loads(self.index.read_text())
