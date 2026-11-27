@@ -895,7 +895,11 @@ public final class MIDIHapticService: @unchecked Sendable {
     @discardableResult
     public func finishClosedRelativeHelperOutput() -> Bool {
         guard var state = relativeHelperOutput else {
-            return continuousOwners.relativeReservedTargets.isEmpty
+            return NativeHelperRelativeHostPolicy.permitsEmptyTerminalClosure(
+                reservationsEmpty: continuousOwners.relativeReservedTargets.isEmpty,
+                transportReady: relativeTransportReady,
+                shutdownCleanupPending: hasUnconfirmedOutgoingCleanup,
+                recoveryRequired: controllerRecoveryRequired)
         }
         var staged = continuousOwners
         let reserved = staged.relativeReservedTargets
