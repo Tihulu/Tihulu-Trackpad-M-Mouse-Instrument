@@ -278,3 +278,46 @@ private let groupContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5,
     #expect(group.stopReason == .memberFault(.trackpad,.expiredOrInvalid))
     #expect(group.phase == .idle && wire[1] == [[0x92,60,100],[0x82,60,0]] && wire[2] == nil)
 }
+
+@Test(arguments: [false, true])
+func customSurfaceGroupNeutralDeadlineDuringIdentityQuery(peerNeutral: Bool) throws {
+    var next: UInt32 = 1
+    var now: Int64 = 0
+    var stallTrackpad = false
+    var wire: [UInt32: [[UInt8]]] = [:]
+    let deadline = CustomSurfacePerformanceGroup.neutralTimeoutNS
+    let host = CustomSurfaceEndpointHost(backend: .init(create: { name in
+        defer { next += 1 }
+        return .init(endpoint: .init(handle: next, uniqueID: Int32(next), name: name), succeeded: true)
+    }, owns: { endpoint in
+        if endpoint.handle == 1 && stallTrackpad { now = deadline }
+        return true
+    }, send: { endpoint, bytes in
+        wire[endpoint.handle, default: []].append(bytes)
+        return true
+    }, dispose: { _ in true }))
+    let group = CustomSurfacePerformanceGroup(host: host)
+    guard case .started(let run) = group.start(try [groupMember(.trackpad), groupMember(.magicMouse)],
+                                               clock: { now }, admitsLive: { true }) else {
+        Issue.record("Group did not start"); return
+    }
+    group.frame(run: run, surface: .trackpad, contacts: [], sequence: 1, observedAt: 0)
+    if peerNeutral {
+        group.frame(run: run, surface: .magicMouse, contacts: [], sequence: 1, observedAt: 0)
+    }
+    now = deadline - 1
+    let observedAt = now
+    stallTrackpad = true
+    let result = group.frame(run: run, surface: .trackpad, contacts: [groupContact],
+                             sequence: 2, observedAt: observedAt)
+    if peerNeutral {
+        #expect(result?.phase == .live)
+        #expect(wire[1] == [[0x92, 60, 100]])
+        group.stop()
+        #expect(wire[1] == [[0x92, 60, 100], [0x82, 60, 0]])
+    } else {
+        #expect(result == nil)
+        #expect(group.stopReason == .neutralTimeout && group.phase == .idle)
+        #expect(wire.isEmpty)
+    }
+}
