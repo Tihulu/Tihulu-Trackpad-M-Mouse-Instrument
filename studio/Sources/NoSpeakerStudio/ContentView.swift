@@ -2237,6 +2237,7 @@ private struct MIDIHelperView: View {
 private struct RelativeUIFragment: View {
     @EnvironmentObject private var studio: StudioController
     @State private var relativeDraft = NativeHelperRelativeManualSettings()
+    @State private var relativeArmRefused = false
     let pitchBendEnabled: Bool
     let vibratoEnabled: Bool
     let expressionEnabled: Bool
@@ -2313,18 +2314,23 @@ private struct RelativeUIFragment: View {
                     Text(preflightMessage(failure))
                         .font(.caption).foregroundStyle(.orange)
                 }
+                if relativeArmRefused && !studio.relativeHelperArmed {
+                    Text("Last Relative enable attempt was refused. Check the running Helper, device connection and MIDI cleanup status.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
                 HStack {
                     Button("Enable Relative") {
-                        if !studio.enableRelativeMIDIHelper(settings: relativeDraft), studio.lastError == nil {
-                            studio.lastError = "Relative could not arm. Check the running Helper, device connection and MIDI cleanup status."
-                        }
+                        relativeArmRefused = !studio.enableRelativeMIDIHelper(settings: relativeDraft)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(!studio.midiHelperRunning || studio.relativeHelperArmed || preflightFailure != nil)
-                    Button(studio.relativeHelperArmed ? "Stop Relative / Helper" : "Stop Helper / retry cleanup") {
+                    Button(studio.relativeHelperArmed ? "Stop Relative / Helper" : "Stop Helper / retry scoped closure") {
+                        relativeArmRefused = false
                         studio.stopMIDIHelper()
                     }
                 }
+                Text("If MIDI cleanup remains unconfirmed, stop other instruments using the shared MIDI bridge before using Stop MIDI. If disconnected, use Reconnect. If manual recovery is required, reset DAW controllers and relaunch the app.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text("Receiver bend range must already be configured. Gain CC7/11 may retain their last value. Other start restrictions are checked by the Controller.")
                     .font(.caption).foregroundStyle(.secondary)
             }
