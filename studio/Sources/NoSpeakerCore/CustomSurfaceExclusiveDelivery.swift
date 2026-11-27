@@ -12,12 +12,15 @@ public final class CustomSurfaceExclusiveDelivery {
         public let retirement:Retirement?
         public let outstanding:Set<SensorDestination>
         public let hasNeutralHandshake:Bool
+        /// Successfully reconciled logical pad IDs; not receiver acknowledgement.
+        public let activePadIDs:Set<String>
         public var retired:Bool {retirement != nil}
         public var pendingCleanup:Set<SensorDestination> {retired ? outstanding:[]}
     }
     private let plan:CustomSurfaceMixedPlan
     private var projection:CustomSurfaceContactProjection
     private var ledger=PatchOutputLedger()
+    private var activePadIDs:Set<String>=[]
     private var notes:Set<SensorDestination>=[]
     private var sustain:Set<Int>=[]
     private var controls:[SensorDestination:LegacyContinuousOwners.Value]=[:]
@@ -54,7 +57,7 @@ public final class CustomSurfaceExclusiveDelivery {
     }
     private func report(_ count:Int)->Report {
         .init(accepted:count,retirement:retirement,outstanding:ledger.outstanding,
-              hasNeutralHandshake:projection.hasNeutralHandshake)
+              hasNeutralHandshake:projection.hasNeutralHandshake,activePadIDs:activePadIDs)
     }
     private func clean()->Int {
         var count=0
@@ -72,7 +75,7 @@ public final class CustomSurfaceExclusiveDelivery {
         guard retirement==nil else{return report(accepted)}
         retirement=reason
         _=projection.retire()
-        notes=[];sustain=[];controls=[:]
+        activePadIDs=[];notes=[];sustain=[];controls=[:]
         return report(accepted+clean())
     }
     private static func sorted(_ targets:Set<SensorDestination>)->[SensorDestination] {
@@ -133,6 +136,7 @@ public final class CustomSurfaceExclusiveDelivery {
         // Also fence silent ownership joins and synchronous sink latency.
         if let reason=liveFailure(observedAt:observedAt){return retire(reason,accepted:count)}
         notes=nextNotes;sustain=nextSustain;controls=nextControls
+        activePadIDs=Set(snapshot.intents.map(\.padID))
         return report(count)
     }
     public func poll()->Report {

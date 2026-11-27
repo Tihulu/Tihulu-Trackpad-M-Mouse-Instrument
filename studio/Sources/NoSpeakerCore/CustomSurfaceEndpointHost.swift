@@ -62,6 +62,7 @@ public final class CustomSurfaceEndpointHost {
         public let outstanding: Set<SensorDestination>
         public let retirement: CustomSurfaceExclusiveDelivery.Retirement?
         public let hasNeutralHandshake: Bool
+        public let activePadIDs: Set<String>
     }
     private final class Entry {
         let id: UUID
@@ -81,7 +82,8 @@ public final class CustomSurfaceEndpointHost {
         var status: Status {
             .init(id: id, name: endpoint.name, phase: phase, surface: surface,
                   outstanding: report?.outstanding ?? [], retirement: report?.retirement,
-                  hasNeutralHandshake: phase == .live && report?.hasNeutralHandshake == true)
+                  hasNeutralHandshake: phase == .live && report?.hasNeutralHandshake == true,
+                  activePadIDs: phase == .live ? (report?.activePadIDs ?? []) : [])
         }
         func validate(_ backend: Backend) -> Bool {
             guard phase != .identityLost else { return false }

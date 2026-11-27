@@ -279,3 +279,28 @@ private let sustain=SensorDestination(.sustain,channel:2)
     #expect(result.retirement == .admissionDenied && result.outstanding.isEmpty)
     #expect(wire==[.init(n60,value:100),.init(n60,value:0)])
 }
+
+@Test func customPadActivityPublishesOnlyReconciledLogicalPadsAndClearsOnRetirement() throws {
+    var now:Int64=0
+    var allowed=true
+    var fail=false
+    let d=CustomSurfaceExclusiveDelivery(plan:try deliveryPlan(),clock:{now},
+        admitsExclusiveEndpoint:{allowed},ownsCleanupEndpoint:{true},send:{_ in !fail})
+    #expect(d.frame([chord],sequence:1,observedAt:0).activePadIDs.isEmpty)
+    now=1
+    #expect(d.frame([],sequence:2,observedAt:1).activePadIDs.isEmpty)
+    now=2
+    #expect(d.frame([chord,note,pedal,control],sequence:3,observedAt:2).activePadIDs==Set(["chord","note","sustain","control"]))
+    now=3
+    #expect(d.frame([note],sequence:4,observedAt:3).activePadIDs==Set(["note"]))
+    allowed=false
+    #expect(d.poll().activePadIDs.isEmpty)
+    #expect(d.frame([chord],sequence:5,observedAt:4).activePadIDs.isEmpty)
+    allowed=true
+    let failed=CustomSurfaceExclusiveDelivery(plan:try deliveryPlan(),clock:{now},
+        admitsExclusiveEndpoint:{allowed},ownsCleanupEndpoint:{true},send:{_ in !fail})
+    _=failed.frame([],sequence:1,observedAt:now)
+    now=4;fail=true
+    let report=failed.frame([note],sequence:2,observedAt:now)
+    #expect(report.retired && report.activePadIDs.isEmpty && !report.outstanding.isEmpty)
+}
