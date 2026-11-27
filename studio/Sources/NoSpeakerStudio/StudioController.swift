@@ -1128,6 +1128,7 @@ final class StudioController: ObservableObject {
     private var touchClickFence = PhysicalClickSessionFence()
     @Published private(set) var sequenceRunning = false
     @Published private(set) var sequenceStatus = "Sequencer MIDI idle"
+    @Published private(set) var sequencePresentation = SequencerTakePresentation()
     private let sequenceMIDI = ChordMIDIOutput(name: "TIHULU Sequencer")
     private let tunedSequenceMIDI = ChordMIDIOutput(name:"TIHULU Tuned Sequencer MPE")
     private var sequenceUsesTuning = false
@@ -3554,14 +3555,35 @@ final class StudioController: ObservableObject {
         }
     }
 
+    func startFrozenSequence(output: MusicalOutput, makeTake: () throws -> FrozenSequencerPattern) {
+        do {
+            let take = try makeTake()
+            startLiveSequence(output: output, loop: take.loop, presentationTake: take, makeClip: { take.clip })
+        } catch { sequenceStatus = error.localizedDescription }
+    }
+
+    private func showSequenceProgress(_ result: SequencerScheduleProgress.Result) {
+        if case .position(let receipt) = result {
+            sequencePresentation.confirmPosition(token: receipt.token, receipt: receipt.sequence,
+                                                 cycle: receipt.cycle, tick: receipt.tick)
+        }
+    }
+
     /// One independent MIDI sequence, with optional exclusive haptic
     /// preview. MIDI-only does not require the Force Touch driver.
-    func startLiveSequence(output: MusicalOutput, loop: Bool, tuned:TunedMIDIClip? = nil, makeClip: () throws -> MIDIClip) {
+    func startLiveSequence(output: MusicalOutput, loop: Bool, tuned:TunedMIDIClip? = nil,
+                           presentationTake: FrozenSequencerPattern? = nil, makeClip: () throws -> MIDIClip) {
         guard !customPadBlocksOtherStarts else { sequenceStatus = "Stop Custom Pad first."; return }
         guard !groupGamepadsRunning else { sequenceStatus = "Stop group MIDI first."; return }
         guard output.sendsMIDI, !sequenceRunning, tuned == nil || !output.sendsHaptics else { return }
         do {
             let clip = try (tuned?.clip ?? makeClip()).validated()
+            if let take = presentationTake {
+                guard tuned == nil, take.loop == loop, try take.clip.validated() == clip else {
+                    sequenceStatus = "Sequencer take does not match playback."
+                    return
+                }
+            }
             let schedule = try MIDIClipSchedule(clip)
             let hapticEvents = output.sendsHaptics ? try clip.grooveHapticEvents() : []
             if output.sendsHaptics {
@@ -3577,6 +3599,20 @@ final class StudioController: ObservableObject {
                 sequenceStatus = "MIDI release failed. Reset the receiving DAW and retry Stop."
                 return
             }
+            if sequencePresentation.phase == .cleanupPending, let previous = sequencePresentation.token {
+                sequencePresentation.confirmCleanup(token: previous, succeeded: true)
+            }
+            guard sequencePresentation.phase == .idle else { return }
+            let token: UUID
+            var progress: SequencerScheduleProgress?
+            if let take = presentationTake {
+                guard let reserved = sequencePresentation.reserve(take) else { return }
+                token = reserved
+                progress = try SequencerScheduleProgress(token: token, take: take)
+            } else {
+                token = UUID()
+                progress = nil
+            }
             sequenceUsesTuning = tuned != nil
             let port = activeSequenceMIDI
             try port.open()
@@ -3587,7 +3623,10 @@ final class StudioController: ObservableObject {
                     return
                 }
             }
-            let token = UUID()
+            if presentationTake != nil, !sequencePresentation.confirmStarted(token: token) {
+                stopLiveSequence()
+                return
+            }
             sequenceToken = token
             sequenceRunning = true
             sequenceOwnsHaptics = output.sendsHaptics
@@ -3606,30 +3645,81 @@ final class StudioController: ObservableObject {
                     }
                 }
             }
-            sequenceTask = Task { [weak self] in
+            sequenceTask = Task { @MainActor [weak self] in
                 let clock = ContinuousClock()
                 func offset(_ tick: Int) -> Duration {
                     .nanoseconds(Int64((schedule.seconds(at: tick) * 1_000_000_000).rounded()))
                 }
                 let period = offset(schedule.length)
                 var origin = clock.now
+                // Use the existing scheduler clock and deadlines. Sample the
+                // active grid, with at least 1/30 s between sampled boundaries.
+                // Legacy and tuned playback do not acquire additional wakes.
+                let clockStride: Int = presentationTake.map { take in
+                    let step = MIDIClip.ppq / take.stepsPerBeat
+                    let sampleSteps = max(1, Int(ceil((1.0 / 30.0) / schedule.seconds(at: step))))
+                    return step * sampleSteps
+                } ?? 0
+                var nextClockTick = 0
+                // Keep an independent weak capture in the actor-isolated helper.
+                let waitForTick: @MainActor (Int) async throws -> Bool = { [weak self] target in
+                    let deadline = origin.advanced(by: offset(target))
+                    while clockStride > 0 && nextClockTick < target {
+                        guard !Task.isCancelled, self?.sequenceToken == token else { return false }
+                        if clock.now >= deadline { break }
+                        let wake = origin.advanced(by: offset(nextClockTick))
+                        if clock.now < wake { try await clock.sleep(until: wake) }
+                        guard !Task.isCancelled, self?.sequenceToken == token else { return false }
+                        let observed = clock.now
+                        if observed >= deadline { break }
+                        // Coalesce missed samples rather than replay old UI
+                        // positions. Compare rounded deadlines, not a new timebase.
+                        var low = nextClockTick / clockStride
+                        var high = (target - 1) / clockStride
+                        while low < high {
+                            let mid = low + (high - low + 1) / 2
+                            if origin.advanced(by: offset(mid * clockStride)) <= observed { low = mid }
+                            else { high = mid - 1 }
+                        }
+                        let tick = low * clockStride
+                        nextClockTick = tick + clockStride
+                        if let cycle = progress?.cycle,
+                           let receipt = progress?.confirmClock(token: token, cycle: cycle, tick: tick) {
+                            self?.showSequenceProgress(receipt)
+                        }
+                    }
+                    try await clock.sleep(until: deadline)
+                    return !Task.isCancelled && self?.sequenceToken == token
+                }
                 do {
                     repeat {
-                        for event in schedule.events {
-                            try await clock.sleep(until: origin.advanced(by: offset(event.tick)))
-                            guard !Task.isCancelled, let self, self.sequenceToken == token else { return }
+                        nextClockTick = 0
+                        for (index, event) in schedule.events.enumerated() {
+                            guard try await waitForTick(event.tick), let self, self.sequenceToken == token else { return }
                             // Skip notes whose entire gate has expired.
-                            if event.isNoteOn && clock.now >= origin.advanced(by: offset(event.endTick)) { continue }
+                            if event.isNoteOn && clock.now >= origin.advanced(by: offset(event.endTick)) {
+                                if let cycle = progress?.cycle,
+                                   let receipt = progress?.confirmEvent(token: token, cycle: cycle, index: index, outcome: .skippedExpiredOnset) {
+                                    self.showSequenceProgress(receipt)
+                                }
+                                continue
+                            }
                             let delivered = self.sequenceLedger.deliver(event.command, send: { port.send($0) })
                             guard delivered else {
                                 self.stopLiveSequence()
                                 self.lastError = "Sequencer MIDI delivery failed. Check the receiving DAW."
                                 return
                             }
+                            if let cycle = progress?.cycle,
+                               let receipt = progress?.confirmEvent(token: token, cycle: cycle, index: index, outcome: .processed) {
+                                self.showSequenceProgress(receipt)
+                            }
                         }
                         let boundary = origin.advanced(by: period)
-                        try await clock.sleep(until: boundary)
-                        guard !Task.isCancelled, self?.sequenceToken == token else { return }
+                        guard try await waitForTick(schedule.length), self?.sequenceToken == token else { return }
+                        if let cycle = progress?.cycle {
+                            _ = progress?.confirmBoundary(token: token, cycle: cycle)
+                        }
                         // When substantially stalled, never burst old cycles.
                         origin = clock.now >= boundary.advanced(by: period) ? clock.now : boundary
                     } while loop
@@ -3639,11 +3729,14 @@ final class StudioController: ObservableObject {
                 }
             }
         } catch {
+            if sequencePresentation.phase == .starting { stopLiveSequence() }
             sequenceStatus = error.localizedDescription
         }
     }
 
     func stopLiveSequence() {
+        let presentationToken = sequencePresentation.token
+        if let presentationToken { sequencePresentation.requestStop(token: presentationToken) }
         sequenceToken = nil
         sequenceTask?.cancel()
         sequenceTask = nil
@@ -3655,6 +3748,13 @@ final class StudioController: ObservableObject {
         sequenceOwnsHaptics = false
         sequenceRunning = false
         let released = releaseSequenceOutput()
+        if let presentationToken {
+            if sequencePresentation.phase == .cleanupPending {
+                sequencePresentation.confirmCleanup(token: presentationToken, succeeded: released)
+            } else {
+                sequencePresentation.stopped(token: presentationToken, cleanupConfirmed: released)
+            }
+        }
         sequenceStatus = released ? "Sequencer MIDI idle" : "MIDI release failed. Reset the receiving DAW and retry Stop."
     }
 
