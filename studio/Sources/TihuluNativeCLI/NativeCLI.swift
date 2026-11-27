@@ -195,18 +195,18 @@ struct TihuluNativeCLI {
                 try await withProcessStop(command:"midi monitor") {
                     try await NativeMIDIMonitor.observe(sourceName:args[2],seconds:seconds)
                 }
+                return
                 #else
                 throw CLIError("Native inspection requires macOS.")
                 #endif
-                return
             }
             if args == ["gamepad","sample","--confirm"] {
                 #if os(macOS)
                 try emit(Envelope(command:"gamepad sample",result:NativeEngineDiagnostics.sampleGamepads()))
+                return
                 #else
                 throw CLIError("Native inspection requires macOS.")
                 #endif
-                return
             }
             let named = args.last == "--names"
             let command = named ? Array(args.dropLast()) : args
