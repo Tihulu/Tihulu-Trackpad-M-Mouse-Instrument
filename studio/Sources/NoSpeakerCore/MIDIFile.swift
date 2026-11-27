@@ -119,10 +119,16 @@ public enum MIDIFileParser {
                     continue
                 }
 
+                guard (0x80...0xEF).contains(status) else {
+                    throw MIDIFileError.malformed("Unsupported MIDI status byte")
+                }
                 let command = status & 0xF0
                 let channel = Int(status & 0x0F)
                 let dataLength = (command == 0xC0 || command == 0xD0) ? 1 : 2
                 guard cursor + dataLength <= trackEnd else { throw MIDIFileError.truncated }
+                guard bytes[cursor..<(cursor + dataLength)].allSatisfy({ $0 < 0x80 }) else {
+                    throw MIDIFileError.malformed("Invalid MIDI channel data byte")
+                }
                 let d1 = Int(bytes[cursor]); cursor += 1
                 let d2 = dataLength == 2 ? Int(bytes[cursor]) : 0
                 if dataLength == 2 { cursor += 1 }
