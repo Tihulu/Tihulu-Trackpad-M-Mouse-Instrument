@@ -1144,8 +1144,30 @@ final class StudioController: ObservableObject {
         return released
     }
 
+    // All public MIDI start paths must honor the same explicit recovery gate
+    // as the sequencer panels. Do not retry cleanup as a side effect of Play.
+    private func admitSequenceMIDIStart() -> Bool {
+        let cleanup = sequenceCleanupPending || sequencePresentation.phase == .cleanupPending
+        guard sequencePresentation.permitsMIDIStart(running: sequenceRunning, cleanupPending: cleanup) else {
+            if cleanup {
+                sequenceStatus = "MIDI cleanup pending. Retry MIDI Stop before starting another take."
+            }
+            return false
+        }
+        return true
+    }
+
+    private func failActiveSequence(_ message: String) {
+        stopLiveSequence()
+        sequenceStatus = sequenceCleanupPending
+            ? message + " MIDI cleanup pending. Retry MIDI Stop."
+            : message
+        lastError = message
+    }
+
     func startTunedNoteSequence(output:MusicalOutput,loop:Bool,makeClip:() throws -> MIDIClip) {
-        guard !sequenceRunning,output.sendsMIDI,!output.sendsHaptics else {
+        guard admitSequenceMIDIStart() else { return }
+        guard output.sendsMIDI,!output.sendsHaptics else {
             sequenceStatus = "Choose MIDI-only output for tuned sequencer playback."
             return
         }
@@ -3559,6 +3581,7 @@ final class StudioController: ObservableObject {
     }
 
     func startFrozenSequence(output: MusicalOutput, makeTake: () throws -> FrozenSequencerPattern) {
+        guard admitSequenceMIDIStart() else { return }
         do {
             let take = try makeTake()
             startLiveSequence(output: output, loop: take.loop, presentationTake: take, makeClip: { take.clip })
@@ -3576,6 +3599,7 @@ final class StudioController: ObservableObject {
     /// preview. MIDI-only does not require the Force Touch driver.
     func startLiveSequence(output: MusicalOutput, loop: Bool, tuned:TunedMIDIClip? = nil,
                            presentationTake: FrozenSequencerPattern? = nil, makeClip: () throws -> MIDIClip) {
+        guard admitSequenceMIDIStart() else { return }
         guard !customPadBlocksOtherStarts else { sequenceStatus = "Stop Custom Pad first."; return }
         guard !groupGamepadsRunning else { sequenceStatus = "Stop group MIDI first."; return }
         guard output.sendsMIDI, !sequenceRunning, tuned == nil || !output.sendsHaptics else { return }
@@ -3602,9 +3626,6 @@ final class StudioController: ObservableObject {
                 sequenceStatus = "MIDI release failed. Reset the receiving DAW and retry Stop."
                 return
             }
-            if sequencePresentation.phase == .cleanupPending, let previous = sequencePresentation.token {
-                sequencePresentation.confirmCleanup(token: previous, succeeded: true)
-            }
             guard sequencePresentation.phase == .idle else { return }
             let token: UUID
             var progress: SequencerScheduleProgress?
@@ -3621,8 +3642,7 @@ final class StudioController: ObservableObject {
             try port.open()
             if let tuned {
                 guard sequenceSelectors.configure(tuned.setupCommands,send:{ port.send($0) }) else {
-                    stopLiveSequence()
-                    sequenceStatus = "MPE setup failed. Check DAW and retry Stop before playback."
+                    failActiveSequence("MPE setup failed. Check the receiving DAW.")
                     return
                 }
             }
@@ -3642,8 +3662,7 @@ final class StudioController: ObservableObject {
                     if let error {
                         Task { @MainActor in
                             guard let self, self.sequenceToken == token else { return }
-                            self.stopLiveSequence()
-                            self.lastError = error
+                            self.failActiveSequence(error)
                         }
                     }
                 }
@@ -3709,8 +3728,7 @@ final class StudioController: ObservableObject {
                             }
                             let delivered = self.sequenceLedger.deliver(event.command, send: { port.send($0) })
                             guard delivered else {
-                                self.stopLiveSequence()
-                                self.lastError = "Sequencer MIDI delivery failed. Check the receiving DAW."
+                                self.failActiveSequence("Sequencer MIDI delivery failed. Check the receiving DAW.")
                                 return
                             }
                             if let cycle = progress?.cycle,
@@ -3728,12 +3746,15 @@ final class StudioController: ObservableObject {
                     } while loop
                     self?.stopLiveSequence()
                 } catch {
-                    if self?.sequenceToken == token { self?.stopLiveSequence() }
+                    if self?.sequenceToken == token { self?.failActiveSequence(error.localizedDescription) }
                 }
             }
         } catch {
-            if sequencePresentation.phase == .starting { stopLiveSequence() }
-            sequenceStatus = error.localizedDescription
+            if sequencePresentation.phase == .starting {
+                failActiveSequence(error.localizedDescription)
+            } else {
+                sequenceStatus = error.localizedDescription
+            }
         }
     }
 
