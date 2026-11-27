@@ -16,12 +16,49 @@ public struct ScalaKeyboardProfile: Equatable, Sendable {
         let mapping: String
     }
 
-    public init(scaleText: String, mappingText: String) throws {
-        let scale = try ScalaKeyboardImport.scale(scaleText)
-        let mapping = try ScalaKeyboardImport.mapping(mappingText, scale: scale)
-        self.preview = try ScalaKeyboardPreview(scale: scale, mapping: mapping)
+    /// Stable, data-free diagnostics for a draft import screen. The caller
+    /// decides how to present these codes; no source text or path is logged.
+    public enum SourceStage: String, Equatable, Sendable { case scale, mapping, calibration }
+    public enum ValidationIssue: Error, Equatable, Sendable {
+        case invalidEnvelope, unsupportedVersion
+        case source(stage: SourceStage, reason: ScalaKeyboardImport.Failure)
+
+        fileprivate var legacyError: any Error {
+            switch self {
+            case .invalidEnvelope: return Failure.invalidEnvelope
+            case .unsupportedVersion: return Failure.unsupportedVersion
+            case .source(_, let reason): return reason
+            }
+        }
+    }
+
+    private init(scaleText: String, mappingText: String, preview: ScalaKeyboardPreview) {
         self.scaleText = scaleText
         self.mappingText = mappingText
+        self.preview = preview
+    }
+
+    /// Reuses the existing strict parsers and calibration; a successful
+    /// result is the validated immutable profile, not a second draft parse.
+    public static func inspectSources(scaleText: String, mappingText: String) -> Result<Self, ValidationIssue> {
+        var stage = SourceStage.scale
+        do {
+            let scale = try ScalaKeyboardImport.scale(scaleText)
+            stage = .mapping
+            let mapping = try ScalaKeyboardImport.mapping(mappingText, scale: scale)
+            stage = .calibration
+            let preview = try ScalaKeyboardPreview(scale: scale, mapping: mapping)
+            return .success(Self(scaleText: scaleText, mappingText: mappingText, preview: preview))
+        } catch {
+            return .failure(.source(stage: stage, reason: (error as? ScalaKeyboardImport.Failure) ?? .malformed))
+        }
+    }
+
+    public init(scaleText: String, mappingText: String) throws {
+        switch Self.inspectSources(scaleText: scaleText, mappingText: mappingText) {
+        case .success(let profile): self = profile
+        case .failure(let issue): throw issue.legacyError
+        }
     }
 
     public func exportData() throws -> Data {
@@ -84,12 +121,21 @@ public struct ScalaKeyboardProfile: Equatable, Sendable {
         return i == bytes.count && seen.count == 3
     }
 
-    public static func importData(_ data: Data) throws -> Self {
+    /// Envelope and source failures remain distinct. No automatic repair,
+    /// activation, or mutation of a previously valid profile occurs.
+    public static func inspectData(_ data: Data) -> Result<Self, ValidationIssue> {
         guard hasUniqueFields(data),
               let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else {
-            throw Failure.invalidEnvelope
+            return .failure(.invalidEnvelope)
         }
-        guard envelope.version == 1 else { throw Failure.unsupportedVersion }
-        return try Self(scaleText: envelope.scale, mappingText: envelope.mapping)
+        guard envelope.version == 1 else { return .failure(.unsupportedVersion) }
+        return inspectSources(scaleText: envelope.scale, mappingText: envelope.mapping)
+    }
+
+    public static func importData(_ data: Data) throws -> Self {
+        switch inspectData(data) {
+        case .success(let profile): return profile
+        case .failure(let issue): throw issue.legacyError
+        }
     }
 }
