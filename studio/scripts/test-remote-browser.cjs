@@ -1941,3 +1941,39 @@ test("MUSIC-WEB pedal accessible names identify mapped control and action",()=>{
   assert.equal(p.attributes["aria-pressed"],"true");
   assert.match(a.elements.pedalToggle3.attributes["aria-label"],/Sustain/i);
 });
+
+test("MUSIC-WEB chord cancellation rejects queued overlapping chord attacks",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:33554431},false);
+  a.elements.playMode.value="chord";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.chord1.emit("pointerdown",drumEvent(1));
+  a.elements.chord2.emit("pointerdown",drumEvent(2));
+  a.elements.chord2.emit("pointercancel",drumEvent(2));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB delivered chord cancellation retains shared note owners",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:33554431},false);
+  a.elements.playMode.value="chord";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.chord1.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.chord2.emit("pointerdown",drumEvent(2));a.step();a.ack();
+  a.elements.chord1.emit("pointercancel",drumEvent(1));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<5)|(1<<9)|(1<<12));a.ack();
+  assert.equal(a.socket.closed,undefined);
+});
+test("MUSIC-WEB focus loss cancels queued keyboard drum piano and held pedal attacks",()=>{
+  for(const family of ["drum","piano","pedal"]){
+    const a=setup();const key={key:" ",preventDefault(){}};
+    let b;
+    if(family==="drum"){a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));a.elements.drumEnable.emit("click");b=a.elements.drum0;}
+    else if(family==="piano"){a.elements.drumEnable.emit("click");a.elements.drum0.emit("pointerdown",drumEvent(1));a.elements.pianoEnable.emit("click");b=a.elements.piano0;}
+    else{setHoldPedal(a,4);a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));b=a.elements.pedalToggle4;}
+    b.emit("keydown",key);b.emit("blur");assert.equal(a.socket.closed,true,family);assert.equal(a.socket.frames.length,1);
+  }
+});
+test("MUSIC-WEB chord repeated keyboard event suppresses browser default",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:145},false);
+  a.elements.playMode.value="chord";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  let prevented=0;const key={key:" ",preventDefault(){prevented++;}};
+  a.elements.chord0.emit("keydown",key);a.elements.chord0.emit("keydown",{...key,repeat:true});
+  assert.equal(prevented,2);assert.equal(a.socket.frames.length,1);a.ack();
+  a.elements.chord0.emit("keyup",key);a.step();assert.equal(a.socket.frames.at(-1).mask,0);
+});

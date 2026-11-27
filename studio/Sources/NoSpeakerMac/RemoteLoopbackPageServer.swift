@@ -1588,6 +1588,13 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     chordOwners.set(owner,i);pianoChanged();
   }
   function chordUp(owner){if(chordOwners.delete(owner))pianoChanged();}
+  function cancelChord(owner){
+    const i=chordOwners.get(owner);
+    if(i!==undefined&&queuedAttack(pianoSent,pianoQueue,chordMask(i),e=>e.mask)){
+      close("Queued chord contact cancelled. Reconnect explicitly.");return;
+    }
+    chordUp(owner);
+  }
   function startPhrase(){
     if(currentView!=="play"||!["arp","seq"].includes(playMode)||!pianoEnabled||!admitted||releasingAll||pianoBusy())return;
     const bpm=Number(get("phraseTempo").value);
@@ -1675,6 +1682,13 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pianoOwners.set(owner,index);pianoChanged();
   }
   function pianoUp(owner){arpContacts.delete(owner);if(pianoOwners.delete(owner))pianoChanged();}
+  function cancelPiano(owner){
+    const index=pianoOwners.get(owner);
+    if(index!==undefined&&(strips&&owner.startsWith("p")||queuedAttack(pianoSent,pianoQueue,1<<index,e=>e.mask))){
+      close("Note contact cancelled. Reconnect explicitly.");return;
+    }
+    pianoUp(owner);
+  }
   function moveStrip(e){
     const owner="p"+e.pointerId;
     if(!strips||!admitted||!pianoEnabled||pianoEmergency||!pianoOwners.has(owner)||pianoOwners.get(owner)===25)return;
@@ -1758,6 +1772,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(pedalHoldOwners.get(owner)!==i)return;
     pedalHoldOwners.delete(owner);
     if(![...pedalHoldOwners.values()].includes(i))pedalSet(i,false);
+  }
+  function cancelHeldPedal(i,owner){
+    if(pedalHoldOwners.get(owner)===i&&queuedAttack(pedalSentMask,pedalQueue,1<<i,edge=>edge.snapshot.mask)){
+      close("Queued pedal contact cancelled. Reconnect explicitly.");return;
+    }
+    pedalHoldUp(i,owner);
   }
   function pedalMove(i){
     if(!pedalAdmitted(i)||!(pedalMask&(1<<i)))return;
@@ -2060,7 +2080,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     for(const name of ["pointercancel","lostpointercapture"])b.addEventListener(name,e=>cancelDrum("p"+e.pointerId));
     b.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();if(!e.repeat)drumDown("k"+index,index);}});
     b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();drumUp("k"+index);}});
-    b.addEventListener("blur",()=>drumUp("k"+index));
+    b.addEventListener("blur",()=>cancelDrum("k"+index));
   });
   pianoEnable.addEventListener("click",()=>{
     if(currentView!=="play"||releasingAll||!admitted||!caps?.piano)return;
@@ -2081,10 +2101,11 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   for(let i=0;i<4;i++){
     const b=get("chord"+i);
     b.addEventListener("pointerdown",e=>{if(e.button!==0||b.disabled)return;e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch{close("Chord pointer capture failed.");return;}chordDown("c"+i+":"+e.pointerId,i);});
-    for(const event of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(event,e=>chordUp("c"+i+":"+e.pointerId));
-    b.addEventListener("keydown",e=>{if((e.key===" "||e.key==="Enter")&&!e.repeat){e.preventDefault();chordDown("k"+i,i);}});
+    b.addEventListener("pointerup",e=>chordUp("c"+i+":"+e.pointerId));
+    for(const event of ["pointercancel","lostpointercapture"])b.addEventListener(event,e=>cancelChord("c"+i+":"+e.pointerId));
+    b.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();if(!e.repeat)chordDown("k"+i,i);}});
     b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();chordUp("k"+i);}});
-    b.addEventListener("blur",()=>chordUp("k"+i));
+    b.addEventListener("blur",()=>cancelChord("k"+i));
   }
   pianoStrips.addEventListener("click",()=>{
     if(currentView!=="play"||!admitted||releasingAll||pianoBusy()||!Boolean(caps?.piano&33554431))return;
@@ -2102,16 +2123,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     });
     if(i!==13)b.addEventListener("pointermove",moveStrip);
     b.addEventListener("pointerup",e=>pianoUp("p"+e.pointerId));
-    for(const name of ["pointercancel","lostpointercapture"])b.addEventListener(name,e=>{
-      const owner="p"+e.pointerId,index=pianoOwners.get(owner);
-      if(index!==undefined&&(strips||queuedAttack(pianoSent,pianoQueue,1<<index,e=>e.mask))){
-        close("Note contact cancelled. Reconnect explicitly.");return;
-      }
-      pianoUp(owner);
-    });
+    for(const name of ["pointercancel","lostpointercapture"])b.addEventListener(name,e=>cancelPiano("p"+e.pointerId));
     b.addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();if(!e.repeat)pianoDown("k"+i,index());}});
     b.addEventListener("keyup",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();pianoUp("k"+i);}});
-    b.addEventListener("blur",()=>pianoUp("k"+i));
+    b.addEventListener("blur",()=>cancelPiano("k"+i));
   });
   function togglePedals(){
     if(currentView!=="play"||releasingAll||!admitted||!caps?.pedals||cameraHelper||!modeAllows("pedals"))return;
@@ -2137,13 +2152,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       pedalHoldDown(i,"p"+e.pointerId);
     });
     b.addEventListener("pointerup",e=>pedalHoldUp(i,"p"+e.pointerId));
-    for(const event of ["pointercancel","lostpointercapture"])b.addEventListener(event,e=>{
-      const owner="p"+e.pointerId;
-      if(pedalHoldOwners.get(owner)===i&&queuedAttack(pedalSentMask,pedalQueue,1<<i,edge=>edge.snapshot.mask)){
-        close("Queued pedal contact cancelled. Reconnect explicitly.");return;
-      }
-      pedalHoldUp(i,owner);
-    });
+    for(const event of ["pointercancel","lostpointercapture"])b.addEventListener(event,e=>cancelHeldPedal(i,"p"+e.pointerId));
     b.addEventListener("keydown",e=>{
       if(isHoldPedal(i)&&(e.key===" "||e.key==="Enter")){
         e.preventDefault();if(!e.repeat)pedalHoldDown(i,"k"+i);
@@ -2152,7 +2161,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     b.addEventListener("keyup",e=>{
       if(isHoldPedal(i)&&(e.key===" "||e.key==="Enter")){e.preventDefault();pedalHoldUp(i,"k"+i);}
     });
-    b.addEventListener("blur",()=>pedalHoldUp(i,"k"+i));
+    b.addEventListener("blur",()=>cancelHeldPedal(i,"k"+i));
   });
   pedalSliders.forEach((b,i)=>b.addEventListener("input",()=>pedalMove(i)));
   pedalOutputs.forEach((dial,i)=>{
