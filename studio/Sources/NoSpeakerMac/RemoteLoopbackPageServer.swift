@@ -1066,7 +1066,7 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
     pointer=null;position=null;dot.hidden=true;touchQueue=touchSent?[{kind:"release",at:touchReleaseAt}]:[];
     resetStick();drumEnabled=false;drumOwners.clear();drumDesired=0;drumQueue=[];drumEmergency=drumSent!==0;
     resetPhrase();pianoEnabled=false;pianoOwners.clear();pianoVisited.clear();pianoDesired=0;pianoQueue=[];pianoEmergency=pianoSent!==0;
-    pedalEnabled=false;pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;
+    dialDrags.clear();pedalEnabled=false;pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;
     drumStatus.textContent=pianoStatus.textContent=pedalStatus.textContent="Off; releasing sent controls.";
     permissionEpoch++;window.removeEventListener("deviceorientation",orientation);
     if(mode==="arming"||mode==="active"||mode==="releasing"){mode="releasing";sample=null;motionStatus.textContent="Releasing…";}
