@@ -30,7 +30,13 @@ public enum ScalaKeyboardImport {
     }
     private static func lines(_ text: String) throws -> [String] {
         guard text.utf8.count <= 16_384 else { throw Failure.unsupported }
-        let rows = text.split(whereSeparator: \.isNewline).compactMap { raw -> String? in
+        // A single initial UTF-8 BOM is a text encoding marker, not a
+        // scale description or a keyboard-map field. The profile retains
+        // the unmodified source; only parsing removes the marker.
+        let source = text.unicodeScalars.first?.value == 0xFEFF
+            ? String(text.unicodeScalars.dropFirst()) : text
+        guard source.unicodeScalars.first?.value != 0xFEFF else { throw Failure.malformed }
+        let rows = source.split(whereSeparator: \.isNewline).compactMap { raw -> String? in
             let line = raw.prefix(while: { $0 != "!" }).trimmingCharacters(in: .whitespaces)
             return line.isEmpty ? nil : line
         }
