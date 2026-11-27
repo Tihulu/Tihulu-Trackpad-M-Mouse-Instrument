@@ -61,6 +61,7 @@ class AirPreviewActivity: ComponentActivity() {
     private var xyzSource:Camera2XYZSource?=null
     private var xyzRetiring:Camera2XYZSource?=null
     private var xyzVolume:XYZVolume?=null
+    private var xyzCaptureSelection:XYZSetupSelection?=null
     private var xyzTracking:MeasuredXYZTracking?=null
     private var xyzStage:XYZStageView?=null
     private var xyzKeys:MeasuredXYZKeys?=null
@@ -74,10 +75,11 @@ class AirPreviewActivity: ComponentActivity() {
     }
     private fun xyzAssigned():Boolean {
         val manifest=lan?.status()?.assignment?:return false
+        val selected=xyzSettings.selection?:return false
         return when {
-            xyzSettings.hybrid -> manifest.hybridLane(xyzSettings.mask)!=null
-            xyzSettings.pitchAxis!=null -> manifest.keysLane()!=null
-            else -> manifest.xyzLane(xyzSettings.mask)!=null
+            selected.hybrid -> manifest.hybridLane(selected.mask)!=null
+            selected.pitchAxis!=null -> manifest.keysLane()!=null
+            else -> manifest.xyzLane(selected.mask)!=null
         }
     }
     private var installRequested=false
@@ -239,8 +241,9 @@ class AirPreviewActivity: ComponentActivity() {
             xyzSource?.let { source ->
                 val volume=xyzVolume
                 val tracker=xyzTracking
+                val selected=xyzCaptureSelection
                 val failure=source.fault
-                if(failure!=null || displayDegrees()!=xyzRotation || volume==null || tracker==null){
+                if(failure!=null || displayDegrees()!=xyzRotation || volume==null || tracker==null || selected==null){
                     end(failure?:"Display rotation changed · restart required")
                 } else {
                     for(frame in source.drain()) {
@@ -248,7 +251,7 @@ class AirPreviewActivity: ComponentActivity() {
                         val pitch=xyzKeys?.output(frame.point?.takeIf {axes.xyz!=null}?.let {volume.axes(it,7)})
                         val output=when {
                             pitch==null -> axes
-                            xyzSettings.hybrid -> axes.copy(keys=pitch.keys)
+                            selected.hybrid -> axes.copy(keys=pitch.keys)
                             else -> pitch
                         }
                         if(!submit(output,frame.at,emptyMap(),false))break
@@ -500,7 +503,8 @@ class AirPreviewActivity: ComponentActivity() {
         for(v in listOf(address,invitation,fingerprint,qrButton,rootButton,helperPick))v.isEnabled=!b&&wantsPair
         touchOnly.isEnabled=!b&&wantsPair
         helperPick.visibility=if(!measuredMode&&!wantsTouchPair&&selectedMode()?.isHelper==true)View.VISIBLE else View.GONE
-        connectButton.isEnabled=!b&&wantsPair
+        connectButton.isEnabled=!b&&wantsPair&&(!measuredMode||
+            (measuredCamera()!=null&&xyzSettings.volume()!=null&&xyzSettings.selection!=null))
         disconnectButton.isEnabled=lan!=null
         pauseModeButton.isEnabled=lan?.status()?.phase==MobileLanSession.Phase.READY&&(pending||source!=null||depthSource!=null)
         start.text=if(wantsPair)"Start playing" else "Start sensors"
@@ -508,7 +512,7 @@ class AirPreviewActivity: ComponentActivity() {
             status.text="Mode incompatible with assignment: choose the same family or disconnect and pair again."
         start.isEnabled=!wantsTouchPair&&!busy&&!qrRequested&&validAirSetup()&&(depth||r?.admits(zoom)==true)&&(!wantsPair||pairedProjection()!=null)
         if(measuredMode){
-            val validVolume=xyzSettings.volume()!=null && xyzSettings.mask in 1..7
+            val validVolume=xyzSettings.volume()!=null && xyzSettings.selection!=null
             start.isEnabled=!busy&&!qrRequested&&measuredCamera()!=null&&validVolume&&(!wantsPair||xyzAssigned())
             xyzSettings.describeEligibility(when {
                 measuredCamera()==null -> "Select a rear camera with advertised DEPTH16."
@@ -548,7 +552,7 @@ class AirPreviewActivity: ComponentActivity() {
         if(!measuredMode&&!wantsTouchPair&&!validAirSetup()){
             connectionStatus.text="Choose a valid performing hand and depth range.";return
         }
-        if(measuredMode && (measuredCamera()==null || xyzSettings.volume()==null || xyzSettings.mask==0)){
+        if(measuredMode && (measuredCamera()==null || xyzSettings.volume()==null || xyzSettings.selection==null)){
             connectionStatus.text="Select a rear DEPTH16 camera, enabled axes and valid volume";return
         }
         val selection=when {
@@ -593,18 +597,19 @@ class AirPreviewActivity: ComponentActivity() {
         if(measuredMode){
             val camera=measuredCamera()?:return
             val volume=xyzSettings.volume()
-            val mask=xyzSettings.mask
-            if(volume==null || mask !in 1..7){status.text="Set valid bounds and enable at least one axis";return}
-            xyzKeys=xyzSettings.pitchAxis?.let { axis->
+            val selected=xyzSettings.selection
+            if(volume==null || selected==null){status.text="Set valid bounds, role and required axes";return}
+            val mask=selected.mask
+            xyzKeys=selected.pitchAxis?.let { axis->
                 val allowed=if(wantsPair)lan?.status()?.assignment?.piano?:0 else (1 shl 25)-1
                 if(allowed !in 1 until (1 shl 25)){end("No assigned keys");return}
                 MeasuredXYZKeys(allowed,axis)
             }
-            xyzRotation=displayDegrees();captureRotation=xyzRotation;xyzVolume=volume;xyzLastAt=null
+            xyzRotation=displayDegrees();captureRotation=xyzRotation;xyzVolume=volume;xyzCaptureSelection=selected;xyzLastAt=null
             xyzTracking=MeasuredXYZTracking(volume,mask)
             observationFence=if(wantsPair)PairedObservationFence(SystemClock.elapsedRealtimeNanos()) else null
             val measured=Camera2XYZSource(applicationContext,camera,xyzRotation,volume)
-            xyzSource=measured;xyzStage=XYZStageView(this,mask,xyzSettings.pitchAxis,xyzSettings.hybrid,::end)
+            xyzSource=measured;xyzStage=XYZStageView(this,mask,selected.pitchAxis,selected.hybrid,::end)
             measured.start();controls();return
         }
         if(!validAirSetup()){status.text="Choose a valid performing hand and depth range";return}
@@ -708,7 +713,7 @@ class AirPreviewActivity: ComponentActivity() {
         // No capture callback can renew the old session after this fence.
         beforeWorkerStop()
         xyzSource?.let {it.stop();xyzRetiring=it};xyzSource=null
-        xyzStage?.close();xyzStage=null;xyzKeys=null;xyzTracking=null;xyzVolume=null;xyzLastAt=null
+        xyzStage?.close();xyzStage=null;xyzKeys=null;xyzTracking=null;xyzVolume=null;xyzCaptureSelection=null;xyzLastAt=null
         source?.let {it.stop();retiring=it};source=null;projection=null
         depthSource?.let {it.stop();depthRetiring=it};depthSource=null
         showOutput(AirOutput())

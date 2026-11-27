@@ -22,7 +22,8 @@ import NoSpeakerCore
     @State private var xyzStage = false
     @State private var liveTouchID:UUID?
     @State private var liveTouchMask:Int?
-    @State private var askingPermission = false
+    @State private var pairingPermission = MobilePermissionRequestFence()
+    private var askingPermission: Bool { pairingPermission.pending }
     @State private var backend:MobileAirSensorSource.Backend = .rearCamera
     @State private var cameras:[MobileAirSensorSource.CameraChoice]=[]
     @State private var cameraID:String=""
@@ -373,11 +374,10 @@ import NoSpeakerCore
             connectionStatus = "Allow camera access in Settings to use the Air instrument."
             return false
         }
-        guard !askingPermission else { return false }
-        askingPermission = true
+        guard scenePhase == .active, let ticket = pairingPermission.begin() else { return false }
         Task { @MainActor in
             let granted = await MobileAirSensorSource.requestCameraPermission()
-            askingPermission = false
+            guard pairingPermission.finish(ticket), scenePhase == .active else { return }
             connectionStatus = granted ? "Camera permission granted. Continue when ready." : "Camera permission denied."
         }
         return false
@@ -442,6 +442,7 @@ import NoSpeakerCore
         status="Waiting for neutral ACK; choose a mode and restart."
     }
     private func stop(_ message:String) {
+        pairingPermission.retire()
         generation=UUID();pending=false;captureOrientation=nil
         liveTouchID=nil;liveTouchMask=nil
         invitation = ""
