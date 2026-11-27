@@ -51,6 +51,38 @@ def validate_reuse_matrix(repo, previous, identity):
             raise ValueError("Reuse matrix/index identity mismatch: " + scope)
     # build() still checks the embedding recipe, source rows and vector norms.
     # This is consistency checking, not authentication of untrusted vectors.
+    return commit
+
+
+def compare_lexical_profiles(repo, revision, index, scope, args, out, cases_file):
+    """Same corpus/cutoff for paired, explicitly separate development/evaluation."""
+    comparison = {}
+    for group in ("development", "evaluation"):
+        comparison[group] = {}
+        for profile in ("legacy", "file-first"):
+            report = rag_benchmark.run(SimpleNamespace(repo=repo, expect_ref=revision,
+                index=index, scope=scope, mode="lexical", k=args.k,
+                max_per_file=args.max_per_file, model_dir=None, cases_file=cases_file,
+                case_group=group, lexical_profile=profile))
+            if (report["commit"] != revision or report["scope"] != scope
+                    or report["mode"] != "lexical" or not report["source_verified"]
+                    or report["model_sha256"] is not None
+                    or report["lexical_profile"] != profile or report["case_group"] != group):
+                raise ValueError("Ranking comparison identity mismatch")
+            name = scope + "-lexical-" + group + "-" + profile + "-report.json"
+            with (out / name).open("x", encoding="utf-8") as stream:
+                json.dump(report, stream, ensure_ascii=True, allow_nan=False)
+            comparison[group][profile] = {key: report[key] for key in
+                ("cases", "cases_sha256", "file_hit_rate", "file_mrr",
+                 "missing_paths", "median_query_ms")}
+            comparison[group][profile]["report"] = name
+        if (comparison[group]["legacy"]["cases_sha256"]
+                != comparison[group]["file-first"]["cases_sha256"]):
+            raise ValueError("Ranking comparison dataset changed")
+    if (comparison["development"]["legacy"]["cases_sha256"]
+            == comparison["evaluation"]["legacy"]["cases_sha256"]):
+        raise ValueError("Development and evaluation datasets must differ")
+    return comparison
 
 
 def run(args):
@@ -66,9 +98,9 @@ def run(args):
     if reuse_dir and identity is None:
         raise ValueError("--reuse-dir requires an explicit local embedding model")
     previous = Path(reuse_dir).resolve(strict=True) if reuse_dir else None
-    if previous:
-        validate_reuse_matrix(repo, previous, identity)
+    previous_commit = validate_reuse_matrix(repo, previous, identity) if previous else None
     heldout_cases = getattr(args, "heldout_cases", None)
+    ranking_cases = getattr(args, "ranking_cases", None)
     out = Path(args.out_dir).resolve()
     # A matrix contains source text and possibly vectors. Never overwrite
     # previous evidence or create a public/shared directory by default.
@@ -88,7 +120,8 @@ def run(args):
                     scope=scope, out=index,
                     model_dir=args.model_dir if family == "semantic" else None,
                     reuse_index=(previous / (scope + "-semantic.json"))
-                    if previous and family == "semantic" else None))
+                    if previous and family == "semantic" else None,
+                    reuse_expected_commit=previous_commit if family == "semantic" else None))
                 if info["commit"] != revision or info["mode"] != family:
                     raise ValueError("Build identity mismatch")
                 built[family] = (index, info)
@@ -131,6 +164,12 @@ def run(args):
                 cell["heldout"]["report"] = heldout_name
                 if heldout["missing_paths"]:
                     cell["status"] = "COVERAGE_FAIL"
+            if ranking_cases and mode == "lexical":
+                cell["ranking_comparison"] = compare_lexical_profiles(
+                    repo, revision, index, scope, args, out, ranking_cases)
+                if any(result["missing_paths"] for group in cell["ranking_comparison"].values()
+                       for result in group.values()):
+                    cell["status"] = "COVERAGE_FAIL"
             cells.append(cell)
     if identity and repo_index.fingerprint(args.model_dir)[1] != identity:
         raise ValueError("Model changed during matrix")
@@ -157,6 +196,7 @@ def main():
     parser.add_argument("--curated-only", action="store_true", help="Reproduce the original nine-case benchmark only")
     args = parser.parse_args()
     args.heldout_cases = None if args.curated_only else rag_benchmark.HELDOUT_CASES
+    args.ranking_cases = None if args.curated_only else rag_benchmark.RANKING_CASES
     try:
         result = run(args)
         print(json.dumps(result, ensure_ascii=True, allow_nan=False))
