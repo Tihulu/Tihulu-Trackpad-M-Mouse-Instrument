@@ -5,10 +5,10 @@ package com.tihulu.mobile.air
 internal data class AirStageFeedback(val slots: List<Int>, val active: Set<Int>, val level: Double?) {
     companion object {
         fun from(mode: AirMode, authorized: Int, output: AirOutput): AirStageFeedback {
-            val keys = if (authorized in 0 until (1 shl 25))
-                (0..24).filter { authorized and (1 shl it) != 0 } else emptyList()
+            if (authorized !in 0 until (1 shl 25)) return AirStageFeedback(emptyList(), emptySet(), null)
+            val keys = (0..24).filter { authorized and (1 shl it) != 0 }
             val slots = when (mode) {
-                AirMode.STRINGS -> keys.take(3)
+                AirMode.STRINGS -> if (keys.size >= 3) keys.take(3) else emptyList()
                 AirMode.BEAM_KEYS -> keys.take(8)
                 else -> if (mode.isHelper) emptyList() else keys
             }
