@@ -6,6 +6,9 @@ import tempfile
 import unittest
 from repo_index import normalized, semantic_windows, fuse_rankings, in_scope, tokens, prepare_search, search_prepared, lexical_ranking, diverse_results
 from types import SimpleNamespace
+from unittest.mock import patch
+import rag_benchmark
+import rag_matrix
 
 TOOL = Path(__file__).resolve().with_name("repo_index.py")
 
@@ -169,6 +172,35 @@ class RepositoryIndexTests(unittest.TestCase):
         result = self.cli("verify", "--repo", self.repo, "--index", self.index)
         self.assertEqual(result.returncode, 2)
         self.assertIn("Invalid source row", result.stderr)
+
+    def test_matrix_pins_revision_and_reports_unrun_vector_cells(self):
+        cases = []
+        for scope, relative in (("engine","studio/Sources/NoSpeakerCore/Engine.swift"),
+                                ("app","studio/Sources/NoSpeakerStudio/View.swift"),
+                                ("docs","README.md")):
+            target = self.repo / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("MIDI sustain")
+            cases.append({"id":scope,"scope":scope,"language":"en","query":"MIDI",
+                          "expected_paths":[relative]})
+            self.git("add", relative)
+        self.git("commit", "-qm", "matrix fixture")
+        revision = self.git("rev-parse", "HEAD").stdout.strip()
+        fixture = self.root / "cases.json"
+        fixture.write_text(json.dumps(cases))
+        out = self.root / "matrix"
+        args = SimpleNamespace(repo=self.repo, ref=revision, out_dir=out,
+                               model_dir=None, k=8, max_per_file=3)
+        with patch.object(rag_benchmark, "CASES", fixture):
+            report = rag_matrix.run(args)
+            self.assertEqual(report["commit"], revision)
+            self.assertEqual(len(report["cells"]), 9)
+            self.assertEqual(sum(c["status"] == "MEASURED" for c in report["cells"]), 3)
+            self.assertEqual(sum(c["status"] == "NOT_RUN" for c in report["cells"]), 6)
+            self.assertEqual(json.loads((out / "matrix.json").read_text()), report)
+            self.assertEqual(len(list(out.glob("*-report.json"))), 3)
+            with self.assertRaises(FileExistsError):
+                rag_matrix.run(args)
 
     def test_prepared_lexical_session_reuses_verified_rows(self):
         self.build()

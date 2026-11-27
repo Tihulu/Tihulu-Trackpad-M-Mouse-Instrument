@@ -105,3 +105,16 @@ The independent Linux RAG workflow runs the portable unit tests and builds/bench
 - Verify scoped source inclusion, old index compatibility, stale revision refusal, bounded context, malformed metadata and forged source checks.
 - Hybrid ranking fixture tests ranking math only. A real local model and representative engine/app/docs benchmark are still required.
 - Future optional Studio help must be separated from the audio/MIDI path, offline-first, opt-in, cancellable and read-only by default. No native assistant has been added.
+
+## 8. Parallel development matrix
+
+At each coherent product checkpoint, run the independent lexical matrix in CI. On your trusted local workstation, optionally run all nine cells with an explicitly selected model. The runner pins one revision, creates a fresh private output directory, builds each lexical/vector corpus once per scope, and reuses the vector index for semantic and hybrid benchmarks. It emits a completed matrix.json plus individual reports and local indices. Without a model, six semantic/hybrid cells are explicitly NOT_RUN. MEASURED is not a quality pass; missing expected source coverage is COVERAGE_FAIL and returns nonzero. A failed partial directory has no completed summary. Never reuse an existing output path.
+
+```sh
+work=$(mktemp -d)
+python3 tools/rag_matrix.py --repo . --ref HEAD --out-dir "$work/lexical"
+# Optional: genuine local vectors, on a trusted machine only.
+python3 tools/rag_matrix.py --repo . --ref HEAD --out-dir "$work/full" --model-dir /absolute/path/to/trusted-model
+```
+
+Keep these private snapshots outside the checkout; do not publish indices, source chunks or vectors. Compare matrix.json at successive revisions; use the same model fingerprint, cases and ranking limits for comparisons. CI uses temporary lexical snapshots and deletes them after reporting, not persistent vector storage. A full run currently rebuilds the vector corpus; incremental cache reuse and independent held-out quality evaluation are not yet implemented. Keep product and RAG progress separate; continue development even if optional model execution is unavailable, but never label unrun vector cells as passed.

@@ -48,8 +48,5 @@ jobs:
           work="$(mktemp -d)"
           trap 'rm -rf "$work"' EXIT
           rev="$(git rev-parse HEAD)"
-          for scope in engine app docs; do
-            python3 tools/repo_index.py build --repo . --ref "$rev" --scope "$scope" --out "$work/$scope.json"
-            python3 tools/rag_benchmark.py --repo . --expect-ref "$rev" --index "$work/$scope.json" --scope "$scope"
-          done
+          python3 tools/rag_matrix.py --repo . --ref "$rev" --out-dir "$work/matrix"
           # No models, index artifacts, or source chunks are uploaded.
