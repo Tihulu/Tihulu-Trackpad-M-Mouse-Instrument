@@ -6,6 +6,8 @@ import NoSpeakerCore
 /// Local preview and explicitly paired Mac performance share one camera owner.
 @MainActor public struct MobileAirPreviewView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @State private var window = MobileCaptureWindow()
+    @State private var captureOrientation: MobileSensorOrientation?
     @State private var useMac = false
     @State private var touchOnlyPairing = false
     @State private var pageAddress = ""
@@ -262,6 +264,7 @@ import NoSpeakerCore
                 Text(useMac ? "Your hand position and depth are processed on this device. The Mac receives assigned keys or helper levels." : "Preview keys and helper levels on this device.").font(.caption).foregroundStyle(.secondary)
             }.padding().frame(maxWidth:640).frame(maxWidth:.infinity)
         }
+        .background(MobileCaptureSceneProbe(window: window).allowsHitTesting(false))
         .onAppear {if !busy {refreshCameras()}}
         .onChange(of:backend) {_,_ in if !busy {refreshCameras()}}
         .onChange(of:cameraID) {_,_ in if !busy {zoom=selectedCamera?.zoom.defaultFactor ?? 1}}
@@ -386,12 +389,17 @@ import NoSpeakerCore
         status="Assigned touch piano · press Arm to play"
     }
     private func start() {
-        guard !busy, !scanning, !askingPermission, !(useMac && touchOnlyPairing), valid, playableAssignment, scenePhase == .active else {return}
+        guard !busy, !scanning, !askingPermission, !(useMac && touchOnlyPairing), valid, playableAssignment, scenePhase == .active,
+              let pose = window.orientation else {return}
+        captureOrientation = pose
         let ticket=UUID();generation=ticket;pending=true;status="Waiting for camera permission"
         Task { @MainActor in
             let granted=await MobileAirSensorSource.requestCameraPermission()
             guard generation==ticket,pending else {return}
-            guard granted,scenePhase == .active else {stop("Camera permission denied or app inactive");return}
+            guard granted, MobileAirSensorSource.authorization == .authorized, scenePhase == .active,
+                  captureOrientation == window.orientation else {
+                stop("Camera permission or display orientation changed · restart required"); return
+            }
             let keys: Int
             if useMac {
                 guard let assigned = socket?.status().assignment else { stop("Mac assignment ended"); return }
@@ -406,7 +414,7 @@ import NoSpeakerCore
     }
     private func pauseInstrument() {
         guard let socket,assignment != nil else {return}
-        generation=UUID();pending=false
+        generation=UUID();pending=false;captureOrientation=nil
         assignment=nil
         socket.pauseForModeChange()
         if let source {source.stop();retiring=source}
@@ -414,7 +422,7 @@ import NoSpeakerCore
         status="Waiting for neutral ACK; choose a mode and restart."
     }
     private func stop(_ message:String) {
-        generation=UUID();pending=false
+        generation=UUID();pending=false;captureOrientation=nil
         liveTouchID=nil;liveTouchMask=nil
         invitation = ""
         if let socket { socket.stop(); connectionStatus = message }
@@ -426,6 +434,10 @@ import NoSpeakerCore
     }
     private func poll() {
         if retiring?.isStopped == true {retiring=nil}
+        if (pending || source != nil),
+           scenePhase != .active || captureOrientation == nil || captureOrientation != window.orientation {
+            stop("App inactive or display orientation changed · restart required"); return
+        }
         if (source != nil || (socket != nil && !touchOnlyPairing)),
            MobileAirSensorSource.authorization != .authorized {
             stop("Camera permission lost"); return
