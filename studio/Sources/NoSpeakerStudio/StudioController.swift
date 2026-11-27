@@ -4833,7 +4833,7 @@ final class StudioController: ObservableObject {
         guard let session = midiSessionEpoch.token else { return }
         do {
             let generation = engineGeneration
-            try midi.start(masterLevel: masterLevel,onFailure:{ [weak self] status in
+            let shutdown: @Sendable (String) -> Void = { [weak self] message in
                 Task { @MainActor in
                     guard let self, self.engineGeneration == generation,
                           self.midiSessionEpoch.accepts(session) else { return }
@@ -4844,8 +4844,15 @@ final class StudioController: ObservableObject {
                     if self.touchRunning && self.touchMIDIOutEnabled { self.stopTouch() }
                     if self.midiHelperRunning { self.stopMIDIHelper() }
                     self.stopMIDI()
-                    self.lastError = "MIDI output failed (OSStatus \(status)). Check the DAW; cleanup is not receiver-confirmed."
+                    self.lastError = self.midi?.requiresManualDAWReset == true
+                        ? message + " Reset the DAW controllers, then quit and relaunch this app."
+                        : message
                 }
+            }
+            try midi.start(masterLevel: masterLevel, onFailure: { status in
+                shutdown("MIDI output failed (OSStatus \(status)). Check the DAW; cleanup is not receiver-confirmed.")
+            }, onManualRecovery: {
+                shutdown("MIDI controller state is uncertain; output stopped. Cleanup is not receiver-confirmed.")
             }) { [weak self] message in
                 Task { @MainActor in
                     guard let self, self.engineGeneration == generation, self.midiRunning,
