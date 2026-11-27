@@ -2101,3 +2101,24 @@ test("MUSIC-WEB keyboard XY cannot steal pointer ownership or arm from setup",()
   e.navSetup.emit("click");assert.equal(p.attributes.tabindex,"-1");
   const n=a.socket.frames.length;p.emit("keydown",xyKey("Enter"));assert.equal(a.socket.frames.length,n);
 });
+
+test("MUSIC-WEB removed air stick target cannot arm or select; restoring permits explicit start",async()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:2},false),e=a.elements;
+  e.playMode.value="stick";e.playMode.emit("change");e.kitEdit.emit("click");e.kitRemove.emit("click");
+  assert.equal(e.airStickPad.children.length,0);assert.equal(e.airStickStart.disabled,true);
+  e.airStickPad.value="1";e.airStickPad.emit("change");assert.equal(e.airStickPad.value,"");
+  await e.airStickStart.emit("click");assert.equal(a.window.events.has("devicemotion"),false);
+  e.kitAdd.emit("click");assert.equal(e.airStickStart.disabled,false);
+  assert.equal(e.airStickPad.value,"1");assert.equal(a.socket.frames.length,0);
+});
+test("MUSIC-WEB overlapping kit elements expose deterministic selected state without striking",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,drums:3},false),e=a.elements;
+  e.playMode.value="stick";e.playMode.emit("change");e.kitEdit.emit("click");
+  e.kitPart.value="1";e.kitPart.emit("change");
+  e.kitX.value="50";e.kitX.emit("input");e.kitY.value="78";e.kitY.emit("input");
+  assert.equal(e.kitBoard.children[1].attributes["aria-pressed"],"true");
+  assert.equal(e.kitBoard.children[0].attributes["aria-pressed"],"false");
+  e.kitEdit.emit("click");e.airStickPad.value="1";e.airStickPad.emit("change");
+  assert.equal(e.kitBoard.children[1].attributes["data-selected"],"true");
+  assert.equal(a.socket.frames.length,0);
+});

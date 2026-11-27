@@ -135,7 +135,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #kitBoard{container-type:size;position:relative;height:clamp(250px,48vh,430px);border:1px solid #777;border-radius:12px;background:radial-gradient(#454545 1px,transparent 1px) 0 0/16px 16px;overflow:hidden}
 #kitBoard button{position:absolute;margin:0;transform:translate(-50%,-50%);width:clamp(44px,18%,100px);max-width:min(24cqw,30cqh);box-sizing:border-box;aspect-ratio:1;border-radius:50%;padding:3px;touch-action:none;font-size:clamp(10px,2.4vw,14px);background:#303947;border:2px solid #8e9bad;overflow-wrap:anywhere}
 #kitBoard button[data-cymbal=true]{background:#66512a;border-color:#d9b65c}
-#kitBoard button[data-selected=true]{outline:3px solid #79c9a5;outline-offset:2px}
+#kitBoard button[data-selected=true]{outline:3px solid #79c9a5;outline-offset:2px;z-index:2}#kitBoard button:focus-visible{outline:3px solid #e5a33b;outline-offset:2px;z-index:3}
 #kitBoard button[data-hit=true]{background:#286b50;border-color:#79c9a5}
 #kitEditor label{display:block}#kitEditor button{min-height:44px}
 #pianoBoard{position:relative;height:clamp(145px,30vh,240px);touch-action:none;user-select:none}
@@ -1379,15 +1379,16 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     return currentView==="play"&&playMode==="stick"&&admitted&&!releasingAll&&
       stickState!=="requesting"&&stickPulseAt===null&&!drumBusy();
   }
+  function visibleStrikePad(index){return within(index,0,7)&&has("drums",index)&&kit[index].visible;}
   function chooseStrikePad(index){
-    if(canChooseStrikePad()&&within(index,0,7)&&has("drums",index)&&index!==stickPad){
+    if(canChooseStrikePad()&&visibleStrikePad(index)&&index!==stickPad){
       stickPad=index;
       if(stickState!=="idle"){
         stickReady=false;
         get("airStickStatus").textContent="New pad selected. Hold still before the next strike.";
       }
     }
-    get("airStickPad").value=String(stickPad);
+    get("airStickPad").value=stickPad<0?"":String(stickPad);
     syncKit();
   }
   function syncKit(){
@@ -1408,7 +1409,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       b.hidden=!has("drums",i)||!kit[i].visible;b.disabled=!canChooseStrikePad();
       b.style.left=kit[i].x+"%";b.style.top=kit[i].y+"%";
       b.style.width="clamp(44px, "+kit[i].size+"%, "+Math.round(100*kit[i].size/18)+"px)";
-      b.setAttribute("data-selected",String(i===(kitEditing?kitPart:stickPad)));
+      const selected=i===(kitEditing?kitPart:stickPad);
+      b.setAttribute("data-selected",String(selected));b.setAttribute("aria-pressed",String(selected));
       b.setAttribute("data-hit",String(Boolean(drumDesired&(1<<i))));
       b.textContent=mappingLabels.get(9+i)||kitNames[i];b.setAttribute("aria-label",b.textContent+" · "+labelFor(9+i));
     });
@@ -1430,16 +1432,17 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     syncStick();
   }
   function syncStick(){
-    const select=get("airStickPad"),key=String(caps?.drums??0);
+    const select=get("airStickPad"),assigned=Array.from({length:8},(_,i)=>i).filter(visibleStrikePad),key=assigned.join(",");
     if(key!==stickKey){
-      select.replaceChildren(...Array.from({length:8},(_,i)=>i).filter(i=>has("drums",i)).map(i=>{
+      select.replaceChildren(...assigned.map(i=>{
         const o=document.createElement("option");o.value=String(i);o.textContent=labelFor(9+i);return o;
       }));
-      stickPad=Array.from({length:8},(_,i)=>i).find(i=>has("drums",i))??0;select.value=String(stickPad);stickKey=key;
+      if(!visibleStrikePad(stickPad))stickPad=assigned[0]??-1;
+      select.value=stickPad<0?"":String(stickPad);stickKey=key;
     }
     get("airStickSection").hidden=playMode!=="stick";
-    select.disabled=!canChooseStrikePad()||!caps?.drums;
-    get("airStickStart").disabled=playMode!=="stick"||!admitted||!caps?.drums||releasingAll||stickState!=="idle"||drumBusy();
+    select.disabled=!canChooseStrikePad()||!assigned.length;
+    get("airStickStart").disabled=playMode!=="stick"||!admitted||!visibleStrikePad(stickPad)||releasingAll||stickState!=="idle"||drumBusy();
     get("airStickStop").disabled=stickState==="idle";syncKit();
   }
   function resetStick(message="Off."){
@@ -1447,7 +1450,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     get("airStickStatus").textContent=message;syncInertialListener();
   }
   async function startStick(){
-    if(playMode!=="stick"||currentView!=="play"||!admitted||releasingAll||stickState!=="idle"||drumBusy()||!has("drums",stickPad))return;
+    if(playMode!=="stick"||currentView!=="play"||!admitted||releasingAll||stickState!=="idle"||drumBusy()||!visibleStrikePad(stickPad))return;
     if(!window.isSecureContext||typeof window.DeviceMotionEvent==="undefined"){get("airStickStatus").textContent="DeviceMotion unavailable.";return;}
     if(!requestWorkload("drums"))return;
     kitEditing=false;kitDrag=null;const epoch=++stickEpoch;stickState="requesting";drumEnabled=true;syncControls();
@@ -1473,7 +1476,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(magnitude<=3){stickReady=true;stickState="active";get("airStickStatus").textContent="Ready · make a small controlled strike.";return;}
     if(stickState!=="active"||!stickReady||magnitude<8)return;
     stickReady=false;
-    if(now-stickLast<150||pending||drumBusy()||releasingAll)return;
+    if(now-stickLast<150||pending||drumBusy()||releasingAll||!visibleStrikePad(stickPad))return;
     stickLast=now;stickPulseAt=now;drumDown("air-stick",stickPad);
   }
   function stopStick(){if(playMode!=="stick"||stickState==="idle")return;resetStick();drumEnabled=false;releaseDrums();}
