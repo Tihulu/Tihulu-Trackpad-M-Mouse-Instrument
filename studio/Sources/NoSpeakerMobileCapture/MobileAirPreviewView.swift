@@ -89,8 +89,10 @@ import NoSpeakerCore
             return "Position source · Relative is a proposed host response; not negotiated on mobile."
         case .speed:
             return "Speed source · keep absolute until a separate relative-speed contract is reviewed."
-        case .pinchKeys, .chords, .strings, .pinchHelper, .toggleHelper, .depthKeys:
-            return "Discrete notes or gates · no relative displacement."
+        case .pinchHelper, .toggleHelper:
+            return "Binary gate · use Absolute response on the Mac. The current assignment does not report its response mode."
+        case .pinchKeys, .chords, .strings, .depthKeys:
+            return "Discrete notes · no relative displacement."
         }
     }
     private var modeGuide: String {
@@ -265,14 +267,9 @@ import NoSpeakerCore
                 } else {Text("Helper released").foregroundStyle(.secondary)}
                 let active=(0..<25).filter { output.keys & (1<<$0) != 0 }
                 Text(active.isEmpty ? "All preview keys released":"Logical keys: "+active.map {String($0+1)}.joined(separator:", "))
-                HStack {
-                    Button(useMac ? "Start playing" : "Start sensors", action: start).buttonStyle(.borderedProminent)
-                        .disabled(busy || scanning || askingPermission || !valid || !playableAssignment || scenePhase != .active)
-                    Button("Stop / release") { stop("Stopped") }.buttonStyle(.bordered).disabled(!busy)
-                    if useMac,socket != nil {
-                        Button("Pause / change instrument",action:pauseInstrument)
-                            .buttonStyle(.bordered).disabled(assignment == nil || (source == nil && !pending))
-                    }
+                ViewThatFits(in: .horizontal) {
+                    HStack { stageActions }
+                    VStack(alignment: .leading, spacing: 10) { stageActions }
                 }
                 Text(useMac ? "Your hand position and depth are processed on this device. The Mac receives assigned keys or helper levels." : "Preview keys and helper levels on this device.").font(.caption).foregroundStyle(.secondary)
             }.padding().frame(maxWidth:640).frame(maxWidth:.infinity)
@@ -313,6 +310,15 @@ import NoSpeakerCore
             if phase != .active { scanning = false; touchPreview=false; stop("App inactive · stopped") }
         }
         .onDisappear {stop("View closed")}
+    }
+    @ViewBuilder private var stageActions: some View {
+        Button(useMac ? "Start playing" : "Start sensors", action: start).buttonStyle(.borderedProminent)
+            .disabled(busy || scanning || askingPermission || !valid || !playableAssignment || scenePhase != .active)
+        Button("Stop / release") { stop("Stopped") }.buttonStyle(.bordered).disabled(!busy)
+        if useMac, socket != nil {
+            Button("Pause / change instrument",action:pauseInstrument)
+                .buttonStyle(.bordered).disabled(assignment == nil || (source == nil && !pending))
+        }
     }
     private var pairingPanel: some View {
         VStack(alignment: .leading, spacing: 10) {

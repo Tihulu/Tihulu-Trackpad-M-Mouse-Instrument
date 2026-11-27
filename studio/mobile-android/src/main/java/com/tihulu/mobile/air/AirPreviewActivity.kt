@@ -458,7 +458,11 @@ class AirPreviewActivity: ComponentActivity() {
         }
         modeGuide.visibility=if(measuredMode||wantsTouchPair)View.GONE else View.VISIBLE
         responseGuide.visibility=if(measuredMode||wantsTouchPair)View.GONE else View.VISIBLE
-        responseGuide.text=selectedMode()?.let { AirRelativeEligibility.forMode(it).explanation } ?: "Choose a source."
+        responseGuide.text=when(val mode=selectedMode()) {
+            AirMode.PINCH_HELPER, AirMode.TOGGLE_HELPER -> "Binary gate · use Absolute response on the Mac. The current assignment does not report its response mode."
+            null -> "Choose a source."
+            else -> AirRelativeEligibility.forMode(mode).explanation
+        }
         feedback.visibility=if(measuredMode||wantsTouchPair||touchStage)View.GONE else View.VISIBLE
         if(!busy&&!measuredMode&&!wantsTouchPair&&!touchStage)showOutput(AirOutput())
         modeGuide.text=when {
