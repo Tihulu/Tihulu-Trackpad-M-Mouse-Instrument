@@ -1736,26 +1736,61 @@ private struct SequencerTakeStatus: View {
     let kind: FrozenSequencerPattern.Kind
 
     var body: some View {
-        if studio.sequencePresentation.take?.kind == kind {
+        let presentation = studio.sequencePresentation
+        if let take = presentation.take {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    if studio.sequencePresentation.phase == .cleanupPending {
-                        Text("MIDI cleanup pending")
-                    } else if let position = studio.sequencePresentation.position {
-                        Text("Active MIDI take · last confirmed step \(position.gridStep + 1)")
-                    } else {
-                        Text("Active MIDI take · awaiting confirmed event")
+                    let name = take.kind == .notes ? "Note" : "Drum"
+                    switch presentation.phase {
+                    case .idle:
+                        EmptyView()
+                    case .starting:
+                        Text("\(name) MIDI take · starting")
+                    case .playing:
+                        if let position = presentation.position {
+                            Text("\(name) MIDI take · last confirmed step \(position.gridStep + 1)")
+                        } else {
+                            Text("\(name) MIDI take · awaiting confirmed position")
+                        }
+                    case .stopping:
+                        Text("\(name) MIDI take · stopping")
+                    case .cleanupPending:
+                        Text("\(name) MIDI cleanup pending")
                     }
-                    Text("Grid edits affect the next take.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if take.kind == kind {
+                        Text("Grid marker shows transport position, not sounding notes. Edits affect the next take.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("The other sequencer owns this take. Stop it here before starting another.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
-                Button(studio.sequencePresentation.phase == .cleanupPending ? "Retry MIDI Stop" : "Stop Pattern") {
+                Button(presentation.phase == .cleanupPending ? "Retry MIDI Stop" : "Stop Pattern") {
                     studio.stopLiveSequence()
                 }
+                .disabled(presentation.phase == .stopping)
             }
             .font(.callout)
         }
+    }
+}
+
+/// Mark only a scheduler-confirmed subdivision, independently of draft note state.
+private struct SequencerGridMarker: ViewModifier {
+    let current: Bool
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if current {
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(.primary, lineWidth: 2)
+                    .padding(1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .accessibilityHint(current ? "Last confirmed transport step; draft edits may differ from playback." : "")
     }
 }
 
@@ -1811,6 +1846,7 @@ private struct NoteSequencerView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(notes[index] == nil ? .gray.opacity(0.32) : .accentColor)
+                    .modifier(SequencerGridMarker(current: studio.sequencePresentation.confirmedGridStep(for: .notes) == index))
                     .contextMenu {
                         Button("Set selected note") { notes[index] = selectedMIDI }
                         Button("Transpose +12") { if let n = notes[index] { notes[index] = min(127, n + 12) } }
@@ -1902,6 +1938,7 @@ private struct DrumSequencerView: View {
                                     .tint(enabled ? .accentColor : .gray.opacity(beat.isMultiple(of: 2) ? 0.35 : 0.22))
                                     .accessibilityLabel("\(label(voice)), step \(step + 1)")
                                     .accessibilityValue(enabled ? "On" : "Off")
+                                    .modifier(SequencerGridMarker(current: studio.sequencePresentation.confirmedGridStep(for: .drums) == step))
                                 }
                             }.frame(maxWidth: .infinity)
                         }
