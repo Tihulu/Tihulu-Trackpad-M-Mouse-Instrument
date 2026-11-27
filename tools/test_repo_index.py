@@ -820,6 +820,57 @@ class RepositoryIndexTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "development cases only"):
             rag_benchmark.run(args)
 
+    def test_domain_aliases_preserve_contextual_and_original_weights(self):
+        query = "Sürekli kontrol sahipliği öncelik geri yükleme"
+        old = repo_index.query_weights(query, "multilingual-context")
+        new = repo_index.query_weights(query, "multilingual-domain")
+        self.assertEqual(repo_index.query_weights(query, "multilingual-context"), old)
+        for term, weight in old.items():
+            self.assertEqual(new[term], weight)
+        for alias in ("continuous", "control", "controller", "owner", "ownership",
+                      "priority", "restore", "restores"):
+            self.assertEqual(new[alias], repo_index.QUERY_ALIAS_WEIGHT)
+        self.assertNotIn("feedback", repo_index.query_weights("geri", "multilingual-domain"))
+        self.assertEqual(repo_index.query_weights("priority öncelik", "multilingual-domain")
+                         ["priority"], 1.0)
+        self.assertEqual(repo_index.query_weights("gibt frei", "multilingual-domain")
+                         ["release"], repo_index.QUERY_ALIAS_WEIGHT)
+        self.assertNotIn("release", repo_index.query_weights("gibt", "multilingual-domain"))
+        with patch.object(repo_index, "DOMAIN_ALIASES", {"test": tuple("a"+str(i) for i in range(100))}):
+            self.assertEqual(len(repo_index.query_weights("test", "multilingual-domain")),
+                             1 + repo_index.MAX_QUERY_ALIASES)
+
+    def test_domain_profile_retrieves_technical_terms_and_matches_cache(self):
+        self.build()
+        args = SimpleNamespace(repo=self.repo, expect_ref=self.commit, index=self.index,
+                               model_dir=None, hybrid=False, limit=5,
+                               query="sahipliği", lexical_profile="multilingual-domain")
+        prepared = prepare_search(args)
+        result = search_prepared(prepared, args)
+        self.assertTrue(result["results"])
+        self.assertTrue(result["source_verified"])
+        cache = repo_index.prepare_lexical(prepared)
+        self.assertEqual(search_prepared(prepared, args, lexical_cache=cache), result)
+        args.lexical_profile = "multilingual-context"
+        self.assertEqual(search_prepared(prepared, args)["results"], [])
+        args.lexical_profile = "multilingual-domain"
+        report = self.cli("context", "--repo", self.repo, "--expect-ref", self.commit,
+                          "--index", self.index, "--query", "sahipliği",
+                          "--lexical-profile", "multilingual-domain")
+        self.assertEqual(report.returncode, 0, report.stderr)
+        self.assertEqual(json.loads(report.stdout)["lexical_profile"], "multilingual-domain")
+
+    def test_domain_fixture_is_separate_and_balanced(self):
+        dev, _ = rag_benchmark.load_cases(rag_benchmark.DOMAIN_CASES, "development")
+        evaluation, _ = rag_benchmark.load_cases(rag_benchmark.DOMAIN_CASES, "evaluation")
+        digests = rag_benchmark.validate_case_groups(rag_benchmark.DOMAIN_CASES)
+        self.assertNotEqual(digests["development"], digests["evaluation"])
+        for cases in (dev, evaluation):
+            self.assertEqual(Counter(case["scope"] for case in cases),
+                             {"engine": 2, "app": 2, "docs": 2})
+        for scope in ("engine", "app", "docs"):
+            self.assertFalse(in_scope("tools/rag_domain_cases.json", scope))
+
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
         document = json.loads(self.index.read_text())
