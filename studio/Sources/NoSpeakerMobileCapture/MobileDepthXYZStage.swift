@@ -139,9 +139,18 @@ struct MobileCaptureSceneProbe: UIViewRepresentable {
                 Text(String(format: "Palm landmark confidence %.0f%%", palm.confidence*100)).font(.caption)
             }
             Text(axesDescription).font(.caption)
+            Text(responseGuide).font(.caption).foregroundStyle(.secondary)
             if !paired { Text("Local preview only · no MIDI or audio output").font(.caption) }
             if instrument { Text(activeKey.map { "Logical key " + String($0 + 1) } ?? "No active key") }
         }
+    }
+    private var responseGuide: String {
+        if !usesControls { return "Discrete pitch zones · no relative note displacement." }
+        let active = ["X", "Y", "Z"].enumerated().compactMap { index, axis in
+            axes & (1 << index) == 0 ? nil : axis
+        }
+        let lanes = active.isEmpty ? "No helper axes enabled." : active.joined(separator: ", ") + " send normalized positions; Relative is not negotiated on mobile."
+        return instrument ? lanes + " Pitch zones stay discrete." : lanes
     }
     private var axesDescription: String {
         var assignments = [String]()
@@ -154,6 +163,7 @@ struct MobileCaptureSceneProbe: UIViewRepresentable {
     private var setup: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Move one palm right for X, up for Y, and away from the rear camera for Z.")
+            Text(responseGuide).font(.caption).foregroundStyle(.secondary)
             Picker("Role", selection: $role) {
                 ForEach(Role.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented).disabled(locked)

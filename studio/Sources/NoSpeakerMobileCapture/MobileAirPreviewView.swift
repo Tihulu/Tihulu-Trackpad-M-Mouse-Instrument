@@ -82,6 +82,17 @@ import NoSpeakerCore
         return nil
     }
     private var valid: Bool { sensorIssue(for: mode) == nil }
+    // Source eligibility is not a negotiated host capability. Never convert here.
+    private var responseGuide: String {
+        switch mode {
+        case .horizontal, .vertical, .aperture, .depthControl:
+            return "Position source · Relative is a proposed host response; not negotiated on mobile."
+        case .speed:
+            return "Speed source · keep absolute until a separate relative-speed contract is reviewed."
+        case .pinchKeys, .chords, .strings, .pinchHelper, .toggleHelper, .depthKeys:
+            return "Discrete notes or gates · no relative displacement."
+        }
+    }
     private var modeGuide: String {
         switch mode {
         case .pinchKeys: return "Move horizontally to choose a logical key; open then pinch to hold it. Open to release."
@@ -214,6 +225,7 @@ import NoSpeakerCore
                         Text(issue).foregroundStyle(.orange)
                     }
                     Text(modeGuide).font(.caption).foregroundStyle(.secondary)
+                    Text(responseGuide).font(.caption).foregroundStyle(.secondary)
                 }
                 GeometryReader {geo in
                     ZStack {
@@ -249,7 +261,7 @@ import NoSpeakerCore
                 }
                 if let level=output.level {
                     ProgressView(value:level).accessibilityLabel("Projected helper level")
-                    Text("Helper: \(Int(level*100))%")
+                    Text("Projected helper: \(Int(level*100))% · not receiver feedback")
                 } else {Text("Helper released").foregroundStyle(.secondary)}
                 let active=(0..<25).filter { output.keys & (1<<$0) != 0 }
                 Text(active.isEmpty ? "All preview keys released":"Logical keys: "+active.map {String($0+1)}.joined(separator:", "))
@@ -468,7 +480,7 @@ import NoSpeakerCore
                                         now: MobileAirCaptureFrame.nanoseconds(now),
                                         freshness: MobileAirSendGate.freshNS) {
                     sample=observation?.sample?.oriented(musicalOrientation,mirrorX:mirror)
-                    depth=sample == nil ? nil : observation?.depth
+                    depth=sample == nil ? nil : observation?.depth.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
                 } else {sample=nil;depth=nil}
             }
         }

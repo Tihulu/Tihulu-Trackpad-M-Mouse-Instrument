@@ -22,6 +22,7 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
     private val name=EditText(context)
     private val message=TextView(context)
     private val eligibility=TextView(context)
+    private val response=TextView(context)
     var selectionChanged: (() -> Unit)? = null
     val mask:Int get()=if(pitchAxis!=null&&!hybrid)7 else enabledAxes.foldIndexed(0){i,m,box->if(box.isChecked)m or (1 shl i) else m}
     fun volume():XYZVolume? {
@@ -73,9 +74,18 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
         addView(Button(context).apply{text="Delete named calibration";setOnClickListener {delete()}})
         addView(message)
         addView(eligibility)
+        addView(response)
     }
     fun describeEligibility(reason:String?) {
         eligibility.text=reason ?: "Calibration and role valid."
+        val controls=pitchAxis==null || hybrid
+        val enabled=(0..2).filter {mask and (1 shl it)!=0}.map {listOf("X","Y","Z")[it]}
+        response.text=when {
+            !controls -> "Discrete pitch zones · no relative note displacement."
+            enabled.isEmpty() -> "No helper axes enabled."
+            else -> enabled.joinToString()+ " send normalized positions; Relative is not negotiated on mobile."+
+                (if(hybrid)" Pitch zones stay discrete." else "")
+        }
     }
     private fun save(){
         val key=name.text.toString().trim()
@@ -176,6 +186,10 @@ internal class XYZStageView(context:Context, mask:Int, pitchAxis:Int?, hybrid:Bo
             if(hybrid)append(" · ")
             if(pitchAxis==null || hybrid)append((0..2).filter {mask and (1 shl it)!=0}.joinToString {listOf("X → 1","Y → 2","Z → 3")[it]})
         }})
+        column.addView(TextView(context).apply {
+            text=if(pitchAxis==null || hybrid) "Normalized position preview · not receiver feedback. Relative not negotiated."
+                else "Discrete pitch zones · no relative note displacement."
+        })
         column.addView(indicator)
         area.setBackgroundColor(Color.DKGRAY);column.addView(area,LinearLayout.LayoutParams(-1,0,1f))
         depth.max=100;column.addView(depth)
