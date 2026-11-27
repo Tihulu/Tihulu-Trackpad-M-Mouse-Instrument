@@ -17,7 +17,28 @@ public struct FrozenSequencerPattern: Equatable, Sendable {
 
     public init(notes: NoteSequence, channel: Int = 0, loop: Bool = false,
                 groove: GrooveSettings? = nil) throws {
-        try Self.validateGrid(bpm: notes.bpm, stepsPerBeat: notes.stepsPerBeat, length: notes.length)
+        try Self.validate(notes: notes, channel: channel, groove: groove)
+        kind = .notes
+        stepCount = notes.length
+        stepsPerBeat = notes.stepsPerBeat
+        self.loop = loop
+        clip = try Self.prepare(MIDIClip.melody(notes, channel: channel),
+                                stepsPerBeat: stepsPerBeat, groove: groove)
+    }
+
+    public init(drums: DrumSequence, loop: Bool = false, groove: GrooveSettings? = nil) throws {
+        try Self.validate(drums: drums, groove: groove)
+        kind = .drums
+        stepCount = drums.length
+        stepsPerBeat = drums.stepsPerBeat
+        self.loop = loop
+        clip = try Self.prepare(MIDIClip.drums(drums), stepsPerBeat: stepsPerBeat, groove: groove)
+    }
+
+    // Draft validation is also used by the offline archive. Empty and muted
+    // drafts are valid editor data, but MIDIClip still rejects empty playback.
+    static func validate(notes: NoteSequence, channel: Int, groove: GrooveSettings?) throws {
+        try validateGrid(bpm: notes.bpm, stepsPerBeat: notes.stepsPerBeat, length: notes.length)
         guard notes.steps.count <= notes.length, (0...15).contains(channel) else {
             throw ValidationError.invalidGrid
         }
@@ -33,16 +54,11 @@ public struct FrozenSequencerPattern: Equatable, Sendable {
                 throw ValidationError.duplicateStep
             }
         }
-        kind = .notes
-        stepCount = notes.length
-        stepsPerBeat = notes.stepsPerBeat
-        self.loop = loop
-        clip = try Self.prepare(MIDIClip.melody(notes, channel: channel),
-                                stepsPerBeat: stepsPerBeat, groove: groove)
+        try validateGroove(groove, stepsPerBeat: notes.stepsPerBeat)
     }
 
-    public init(drums: DrumSequence, loop: Bool = false, groove: GrooveSettings? = nil) throws {
-        try Self.validateGrid(bpm: drums.bpm, stepsPerBeat: drums.stepsPerBeat, length: drums.length)
+    static func validate(drums: DrumSequence, groove: GrooveSettings?) throws {
+        try validateGrid(bpm: drums.bpm, stepsPerBeat: drums.stepsPerBeat, length: drums.length)
         guard drums.hits.count <= min(16_384, drums.length * DrumVoice.allCases.count) else {
             throw ValidationError.invalidGrid
         }
@@ -56,11 +72,11 @@ public struct FrozenSequencerPattern: Equatable, Sendable {
                 throw ValidationError.duplicateStep
             }
         }
-        kind = .drums
-        stepCount = drums.length
-        stepsPerBeat = drums.stepsPerBeat
-        self.loop = loop
-        clip = try Self.prepare(MIDIClip.drums(drums), stepsPerBeat: stepsPerBeat, groove: groove)
+        try validateGroove(groove, stepsPerBeat: drums.stepsPerBeat)
+    }
+
+    private static func validateGroove(_ groove: GrooveSettings?, stepsPerBeat: Int) throws {
+        if let groove, stepsPerBeat != 4 || !groove.isValid { throw ValidationError.invalidGroove }
     }
 
     private static func validateGrid(bpm: Double, stepsPerBeat: Int, length: Int) throws {
