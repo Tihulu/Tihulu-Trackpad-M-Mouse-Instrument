@@ -1721,7 +1721,15 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       close("Invalid note surface geometry. Reconnect explicitly.");return;
     }
     if(e.clientX<r.left||e.clientX>r.left+r.width||e.clientY<r.top||e.clientY>r.top+r.height){
-      if(strips)pianoUp(owner);else cancelPiano(owner);return;
+      // Leaving the board is not a completed tap if a visited attack is queued.
+      if(strips){
+        const visited=pianoVisited.get(owner)??(1<<pianoOwners.get(owner));
+        if(queuedAttack(pianoSent,pianoQueue,visited,edge=>edge.mask)){
+          close("Note strip left with queued attack. Reconnect explicitly.");return;
+        }
+        pianoUp(owner);
+      }else cancelPiano(owner);
+      return;
     }
     if(!strips){
       // Hit actual rendered geometry because pointer capture keeps events on the

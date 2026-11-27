@@ -2234,3 +2234,23 @@ test("MUSIC-WEB scale guide explains unavailable custom mapping and does not imp
     assert.match(a.elements.scaleGuideStatus.textContent,note===48?/Does not change MIDI, tuning or makam/:/not shared a verified standard note mapping/);
   }
 });
+
+test("MUSIC-WEB strip exit cannot replay a queued visited note",()=>{
+  const a=setup();const e=a.elements;
+  e.pianoStrips.emit("click");e.pianoEnable.emit("click");
+  e.drumEnable.emit("click");e.drum0.emit("pointerdown",drumEvent(2));
+  e.piano0.emit("pointerdown",drumEvent(1));e.piano0.emit("pointermove",xyEvent(1,50,50));
+  e.piano0.emit("pointermove",xyEvent(1,120,50));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB delivered strip exit retains second contact",()=>{
+  const a=setup();const e=a.elements;
+  e.pianoStrips.emit("click");e.pianoEnable.emit("click");
+  e.piano0.emit("pointerdown",drumEvent(1));a.ack();
+  e.piano4.emit("pointerdown",drumEvent(2));a.step(25);a.ack();
+  e.piano0.emit("pointermove",xyEvent(1,120,50));a.step(25);
+  assert.equal(a.socket.frames.at(-1).mask,16);a.ack();
+  assert.equal(a.socket.closed,undefined);
+  e.piano0.emit("pointermove",xyEvent(1,50,50));a.step(25);
+  assert.equal(a.socket.frames.at(-1).mask,16);
+});
