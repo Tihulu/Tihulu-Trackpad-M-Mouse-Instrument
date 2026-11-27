@@ -90,15 +90,8 @@ command -v iconutil >/dev/null 2>&1 || {
 }
 
 echo "==> Rendering and verifying the approved TIHULU vector icon"
-ICONSET="$(mktemp -d "${TMPDIR:-/tmp}/tihulu-icon.XXXXXX").iconset"
-mkdir -p "$ICONSET"
-rsvg-convert --width 1024 --height 1024 "$ICON_SOURCE" > "$ICONSET/icon_512x512@2x.png"
-for spec in "16 16x16" "32 16x16@2x" "32 32x32" "64 32x32@2x" "128 128x128" "256 128x128@2x" "256 256x256" "512 256x256@2x" "512 512x512"; do
-    set -- $spec
-    sips --resampleHeightWidth "$1" "$1" "$ICONSET/icon_512x512@2x.png" --out "$ICONSET/icon_$2.png" >/dev/null
-done
-iconutil -c icns "$ICONSET" -o "$RESOURCES/TihuluInstrument.icns"
-rm -rf "$ICONSET"
+. ./scripts/render-app-icon.sh
+render_app_icon "$ICON_SOURCE" "$RESOURCES/TihuluInstrument.icns"
 [ -s "$RESOURCES/TihuluInstrument.icns" ] || {
     echo "ERROR: the macOS icon was not created; refusing an unbranded build." >&2
     exit 1

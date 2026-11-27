@@ -64,6 +64,7 @@ jobs:
         run: |
           python3 ../tools/check_entrypoint_modes.py
           python3 ../tools/test_entrypoint_modes.py
+          python3 scripts/test_render_app_icon.py
       - name: Remote browser lifecycle tests
         run: node --test scripts/test-remote-browser.cjs
       - name: Verify native fixture inventory
