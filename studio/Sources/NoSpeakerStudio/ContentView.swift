@@ -1737,42 +1737,58 @@ private struct SequencerTakeStatus: View {
 
     var body: some View {
         let presentation = studio.sequencePresentation
-        if let take = presentation.take {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    let name = take.kind == .notes ? "Note" : "Drum"
-                    switch presentation.phase {
-                    case .idle:
-                        EmptyView()
-                    case .starting:
-                        Text("\(name) MIDI take · starting")
-                    case .playing:
-                        if let position = presentation.position {
-                            Text("\(name) MIDI take · last confirmed step \(position.gridStep + 1)")
+        let cleanupPending = studio.sequenceCleanupPending || presentation.phase == .cleanupPending
+        VStack(alignment: .leading, spacing: 5) {
+            if presentation.needsMIDIStopControl(running: studio.sequenceRunning, cleanupPending: cleanupPending) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let take = presentation.take {
+                            let name = take.kind == .notes ? "Note" : "Drum"
+                            switch presentation.phase {
+                            case .idle:
+                                EmptyView()
+                            case .starting:
+                                Text("\(name) MIDI take · starting")
+                            case .playing:
+                                if let position = presentation.position {
+                                    Text("\(name) MIDI take · last confirmed step \(position.gridStep + 1)")
+                                } else {
+                                    Text("\(name) MIDI take · awaiting confirmed position")
+                                }
+                            case .stopping:
+                                Text("\(name) MIDI take · stopping")
+                            case .cleanupPending:
+                                Text("\(name) MIDI cleanup pending")
+                            }
+                            if take.kind == kind {
+                                Text("Grid marker shows transport position, not sounding notes. Edits affect the next take.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text("The other sequencer owns this take. Stop it here before starting another.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                         } else {
-                            Text("\(name) MIDI take · awaiting confirmed position")
+                            Text(cleanupPending ? "Sequencer MIDI cleanup pending" : "Sequencer MIDI playback active")
+                            Text("No confirmed grid position is available for this playback mode.")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
-                    case .stopping:
-                        Text("\(name) MIDI take · stopping")
-                    case .cleanupPending:
-                        Text("\(name) MIDI cleanup pending")
+                        if cleanupPending {
+                            Text("Retry MIDI Stop before starting another MIDI take.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                    if take.kind == kind {
-                        Text("Grid marker shows transport position, not sounding notes. Edits affect the next take.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text("The other sequencer owns this take. Stop it here before starting another.")
-                            .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(cleanupPending ? "Retry MIDI Stop" : "Stop Pattern") {
+                        studio.stopLiveSequence()
                     }
+                    .disabled(presentation.phase == .stopping)
                 }
-                Spacer()
-                Button(presentation.phase == .cleanupPending ? "Retry MIDI Stop" : "Stop Pattern") {
-                    studio.stopLiveSequence()
-                }
-                .disabled(presentation.phase == .stopping)
             }
-            .font(.callout)
+            Text(studio.sequenceStatus)
+                .font(.caption).foregroundStyle(.secondary)
+                .accessibilityLabel("Sequencer MIDI status: \(studio.sequenceStatus)")
         }
+        .font(.callout)
     }
 }
 
@@ -1816,14 +1832,17 @@ private struct NoteSequencerView: View {
                 Slider(value: $velocity, in: 0.1...1) { Text("Velocity") }.frame(width: 180)
                 Toggle("Loop", isOn: $loop).toggleStyle(.switch)
                 Spacer()
-                Button("Play Pattern") { play() }.buttonStyle(.borderedProminent).disabled(studio.sequenceRunning)
+                Button("Play Pattern") { play() }.buttonStyle(.borderedProminent)
+                    .disabled(studio.sequenceRunning || ((output ?? .haptic).sendsMIDI &&
+                        !studio.sequencePresentation.permitsMIDIStart(running: studio.sequenceRunning, cleanupPending: studio.sequenceCleanupPending)))
                 MIDIClipExportButton(filename: "TIHULU Notes",title:studio.chordBank.customScale?.isMicrotonal == true ? "Export MIDI (12-TET)" : "Export MIDI") {
                     try makeClip()
                 }
                 if let scale = studio.chordBank.customScale,scale.isMicrotonal {
                     Button("Play tuned MIDI") {
                         studio.startTunedNoteSequence(output:output ?? .haptic,loop:loop,makeClip:makeClip)
-                    }.disabled(studio.sequenceRunning || !(output ?? .haptic).sendsMIDI || (output ?? .haptic).sendsHaptics)
+                    }.disabled(!studio.sequencePresentation.permitsMIDIStart(running: studio.sequenceRunning, cleanupPending: studio.sequenceCleanupPending) ||
+                        !(output ?? .haptic).sendsMIDI || (output ?? .haptic).sendsHaptics)
                     MIDIClipExportButton(filename:"TIHULU Tuned Notes",title:"Export tuned MPE",makeData:{
                         try TunedMIDIClip(makeClip(),scale:scale,root:studio.chordBank.root).encoded()
                     })
@@ -1902,7 +1921,9 @@ private struct DrumSequencerView: View {
             HStack {
                 Toggle("Loop", isOn: $loop)
                 Spacer()
-                Button("Play Pattern") { play() }.buttonStyle(.borderedProminent).disabled(studio.sequenceRunning)
+                Button("Play Pattern") { play() }.buttonStyle(.borderedProminent)
+                    .disabled(studio.sequenceRunning || ((output ?? .haptic).sendsMIDI &&
+                        !studio.sequencePresentation.permitsMIDIStart(running: studio.sequenceRunning, cleanupPending: studio.sequenceCleanupPending)))
                 MIDIClipExportButton(filename: "TIHULU Drums") {
                     try makeClip()
                 }
