@@ -549,6 +549,21 @@ public final class TouchInstrumentService: @unchecked Sendable {
         return (publicationSequence,helperContactCache.touchingSurfaces)
     }
 
+    /// Freeze both publication and original callback-time cutoffs while
+    /// publication is locked. The caller supplies its current shared inbox
+    /// and selected registration, and still checks them before every send.
+    /// A callback acquired earlier but published later cannot arm Relative.
+    public func relativeConsumerPublicationBoundary(surface: TouchSurfaceKind, registration: UUID,
+        inbox: OrderedTouchInbox<QueuedTouchSnapshot>) -> NativeHelperRelativeArmBoundary? {
+        lock.lock(); defer { lock.unlock() }
+        guard monitoring, monitoringToken != nil, queuedInbox === inbox,
+              HapticTrackpadDriver.matchesTouchRegistrations([surface: registration]) else { return nil }
+        let acquired = Int64(clamping: DispatchTime.now().uptimeNanoseconds)
+        let selected: NativeHelperRelativeClutch.Surface = surface == .trackpad ? .trackpad : .magicMouse
+        return .init(source: selected, registration: registration,
+            afterSequence: publicationSequence, afterAcquisitionNS: acquired)
+    }
+
     /// Explicit publication invalidation also retires the corresponding
     /// motor state. This is not a Helper-only consumer boundary.
     public func invalidatePendingSamples() {
