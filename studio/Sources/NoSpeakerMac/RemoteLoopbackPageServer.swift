@@ -150,10 +150,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 #synthChoiceGrid{display:flex;flex-wrap:wrap;gap:4px}#synthChoiceGrid button{margin:2px;min-height:40px}
 #pedalSection[data-synth=true] output[data-dial]::before{content:"";position:absolute;inset:5px;border-top:3px solid #9bc9fa;border-radius:50%;transform:rotate(var(--dial-angle,0deg));pointer-events:none}
 #pianoBoard button[data-scale=true]{border-bottom:7px solid #79a8d2}
-#pianoBoard button[aria-pressed=true],#pianoSustain[aria-pressed=true]{background:#286b50;color:white;border-color:#79c9a5}
+#pianoBoard button[data-sounding=true],#pianoSustain[aria-pressed=true]{background:#286b50;color:white;border-color:#79c9a5}
 #pianoBoard[data-strips=true]{display:flex;gap:3px;height:clamp(180px,40vh,340px)}
 #pianoBoard[data-strips=true] button{position:static;flex:1 1 0;min-width:0;width:auto!important;height:100%;border-radius:8px;background:#27394a;color:white;font-size:clamp(10px,2vw,16px);padding:0 0 12px}
-#pianoBoard[data-strips=true] button[aria-pressed=true]{background:#286b50;border-color:#79c9a5}
+#pianoBoard[data-strips=true] button[data-sounding=true]{background:#286b50;border-color:#79c9a5}
 #pianoBoard button:focus-visible{outline:3px solid #e5a33b;outline-offset:-4px}
 #pedalGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 #pedalGrid section{border:1px solid #777;border-radius:10px;padding:8px;min-width:0}
@@ -1688,8 +1688,10 @@ select{max-width:100%;min-width:0;font:inherit;color:inherit;background:#252525;
       b.hidden=strips&&!has("piano",index);
       b.style.order=String(i);
       b.textContent=label;b.setAttribute("aria-label",(mappingLabels.has(17+index)?labelFor(17+index)+" · ":"")+label+(rows.length?" · "+rows.map(targetText).join("; "):" · mapping details hidden"));
-      b.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<index))));
-      b.setAttribute("data-arp-selected",String(playMode==="arp"&&arpSelected.has(index)));if(playMode==="arp"&&phraseRun)b.disabled=true;
+      const selectedForArp=playMode==="arp"&&arpSelected.has(index),sounding=Boolean(pianoDesired&(1<<index));
+      b.setAttribute("aria-pressed",String(playMode==="arp"?selectedForArp:sounding));
+      b.setAttribute("data-sounding",String(sounding));
+      b.setAttribute("data-arp-selected",String(selectedForArp));if(playMode==="arp"&&phraseRun)b.disabled=true;
       b.setAttribute("data-scale",String(scaleAllowed&&has("piano",index)&&guideValid&&scale.includes((index-root+12)%12)));
     });
     get("pianoBoard").hidden=!Boolean(caps?.piano&33554431);
