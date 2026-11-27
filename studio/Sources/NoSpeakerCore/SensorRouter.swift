@@ -36,13 +36,17 @@ public enum SensorSignal: String, Codable, CaseIterable, Sendable {
 
 extension SensorSignal {
     /// Discrete keys, strikes, toggles and contact gates never use displacement.
+    /// Remote pedal lanes can carry either binary or positional native modes
+    /// under the current protocol. Wrapped yaw/pitch may jump at their seam.
+    /// Keep these lanes absolute until the host can prove mode identity and
+    /// a continuous angular displacement contract. Magnitudes are level
+    /// differences, not integrated angle or position.
     public var permitsRelativeDisplacement: Bool {
         switch self {
         case .x, .y, .contactSize, .pressure, .angle, .speed, .expression,
              .airLeftX, .airLeftY, .airLeftAperture, .airLeftSpeed,
              .airRightX, .airRightY, .airRightAperture, .airRightSpeed,
-             .tiltYaw, .tiltPitch, .tiltRoll, .accelerationMagnitude, .rotationMagnitude,
-             .pedalExpression, .pedalVolume, .pedalWah,
+             .tiltRoll, .accelerationMagnitude, .rotationMagnitude,
              .padLT, .padRT, .padLSX, .padLSY, .padRSX, .padRSY: return true
         default: return false
         }

@@ -168,13 +168,17 @@ import Testing
         .init(source: .receiverConfirmed, value: 90, observedAt: time)
     }
     #expect(router.ingest(event(0.5, 1, 1), now: 1).isEmpty)
-    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1), now: 1))
+    let referenceResult1 = router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1), now: 1)
+    #expect(!referenceResult1)
     #expect(router.releaseSignal(session: id, signal: .x).isEmpty)
-    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: .init(.controlChange, number: 71), evidence: evidence(2), now: 2))
-    #expect(router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(2), now: 2))
+    let referenceResult2 = router.provideRelativeReference(session: id, mappingID: route.id, destination: .init(.controlChange, number: 71), evidence: evidence(2), now: 2)
+    #expect(!referenceResult2)
+    let referenceResult3 = router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(2), now: 2)
+    #expect(referenceResult3)
     #expect(router.ingest(event(0.5, 2, 2), now: 2).isEmpty)
     #expect(router.ingest(event(0.6, 3, 2.1), now: 2.1) == [.init(target, value: 103)])
-    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(2.1), now: 2.1))
+    let referenceResult4 = router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(2.1), now: 2.1)
+    #expect(!referenceResult4)
     #expect(router.releaseSignal(session: id, signal: .x) == [.init(target, value: 0)])
     #expect(router.ingest(event(0.5, 4, 3), now: 3).isEmpty)
     #expect(router.ingest(event(0.8, 5, 3.1), now: 3.1).isEmpty)
@@ -191,16 +195,40 @@ import Testing
         .init(source: .lastDelivered, value: 80, observedAt: t)
     }
     // Even a reference discarded before movement cannot be re-used.
-    #expect(router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1), now: 1))
+    let referenceResult5 = router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1), now: 1)
+    #expect(referenceResult5)
     #expect(router.releaseSignal(session: id, signal: .x).isEmpty)
-    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1), now: 1.1))
-    #expect(router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.1), now: 1.1))
+    let referenceResult6 = router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1), now: 1.1)
+    #expect(!referenceResult6)
+    let referenceResult7 = router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.1), now: 1.1)
+    #expect(referenceResult7)
     #expect(router.ingest(.init(session: id, signal: .x, value: 0.4, sequence: 1, timestamp: 1.1), now: 1.1).isEmpty)
     #expect(router.ingest(.init(session: id, signal: .x, value: 0.5, sequence: 2, timestamp: 1.2), now: 1.2) == [.init(target, value: 93)])
     #expect(router.releaseSignal(session: id, signal: .x) == [.init(target, value: 0)])
-    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.1), now: 1.21))
-    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.15), now: 1.21))
-    #expect(router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.21), now: 1.21))
+    let referenceResult8 = router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.1), now: 1.21)
+    #expect(!referenceResult8)
+    let referenceResult9 = router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.15), now: 1.21)
+    #expect(!referenceResult9)
+    let referenceResult10 = router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.21), now: 1.21)
+    #expect(referenceResult10)
     #expect(router.disconnect(id).isEmpty)
-    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.22), now: 1.22))
+    let referenceResult11 = router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.22), now: 1.22)
+    #expect(!referenceResult11)
+}
+
+@Test func relativeControlRejectsAmbiguousPedalAndWrappedAngleLanesUntilBound() {
+    for signal in [SensorSignal.pedalExpression, .pedalVolume, .pedalWah, .tiltYaw, .tiltPitch] {
+        let absolute = SensorMapping(id: "lane", source: .phone, signal: signal,
+            destination: .init(.controlChange, number: 74))
+        #expect(absolute.isValid)
+        var relative = absolute
+        relative.response = .init(relative: .init(reference: 0.5))
+        #expect(!relative.isValid)
+    }
+    for signal in [SensorSignal.x, .y, .tiltRoll, .rotationMagnitude] {
+        let route = SensorMapping(id: "level", source: .phone, signal: signal,
+            destination: .init(.controlChange, number: 74),
+            response: .init(relative: .init(reference: 0.5)))
+        #expect(route.isValid)
+    }
 }
