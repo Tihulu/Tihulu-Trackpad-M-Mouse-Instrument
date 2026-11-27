@@ -70,7 +70,7 @@ public struct NativeHelperRelativeInputBinding: Sendable {
 
     /// Call even without frames. Loss of the source/host is terminal; an
     /// ordinary stream expiry retires the clutch without inventing a lift.
-    public mutating func poll(nowNS: Int64, live: Bool,
+    public mutating func poll(nowNS: Int64, live: Bool, activeLeaseValid: () -> Bool = { true },
         retire: (Bool, NativeHelperRelativeOutputPlan) -> Bool) -> Result {
         let frozenPlan = plan
         guard live, (0..<Int64.max).contains(nowNS) else {
@@ -79,7 +79,7 @@ public struct NativeHelperRelativeInputBinding: Sendable {
         let clockValid = lastClockNS.map({ nowNS >= $0 }) ?? true
         if clockValid { lastClockNS = nowNS }
         return session.expire(nowNS: clockValid ? nowNS : -1,
-                              retire: { retire($0, frozenPlan) })
+                              activeLeaseValid: activeLeaseValid, retire: { retire($0, frozenPlan) })
     }
 
     /// No live-admission gate on cleanup. The service owns any unresolved

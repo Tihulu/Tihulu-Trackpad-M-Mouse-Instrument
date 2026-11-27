@@ -174,15 +174,18 @@ public struct NativeHelperRelativeSession: Sendable {
 
     /// The host schedules this on the same serialized execution context.
     /// Never use an absent or stale sample as neutral evidence.
-    public mutating func expire(now: Double, retire: (Bool) -> Bool) -> Result {
-        expire(clock: .seconds(now), retire: retire)
+    public mutating func expire(now: Double, activeLeaseValid: () -> Bool = { true },
+                                retire: (Bool) -> Bool) -> Result {
+        expire(clock: .seconds(now), activeLeaseValid: activeLeaseValid, retire: retire)
     }
 
-    public mutating func expire(nowNS: Int64, retire: (Bool) -> Bool) -> Result {
-        expire(clock: .nanoseconds(nowNS), retire: retire)
+    public mutating func expire(nowNS: Int64, activeLeaseValid: () -> Bool = { true },
+                                retire: (Bool) -> Bool) -> Result {
+        expire(clock: .nanoseconds(nowNS), activeLeaseValid: activeLeaseValid, retire: retire)
     }
 
-    private mutating func expire(clock now: Clock, retire: (Bool) -> Bool) -> Result {
+    private mutating func expire(clock now: Clock, activeLeaseValid: () -> Bool,
+                                 retire: (Bool) -> Bool) -> Result {
         guard !closed else { return .ignored }
         guard matchesClock(now) else { return close(retire: retire) }
         guard observeHostClock(now) else {
@@ -191,7 +194,11 @@ public struct NativeHelperRelativeSession: Sendable {
             guard active || neutralAdmitted else { return .ignored }
             return fault(retire: retire)
         }
-        guard active, let receipt = lastReceipt, let acquired = lastAcquisitionNS,
+        guard active else { return .ignored }
+        // An active lease can be preempted while the device is silent.
+        // Check it on the existing serialized watchdog, not just on frames.
+        guard activeLeaseValid() else { return fault(retire: retire) }
+        guard let receipt = lastReceipt, let acquired = lastAcquisitionNS,
               !fresh(receipt, acquisitionNS: acquired, now: now) else { return .ignored }
         return fault(retire: retire)
     }
