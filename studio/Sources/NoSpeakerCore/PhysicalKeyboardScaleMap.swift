@@ -117,16 +117,11 @@ public struct PhysicalKeyboardScaleMap: Equatable, Sendable {
     /// Input note/step identity survives coincident anchors. Never send
     /// this as a shared-channel bend or treat it as a voice allocation.
     public func memberPitch(_ note: Int, bendRangeSemitones: Int = 2) -> MemberPitch? {
-        guard (1...96).contains(bendRangeSemitones),
-              let pitch = key(note)?.pitch else { return nil }
-        let nominal = 69 + 12 * log2(pitch.frequency / 440)
-        guard nominal.isFinite else { return nil }
-        let anchor = min(127,max(0,Int(nominal.rounded())))
-        let fraction = (nominal - Double(anchor)) / Double(bendRangeSemitones)
-        guard (-1...1).contains(fraction) else { return nil }
-        let delta = Int((fraction * (fraction >= 0 ? 8191 : 8192)).rounded())
-        return MemberPitch(inputNote:note,step:pitch.step,anchor:anchor,bend:8192+delta,
-                           bendRangeSemitones:bendRangeSemitones)
+        guard let pitch = key(note)?.pitch,
+              let encoded = OfflineTuningMemberPitch.encode(inputNote: note, pitch: pitch,
+                  bendRangeSemitones: bendRangeSemitones) else { return nil }
+        return MemberPitch(inputNote: encoded.inputNote, step: encoded.step, anchor: encoded.anchor,
+                           bend: encoded.bend, bendRangeSemitones: encoded.bendRangeSemitones)
     }
 
     /// Complete offline MPE member disposition. The original-note case
