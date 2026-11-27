@@ -3859,12 +3859,16 @@ final class StudioController: ObservableObject {
                 "\nPeak live FIFO depth: \(queue.peak)/64\nInput fault: \(queue.fault?.rawValue ?? "none")"
         }.joined(separator: "\n\n")
         if customPadEvidenceReport != report { customPadEvidenceReport = report }
-        let timing = customPadHost.statuses.compactMap { port -> String? in
-            guard let evidence = customPadHost.timingEvidence(port.id) else { return nil }
-            return port.surface.rawValue + "\n" + evidence.report
+        updateCustomPadGroupTiming()
+    }
+    private func updateCustomPadGroupTiming() {
+        let evidence = customPadHost.groupTimingEvidence
+        let timing = CustomSurfacePadLayout.Surface.allCases.compactMap { surface -> String? in
+            guard let value = evidence[surface] else { return nil }
+            return surface.rawValue + "\n" + value.report
         }.joined(separator: "\n\n")
         if !timing.isEmpty {
-            let report = "Last observed local API timing (not DAW acknowledgement)\n" + timing
+            let report = "Group local API timing including recorded cleanup attempts (not DAW acknowledgement)\n" + timing
             if customPadMIDITimingReport != report { customPadMIDITimingReport = report }
         }
     }
@@ -3907,7 +3911,8 @@ final class StudioController: ObservableObject {
             if groupInput != nil { customPadHost.stopGroup(run: id) }
             else { _ = customPadHost.close(id, retryPending: false) }
         }
-        updateCustomPadMIDITiming()
+        if groupInput != nil { updateCustomPadGroupTiming() }
+        else { updateCustomPadMIDITiming() }
         customPadPorts = customPadHost.statuses
         customPadStatus = customPadPorts.isEmpty ? reason : reason + " · MIDI recovery pending."
         if refresh {
@@ -3917,8 +3922,10 @@ final class StudioController: ObservableObject {
     }
     func retryCustomPadRecovery() {
         guard customPadInbox == nil, customPadGroupInput == nil, customPadRunID == nil else { return }
+        let recoveringGroup = customPadHost.groupPhase == .recoveryPending
         _ = customPadHost.closeAll()
-        updateCustomPadMIDITiming()
+        if recoveringGroup { updateCustomPadGroupTiming() }
+        else { updateCustomPadMIDITiming() }
         customPadPorts = customPadHost.statuses
         customPadStatus = customPadPorts.isEmpty ? "Custom Pad recovery complete" :
             "MIDI recovery unresolved. Identity-lost ports require DAW reset and app relaunch."
