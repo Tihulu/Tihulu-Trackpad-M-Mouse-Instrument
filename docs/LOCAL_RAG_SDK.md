@@ -232,3 +232,8 @@ Historical candidate [8daa5644](https://github.com/Tihulu/Tihulu-Trackpad-M-Mous
 - [RELATIVE_CONTINUOUS_CONTROL.md](https://github.com/Tihulu/Tihulu-Trackpad-M-Mouse-Instrument/blob/8daa564402f682c3a21e6e86e39cc0164449f9e6/studio/docs/RELATIVE_CONTINUOUS_CONTROL.md) records the source contract and remaining host adapter dependencies.
 
 Six new development-only queries in `tools/rag_native_clutch_development_cases.json` are intended for the exact-revision feature probe with `--ref 8daa564402f682c3a21e6e86e39cc0164449f9e6`. Never substitute a later moving branch or combine source trees. Actual candidate retrieval, native runtime, DAW feedback and physical acceptance remain separate; no native helper service integration is claimed. Prior feature and independent evaluation fixtures are unchanged.
+
+
+### Original Git object identity (RAG-07)
+
+Every Git read issued by the retrieval tools now uses `git --no-replace-objects`. A local replace ref can otherwise cause Git to return a replacement tree or blob while reporting the original object ID. This can invalidate exact-commit source claims even when both build and verification use the same local repository. The guard applies to all index builds, source checks, canonical coverage, feature probes and cache provenance reads through the shared helper. Replacement refs are not deleted, and the user's repository is not modified. Tests use temporary local repositories with both commit and blob replacement refs; this is not a claim of defense against a compromised Git executable, filesystem, or arbitrarily hostile runtime environment.
