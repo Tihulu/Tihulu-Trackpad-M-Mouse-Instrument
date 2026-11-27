@@ -15,7 +15,9 @@ public struct TapTempo: Sendable {
             // Invalid or repeated timestamps must not replace accepted history.
             guard time > last else { return nil }
             let gap = time - last
-            if gap < 0.2 || gap > 3 {
+            // Compare the minimum against the rounded absolute timestamp;
+            // subtraction can turn a nominal 200 ms tap into 0.199999...
+            if time < last + 0.2 || gap > 3 {
                 taps = [time]
                 return nil
             }
