@@ -238,6 +238,9 @@ public struct SensorRouter: Sendable {
     private var contributions: [Owner: Contribution] = [:]
     private var relativeGestures: [Owner: RelativeControlGesture] = [:]
     private var relativeReferences: [Owner: RelativeReferenceEvidence] = [:]
+    // Remember accepted evidence timestamps across lifts within a session.
+    // A consumed or discarded reference cannot be re-submitted on re-touch.
+    private var relativeReferenceWatermarks: [Owner: Double] = [:]
     // An unsuccessful clutch requires a real release before retrying.
     private var relativeBlocked: Set<Owner> = []
     private var emitted: [SensorDestination: Int] = [:]
@@ -270,6 +273,7 @@ public struct SensorRouter: Sendable {
         pedalPressed.removeAll()
         relativeGestures.removeAll()
         relativeReferences.removeAll()
+        relativeReferenceWatermarks.removeAll()
         relativeBlocked.removeAll()
     }
 
@@ -302,8 +306,10 @@ public struct SensorRouter: Sendable {
               evidence.permits(source: settings.effectiveSource,
                 lower: ContinuousResponse.wireValue(response.minimum, target: destination),
                 upper: ContinuousResponse.wireValue(response.maximum, target: destination), now: now),
-              relativeReferences[owner].map({ evidence.observedAt >= $0.observedAt }) ?? true else { return false }
+              evidence.observedAt >= session.lastSeen,
+              relativeReferenceWatermarks[owner].map({ evidence.observedAt > $0 }) ?? true else { return false }
         relativeReferences[owner] = evidence
+        relativeReferenceWatermarks[owner] = evidence.observedAt
         return true
     }
 
@@ -483,6 +489,7 @@ public struct SensorRouter: Sendable {
         pedalPressed = pedalPressed.filter { !removed.contains($0.session) }
         relativeGestures = relativeGestures.filter { !removed.contains($0.key.session) }
         relativeReferences = relativeReferences.filter { !removed.contains($0.key.session) }
+        relativeReferenceWatermarks = relativeReferenceWatermarks.filter { !removed.contains($0.key.session) }
         relativeBlocked = relativeBlocked.filter { !removed.contains($0.session) }
         let departing = contributions.keys.filter { removed.contains($0.session) }
         for owner in departing { removeContribution(owner) }
@@ -503,6 +510,7 @@ public struct SensorRouter: Sendable {
         contributions.removeAll()
         relativeGestures.removeAll()
         relativeReferences.removeAll()
+        relativeReferenceWatermarks.removeAll()
         relativeBlocked.removeAll()
         return reconcile()
     }

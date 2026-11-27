@@ -179,3 +179,28 @@ import Testing
     #expect(router.ingest(event(0.5, 4, 3), now: 3).isEmpty)
     #expect(router.ingest(event(0.8, 5, 3.1), now: 3.1).isEmpty)
 }
+
+@Test func relativeReferenceCannotReplayConsumedOrDiscardedEvidence() throws {
+    let target = SensorDestination(.controlChange, number: 74)
+    let route = SensorMapping(id: "last", source: .trackpad, signal: .x,
+        destination: target, response: .init(relative: .init(reference: 0.5, referenceSource: .lastDelivered)))
+    var router = SensorRouter()
+    try router.configure([route])
+    let id = try router.connect(.trackpad, now: 0)
+    func evidence(_ t: Double) -> RelativeReferenceEvidence {
+        .init(source: .lastDelivered, value: 80, observedAt: t)
+    }
+    // Even a reference discarded before movement cannot be re-used.
+    #expect(router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1), now: 1))
+    #expect(router.releaseSignal(session: id, signal: .x).isEmpty)
+    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1), now: 1.1))
+    #expect(router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.1), now: 1.1))
+    #expect(router.ingest(.init(session: id, signal: .x, value: 0.4, sequence: 1, timestamp: 1.1), now: 1.1).isEmpty)
+    #expect(router.ingest(.init(session: id, signal: .x, value: 0.5, sequence: 2, timestamp: 1.2), now: 1.2) == [.init(target, value: 93)])
+    #expect(router.releaseSignal(session: id, signal: .x) == [.init(target, value: 0)])
+    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.1), now: 1.21))
+    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.15), now: 1.21))
+    #expect(router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.21), now: 1.21))
+    #expect(router.disconnect(id).isEmpty)
+    #expect(!router.provideRelativeReference(session: id, mappingID: route.id, destination: target, evidence: evidence(1.22), now: 1.22))
+}
