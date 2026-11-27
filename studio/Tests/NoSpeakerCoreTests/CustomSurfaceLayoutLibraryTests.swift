@@ -52,3 +52,24 @@ import Testing
         #expect(throws:DecodingError.self){try JSONDecoder().decode(CustomSurfaceLayoutLibrary.self,from:data)}
     }
 }
+
+@Test func savedNativePairIsCompleteAndPreservesUnrelatedSurfaces() throws {
+    let trackpad=try #require(CustomSurfacePadPreset.chromatic.layout(surface:.trackpad,channel:0))
+    let mouse=try #require(CustomSurfacePadPreset.xy.layout(surface:.magicMouse,channel:4))
+    let tablet=try #require(CustomSurfacePadPreset.chords.layout(surface:.tablet,channel:2))
+    var library=CustomSurfaceLayoutLibrary()
+    library.save(trackpad)
+    #expect(library.nativePair == nil)
+    library.save(mouse)
+    #expect(library.nativePair?.trackpadChannel == 0 && library.nativePair?.mouseChannel == 1)
+    #expect(library.melodicChannel(for:.trackpad) == nil)
+    let savedTablet=library.save(tablet,melodicChannel:2)
+    #expect(savedTablet)
+    let pair=try #require(CustomSurfaceLayoutLibrary.NativePair(trackpad:trackpad,mouse:mouse,trackpadChannel:3,mouseChannel:4))
+    library.saveNativePair(pair)
+    #expect(library.nativePair == pair && library.layout(for:.tablet) == tablet && library.melodicChannel(for:.tablet) == 2)
+    let decoded=try JSONDecoder().decode(CustomSurfaceLayoutLibrary.self,from:JSONEncoder().encode(library))
+    #expect(decoded.nativePair == pair && decoded == library)
+    #expect(CustomSurfaceLayoutLibrary.NativePair(trackpad:mouse,mouse:trackpad,trackpadChannel:0,mouseChannel:1) == nil)
+    #expect(CustomSurfaceLayoutLibrary.NativePair(trackpad:trackpad,mouse:mouse,trackpadChannel:16,mouseChannel:1) == nil)
+}

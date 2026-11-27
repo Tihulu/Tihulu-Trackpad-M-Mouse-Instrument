@@ -31,6 +31,34 @@ public struct CustomSurfaceLayoutLibrary: Codable, Equatable, Sendable {
         channels.append(.init(surface:layout.surface,channel:melodicChannel))
         return true
     }
+    /// Complete offline pair, not a live route. Explicit legacy defaults
+    /// are returned without mutating the underlying stored library.
+    public struct NativePair: Equatable, Sendable {
+        public let trackpad: CustomSurfacePadLayout
+        public let mouse: CustomSurfacePadLayout
+        public let trackpadChannel: Int
+        public let mouseChannel: Int
+        public init?(trackpad: CustomSurfacePadLayout, mouse: CustomSurfacePadLayout,
+                     trackpadChannel: Int, mouseChannel: Int) {
+            guard trackpad.surface == .trackpad, mouse.surface == .magicMouse,
+                  (0...15).contains(trackpadChannel), (0...15).contains(mouseChannel) else { return nil }
+            self.trackpad=trackpad;self.mouse=mouse
+            self.trackpadChannel=trackpadChannel;self.mouseChannel=mouseChannel
+        }
+    }
+    public var nativePair: NativePair? {
+        guard let trackpad=layout(for:.trackpad), let mouse=layout(for:.magicMouse) else { return nil }
+        return .init(trackpad:trackpad,mouse:mouse,trackpadChannel:melodicChannel(for:.trackpad) ?? 0,
+                     mouseChannel:melodicChannel(for:.magicMouse) ?? 1)
+    }
+    public mutating func saveNativePair(_ pair: NativePair) {
+        // The pair's initializer already validated both channels/surfaces.
+        // Publish the entire update together, preserving unrelated surfaces.
+        var next=self
+        next.save(pair.trackpad,melodicChannel:pair.trackpadChannel)
+        next.save(pair.mouse,melodicChannel:pair.mouseChannel)
+        self=next
+    }
     private enum CodingKeys:String,CodingKey {case layouts,channels}
     public init(from decoder:Decoder)throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
