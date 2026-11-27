@@ -25,26 +25,34 @@ public struct RelativeAngularClutch: Sendable {
         self.maximumStepDegrees = maximumStepDegrees
     }
 
-    private func valid(angle: Double, receipt: Double) -> Bool {
-        angle.isFinite && (0..<360).contains(angle) && receipt.isFinite && receipt >= 0 &&
-        (lastReceipt.map { receipt > $0 } ?? true)
+    /// Retire every finite, advancing observed receipt, including rejected
+    /// angles and samples while blocked. Invalid clocks cannot poison rearm.
+    private mutating func observe(receipt: Double) -> Bool {
+        guard receipt.isFinite, receipt >= 0,
+              lastReceipt.map({ receipt > $0 }) ?? true else { return false }
+        lastReceipt = receipt
+        return true
+    }
+
+    private func valid(angle: Double) -> Bool {
+        angle.isFinite && (0..<360).contains(angle)
     }
 
     /// The adapter calls begin only on a newly admitted explicit clutch.
     /// The origin is always 0.5; feed it into the existing relative engine
     /// once, rather than independently transforming the same MIDI parameter.
     public mutating func begin(angle: Double, receipt: Double) -> Result {
-        guard case .ready = phase else { return invalidate() }
-        guard valid(angle: angle, receipt: receipt) else { return invalidate() }
-        previousAngle = angle; displacement = 0; lastReceipt = receipt
+        guard observe(receipt: receipt), case .ready = phase,
+              valid(angle: angle) else { return invalidate() }
+        previousAngle = angle; displacement = 0
         phase = .active
         return .anchored(0.5)
     }
 
     public mutating func update(angle: Double, receipt: Double) -> Result {
+        let advanced = observe(receipt: receipt)
         guard case .active = phase else { return .blocked }
-        guard valid(angle: angle, receipt: receipt) else { return invalidate() }
-        lastReceipt = receipt
+        guard advanced, valid(angle: angle) else { return invalidate() }
         var step = angle - previousAngle
         if step > 180 { step -= 360 }
         if step < -180 { step += 360 }

@@ -66,3 +66,30 @@ import Testing
     #expect(clutch.update(angle: 90, receipt: 41) == .releaseRequired)
     #expect(clutch.update(angle: 0, receipt: 42) == .blocked)
 }
+
+@Test func relativeAngleRejectedBeginStillRetiresObservedReceipt() throws {
+    var clutch = try #require(RelativeAngularClutch())
+    #expect(clutch.begin(angle: 360, receipt: 20) == .blocked)
+    _ = clutch.end()
+    #expect(clutch.begin(angle: 0, receipt: 19) == .blocked)
+    _ = clutch.end()
+    #expect(clutch.begin(angle: 0, receipt: 21) == .anchored(0.5))
+    #expect(clutch.begin(angle: 1, receipt: 30) == .releaseRequired)
+    _ = clutch.end()
+    #expect(clutch.begin(angle: 0, receipt: 29) == .blocked)
+    _ = clutch.end()
+    #expect(clutch.begin(angle: 0, receipt: 31) == .anchored(0.5))
+}
+
+@Test func relativeAngleRetiresBlockedAndInvalidSamplesButNotInvalidClock() throws {
+    var clutch = try #require(RelativeAngularClutch())
+    _ = clutch.begin(angle: 0, receipt: 1)
+    #expect(clutch.update(angle: .nan, receipt: 10) == .releaseRequired)
+    #expect(clutch.update(angle: 0, receipt: 20) == .blocked)
+    _ = clutch.end()
+    #expect(clutch.begin(angle: 0, receipt: 19) == .blocked)
+    _ = clutch.end()
+    #expect(clutch.begin(angle: 0, receipt: .infinity) == .blocked)
+    _ = clutch.end()
+    #expect(clutch.begin(angle: 0, receipt: 21) == .anchored(0.5))
+}
