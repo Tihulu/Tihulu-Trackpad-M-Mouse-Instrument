@@ -51,4 +51,29 @@ public enum NativeHelperRelativeHostPolicy {
         return permitsCleanupConfirmation(plannedTargets: plannedTargets, reservedTargets: [], debt: debt,
             transportReady: transportReady, recoveryRequired: recoveryRequired)
     }
+
+    /// Completing a retired transaction and admitting the current plan are
+    /// different results. The old lease may be disposed even if the new
+    /// configuration must wait for another genuinely clean neutral frame.
+    public struct RetirementResult: Equatable, Sendable {
+        public let finished: Bool
+        public let neutralPermitted: Bool
+    }
+
+    /// Call after releasing only the old reserved helper intent. The
+    /// reservedTargets snapshot is for cleanliness, never for new sends.
+    /// Missing current-plan evidence never authorizes a new neutral.
+    public static func finishRetirement(transaction: inout NativeHelperRelativeOutputTransaction,
+        owners: inout LegacyContinuousOwners, reservedTargets: Set<SensorDestination>,
+        genuineNeutral: Bool, currentPlanTargets: Set<SensorDestination>?,
+        debt: LegacyControllerReleaseDebt, transportReady: Bool, recoveryRequired: Bool) -> RetirementResult {
+        let clean = permitsCleanupConfirmation(plannedTargets: transaction.cleanupTargets,
+            reservedTargets: reservedTargets, debt: debt, transportReady: transportReady,
+            recoveryRequired: recoveryRequired)
+        let finished = transaction.confirmCleanup(owners: &owners, genuineNeutral: genuineNeutral, transportClean: clean)
+        let neutralPermitted = finished && permitsInitialNeutral(genuineNeutral: genuineNeutral,
+            plannedTargets: currentPlanTargets, owners: owners, debt: debt,
+            transportReady: transportReady, recoveryRequired: recoveryRequired)
+        return .init(finished: finished, neutralPermitted: neutralPermitted)
+    }
 }
