@@ -820,6 +820,19 @@ public final class MIDIHapticService: @unchecked Sendable {
         mpeChannels.reserved.union(outgoingTouches.values.filter { $0.mpe }.map(\.channel))
     }
 
+    // Emergency cleanup permission must never authorize a new relative onset.
+    private var relativeTransportReady: Bool {
+        virtualSource != 0 && !cleaningOutgoing && permitsOutgoingSend
+    }
+
+    /// Read only between serialized begin/move/retire calls, not inside a
+    /// staged per-send callback. Freshness/source admission is separate.
+    public var hasActiveRelativeHelperLease: Bool {
+        relativeTransportReady && !controllerRecoveryRequired &&
+            relativeHelperOutput?.hasActiveLogicalLease(owners: continuousOwners,
+                reservedChannels: relativeUnavailableChannels) == true
+    }
+
     public func beginRelativeHelperOutput(plan: NativeHelperRelativeOutputPlan,
                                           admitOnset: () -> Bool) -> Bool {
         guard relativeHelperOutput == nil else { return false }
@@ -829,8 +842,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         var staged = continuousOwners
         let result = state.anchor(owners:&staged,reservedChannels:relativeUnavailableChannels,
                                   permits:{
-            self.virtualSource != 0 && self.permitsOutgoingSend &&
-                !self.controllerRecoveryRequired &&
+            self.relativeTransportReady && !self.controllerRecoveryRequired &&
                 !NativeHelperRelativeHostPolicy.hasPendingCleanup(targets:plan.targetDestinations,debt:self.controllerDebt) &&
                 admitOnset()
         })
@@ -845,7 +857,7 @@ public final class MIDIHapticService: @unchecked Sendable {
         guard var state = relativeHelperOutput else { return false }
         var staged = continuousOwners
         let result = state.movement(values,owners:&staged,reservedChannels:relativeUnavailableChannels,
-                                    permits:{ admitOnset() && self.permitsOutgoingSend && !self.controllerRecoveryRequired },
+                                    permits:{ admitOnset() && self.relativeTransportReady && !self.controllerRecoveryRequired },
                                     send:{ self.sendAdmittedContinuousUpdate($0,permits:admitOnset) })
         continuousOwners = staged
         relativeHelperOutput = state
@@ -857,13 +869,18 @@ public final class MIDIHapticService: @unchecked Sendable {
     /// never manufacture neutral for a target now owned by another producer.
     /// Failed/ambiguous sends remain in the existing Stop recovery ledger.
     @discardableResult
-    public func retireRelativeHelperOutput(genuineNeutral: Bool) -> Bool {
-        guard var state = relativeHelperOutput else { return continuousOwners.relativeReservedTargets.isEmpty }
+    public func retireRelativeHelperOutput(genuineNeutral: Bool, initialPlan: NativeHelperRelativeOutputPlan? = nil) -> Bool {
+        guard var state = relativeHelperOutput else {
+            return NativeHelperRelativeHostPolicy.permitsInitialNeutral(genuineNeutral: genuineNeutral,
+                plannedTargets: initialPlan?.targetDestinations, owners: continuousOwners, debt: controllerDebt,
+                transportReady: relativeTransportReady, recoveryRequired: controllerRecoveryRequired)
+        }
         _ = state.retire()
         let targets = continuousOwners.relativeReservedTargets
         if !targets.isEmpty { sendContinuousUpdates(continuousOwners.release(.helper)) }
-        let clean = permitsOutgoingSend && !controllerRecoveryRequired &&
-            !NativeHelperRelativeHostPolicy.hasPendingCleanup(targets:targets,debt:controllerDebt)
+        let clean = NativeHelperRelativeHostPolicy.permitsCleanupConfirmation(plannedTargets: state.cleanupTargets,
+            reservedTargets: targets, debt: controllerDebt, transportReady: relativeTransportReady,
+            recoveryRequired: controllerRecoveryRequired)
         var staged = continuousOwners
         let finished = state.confirmCleanup(owners:&staged,genuineNeutral:genuineNeutral,transportClean:clean)
         continuousOwners = staged
