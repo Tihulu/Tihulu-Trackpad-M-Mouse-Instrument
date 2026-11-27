@@ -255,6 +255,11 @@ struct CustomSurfacePadEditor:View {
                         Text(studio.customPadEvidenceReport).font(.caption.monospaced()).textSelection(.enabled)
                     }
                 }
+                if !studio.customPadMIDITimingReport.isEmpty {
+                    DisclosureGroup("Local MIDI timing evidence") {
+                        Text(studio.customPadMIDITimingReport).font(.caption.monospaced()).textSelection(.enabled)
+                    }
+                }
                 ForEach(studio.customPadPorts) { port in
                     VStack(alignment:.leading,spacing:2) {
                         Text(port.surface.rawValue + " · " + String(describing:port.phase)).font(.caption.bold())

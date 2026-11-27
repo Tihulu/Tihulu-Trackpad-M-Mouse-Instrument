@@ -224,3 +224,18 @@ private let hostContact = CustomSurfaceContactProjection.Contact(id: 1, x: 0.5, 
     #expect(evidence.maximumFrameAgeNS == 99 && evidence.sendAttempts == 2 && evidence.failedSends == 1)
     #expect(evidence.identityChecks > 0 && evidence.failedIdentityChecks == 0)
 }
+
+@Test func customSurfaceHostPreservesOnlyMostRecentClosedTiming() throws {
+    var next: UInt32 = 1
+    let host = CustomSurfaceEndpointHost(backend: .init(create: { name in
+        defer { next += 1 }
+        return .init(endpoint: .init(handle: next, uniqueID: Int32(next), name: name), succeeded: true)
+    }, owns: { _ in true }, send: { _, _ in true }, dispose: { _ in true }))
+    let plan = try hostPlan()
+    let first = try #require(host.open(plan: plan, clock: { 0 }, admitsLive: { true }))
+    #expect(host.close(first.id)?.phase == .closed)
+    #expect(host.timingEvidence(first.id) != nil && host.statuses.isEmpty)
+    let second = try #require(host.open(plan: plan, clock: { 0 }, admitsLive: { true }))
+    #expect(host.close(second.id)?.phase == .closed)
+    #expect(host.timingEvidence(first.id) == nil && host.timingEvidence(second.id) != nil)
+}

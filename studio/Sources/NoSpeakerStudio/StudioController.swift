@@ -46,6 +46,8 @@ final class StudioController: ObservableObject {
     @Published private(set) var customPadPorts: [NativeCustomSurfaceMIDIHost.Status] = []
     @Published private(set) var customPadDiagnosticRunning = false
     @Published private(set) var customPadEvidenceReport = ""
+    @Published private(set) var customPadMIDITimingReport = ""
+    private var customPadEvidencePort: UUID?
     private var customPadEvidenceSurface: CustomSurfacePadLayout.Surface?
     private var customPadInbox: CustomSurfaceNativeInbox?
     private var customPadTask: Task<Void, Never>?
@@ -3601,6 +3603,8 @@ final class StudioController: ObservableObject {
             return
         }
         customPadEvidenceReport = ""
+        customPadMIDITimingReport = ""
+        customPadEvidencePort = nil
         customPadEvidenceSurface = surface
         let source: TouchSurfaceKind = surface == .trackpad ? .trackpad : .magicMouse
         let generation = engineGeneration
@@ -3633,6 +3637,12 @@ final class StudioController: ObservableObject {
     private func updateCustomPadEvidence(_ inbox: CustomSurfaceNativeInbox) {
         let report = (customPadEvidenceSurface?.rawValue ?? "Unknown surface") + "\n" + inbox.captureEvidence().report
         if customPadEvidenceReport != report { customPadEvidenceReport = report }
+        updateCustomPadMIDITiming()
+    }
+    private func updateCustomPadMIDITiming() {
+        guard let id = customPadEvidencePort, let evidence = customPadHost.timingEvidence(id) else { return }
+        let report = "Local API timing (not DAW acknowledgement)\n" + evidence.report
+        if customPadMIDITimingReport != report { customPadMIDITimingReport = report }
     }
 
     func startCustomPad(_ layout: CustomSurfacePadLayout, channel: Int) {
@@ -3653,6 +3663,8 @@ final class StudioController: ObservableObject {
             return
         }
         customPadEvidenceReport = ""
+        customPadMIDITimingReport = ""
+        customPadEvidencePort = nil
         customPadEvidenceSurface = layout.surface
         let surface: TouchSurfaceKind = layout.surface == .trackpad ? .trackpad : .magicMouse
         let generation = engineGeneration
@@ -3681,6 +3693,7 @@ final class StudioController: ObservableObject {
             stopCustomPad(reason: "Dedicated MIDI port could not be opened.")
             return
         }
+        customPadEvidencePort = opened.id
         customPadPorts = customPadHost.statuses
         guard opened.phase == .live else {
             stopCustomPad(reason: "MIDI port creation failed; check recovery status.")
@@ -3754,6 +3767,7 @@ final class StudioController: ObservableObject {
         let id = customPadRunID
         customPadRunID = nil
         if let id { _ = customPadHost.close(id, retryPending: false) }
+        updateCustomPadMIDITiming()
         customPadPorts = customPadHost.statuses
         customPadStatus = customPadPorts.isEmpty ? reason : reason + " · MIDI recovery pending."
         if refresh {
@@ -3764,6 +3778,7 @@ final class StudioController: ObservableObject {
     func retryCustomPadRecovery() {
         guard customPadInbox == nil, customPadRunID == nil else { return }
         _ = customPadHost.closeAll()
+        updateCustomPadMIDITiming()
         customPadPorts = customPadHost.statuses
         customPadStatus = customPadPorts.isEmpty ? "Custom Pad recovery complete" :
             "MIDI recovery unresolved. Identity-lost ports require DAW reset and app relaunch."

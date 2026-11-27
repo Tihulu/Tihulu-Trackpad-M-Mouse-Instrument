@@ -27,6 +27,7 @@ public final class NativeCustomSurfaceMIDIHost {
         Int64(clamping: DispatchTime.now().uptimeNanoseconds)
     }
     public var statuses: [Status] { host.statuses }
+    public func timingEvidence(_ id: UUID) -> CustomSurfaceEndpointHost.TimingEvidence? { host.timingEvidence(id) }
 
     /// No input capture or automatic rearm. Non-live returned states are
     /// recovery records, not successful activation.

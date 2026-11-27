@@ -117,10 +117,14 @@ public final class CustomSurfaceEndpointHost {
     private let measure: () -> UInt64
     private let registry = CustomSurfaceEndpointReservations()
     private var entries: [UUID: Entry] = [:]
+    // Bounded final evidence, not a retained endpoint or cleanup record.
+    private var lastClosedTiming: (id: UUID, evidence: TimingEvidence)?
     public init(backend: Backend, measure: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
         self.backend = backend; self.measure = measure
     }
-    public func timingEvidence(_ id: UUID) -> TimingEvidence? { entries[id]?.timing }
+    public func timingEvidence(_ id: UUID) -> TimingEvidence? {
+        entries[id]?.timing ?? (lastClosedTiming?.id == id ? lastClosedTiming?.evidence : nil)
+    }
     public var statuses: [Status] { entries.values.map(\.status).sorted { $0.id.uuidString < $1.id.uuidString } }
 
     /// Returns nil only when no owned handle was created or capacity/admission
@@ -211,6 +215,7 @@ public final class CustomSurfaceEndpointHost {
             return entry.status
         }
         entry.phase = .closed
+        lastClosedTiming = (id, entry.timing)
         entries.removeValue(forKey: id)
         return entry.status
     }
