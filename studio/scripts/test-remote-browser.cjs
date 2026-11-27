@@ -1977,3 +1977,47 @@ test("MUSIC-WEB chord repeated keyboard event suppresses browser default",()=>{
   assert.equal(prevented,2);assert.equal(a.socket.frames.length,1);a.ack();
   a.elements.chord0.emit("keyup",key);a.step();assert.equal(a.socket.frames.at(-1).mask,0);
 });
+
+function classicGeometry(a){
+  const white=[0,2,4,5,7,9,11,12],black=[1,3,6,8,10];
+  white.forEach((i,n)=>a.elements["piano"+i].getBoundingClientRect=()=>({left:n*12.5,top:0,width:12.5,height:100}));
+  [9,21.5,46.5,59,71.5].forEach((left,n)=>a.elements["piano"+black[n]].getBoundingClientRect=()=>({left,top:0,width:7,height:60}));
+}
+test("MUSIC-WEB classic piano slides prioritize black key and preserve sustain and second finger",()=>{
+  const a=setup();classicGeometry(a);a.elements.pianoEnable.emit("click");
+  a.elements.pianoSustain.emit("pointerdown",drumEvent(8));a.ack();
+  a.elements.piano0.emit("pointerdown",drumEvent(1));a.step();a.ack();
+  a.elements.piano4.emit("pointerdown",drumEvent(2));a.step();a.ack();
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<25)|16|2);a.ack();
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,80));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<25)|16|1);a.ack();
+  a.elements.piano0.emit("pointerup",drumEvent(1));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,(1<<25)|16);a.ack();
+  a.elements.piano4.emit("pointerup",drumEvent(2));a.step();a.ack();
+  a.elements.pianoSustain.emit("pointerup",drumEvent(8));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,0);
+});
+test("MUSIC-WEB classic slide onto unauthorized black key retires without white fallback",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:5},false);classicGeometry(a);
+  a.elements.pianoEnable.emit("click");a.elements.piano0.emit("pointerdown",drumEvent(1));a.ack();
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));a.step();
+  assert.equal(a.socket.frames.at(-1).mask,0);a.ack();
+  const n=a.socket.frames.length;a.elements.piano0.emit("pointermove",xyEvent(1,20,80));a.step();
+  assert.equal(a.socket.frames.length,n);assert.equal(a.socket.closed,undefined);
+});
+test("MUSIC-WEB cancellation after several classic slide targets cannot replay visited attacks",()=>{
+  const a=setup();classicGeometry(a);a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,80));
+  a.elements.piano0.emit("pointercancel",drumEvent(1));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});
+test("MUSIC-WEB classic slide leaving board discards queued attack",()=>{
+  const a=setup();classicGeometry(a);a.elements.pianoEnable.emit("click");
+  a.elements.piano0.emit("pointerdown",drumEvent(1));
+  a.elements.piano0.emit("pointermove",xyEvent(1,12,20));
+  a.elements.piano0.emit("pointermove",xyEvent(1,120,50));
+  assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
+});

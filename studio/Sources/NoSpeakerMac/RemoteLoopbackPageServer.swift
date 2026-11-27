@@ -266,7 +266,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <small id="pianoStripHint" hidden>Slide between assigned notes or hold multiple fingers. Lift to release; leaving the surface releases that finger. Discrete notes only, no independent pitch bend. Change layouts when all notes and pedal are released.</small>
 <div id="pianoBoard" aria-label="Piano keyboard"><button id="piano0" class="whiteKey" type="button" style="left:0%;width:12.5%" aria-pressed="false" disabled></button><button id="piano2" class="whiteKey" type="button" style="left:12.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano4" class="whiteKey" type="button" style="left:25%;width:12.5%" aria-pressed="false" disabled></button><button id="piano5" class="whiteKey" type="button" style="left:37.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano7" class="whiteKey" type="button" style="left:50%;width:12.5%" aria-pressed="false" disabled></button><button id="piano9" class="whiteKey" type="button" style="left:62.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano11" class="whiteKey" type="button" style="left:75%;width:12.5%" aria-pressed="false" disabled></button><button id="piano12" class="whiteKey" type="button" style="left:87.5%;width:12.5%" aria-pressed="false" disabled></button><button id="piano1" class="blackKey" type="button" style="left:8.6%;width:7.8%" aria-pressed="false" disabled></button><button id="piano3" class="blackKey" type="button" style="left:21.1%;width:7.8%" aria-pressed="false" disabled></button><button id="piano6" class="blackKey" type="button" style="left:46.1%;width:7.8%" aria-pressed="false" disabled></button><button id="piano8" class="blackKey" type="button" style="left:58.6%;width:7.8%" aria-pressed="false" disabled></button><button id="piano10" class="blackKey" type="button" style="left:71.1%;width:7.8%" aria-pressed="false" disabled></button></div>
 <button id="pianoSustain" type="button" aria-pressed="false" disabled>Sustain (hold)</button>
-<small id="pianoManualHint">Hold multiple keys or the pedal. Lift to release. Octave changes are available only after all piano messages are acknowledged. Scale guide does not alter MIDI routing.</small>
+<small id="pianoManualHint">Hold or slide across multiple keys. Lift to release. Sustain is independent. Octave changes are available only after all piano messages are acknowledged. Scale guide does not alter MIDI routing.</small>
 <div id="phraseSection" hidden><h3 id="phraseTitle">Chord pads</h3>
 <div id="chordGrid"><button id="chord0" type="button" disabled></button><button id="chord1" type="button" disabled></button><button id="chord2" type="button" disabled></button><button id="chord3" type="button" disabled></button></div>
 <div id="phraseTransport" hidden><label for="phraseTempo">Tempo</label><select id="phraseTempo"><option value="60">60 BPM</option><option value="90">90 BPM</option><option value="120" selected>120 BPM</option><option value="150">150 BPM</option></select><label id="arpLabel" for="arpChoice">Arpeggio chord</label><select id="arpChoice"></select><div id="arpKeyboardTools" hidden><button id="arpClear" type="button">Clear selected notes</button><label for="arpDirection">Direction</label><select id="arpDirection"><option value="up">Up</option><option value="down">Down</option><option value="bounce">Up / down</option></select><label for="arpRate">Rate</label><select id="arpRate"><option value="8">1/8</option><option value="4">1/4</option><option value="16">1/16</option><option value="12">1/8 triplet</option></select><label for="arpSwing">Swing</label><select id="arpSwing"><option value="50">Straight (50%)</option><option value="55">55%</option><option value="60">60%</option></select><p id="arpSelected" role="status"></p></div><div id="sequenceSteps"><label for="phraseStep0">Step 1</label><select id="phraseStep0"></select><label for="phraseStep1">Step 2</label><select id="phraseStep1"></select><label for="phraseStep2">Step 3</label><select id="phraseStep2"></select><label for="phraseStep3">Step 4</label><select id="phraseStep3"></select><label for="phraseStep4">Step 5</label><select id="phraseStep4"></select><label for="phraseStep5">Step 6</label><select id="phraseStep5"></select><label for="phraseStep6">Step 7</label><select id="phraseStep6"></select><label for="phraseStep7">Step 8</label><select id="phraseStep7"></select></div><button id="phraseStart" type="button" disabled>Start loop</button><button id="phraseStop" type="button" disabled>Stop loop</button></div>
@@ -1051,7 +1051,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     // Cancel unsent onsets; retain the state of every already sent owner.
     pointer=null;position=null;dot.hidden=true;touchQueue=touchSent?[{kind:"release",at:now}]:[];
     resetStick();drumEnabled=false;drumOwners.clear();drumDesired=0;drumQueue=[];drumEmergency=drumSent!==0;
-    resetPhrase();pianoEnabled=false;pianoOwners.clear();pianoDesired=0;pianoQueue=[];pianoEmergency=pianoSent!==0;
+    resetPhrase();pianoEnabled=false;pianoOwners.clear();pianoVisited.clear();pianoDesired=0;pianoQueue=[];pianoEmergency=pianoSent!==0;
     pedalEnabled=false;pedalHoldOwners.clear();pedalMask=0;pedalQueue=[];pedalDirty=false;pedalEmergency=pedalSentMask!==0;
     drumStatus.textContent=pianoStatus.textContent=pedalStatus.textContent="Off; releasing sent controls.";
     permissionEpoch++;window.removeEventListener("deviceorientation",orientation);
@@ -1661,7 +1661,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pianoPedal.hidden=!has("piano",25);pianoPedal.disabled=!admitted||!pianoEnabled||!has("piano",25)||pianoEmergency;
     pianoPedal.setAttribute("aria-pressed",String(Boolean(pianoDesired&(1<<25))));syncPhrase();
   }
-  function resetPiano(){resetPhrase();arpSelected.clear();synthOpen=false;dialDrags.clear();synthHidden.clear();strips=false;pianoEnabled=false;pianoOctave=0;pianoOwners.clear();pianoQueue=[];pianoDesired=0;pianoSent=0;lastPianoSend=-Infinity;pianoEmergency=false;pianoStatus.textContent="Off.";syncPiano();}
+  function resetPiano(){resetPhrase();arpSelected.clear();synthOpen=false;dialDrags.clear();synthHidden.clear();strips=false;pianoEnabled=false;pianoOctave=0;pianoOwners.clear();pianoVisited.clear();pianoQueue=[];pianoDesired=0;pianoSent=0;lastPianoSend=-Infinity;pianoEmergency=false;pianoStatus.textContent="Off.";syncPiano();}
   function pianoChanged(runTick=true){
     let mask=phraseMask;for(const index of pianoOwners.values())mask|=1<<index;
     for(const index of chordOwners.values())mask|=chordMask(index);
@@ -1671,7 +1671,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pianoQueue.push({mask,at:performance.now()});syncPiano();if(runTick)tick();
   }
   function releasePiano(){
-    resetPhrase();pianoOwners.clear();pianoDesired=0;pianoQueue=[];
+    resetPhrase();pianoOwners.clear();pianoVisited.clear();pianoDesired=0;pianoQueue=[];
     pianoEmergency=pianoSent!==0;syncControls();tick();
   }
   function pianoDown(owner,index){
@@ -1679,26 +1679,44 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(playMode==="arp"&&index!==25){if(phraseRun||arpContacts.has(owner)||arpContacts.size>=32)return;arpContacts.add(owner);if(arpSelected.has(index))arpSelected.delete(index);else arpSelected.add(index);syncPiano();return;}
     if(specialPiano()&&!(playMode==="arp"&&index===25))return;
     if(pianoOwners.size>=32){close("Too many piano contacts. Reconnect explicitly.");return;}
-    pianoOwners.set(owner,index);pianoChanged();
+    pianoOwners.set(owner,index);
+    if(owner.startsWith("p"))pianoVisited.set(owner,1<<index);
+    pianoChanged();
   }
-  function pianoUp(owner){arpContacts.delete(owner);if(pianoOwners.delete(owner))pianoChanged();}
+  const pianoVisited=new Map();
+  function pianoUp(owner){arpContacts.delete(owner);pianoVisited.delete(owner);if(pianoOwners.delete(owner))pianoChanged();}
   function cancelPiano(owner){
     const index=pianoOwners.get(owner);
-    if(index!==undefined&&(strips&&owner.startsWith("p")||queuedAttack(pianoSent,pianoQueue,1<<index,e=>e.mask))){
+    if(index!==undefined&&(strips&&owner.startsWith("p")||queuedAttack(pianoSent,pianoQueue,pianoVisited.get(owner)??(1<<index),e=>e.mask))){
       close("Note contact cancelled. Reconnect explicitly.");return;
     }
     pianoUp(owner);
   }
   function moveStrip(e){
     const owner="p"+e.pointerId;
-    if(!strips||!admitted||!pianoEnabled||pianoEmergency||!pianoOwners.has(owner)||pianoOwners.get(owner)===25)return;
+    if(!admitted||!pianoEnabled||pianoEmergency||releasingAll||!pianoOwners.has(owner)||pianoOwners.get(owner)===25)return;
     e.preventDefault();
     const r=pianoBoard.getBoundingClientRect();
     if(![r.left,r.top,r.width,r.height,e.clientX,e.clientY].every(Number.isFinite)||r.width<=0||r.height<=0){
       close("Invalid note surface geometry. Reconnect explicitly.");return;
     }
     if(e.clientX<r.left||e.clientX>r.left+r.width||e.clientY<r.top||e.clientY>r.top+r.height){
-      pianoUp(owner);return;
+      if(strips)pianoUp(owner);else cancelPiano(owner);return;
+    }
+    if(!strips){
+      // Hit actual rendered geometry because pointer capture keeps events on the
+      // original key. Black keys take precedence, including unmapped black keys.
+      const order=[1,3,6,8,10,0,2,4,5,7,9,11,12];
+      let hit=null;
+      for(const i of order){
+        const b=pianoButtons[i],k=b.getBoundingClientRect();
+        if(![k.left,k.top,k.width,k.height].every(Number.isFinite)||k.width<=0||k.height<=0){
+          close("Invalid piano key geometry. Reconnect explicitly.");return;
+        }
+        if(e.clientX>=k.left&&e.clientX<k.left+k.width&&e.clientY>=k.top&&e.clientY<k.top+k.height){hit=i;break;}
+      }
+      if(hit===null||!has("piano",hit+12*pianoOctave)){cancelPiano(owner);return;}
+      slideTo(owner,hit+12*pianoOctave);return;
     }
     // Compact only the host-authorized notes. DOM order and geometry agree.
     const zones=Array.from({length:13},(_,i)=>i+12*pianoOctave).filter(i=>has("piano",i));
@@ -1707,7 +1725,12 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     if(width<=0){close("Note surface too narrow. Reconnect explicitly.");return;}
     const slot=Math.min(zones.length-1,Math.floor((e.clientX-r.left)/(width+gap)));
     const index=zones[slot];
-    if(index!==pianoOwners.get(owner)){pianoOwners.set(owner,index);pianoChanged();}
+    slideTo(owner,index);
+  }
+  function slideTo(owner,index){
+    if(index===pianoOwners.get(owner))return;
+    pianoVisited.set(owner,(pianoVisited.get(owner)??0)|(1<<index));
+    pianoOwners.set(owner,index);pianoChanged();
   }
   function sendPiano(mask){send("pianoKeys",{mask});}
   function changeOctave(value){if(!admitted||!pianoEnabled||!octaveAvailable(value)||pianoBusy())return;pianoOctave=value;syncPiano();}
