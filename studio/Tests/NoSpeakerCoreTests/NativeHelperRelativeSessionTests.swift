@@ -7,10 +7,10 @@ private typealias Clutch = NativeHelperRelativeClutch
 private let registration = UUID()
 private struct Wire {
     var calls: [String] = []
-    var beginOK = true, moveOK = true, clean = true, permitted = true
+    var beginOK = true, moveOK = true, clean = true, permitted = true, leaseValid = true
 }
-private func session(_ token: UUID, source: Clutch.Surface = .magicMouse) throws -> Session {
-    try #require(Session(source: source, monitor: token, registration: registration, afterSequence: 10, maximumAge: 0.125,
+private func session(_ token: UUID, source: Clutch.Surface = .magicMouse, cutoff: Int64 = 0) throws -> Session {
+    try #require(Session(source: source, monitor: token, registration: registration, afterSequence: 10, afterAcquisitionNS: cutoff, maximumAge: 0.125,
                          lanes: [.x: .init(reference: 8192, upper: 16383)]))
 }
 private func frame(_ time: Double, x: Double? = nil, count: Int? = nil,
@@ -22,9 +22,10 @@ private func frame(_ time: Double, x: Double? = nil, count: Int? = nil,
 }
 private func receive(_ s: inout Session, _ wire: inout Wire, _ f: Clutch.SourceFrame,
                      _ token: UUID, _ seq: UInt64, now: Double? = nil) -> Session.Result {
+    let lease = wire.leaseValid
     let permits = wire.permitted, beginOK = wire.beginOK, moveOK = wire.moveOK, clean = wire.clean
     var calls: [String] = []
-    let result = s.receive(f, monitor:token, sequence:seq, now:now ?? f.receipt, permits:{ permits }, begin:{
+    let result = s.receive(f, monitor:token, sequence:seq, now:now ?? f.receipt, permits:{ permits }, activeLeaseValid:{ lease }, begin:{
         calls.append("begin"); return beginOK
     }, move:{ values in calls.append("move:\(values[.x] ?? -1)"); return moveOK }, retire:{ neutral in
         calls.append("retire:\(neutral)"); return clean
@@ -94,12 +95,12 @@ private func receive(_ s: inout Session, _ wire: inout Wire, _ f: Clutch.SourceF
     let token = UUID(); var s = try session(token), w = Wire()
     _ = receive(&s,&w,frame(1),token,11)
     var allowed = true, retired: [Bool] = []
-    #expect(s.receive(frame(1.03125,x:0.5),monitor:token,sequence:12,now:1.03125,permits:{allowed},begin:{allowed=false;return true},move:{_ in true},retire:{retired.append($0);return true}) == .retired)
+    #expect(s.receive(frame(1.03125,x:0.5),monitor:token,sequence:12,now:1.03125,permits:{allowed},activeLeaseValid:{true},begin:{allowed=false;return true},move:{_ in true},retire:{retired.append($0);return true}) == .retired)
     #expect(retired == [false])
     _ = receive(&s,&w,frame(1.0625),token,13)
     _ = receive(&s,&w,frame(1.09375,x:0.5),token,14)
     allowed = true
-    #expect(s.receive(frame(1.125,x:0.75),monitor:token,sequence:15,now:1.125,permits:{allowed},begin:{true},move:{_ in allowed=false;return true},retire:{retired.append($0);return true}) == .retired)
+    #expect(s.receive(frame(1.125,x:0.75),monitor:token,sequence:15,now:1.125,permits:{allowed},activeLeaseValid:{true},begin:{true},move:{_ in allowed=false;return true},retire:{retired.append($0);return true}) == .retired)
     #expect(retired == [false,false])
 }
 
@@ -118,4 +119,73 @@ private func receive(_ s: inout Session, _ wire: inout Wire, _ f: Clutch.SourceF
     #expect(receive(&s,&w,frame(1.03125,x:0.5),token,12) == .waiting)
     #expect(receive(&s,&w,frame(1.0625),token,13) == .waiting)
     #expect(receive(&s,&w,frame(1.09375,x:0.5),token,14) == .anchored)
+}
+
+@Test func relativeSessionRejectsAcquisitionBeforeOrAtArm() throws {
+    for time in [0.96875, 1.0] {
+        let token = UUID(); var s = try session(token, cutoff: 1_000_000_000), w = Wire()
+        #expect(receive(&s,&w,frame(time),token,11,now:1.0) == .retired)
+        #expect(w.calls == ["retire:false"])
+        #expect(receive(&s,&w,frame(1.03125,x:0.5),token,12) == .waiting)
+        #expect(receive(&s,&w,frame(1.0625),token,13) == .waiting)
+        #expect(receive(&s,&w,frame(1.09375,x:0.5),token,14) == .anchored)
+    }
+    #expect(Session(source:.magicMouse,monitor:UUID(),registration:registration,afterSequence:0,
+                    afterAcquisitionNS:-1,maximumAge:0.125,lanes:[.x:.init(reference:8192,upper:16383)]) == nil)
+}
+
+@Test func relativeSessionDoubleCollisionDoesNotAuthorizeNeutral() throws {
+    let token = UUID(); var s = try session(token), w = Wire()
+    let ns: Int64 = 100_000_000_000_000_000
+    func exact(_ n: Int64, down: Bool = false) -> Clutch.SourceFrame {
+        let contacts: [Clutch.Contact] = down ? [.init(surface:.magicMouse,id:1,x:0.5,y:0.5,contactSize:0.5)] : []
+        return .init(surface:.magicMouse,rawDownCount:contacts.count,sourceConsistent:true,contacts:contacts,
+                     receipt:Double(n)/1_000_000_000,nativeRegistration:registration,acquisitionNS:n)
+    }
+    let anchored = ns + 31_250_000
+    #expect(exact(anchored).receipt == exact(anchored+1).receipt)
+    #expect(receive(&s,&w,exact(ns),token,11) == .waiting)
+    #expect(receive(&s,&w,exact(anchored,down:true),token,12) == .anchored)
+    #expect(receive(&s,&w,exact(anchored+1),token,13) == .retired)
+    #expect(w.calls.last == "retire:false")
+    #expect(receive(&s,&w,exact(anchored+31_250_000,down:true),token,14) == .waiting)
+    #expect(receive(&s,&w,exact(anchored+62_500_000),token,15) == .waiting)
+    #expect(receive(&s,&w,exact(anchored+93_750_000,down:true),token,16) == .anchored)
+}
+
+@Test func relativeSessionStationaryLeaseLossRequiresCleanNeutral() throws {
+    let token = UUID(); var s = try session(token), w = Wire()
+    #expect(receive(&s,&w,frame(1),token,11) == .waiting)
+    #expect(receive(&s,&w,frame(1.03125,x:0.5),token,12) == .anchored)
+    w.leaseValid = false
+    #expect(receive(&s,&w,frame(1.0625,x:0.5),token,13) == .retired)
+    #expect(w.calls.last == "retire:false")
+    w.leaseValid = true
+    #expect(receive(&s,&w,frame(1.09375,x:0.6),token,14) == .waiting)
+    w.clean = false
+    #expect(receive(&s,&w,frame(1.125),token,15) == .retired)
+    w.clean = true
+    #expect(receive(&s,&w,frame(1.15625,x:0.6),token,16) == .waiting)
+    #expect(receive(&s,&w,frame(1.1875),token,17) == .waiting)
+    #expect(receive(&s,&w,frame(1.21875,x:0.5),token,18) == .anchored)
+    #expect(w.calls.filter{$0 == "begin"}.count == 2)
+}
+
+@Test func relativeSessionLeaseLossInsideCallbacksRetires() throws {
+    for lossDuringBegin in [true,false] {
+        let token = UUID(); var s = try session(token), w = Wire()
+        _ = receive(&s,&w,frame(1),token,11)
+        var lease = true, retired: [Bool] = []
+        let result = s.receive(frame(1.03125,x:0.5),monitor:token,sequence:12,now:1.03125,
+            permits:{true},activeLeaseValid:{lease},begin:{if lossDuringBegin {lease=false};return true},
+            move:{_ in true},retire:{retired.append($0);return true})
+        if lossDuringBegin { #expect(result == .retired) }
+        else {
+            #expect(result == .anchored)
+            #expect(s.receive(frame(1.0625,x:0.75),monitor:token,sequence:13,now:1.0625,
+                permits:{true},activeLeaseValid:{lease},begin:{true},move:{_ in lease=false;return true},
+                retire:{retired.append($0);return true}) == .retired)
+        }
+        #expect(retired == [false])
+    }
 }

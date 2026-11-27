@@ -37,3 +37,10 @@ private func project(_ count: Int?, _ states: [Int] = [], _ records: [Envelope.R
     #expect(project(32,Array(repeating:3,count:32),(0..<32).map{record(3,id:$0)}).isComplete)
     #expect(!project(33,Array(repeating:3,count:33),(0..<33).map{record(3,id:$0)}).isComplete)
 }
+
+@Test func nativeRelativeEnvelopeRejectsDuplicateRawIDsIncludingLiftRecords() {
+    #expect(!project(2,[3,5],[record(3),record(5)]).isComplete)
+    #expect(!project(2,[5,4],[record(5),record(4)]).isComplete)
+    #expect(!project(3,[5,3,5],[record(5,id:2),record(3),record(5,id:2)]).isComplete)
+    #expect(project(3,[5,3,5],[record(5,id:2),record(3),record(5,id:3)]).isComplete)
+}
