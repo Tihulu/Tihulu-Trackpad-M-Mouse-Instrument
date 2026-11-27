@@ -27,10 +27,12 @@ import Testing
     let trackpad=try #require(CustomSurfacePadPreset.chromatic.layout(surface:.trackpad,channel:0))
     let mouse=try #require(CustomSurfacePadPreset.drums.layout(surface:.magicMouse,channel:1))
     var library=CustomSurfaceLayoutLibrary()
-    #expect(library.save(trackpad,melodicChannel:3))
-    #expect(library.save(mouse,melodicChannel:5))
+    let savedTrackpad=library.save(trackpad,melodicChannel:3)
+    let savedMouse=library.save(mouse,melodicChannel:5)
+    #expect(savedTrackpad && savedMouse)
     let before=library
-    #expect(!library.save(trackpad,melodicChannel:16) && library==before)
+    let invalid=library.save(trackpad,melodicChannel:16)
+    #expect(!invalid && library==before)
     #expect(library.melodicChannel(for:.trackpad)==3 && library.melodicChannel(for:.magicMouse)==5)
     #expect(try JSONDecoder().decode(CustomSurfaceLayoutLibrary.self,from:JSONEncoder().encode(library))==library)
 }
