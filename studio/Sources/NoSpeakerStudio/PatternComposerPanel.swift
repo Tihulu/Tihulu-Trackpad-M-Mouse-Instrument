@@ -54,6 +54,11 @@ struct NoteComposerPanel: View {
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(6)
         }
+        .onChange(of: notes) { value in
+            if draft.observe(current: value) {
+                feedback = "Manual edit: previous previews and replacement history cleared."
+            }
+        }
     }
 
     private func generate() {
@@ -112,6 +117,11 @@ struct DrumComposerPanel: View {
                 Text("Local groove rules with seeded variation. Generates editable hits, not rendered audio. No model download or automatic playback; the existing sequencer still controls the sound.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(6)
+        }
+        .onChange(of: active) { value in
+            if draft.observe(current: value) {
+                feedback = "Manual edit: previous previews and replacement history cleared."
+            }
         }
     }
 
