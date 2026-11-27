@@ -356,6 +356,8 @@ public struct QueuedTouchSnapshot: Sendable {
     public let stamp: TouchSnapshotStamp
     public let sourceSurface: TouchSurfaceKind
     public let queuedAt: Double
+    /// Source-local raw observation, separate from the combined preview.
+    public var relativeFrame: NativeHelperRelativeClutch.SourceFrame? = nil
 }
 
 public final class TouchInstrumentService: @unchecked Sendable {
@@ -768,6 +770,18 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 x:Double(contact.x),y:Double(contact.y),pressure:Double(contact.size))
         }
         let receivedAt = ProcessInfo.processInfo.systemUptime
+        // Preserve raw source membership and count. Relative admission must
+        // not treat compactMap dropping an invalid contact as a real lift.
+        let relativeSurface: NativeHelperRelativeClutch.Surface = frame.surface == .trackpad ? .trackpad : .magicMouse
+        let relativeDown = frame.contacts.filter(\.isDown)
+        let relativeFrame = NativeHelperRelativeClutch.SourceFrame(
+            surface: relativeSurface, rawDownCount: relativeDown.count,
+            sourceConsistent: frame.contacts.allSatisfy { $0.surface == frame.surface },
+            contacts: relativeDown.map { contact in
+                .init(surface: contact.surface == .trackpad ? .trackpad : .magicMouse,
+                      id: contact.id, x: Double(contact.x), y: Double(contact.y),
+                      contactSize: Double(contact.size))
+            }, receipt: receivedAt)
         helperContactCache.replace(frame.surface,contacts:physical,
             observation:.init(stamp:stamp,receivedAt:receivedAt))
         let helperContacts = helperContactCache.combined(order:TouchSurfaceKind.allCases)
@@ -807,7 +821,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
         // A preview is never a percussion trigger.
         guard isActive && active else {
             let inbox = queuedInbox, notify = queuedReady
-            let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,clickObservation:clickObservation,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
+            let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,clickObservation:clickObservation,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime,relativeFrame:relativeFrame)) ?? false
             lock.unlock()
             if inbox != nil { if ready { notify?() } }
             else { callback?(combined,stamp) }
@@ -851,7 +865,7 @@ public final class TouchInstrumentService: @unchecked Sendable {
             }
         }
         let inbox = queuedInbox, notify = queuedReady
-        let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,clickObservation:clickObservation,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime)) ?? false
+        let ready = inbox?.submit(.init(states:combined,helperContacts:helperContacts,clickObservation:clickObservation,stamp:stamp,sourceSurface:frame.surface,queuedAt:ProcessInfo.processInfo.systemUptime,relativeFrame:relativeFrame)) ?? false
         lock.unlock()
         if inbox != nil { if ready { notify?() } }
         else { callback?(combined,stamp) }
