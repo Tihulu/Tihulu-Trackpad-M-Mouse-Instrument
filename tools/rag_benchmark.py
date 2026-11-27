@@ -17,6 +17,7 @@ HELDOUT_CASES = Path(__file__).with_name("rag_heldout_cases.json")
 RANKING_CASES = Path(__file__).with_name("rag_ranking_cases.json")
 MULTILINGUAL_CASES = Path(__file__).with_name("rag_multilingual_cases.json")
 CONTEXTUAL_CASES = Path(__file__).with_name("rag_contextual_cases.json")
+DOMAIN_CASES = Path(__file__).with_name("rag_domain_cases.json")
 
 
 def load_cases(path, group=None):
