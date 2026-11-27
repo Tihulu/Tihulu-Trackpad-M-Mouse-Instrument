@@ -2128,6 +2128,16 @@ private struct MIDIHelperView: View {
                             }.padding(6)
                         }
 
+                        RelativeUIFragment(
+                            pitchBendEnabled: pitchBendEnabled,
+                            vibratoEnabled: vibratoEnabled,
+                            expressionEnabled: expressionEnabled,
+                            vibratoCC: vibratoCC,
+                            expressionCC: expressionCC,
+                            sendToDAW: sendToDAW,
+                            surfaceSelection: surfaceSelection
+                        )
+
                         GroupBox("Gesture Mapping") {
                             VStack(alignment: .leading, spacing: 10) {
                                 if pitchBendEnabled {
@@ -2217,6 +2227,86 @@ private struct MIDIHelperView: View {
         if studio.midiHelperRunning { startHelper() }
     }
 
+}
+
+private struct RelativeUIFragment: View {
+    @EnvironmentObject private var studio: StudioController
+    @State private var relativeDraft = NativeHelperRelativeManualSettings()
+    let pitchBendEnabled: Bool
+    let vibratoEnabled: Bool
+    let expressionEnabled: Bool
+    let vibratoCC: Int
+    let expressionCC: Int
+    let sendToDAW: Bool
+    let surfaceSelection: TouchSurfaceSelection
+
+    var body: some View { relativeManualPanel }
+
+    private var relativeManualPanel: some View {
+        GroupBox("Relative control · experimental") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(studio.relativeHelperStatus)
+                    .font(.headline)
+                Text("Configure one surface and start MIDI Helper first. Lift all fingers before enabling Relative. The first new touch anchors silently; movement is measured from that touch. Stop, then start Helper explicitly to return to Absolute.")
+                    .font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup("Manual reference and sensitivity (next arm)") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        relativeLaneEditor("X / Pitch Bend", settings: $relativeDraft.x, upper: 16383)
+                            .disabled(!pitchBendEnabled)
+                        relativeLaneEditor("Y / CC \(vibratoCC)", settings: $relativeDraft.y, upper: 127)
+                            .disabled(!vibratoEnabled)
+                        relativeLaneEditor("Contact size / CC \(expressionCC)", settings: $relativeDraft.contactSize, upper: 127)
+                            .disabled(!expressionEnabled)
+                        Stepper("Smoothing: \(relativeDraft.smoothingMS) ms", value: $relativeDraft.smoothingMS, in: 0...250, step: 5)
+                        Button("Reset manual draft") { relativeDraft = NativeHelperRelativeManualSettings() }
+                        Text("Manual values are not DAW feedback. Edits are local to this view and apply only to the next explicit arm.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .disabled(studio.relativeHelperArmed)
+                    .padding(.top, 6)
+                }
+                if surfaceSelection == .both || !sendToDAW || !(pitchBendEnabled || vibratoEnabled || expressionEnabled) {
+                    Text("Relative requires one surface, MIDI Out and at least one expressive axis.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                HStack {
+                    Button("Enable Relative") {
+                        _ = studio.enableRelativeMIDIHelper(settings: relativeDraft)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!studio.midiHelperRunning || studio.relativeHelperArmed ||
+                        surfaceSelection == .both || !sendToDAW || !relativeDraft.isValid ||
+                        !(pitchBendEnabled || vibratoEnabled || expressionEnabled))
+                    Button(studio.relativeHelperArmed ? "Stop Relative / Helper" : "Stop Helper / retry cleanup") {
+                        studio.stopMIDIHelper()
+                    }
+                }
+                Text("Receiver bend range must already be configured. Gain CC7/11 may retain their last value. Other start restrictions are checked by the Controller.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(6)
+        }
+    }
+
+    private func relativeLaneEditor(_ name: String, settings: Binding<RelativeControlSettings>, upper: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(name).font(.subheadline.weight(.medium))
+            HStack {
+                Text("Reference")
+                Slider(value: settings.reference, in: 0...1, step: 1.0 / Double(upper))
+                    .accessibilityLabel("\(name) manual reference")
+                Text("\(Int((settings.wrappedValue.reference * Double(upper)).rounded())) / \(upper)")
+                    .monospacedDigit()
+            }
+            HStack {
+                Text("Sensitivity")
+                Slider(value: settings.gain, in: 0.25...4, step: 0.25)
+                    .accessibilityLabel("\(name) sensitivity")
+                Text(settings.wrappedValue.gain, format: .number.precision(.fractionLength(2)))
+                    .monospacedDigit()
+            }
+        }
+    }
 }
 
 private struct SustainSettingsPanel: View {
