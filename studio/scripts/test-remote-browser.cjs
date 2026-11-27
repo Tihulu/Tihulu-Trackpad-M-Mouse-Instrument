@@ -2021,3 +2021,24 @@ test("MUSIC-WEB classic slide leaving board discards queued attack",()=>{
   a.elements.piano0.emit("pointermove",xyEvent(1,120,50));
   assert.equal(a.socket.closed,true);assert.equal(a.socket.frames.length,1);
 });
+
+test("MUSIC-WEB all-rest and unmapped sequence explain disabled start and emit nothing",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="seq";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseTempo.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,true);assert.match(a.elements.phraseStatus.textContent,/all-rest/);
+  a.elements.phraseStart.emit("click");assert.equal(a.socket.frames.length,0);
+  a.elements.phraseStep0.value="1";a.elements.phraseStep0.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,true);assert.match(a.elements.phraseStatus.textContent,/unavailable/);
+  a.elements.phraseStep0.value="0";a.elements.phraseStep0.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,false);assert.match(a.elements.phraseStatus.textContent,/Ready/);
+  a.elements.phraseStart.emit("click");a.step();assert.equal(a.socket.frames.at(-1).mask,1);
+});
+test("MUSIC-WEB sparse arpeggio requires an explicit mapped note before starting",()=>{
+  const a=setup("granted",{...touchOnly,touch:false,piano:1},false);
+  a.elements.playMode.value="arp";a.elements.playMode.emit("change");a.elements.pianoEnable.emit("click");
+  a.elements.phraseTempo.value="120";a.elements.phraseTempo.emit("change");
+  assert.equal(a.elements.phraseStart.disabled,true);assert.match(a.elements.phraseStatus.textContent,/Choose mapped notes/);
+  a.elements.piano0.emit("pointerdown",drumEvent(1));a.elements.piano0.emit("pointerup",drumEvent(1));
+  assert.equal(a.elements.phraseStart.disabled,false);assert.equal(a.socket.frames.length,0);
+});

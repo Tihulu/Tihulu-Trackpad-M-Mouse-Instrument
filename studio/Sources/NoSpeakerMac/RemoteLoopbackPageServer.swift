@@ -1578,7 +1578,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
       b.setAttribute("aria-pressed",String([...chordOwners.values()].includes(i)));
     }
     for(const id of ["phraseTempo","arpChoice",...Array.from({length:8},(_,i)=>"phraseStep"+i)])get(id).disabled=playing;
-    get("phraseStart").disabled=!pianoEnabled||!admitted||releasingAll||pianoBusy()||!["arp","seq"].includes(playMode);
+    const phraseMode=["arp","seq"].includes(playMode),candidate=phraseMode?phraseCandidate():null;
+    get("phraseStart").disabled=!pianoEnabled||!admitted||releasingAll||pianoBusy()||!candidate?.pattern;
+    get("phraseStart").setAttribute("aria-describedby","phraseStatus");
+    if(phraseMode&&!playing)textIfChanged("phraseStatus",!pianoEnabled?"Enable this instrument before starting.":releasingAll||pianoBusy()?"Release controls and wait for Mac acknowledgment.":candidate?.reason||"Ready. Start to play the selected pattern.");
     get("phraseStop").disabled=!playing;
   }
   function resetPhrase(message="Off."){phraseRun=null;phraseMask=0;chordOwners.clear();arpContacts.clear();get("phraseStatus").textContent=message;}
@@ -1595,19 +1598,28 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     }
     chordUp(owner);
   }
-  function startPhrase(){
-    if(currentView!=="play"||!["arp","seq"].includes(playMode)||!pianoEnabled||!admitted||releasingAll||pianoBusy())return;
+  function phraseCandidate(){
     const bpm=Number(get("phraseTempo").value);
-    if(![60,90,120,150].includes(bpm))return;
+    if(![60,90,120,150].includes(bpm))return {reason:"Choose a supported tempo."};
     const selection=get("arpChoice").value,index=Number(selection);
     let pattern=playMode==="arp"?(arpSelected.size?[...arpSelected].sort((a,b)=>a-b):selection!==""&&chordAvailable(index)?[...chordShapes[index]]:[]):
-      Array.from({length:8},(_,i)=>Number(get("phraseStep"+i).value));
+      Array.from({length:8},(_,i)=>{const v=get("phraseStep"+i).value;return v===""?NaN:Number(v);});
     const direction=get("arpDirection").value,rate=get("arpRate").value||"8";
-    if(playMode==="arp"){if(!["","up","down","bounce"].includes(direction)||!["4","8","12","16"].includes(rate))return;if(direction==="down")pattern.reverse();if(direction==="bounce"&&pattern.length>2)pattern=pattern.concat(pattern.slice(1,-1).reverse());}
-    if(!pattern.length||!pattern.some(i=>i>=0)||!pattern.every(i=>Number.isInteger(i)&&(i===-1||(i<25&&has("piano",i)))))return;
+    if(playMode==="arp"){
+      if(!["","up","down","bounce"].includes(direction)||!["4","8","12","16"].includes(rate))return {reason:"Choose a supported arpeggio direction and rate."};
+      if(direction==="down")pattern.reverse();if(direction==="bounce"&&pattern.length>2)pattern=pattern.concat(pattern.slice(1,-1).reverse());
+    }
+    if(!pattern.length||!pattern.some(i=>i>=0))return {reason:playMode==="seq"?"Choose at least one mapped note; an all-rest pattern cannot start.":"Choose mapped notes or an available chord."};
+    if(!pattern.every(i=>Number.isInteger(i)&&(i===-1||(i<25&&has("piano",i)))))return {reason:"The pattern contains an unavailable note."};
     const swing=playMode==="arp"?Number(get("arpSwing").value||"50"):50;
-    if(![50,55,60].includes(swing))return;
-    phraseRun={pattern,index:0,on:false,longStep:true,swing,next:performance.now(),period:240000/(bpm*(playMode==="arp"?Number(rate):8))};
+    if(![50,55,60].includes(swing))return {reason:"Choose a supported swing value."};
+    return {pattern,swing,period:240000/(bpm*(playMode==="arp"?Number(rate):8))};
+  }
+  function startPhrase(){
+    if(currentView!=="play"||!["arp","seq"].includes(playMode)||!pianoEnabled||!admitted||releasingAll||pianoBusy())return;
+    const candidate=phraseCandidate();
+    if(!candidate.pattern){syncPhrase();return;}
+    phraseRun={...candidate,index:0,on:false,longStep:true,next:performance.now()};
     get("phraseStatus").textContent="Playing · local browser clock.";syncControls();tick();
   }
   function advancePhrase(now){
@@ -2119,6 +2131,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   get("pianoSynth").addEventListener("click",toggleSynth);
   get("synthCompact").addEventListener("click",()=>{if(synthOpen&&admitted&&!releasingAll){synthCompact=!synthCompact;syncControls();}});
   get("arpClear").addEventListener("click",()=>{if(playMode==="arp"&&!phraseRun&&!releasingAll){arpSelected.clear();syncPiano();}});
+  for(const id of ["phraseTempo","arpChoice","arpDirection","arpRate","arpSwing",...Array.from({length:8},(_,i)=>"phraseStep"+i)])get(id).addEventListener("change",syncPhrase);
   get("phraseStart").addEventListener("click",startPhrase);
   get("phraseStop").addEventListener("click",releasePiano);
   for(let i=0;i<4;i++){
