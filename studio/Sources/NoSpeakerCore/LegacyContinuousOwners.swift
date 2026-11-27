@@ -1,3 +1,5 @@
+import Foundation
+
 /// Outgoing continuous controller arbitration for one virtual MIDI source.
 /// Priority is fixed, not arrival-time dependent. An active lower-priority
 /// owner retains its latest value; releasing the winner restores that value.
@@ -40,6 +42,54 @@ public struct LegacyContinuousOwners: Sendable {
     }
 
     private var owners: [Owner:[SensorDestination:Value]] = [:]
+    private struct RelativeReservation: Sendable {
+        let token: UUID
+        let targets: Set<SensorDestination>
+        var retired = false
+    }
+    private var relativeReservation: RelativeReservation?
+
+    /// The token is a local logical lease, not an endpoint or delivery claim.
+    public mutating func reserveRelativeHelper(targets: Set<SensorDestination>) -> UUID? {
+        guard relativeReservation == nil, !targets.isEmpty,
+              targets.allSatisfy({ ContinuousResponse.permitsRelative($0) &&
+                  ($0.kind != .controlChange || HelperCCPolicy.permits($0.number)) }),
+              values(for: .helper).isEmpty,
+              [Owner.touch, .legacyTouch, .touchBar].allSatisfy({ targets.isDisjoint(with: values(for: $0).keys) }) else { return nil }
+        let token = UUID()
+        relativeReservation = .init(token: token, targets: targets)
+        return token
+    }
+
+    public func permitsRelativeHelper(_ token: UUID) -> Bool {
+        relativeReservation?.token == token && relativeReservation?.retired == false
+    }
+
+    public mutating func invalidateRelativeHelper(_ token: UUID) {
+        guard relativeReservation?.token == token else { return }
+        relativeReservation?.retired = true
+    }
+
+    /// Only the holder can clear a retired lease after actual cleanup.
+    public mutating func finishRelativeHelper(_ token: UUID, transportClean: Bool) -> Bool {
+        guard transportClean, relativeReservation?.token == token,
+              relativeReservation?.retired == true, values(for: .helper).isEmpty else { return false }
+        relativeReservation = nil
+        return true
+    }
+
+    private func conflictsWithRelative(_ owner: Owner, values: [SensorDestination:Value]) -> Bool {
+        guard let reservation = relativeReservation else { return false }
+        return owner == .helper || !reservation.targets.isDisjoint(with: values.keys)
+    }
+
+    /// Withdraw the entire relative intent before a competing owner enters.
+    /// Never retain a hidden relative fallback. If a wire cleanup is denied
+    /// or fails, the host's actual-attempt ledger still owns that debt.
+    private mutating func withdrawRelative() -> [Update] {
+        relativeReservation?.retired = true
+        return replaceRaw(.helper, values: [:])
+    }
     public init() {}
     public func values(for owner: Owner) -> [SensorDestination:Value] { owners[owner] ?? [:] }
 
@@ -59,6 +109,16 @@ public struct LegacyContinuousOwners: Sendable {
 
     public mutating func replace(_ owner: Owner, values: [SensorDestination:Value]) -> [Update] {
         guard values.allSatisfy({ $0.value.valid(for:$0.key) }) else { return [] }
+        if conflictsWithRelative(owner, values: values) {
+            let cleanup = withdrawRelative()
+            // Untokened helper writes are not relative movement.
+            if owner == .helper { return cleanup }
+            return cleanup + replaceRaw(owner, values: values)
+        }
+        return replaceRaw(owner, values: values)
+    }
+
+    private mutating func replaceRaw(_ owner: Owner, values: [SensorDestination:Value]) -> [Update] {
         let old = self.values(for:owner)
         guard old != values else { return [] }
         // Only destinations whose intent changed can acquire a new winner.
@@ -77,6 +137,30 @@ public struct LegacyContinuousOwners: Sendable {
     public mutating func replaceAdmitted(_ owner:Owner,values:[SensorDestination:Value],
                                          permits:()->Bool,send:(Update)->Bool)->Bool {
         guard values.allSatisfy({ $0.value.valid(for:$0.key) }) else { return false }
+        if conflictsWithRelative(owner, values: values) {
+            guard permits() else { return false }
+            let cleanup = withdrawRelative()
+            for update in cleanup {
+                guard permits(), send(update) else { return false }
+            }
+            if owner == .helper { return values.isEmpty && permits() }
+        }
+        return replaceAdmittedRaw(owner, values: values, permits: permits, send: send)
+    }
+
+    /// Tokened relative movement never runs through untokened legacy paths.
+    public mutating func replaceRelativeHelperAdmitted(_ token: UUID, values: [SensorDestination:Value],
+                                                        permits: () -> Bool, send: (Update) -> Bool) -> Bool {
+        guard permitsRelativeHelper(token), let reservation = relativeReservation,
+              values.allSatisfy({ reservation.targets.contains($0.key) && $0.value.valid(for: $0.key) &&
+                                  $0.value.bendRange == nil }) else { return false }
+        let accepted = replaceAdmittedRaw(.helper, values: values, permits: permits, send: send)
+        if !accepted { invalidateRelativeHelper(token) }
+        return accepted
+    }
+
+    private mutating func replaceAdmittedRaw(_ owner: Owner, values: [SensorDestination:Value],
+                                             permits: () -> Bool, send: (Update) -> Bool) -> Bool {
         let old=self.values(for:owner)
         let targets=sorted(Set(old.keys).union(values.keys).filter { old[$0] != values[$0] })
         for target in targets {
@@ -84,7 +168,7 @@ public struct LegacyContinuousOwners: Sendable {
             var next=self.values(for:owner)
             next[target]=values[target]
             var candidate=self
-            let updates=candidate.replace(owner,values:next)
+            let updates=candidate.replaceRaw(owner,values:next)
             for update in updates {
                 guard permits(),send(update) else { return false }
             }
@@ -104,13 +188,23 @@ public struct LegacyContinuousOwners: Sendable {
     }
 
     public mutating func set(_ owner: Owner, target: SensorDestination, value: Value) -> [Update] {
-        guard value.valid(for:target), owners[owner]?[target] != value else { return [] }
+        guard value.valid(for:target) else { return [] }
+        if conflictsWithRelative(owner, values: [target:value]) {
+            var next = values(for: owner)
+            next[target] = value
+            return replace(owner, values: next)
+        }
+        guard owners[owner]?[target] != value else { return [] }
         let previous = winner(target)
         owners[owner,default:[:]][target] = value
         return Self.transition(target,from:previous,to:winner(target)).map { [$0] } ?? []
     }
     public mutating func release(_ owner: Owner, channel: Int? = nil) -> [Update] {
-        replace(owner,values:channel.map { ch in values(for:owner).filter { $0.key.channel != ch } } ?? [:])
+        if owner == .helper, let reservation = relativeReservation {
+            guard channel.map({ ch in reservation.targets.contains(where: { $0.channel == ch }) }) ?? true else { return [] }
+            return withdrawRelative()
+        }
+        return replace(owner,values:channel.map { ch in values(for:owner).filter { $0.key.channel != ch } } ?? [:])
     }
     public mutating func releaseAll() -> [Update] {
         let targets = sorted(Set(owners.values.flatMap(\.keys)))
@@ -119,6 +213,7 @@ public struct LegacyContinuousOwners: Sendable {
             return .init(target,value:previous.neutral,neutral:previous.neutral)
         }
         owners.removeAll()
+        relativeReservation?.retired = true
         return result
     }
 }
