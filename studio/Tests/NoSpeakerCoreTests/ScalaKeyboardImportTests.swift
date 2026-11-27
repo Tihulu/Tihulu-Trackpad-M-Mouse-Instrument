@@ -63,3 +63,27 @@ private let kbm = "3\n48\n84\n60\n64\n432.0\n3\n0\nx\n2\n"
     let high = try ScalaKeyboardImport.mapping("0\n0\n127\n60\n60\n20000\n3", scale: scale)
     #expect(throws: ScalaKeyboardImport.Failure.self) { try ScalaKeyboardImport.tuning(scale: scale, mapping: high) }
 }
+
+@Test func scalaImportAcceptsOneLeadingUTF8BOMWithoutChangingPitchOrMapping() throws {
+    let source = "! comment\nBOM test\n3\n100.0\n700.0\n2/1\n"
+    let mapping = "! comment\n3\n48\n84\n60\n60\n440\n3\n0\nx\n2\n"
+    let plain = try ScalaKeyboardProfile(scaleText: source, mappingText: mapping)
+    let marked = try ScalaKeyboardProfile(scaleText: "\u{FEFF}" + source, mappingText: "\u{FEFF}" + mapping)
+    #expect(marked.preview == plain.preview)
+    #expect(marked.scaleText == "\u{FEFF}" + source)
+    #expect(try ScalaKeyboardProfile.importData(marked.exportData()) == marked)
+    let noComments = "0\n0\n127\n60\n60\n440\n3"
+    let scale = try ScalaKeyboardImport.scale(source)
+    #expect(try ScalaKeyboardImport.mapping("\u{FEFF}" + noComments, scale: scale) == ScalaKeyboardImport.mapping(noComments, scale: scale))
+}
+
+@Test func scalaImportRejectsRepeatedOrMisplacedEncodingMarker() throws {
+    let scaleText = "Name\n2\n100.0\n2"
+    let scale = try ScalaKeyboardImport.scale(scaleText)
+    for text in ["\u{FEFF}\u{FEFF}" + scaleText, "Name\n\u{FEFF}2\n100.0\n2"] {
+        #expect(throws: ScalaKeyboardImport.Failure.malformed) { try ScalaKeyboardImport.scale(text) }
+    }
+    for text in ["\u{FEFF}\u{FEFF}0\n0\n127\n60\n60\n440\n2", "0\n0\n127\n60\n60\n\u{FEFF}440\n2"] {
+        #expect(throws: ScalaKeyboardImport.Failure.malformed) { try ScalaKeyboardImport.mapping(text, scale: scale) }
+    }
+}
