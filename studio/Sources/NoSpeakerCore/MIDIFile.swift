@@ -61,8 +61,9 @@ public enum MIDIFileParser {
         let division = u16(try read(2))
         if headerLength > 6 { _ = try read(headerLength - 6) }
         guard format == 0 || format == 1 else { throw MIDIFileError.malformed("Only MIDI formats 0 and 1 are supported") }
-        guard division & 0x8000 == 0 else { throw MIDIFileError.unsupportedTiming }
-        let ticksPerQuarter = max(1, division)
+        guard trackCount > 0, format != 0 || trackCount == 1 else { throw MIDIFileError.invalidHeader }
+        guard division > 0, division & 0x8000 == 0 else { throw MIDIFileError.unsupportedTiming }
+        let ticksPerQuarter = division
 
         var allEvents: [MIDITrackEvent] = []
         var eventOrder = 0
@@ -115,6 +116,7 @@ public enum MIDIFileParser {
                     }
                     if type == 0x51, metaLength == 3 {
                         let tempo = (Int(bytes[cursor]) << 16) | (Int(bytes[cursor + 1]) << 8) | Int(bytes[cursor + 2])
+                        guard tempo > 0 else { throw MIDIFileError.malformed("Tempo must be positive") }
                         allEvents.append(.init(tick: tick, order: eventOrder, kind: .tempo(microsecondsPerQuarter: tempo)))
                         eventOrder += 1
                     }
