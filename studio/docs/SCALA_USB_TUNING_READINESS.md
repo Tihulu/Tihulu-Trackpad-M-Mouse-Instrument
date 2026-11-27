@@ -86,3 +86,11 @@ Reproduction using exact predecessor importer blob 96aecfd967966559d6bdfc202de05
 | Physical acceptance | Verify real Logic/MPE/USB output frequency, simultaneous notes, sustain, loss, Stop/Panic and failed release retry; all NOT_RUN by this agent. |
 
 Coordinator owns UI and live integration. Independent UX and native/receiver acceptance remain separate. No new route, activation, port access, live allocator, shared protocol or timing changes.
+
+## TUN-07: explicit source boundaries and staged validation
+
+The bounded importer accepts CR, LF and CRLF physical line endings. It rejects VT, FF, NEL, Unicode line separator and paragraph separator anywhere in the source, including comments, rather than allowing the general Swift Character.isNewline predicate to turn hidden characters into data fields. This is a conservative input interoperability policy, not a new remote security vulnerability. Original valid source text remains byte-for-byte preserved in the profile. Reproduced on exact predecessor importer b41a56ec8a929e1d96dd72ebacf648e00c067dcf: all ten malformed SCL/KBM cases were admitted; focused before test 1/2 PASS with 10 assertion issues, after 2/2 PASS.
+
+ScalaKeyboardProfile.inspectSources and inspectData provide data-free typed validation results for a future import screen. Envelope and unsupported-version errors are separate from source failures at scale, mapping and calibration stages, with existing malformed/unsupported classification. Successful inspection returns the immutable validated profile; existing throwing initializer and importData retain their previous error types. The same strict parser and calibration are reused; no duplicate validation, inferred repair, activation, mutation of the prior draft, raw path/text logging or native file access. These are stage codes, not precise source line diagnostics. UI ownership remains with the coordinator, and the caller must translate codes to actionable localized text without exposing imported data unnecessarily.
+
+Local Linux Swift 6.2.1 minimal package: 30/30 PASS (26 predecessor + 4 new methods); all four changed Swift source/test blob identities checked. Full repository CI and physical USB/Logic/MPE remain separate. No live allocator or timing changes.
