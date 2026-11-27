@@ -1,9 +1,21 @@
-# TIHULU Universal Instrument Studio — Master development plan
+# Tihulu Instrument — Master development plan
 
-Status: design and development backlog, not a claim that all features are implemented. Existing app and repository name remain Tihulu Trackpad & M. Mouse Instrument. User communication in Turkish; repository, UI and code in English, except the approved Turkish spoken greeting. Based on os6/nospeaker (Cody Collier, MIT). Preserve attribution and third-party licenses.
+Status: design and development backlog, not a claim that all features are implemented. Product name approved by the maintainer: **Tihulu Instrument**. The previous name, Tihulu Trackpad & M. Mouse Instrument, remains a historical/compatibility name for existing releases and install paths. The GitHub repository slug is unchanged. User communication in Turkish; repository, UI and code in English, except the approved Turkish spoken greeting. Based on os6/nospeaker (Cody Collier, MIT). Preserve attribution and third-party licenses.
 
 ## 1. Product vision
 A local-first, modular musical environment that lets musicians invent new instruments from their available hardware, not merely use a catalog of presets. Native macOS remains the host. Trackpad, Magic Mouse, Touch Bar, lid angle, camera, microphone, phones, tablets and external MIDI/OSC controllers are independent optional sources. Hardware availability is detected, never assumed. UI navigation never owns a running session. The same engine supports a simple ready-to-play mode and an advanced instrument builder; all idle modules stay off.
+
+### Product identity and community mission (approved 2026-11-27)
+Tihulu Instrument is the umbrella name for the full open-source musical platform, not just two touch devices. The project aims to make creative music accessible to beginners and professionals, extend equipment people already own (including keyboards and organs) with microtonal tuning and expressive sound control, support experimental sound design and DAWs such as Logic Pro, and bring people together through collaborative jam sessions. Preserve local-first operation, MIT attribution, accessible UI, and extensibility for musicians, educators and developers. These are product goals, not claims of completed capabilities or established community adoption.
+
+### Branding migration and release gates
+- [x] Adopt the exact public product name **Tihulu Instrument** in the master plan and agent instructions.
+- [x] Apply the new name to draft Studio window, About and error alert titles, and the preview bundle display name (**Tihulu Instrument Preview**); update the preview verification expectation. Native acceptance is still required.
+- [ ] Inventory remaining user-visible labels, mobile/web companions, icons, documentation, installer/uninstaller text and release artifacts; use one consistent product identity while preserving historical release notes and upstream attribution.
+- [ ] Plan compatible transition of app filenames, DMG names, CLI aliases and update/download links before changing them; detect existing installations and avoid duplicates, destructive replacement or unintended launch.
+- [ ] Preserve existing stable/preview bundle identifiers, internal executable/package names, preferences, preset schemas, CoreMIDI endpoint identities and saved Logic/DAW routing unless a separately reviewed migration is required. No repository rename or identifier migration is authorized by this branding decision.
+- [ ] Verify clean install, upgrade from the previous name, rollback, uninstall, signing/notarization, permission prompts, settings and preset retention, MIDI/DAW routing and macOS/iOS/Android/web display consistency before publication.
+- [ ] Keep the current released stable artifact unchanged; do not automatically merge, install, publish, or alter old releases. Record verified evidence and unresolved migration risks.
 
 ## 2. Evidence and immediate baseline
 - Published v0.2.3 is the rollback reference, not the new feature version. Main at inspection: c504a8430e1a6d55573c8cd9f10f6a7465d3cbc6.

@@ -38,3 +38,7 @@ chosen trusted local model. Never automatically upload repository content.
 - Use examples/EngineConsumer to check public API consumption without Studio.
 - Report actual test counts and results, known limitations and unresolved
   failures. Preserve existing regression tests and add negative cases.
+
+## Product identity
+
+The maintainer-approved public product name is **Tihulu Instrument** (2026-11-27). Use it for new user-facing UI, documentation and future release branding; label previews explicitly. Follow the branding migration and acceptance checklist in studio/docs/UNIVERSAL_INSTRUMENT_MASTER_PLAN.md. Preserve historical release references, MIT/upstream credit, existing repository slug, bundle IDs, MIDI identities, preference keys, executable/package names and installer compatibility until an explicitly reviewed migration is accepted. Do not perform a blind global rename or publish a release.

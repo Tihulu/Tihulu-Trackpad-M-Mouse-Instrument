@@ -239,7 +239,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .alert("Tihulu Trackpad & M. Mouse Instrument", isPresented: Binding(
+        .alert("Tihulu Instrument", isPresented: Binding(
             get: { studio.lastError != nil },
             set: { if !$0 { studio.lastError = nil } }
         )) {
@@ -3183,10 +3183,10 @@ private struct AboutView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                PageHeader(title: "About Tihulu Trackpad & M. Mouse Instrument", subtitle: "A native macOS expressive trackpad, Magic Mouse and haptic MIDI workstation.")
+                PageHeader(title: "About Tihulu Instrument", subtitle: "A native macOS expressive musical instrument and MIDI workstation.")
                 GroupBox("Upstream credit") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Tihulu Trackpad & M. Mouse Instrument is based on nospeaker by Cody Collier (os6).").font(.headline)
+                        Text("Tihulu Instrument is based on nospeaker by Cody Collier (os6).").font(.headline)
                         Text("Upstream: https://github.com/os6/nospeaker")
                         Text("Initial compatibility baseline: nospeaker v1.0 · 64c5fbf493fab0a79382c8e101de8d80083b0d5c")
                         Text("License: MIT")
