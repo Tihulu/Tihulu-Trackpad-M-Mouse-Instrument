@@ -1361,13 +1361,25 @@ public final class ChordMIDIOutput {
     public init(name: String = "TIHULU Chord Pads") { self.name = name }
 
     public func open() throws {
+        try open(create: {
+            let client = try MIDIProcessClient.shared.acquire()
+            var source = MIDIEndpointRef()
+            let status = MIDISourceCreate(client, name as CFString, &source)
+            return (status, source)
+        }, register: { MIDIProcessClient.shared.registerIsolatedSource($0) })
+    }
+
+    // Separate the local admission decision from the native call so invalid
+    // success handles can be tested without opening a real MIDI endpoint.
+    func open(create: () throws -> (status: OSStatus, handle: MIDIEndpointRef),
+              register: (MIDIEndpointRef) -> Void) throws {
         if endpoint != 0 { return }
-        let client = try MIDIProcessClient.shared.acquire()
-        var source = MIDIEndpointRef()
-        let status = MIDISourceCreate(client, name as CFString, &source)
-        guard status == noErr else { throw MIDIHapticError.source(status) }
-        endpoint = source
-        MIDIProcessClient.shared.registerIsolatedSource(source)
+        let result = try create()
+        if let failure = LegacyRecoveryPolicy.endpointCreationFailure(status: result.status, handle: result.handle) {
+            throw MIDIHapticError.source(failure)
+        }
+        endpoint = result.handle
+        register(result.handle)
     }
 
     /// Return CoreMIDI's delivery status; never report success on a failed send.
