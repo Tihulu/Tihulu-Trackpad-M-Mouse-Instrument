@@ -10,4 +10,13 @@ swiftc -swift-version 6 studio/Sources/NoSpeakerMobileCapture/MobileXYZSetupAdmi
 "$work/xyz-check"
 ```
 
-The first fixture uses the documented production freshness constant (150 ms); the native caller passes MobileAirSendGate.freshNS. The second exercises setup combinations and permission-request retirement; a callback cannot initiate camera capture or connect a socket. Neither fixture uses hardware, opens a network connection, validates SwiftUI rendering, verifies actual MIDI ownership, or exercises the OS permission prompt. Preserve source/commit provenance and require native build and physical acceptance separately.
+The first fixture uses the documented production freshness constant (150 ms); the native caller passes MobileAirSendGate.freshNS. The second exercises setup combinations and permission-request retirement; a callback cannot initiate camera capture or connect a socket. None of these fixtures uses hardware, opens a network connection, validates SwiftUI rendering, verifies actual MIDI ownership, or exercises the OS permission prompt. Preserve source/commit provenance and require native build and physical acceptance separately.
+
+For the mode-specific effective range and strict boundary characterization:
+
+```sh
+swiftc -swift-version 6 studio/Sources/NoSpeakerMobileCapture/MobileAirEffectiveRange.swift studio/mobile-ios/tests/AirEffectiveRangeChecks.swift -o "$work/range-check"
+"$work/range-check"
+```
+
+The fixture deliberately preserves the current depth predicate; nominal decimal pairs that subtract to less than 0.1 remain refused. It does not compile the SwiftUI call sites or establish sensor/host acceptance.
