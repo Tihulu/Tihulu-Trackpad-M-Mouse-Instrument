@@ -134,3 +134,21 @@ private func surfacePad(_ id:String,_ x:Int,_ y:Int,_ w:Int,_ h:Int,_ assignment
     #expect(changed.assignment==pad.assignment)
     #expect(!changed.hasStagedEdit(label:"New label",x:100,y:0,width:5000,height:10000,replacingAssignment:false))
 }
+
+@Test func customSurfaceReplacementReasonsPreserveOriginalAndExactEdges() throws {
+    let left=surfacePad("left",0,0,9999,10000)
+    let right=surfacePad("right",9999,0,1,10000,.degree(-1408))
+    let layout=try #require(CustomSurfacePadLayout(surface:.trackpad,pads:[left,right]))
+    #expect(layout.replacementFailure(right)==nil)
+    #expect(layout.replacing(right)==layout)
+    #expect(layout.replacementFailure(surfacePad("other",0,0,1,1)) == .unknownPad)
+    #expect(layout.replacementFailure(right.editingGeometry(label:String(repeating:"é",count:33),x:9999,y:0,width:1,height:10000)) == .invalidLabel)
+    #expect(layout.replacementFailure(right.editingGeometry(label:"right",x:Int.max,y:0,width:1,height:10000)) == .invalidGeometry)
+    #expect(layout.replacementFailure(surfacePad("right",9999,0,1,10000,.note(128))) == .invalidAssignment)
+    let overlap=right.editingGeometry(label:"right",x:9998,y:0,width:2,height:10000)
+    #expect(layout.replacementFailure(overlap) == .overlaps("left"))
+    #expect(layout.replacing(overlap)==nil)
+    #expect(layout.pads==[left,right])
+    let bar=try #require(CustomSurfacePadLayout(surface:.touchBar,pads:[left,right]))
+    #expect(bar.replacementFailure(right.editingGeometry(label:"right",x:9999,y:0,width:1,height:9999)) == .touchBarGeometry)
+}

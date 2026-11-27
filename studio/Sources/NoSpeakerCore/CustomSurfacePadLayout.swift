@@ -81,9 +81,34 @@ public struct CustomSurfacePadLayout: Codable, Equatable, Sendable {
         }
         return true
     }
+    public enum EditFailure: Error, Equatable, Sendable {
+        case unknownPad
+        case invalidLabel
+        case invalidGeometry
+        case invalidAssignment
+        case touchBarGeometry
+        case overlaps(String)
+    }
+    /// Deterministic, non-mutating feedback for an editor. Keep the same
+    /// exact bounds as layout validation and do not silently move neighbors.
+    public func replacementFailure(_ pad:Pad)->EditFailure? {
+        guard pads.contains(where:{$0.id==pad.id}) else{return .unknownPad}
+        guard pad.label.utf8.count<=64,
+              !pad.label.unicodeScalars.contains(where:{CharacterSet.controlCharacters.contains($0)}) else{return .invalidLabel}
+        guard (0..<10000).contains(pad.x),(0..<10000).contains(pad.y),
+              (1...10000).contains(pad.width),(1...10000).contains(pad.height),
+              pad.width<=10000-pad.x,pad.height<=10000-pad.y else{return .invalidGeometry}
+        guard pad.assignment.isValid else{return .invalidAssignment}
+        guard surface != .touchBar || (pad.y==0 && pad.height==10000) else{return .touchBarGeometry}
+        if let other=pads.first(where:{$0.id != pad.id && pad.overlaps($0)}) {
+            return .overlaps(other.id)
+        }
+        return nil
+    }
     /// Validated edits never mutate the original or silently resolve overlaps.
     public func replacing(_ pad:Pad)->Self? {
-        guard let index=pads.firstIndex(where:{$0.id==pad.id}) else{return nil}
+        guard replacementFailure(pad)==nil,
+              let index=pads.firstIndex(where:{$0.id==pad.id}) else{return nil}
         var next=pads;next[index]=pad
         return Self(surface:surface,pads:next)
     }

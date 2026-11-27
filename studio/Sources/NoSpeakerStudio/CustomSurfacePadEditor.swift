@@ -110,6 +110,9 @@ struct CustomSurfacePadEditor:View {
     @State private var width=2500
     @State private var height=5000
     @State private var note=60
+    @State private var drumNote=36
+    @State private var tuningDegree=0
+    @State private var fineGeometry=false
     @State private var kind:Kind = .note
     @State private var changeAssignment=false
     @State private var chordNotes="60, 64, 67"
@@ -258,15 +261,11 @@ struct CustomSurfacePadEditor:View {
                     }
                     if let id=selected, layout.pads.contains(where:{$0.id==id}) {
                         TextField("Label",text:$label)
-                        HStack {
-                            Stepper("X \(x)",value:$x,in:0...9900,step:100)
-                            Stepper("Width \(width)",value:$width,in:100...10000,step:100)
-                        }
-                        if surface != .touchBar {
-                            HStack {
-                                Stepper("Y \(y)",value:$y,in:0...9900,step:100)
-                                Stepper("Height \(height)",value:$height,in:100...10000,step:100)
-                            }
+                        geometryEditor
+                        if let reason=editFailure(layout) {
+                            Label(reason,systemImage:"exclamationmark.triangle")
+                                .font(.caption).foregroundStyle(.orange)
+                                .accessibilityLabel(reason)
                         }
                         if let pad=layout.pads.first(where:{$0.id==id}) {
                             Text("Current assignment: "+String(describing:pad.assignment)).font(.caption).textSelection(.enabled)
@@ -275,9 +274,11 @@ struct CustomSurfacePadEditor:View {
                         if changeAssignment {
                             Picker("Assignment",selection:$kind){ForEach(Kind.allCases){Text($0.rawValue).tag($0)}}
                             if kind == .degree {
-                                Stepper("Tuning degree \(note)",value:$note,in:-1408...1408)
-                            } else if kind == .note || kind == .drum {
+                                Stepper("Tuning degree \(tuningDegree)",value:$tuningDegree,in:-1408...1408)
+                            } else if kind == .note {
                                 Stepper("MIDI note \(note)",value:$note,in:0...127)
+                            } else if kind == .drum {
+                                Stepper("GM drum note \(drumNote)",value:$drumNote,in:0...127)
                             } else if kind == .chord {
                                 TextField("Chord MIDI notes, comma separated",text:$chordNotes)
                             } else if kind == .cc {
@@ -300,15 +301,12 @@ struct CustomSurfacePadEditor:View {
                                 guard layouts[surface]==layout, let old=selectedPad, old.id==id else {
                                     feedback="Pad selection changed; select the pad again.";return
                                 }
-                                let geometry=old.editingGeometry(label:label,x:x,y:surface == .touchBar ? 0:y,width:width,height:surface == .touchBar ? 10000:height)
-                                var pad=geometry
-                                if changeAssignment {
-                                    guard let assignment else{feedback="Invalid musical assignment.";return}
-                                    pad=Layout.Pad(id:id,label:label,x:geometry.x,y:geometry.y,width:geometry.width,height:geometry.height,assignment:assignment)
+                                guard let pad=proposedPad(old),editFailure(layout)==nil,
+                                      let next=layout.replacing(pad) else {
+                                    feedback=editFailure(layout) ?? "Edit could not be applied.";return
                                 }
-                                if let next=layout.replacing(pad){layouts[surface]=next;select(pad);feedback="Draft updated."}
-                                else {feedback="Edit rejected: overlap, boundary or invalid assignment."}
-                            }.disabled(!hasStagedEdit)
+                                layouts[surface]=next;select(pad);feedback="Draft updated."
+                            }.disabled(!hasStagedEdit || editFailure(layout) != nil)
                             Button("Remove pad"){
                                 guard resolveStagedEditFirst(), layouts[surface]==layout, selectedPad?.id==id else { return }
                                 if let next=layout.removing(id:id){layouts[surface]=next;select(next.pads.first);feedback="Pad removed."}
@@ -530,6 +528,47 @@ struct CustomSurfacePadEditor:View {
             return "Duplicate continuous target: "+name+", channel "+String(target.channel+1)+"."
         } catch {return "Standard MIDI plan could not be validated."}
     }
+    private var geometryEditor: some View {
+        let step=fineGeometry ? 1:100
+        return VStack(alignment:.leading,spacing:4) {
+            Toggle("Fine geometry (0.01%)",isOn:$fineGeometry)
+            Text("Coordinates use 0…10000 across the surface. 100 units = 1%.").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Stepper("X \(x)",value:$x,in:0...9999,step:step)
+                Stepper("Width \(width)",value:$width,in:1...10000,step:step)
+            }
+            if surface != .touchBar {
+                HStack {
+                    Stepper("Y \(y)",value:$y,in:0...9999,step:step)
+                    Stepper("Height \(height)",value:$height,in:1...10000,step:step)
+                }
+            }
+        }
+    }
+    private func proposedPad(_ old:Layout.Pad)->Layout.Pad? {
+        let musical:Layout.Assignment
+        if changeAssignment {
+            guard let assignment else{return nil}
+            musical=assignment
+        } else {musical=old.assignment}
+        return .init(id:old.id,label:label,x:x,y:surface == .touchBar ? 0:y,
+                     width:width,height:surface == .touchBar ? 10000:height,assignment:musical)
+    }
+    private func editFailure(_ layout:Layout)->String? {
+        guard let old=selectedPad else{return "Select a pad first."}
+        guard let pad=proposedPad(old) else{return "Invalid musical assignment."}
+        guard let failure=layout.replacementFailure(pad) else{return nil}
+        switch failure {
+        case .unknownPad:return "Pad no longer belongs to this draft."
+        case .invalidLabel:return "Label must fit 64 UTF-8 bytes and contain no control characters."
+        case .invalidGeometry:return "Pad must fit entirely inside the surface with positive width and height."
+        case .invalidAssignment:return "Invalid musical assignment."
+        case .touchBarGeometry:return "Touch Bar pads must span the full height."
+        case .overlaps(let id):
+            let other=layout.pads.first(where:{$0.id==id})
+            return "Overlaps pad: "+(other?.label.isEmpty == false ? other?.label ?? id:id)+"."
+        }
+    }
     private func axisEditor(_ axis:String,bend:Binding<Bool>,cc:Binding<Int>,channel:Binding<Int>)->some View {
         VStack(alignment:.leading,spacing:4) {
             Text(axis+" axis").font(.caption).bold()
@@ -544,8 +583,8 @@ struct CustomSurfacePadEditor:View {
         let result:Layout.Assignment
         switch kind {
         case .note:result = .note(note)
-        case .drum:result = .drum(note)
-        case .degree:result = .degree(note)
+        case .drum:result = .drum(drumNote)
+        case .degree:result = .degree(tuningDegree)
         case .chord:
             let parts=chordNotes.split(separator:",",omittingEmptySubsequences:false)
             let notes=parts.compactMap{Int($0.trimmingCharacters(in:.whitespaces))}
@@ -565,14 +604,14 @@ struct CustomSurfacePadEditor:View {
         selected=pad?.id
         changeAssignment=false
         label="";x=0;y=0;width=2500;height=5000
-        kind = .note;note=60;chordNotes="60, 64, 67";cc=71;channel=0
+        kind = .note;note=60;drumNote=36;tuningDegree=0;chordNotes="60, 64, 67";cc=71;channel=0
         xyXCC=1;xyYCC=11;xyXChannel=0;xyYChannel=0;xyXBend=false;xyYBend=false
         guard let pad else{return}
         label=pad.label;x=pad.x;y=pad.y;width=pad.width;height=pad.height
         switch pad.assignment {
         case .note(let n):kind = .note;note=n
-        case .drum(let n):kind = .drum;note=n
-        case .degree(let n):kind = .degree;note=n
+        case .drum(let n):kind = .drum;drumNote=n
+        case .degree(let n):kind = .degree;tuningDegree=n
         case .helper(let target):
             channel=target.channel
             if target.kind == .sustain {kind = .sustain}
