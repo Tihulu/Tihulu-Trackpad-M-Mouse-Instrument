@@ -42,6 +42,8 @@ final class StudioController: ObservableObject {
     private var builderDraftSession = BuilderDraftSession()
     private var groupDraftSession=PerformanceGroupDraftSession()
     @Published private(set) var customPadRunID: UUID?
+    @Published private(set) var customPadFrozenLayout: CustomSurfacePadLayout?
+    @Published private(set) var customPadFrozenChannel: Int?
     @Published private(set) var customPadStatus = "Custom Pad idle"
     @Published private(set) var customPadPorts: [NativeCustomSurfaceMIDIHost.Status] = []
     @Published private(set) var customPadDiagnosticRunning = false
@@ -3701,6 +3703,8 @@ final class StudioController: ObservableObject {
             stopCustomPad(reason: "MIDI port creation failed; check recovery status.")
             return
         }
+        customPadFrozenLayout = layout
+        customPadFrozenChannel = channel
         customPadRunID = opened.id
         guard inbox.begin(at: NativeCustomSurfaceMIDIHost.monotonicNow()),
               captureMonitor?.customPadEmergencyOperational == true else {
@@ -3768,6 +3772,8 @@ final class StudioController: ObservableObject {
         touch?.setCustomSurfaceInbox(nil)
         let id = customPadRunID
         customPadRunID = nil
+        customPadFrozenLayout = nil
+        customPadFrozenChannel = nil
         if let id { _ = customPadHost.close(id, retryPending: false) }
         updateCustomPadMIDITiming()
         customPadPorts = customPadHost.statuses

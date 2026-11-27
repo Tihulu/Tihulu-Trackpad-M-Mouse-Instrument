@@ -231,6 +231,9 @@ struct CustomSurfacePadEditor:View {
                     Text("No MIDI, haptics or keyboard monitoring. Lift all fingers, hold a finger still for 5 seconds, then release.").font(.caption)
                 } else if studio.customPadRunID != nil {
                     Button("Stop Custom Pad",role:.destructive) { studio.stopCustomPad() }
+                    if let layout=studio.customPadFrozenLayout, let channel=studio.customPadFrozenChannel {
+                        frozenPerformance(layout,channel:channel)
+                    }
                     Text("Esc stops this performance even outside Studio; the foreground app still receives Escape. Cursor remains free.")
                         .font(.caption)
                 } else if !studio.customPadPorts.isEmpty {
@@ -271,6 +274,36 @@ struct CustomSurfacePadEditor:View {
                     }
                 }
             }.frame(maxWidth:.infinity,alignment:.leading)
+        }
+    }
+    /// Render only the armed immutable layout, never the mutable editor draft.
+    /// Highlights are local reconciled intent, not acoustic or DAW confirmation.
+    private func frozenPerformance(_ layout:Layout,channel:Int)->some View {
+        let active=studio.customPadPorts.first(where:{$0.id==studio.customPadRunID && $0.phase == .live})?.activePadIDs ?? []
+        return VStack(alignment:.leading,spacing:6) {
+            Text("Armed: "+layout.surface.rawValue+" · melodic channel "+String(channel+1)).font(.caption.bold())
+            Text("Active logical pads: "+String(active.count)+" / "+String(layout.pads.count)).font(.caption.monospacedDigit())
+            GeometryReader { geo in
+                ZStack(alignment:.topLeading) {
+                    RoundedRectangle(cornerRadius:6).strokeBorder(Color.secondary)
+                    ForEach(layout.pads) { pad in
+                        let on=active.contains(pad.id)
+                        ZStack {
+                            RoundedRectangle(cornerRadius:3).fill(on ? Color.accentColor.opacity(0.5):Color.secondary.opacity(0.15))
+                            RoundedRectangle(cornerRadius:3).strokeBorder(on ? Color.accentColor:Color.secondary.opacity(0.5),lineWidth:on ? 2:1)
+                            HStack(spacing:2) {
+                                if on { Image(systemName:"circle.fill").font(.system(size:7)) }
+                                Text(pad.label).font(.caption2).lineLimit(1)
+                            }.padding(2)
+                        }
+                        .frame(width:max(0,geo.size.width*CGFloat(pad.width)/10000),height:max(0,geo.size.height*CGFloat(pad.height)/10000))
+                        .offset(x:geo.size.width*CGFloat(pad.x)/10000,y:geo.size.height*CGFloat(pad.y)/10000)
+                        .accessibilityLabel(pad.label)
+                        .accessibilityValue(on ? "Active":"Inactive")
+                    }
+                }.clipped()
+            }.frame(height:160)
+            Text("Read-only frozen map. Highlight = locally reconciled pad, not DAW acknowledgement.").font(.caption).foregroundStyle(.secondary)
         }
     }
     private func compatibility(_ layout:Layout)->String {
