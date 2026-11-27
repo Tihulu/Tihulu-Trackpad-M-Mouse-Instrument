@@ -61,6 +61,11 @@ public struct LegacyContinuousOwners: Sendable {
         return token
     }
 
+    /// Includes retired reservations until the matching holder confirms cleanup.
+    public var relativeReservedTargets: Set<SensorDestination> {
+        relativeReservation?.targets ?? []
+    }
+
     public func permitsRelativeHelper(_ token: UUID) -> Bool {
         relativeReservation?.token == token && relativeReservation?.retired == false
     }

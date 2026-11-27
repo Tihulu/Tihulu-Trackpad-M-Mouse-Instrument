@@ -6,6 +6,7 @@ public struct NativeHelperRelativeOutputPlan: Sendable {
     public typealias Axis = NativeHelperRelativeClutch.Axis
     private let targets: [Axis: SensorDestination]
     let targetSet: Set<SensorDestination>
+    public var targetDestinations: Set<SensorDestination> { targetSet }
 
     public init?(targets: [Axis: SensorDestination]) {
         let unique = Set(targets.values)
