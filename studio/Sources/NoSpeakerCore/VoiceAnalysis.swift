@@ -235,12 +235,20 @@ public enum HapticVoiceAnalyzer {
 
     public static func hapticEvents(frames: [HapticVoiceFrame], safety: HapticSafetyPolicy = .init()) -> [ScheduledHapticEvent] {
         frames.enumerated().compactMap { index, frame in
-            guard frame.level > 0 else { return nil }
+            guard frame.level.isFinite, frame.level > 0 else { return nil }
             let tones: [HapticTone]
             let durationMS: Double
             if frame.voiced {
+                // Public frames can be constructed outside the analyzer.
+                // Validate only the lanes consumed by this renderer.
+                guard frame.formants.count >= 2, frame.amplitudes.count >= 2,
+                      frame.formants.prefix(2).allSatisfy({ $0.isFinite && $0 > 0 }),
+                      frame.amplitudes.prefix(2).allSatisfy({ $0.isFinite && $0 >= 0 }),
+                      frame.fundamentalHz.isFinite, frame.fundamentalHz > 0 else { return nil }
                 let weights = [frame.amplitudes[0], frame.amplitudes[1] * 1.8]
-                let total = max(weights[0] + weights[1], 1e-9)
+                let sum = weights[0] + weights[1]
+                guard sum.isFinite else { return nil }
+                let total = max(sum, 1e-9)
                 tones = [
                     HapticTone(frequencyHz: frame.formants[0], amplitude: weights[0] / total),
                     HapticTone(frequencyHz: frame.formants[1], amplitude: weights[1] / total)
