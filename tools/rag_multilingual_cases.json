@@ -1,0 +1,168 @@
+{
+  "development": [
+    {
+      "id": "dev3-queue",
+      "scope": "engine",
+      "language": "tr",
+      "query": "Kısa dokunuş olayları sırayla işlenirken kuyruk taşması nasıl ele alınır?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/OrderedTouchInbox.swift"
+      ]
+    },
+    {
+      "id": "dev3-calibration",
+      "scope": "engine",
+      "language": "de",
+      "query": "Wie speichert man die Kalibrierung der Tiefenkamera ohne Zugangsdaten?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/DepthXYZCalibrationProfiles.swift"
+      ]
+    },
+    {
+      "id": "dev3-chord",
+      "scope": "engine",
+      "language": "en",
+      "query": "Which lower-zone chord allocator reserves exclusive member channels and refuses note stealing?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/ChordMPEState.swift"
+      ]
+    },
+    {
+      "id": "dev3-profile",
+      "scope": "app",
+      "language": "tr",
+      "query": "Dokunmatik çubuğun kayıtlı profili yüklenince eski oturum bırakılıyor mu?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/TouchBarSavedProfilesPanel.swift"
+      ]
+    },
+    {
+      "id": "dev3-progression",
+      "scope": "app",
+      "language": "de",
+      "query": "Wo lassen sich Akkordfolgen mit leeren Schritten abspielen und bearbeiten?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/ChordProgressionPanel.swift"
+      ]
+    },
+    {
+      "id": "dev3-export",
+      "scope": "app",
+      "language": "en",
+      "query": "Which reusable export button opens a save dialog and writes a MIDI file atomically?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/MIDIClipExportButton.swift"
+      ]
+    },
+    {
+      "id": "dev3-debt",
+      "scope": "docs",
+      "language": "tr",
+      "query": "Gönderim hatasından sonra bekleyen nota ve pedal bırakma işlemleri hangi temizlik kuralına göre yeniden deneniyor?",
+      "expected_paths": [
+        "docs/STUDIO_LEGACY_GATE_RELEASE_DEBT.md"
+      ]
+    },
+    {
+      "id": "dev3-domain",
+      "scope": "docs",
+      "language": "de",
+      "query": "Wo werden ungültige Koordinaten und Druckwerte vor der Quantisierung verworfen?",
+      "expected_paths": [
+        "docs/STUDIO_TOUCH_SAMPLE_DOMAIN.md"
+      ]
+    },
+    {
+      "id": "dev3-release",
+      "scope": "docs",
+      "language": "en",
+      "query": "How does the persistent release-my-controls button differ from disconnect and global panic?",
+      "expected_paths": [
+        "docs/REMOTE_R9_GLOBAL_RELEASE.md"
+      ]
+    }
+  ],
+  "evaluation": [
+    {
+      "id": "eval3-actuator",
+      "scope": "engine",
+      "language": "tr",
+      "query": "Aktüatör bağlantısı kapatılınca eski üreticinin yeniden donanımı açması nasıl önleniyor?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/ActuatorLifetimeGate.swift"
+      ]
+    },
+    {
+      "id": "eval3-contact",
+      "scope": "engine",
+      "language": "de",
+      "query": "Welche Kontaktübergänge beenden die mobile Berührung dauerhaft, wenn der vollständige Satz nicht stimmt?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/MobileTouchOwnership.swift"
+      ]
+    },
+    {
+      "id": "eval3-epoch",
+      "scope": "engine",
+      "language": "en",
+      "query": "What revision token makes earlier Touch Bar gestures invalid after mapping replacement?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerCore/TouchBarGestureEpoch.swift"
+      ]
+    },
+    {
+      "id": "eval3-synth",
+      "scope": "app",
+      "language": "tr",
+      "query": "Sanal sentezleyici düğmelerinde kanal mirası ve parametre adı gerçek DAW ataması mı?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/TouchBarSynthPanel.swift"
+      ]
+    },
+    {
+      "id": "eval3-shared",
+      "scope": "app",
+      "language": "de",
+      "query": "Wo wird der gemeinsame Sechston-Haptikmodus für Akkordpads, Touch Bar und Xbox aktiviert?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/ChordPadPanel.swift"
+      ]
+    },
+    {
+      "id": "eval3-layout",
+      "scope": "app",
+      "language": "en",
+      "query": "Where can I reorder performance widgets and pair XY controls without changing a saved binding?",
+      "expected_paths": [
+        "studio/Sources/NoSpeakerStudio/PerformanceControlsView.swift"
+      ]
+    },
+    {
+      "id": "eval3-receive",
+      "scope": "docs",
+      "language": "tr",
+      "query": "Yeniden başlatılan MIDI oturumunda eski geri çağrıların notaları değiştirmesi nasıl engelleniyor?",
+      "expected_paths": [
+        "docs/STUDIO_MIDI_RECEIVE_FENCE.md"
+      ]
+    },
+    {
+      "id": "eval3-ingress",
+      "scope": "docs",
+      "language": "de",
+      "query": "Was passiert bei überlaufenden Eingabeschnappschüssen oder veralteten Live-Berührungen?",
+      "expected_paths": [
+        "docs/TOUCH_ORDERED_INGRESS.md"
+      ]
+    },
+    {
+      "id": "eval3-controller",
+      "scope": "docs",
+      "language": "en",
+      "query": "Where is a failed neutral controller write retained and why does selector cleanup not restore an earlier pitch range?",
+      "expected_paths": [
+        "docs/STUDIO_LEGACY_CONTROLLER_RELEASE_DEBT.md"
+      ]
+    }
+  ]
+}
