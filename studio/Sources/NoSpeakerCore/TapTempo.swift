@@ -10,8 +10,10 @@ public struct TapTempo: Sendable {
     }
 
     public mutating func tap(at time: Double) -> Double? {
-        guard time.isFinite else { return nil }
+        guard time.isFinite, time >= 0 else { return nil }
         if let last = taps.last {
+            // Invalid or repeated timestamps must not replace accepted history.
+            guard time > last else { return nil }
             let gap = time - last
             if gap < 0.2 || gap > 3 {
                 taps = [time]
