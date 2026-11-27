@@ -37,8 +37,12 @@ Only after input evidence is understood, explicitly arm a compatible draft. Sele
 | Failed cleanup | Debt remains visible; explicit retry on original owned endpoint; identity loss requires manual DAW reset/relaunch |
 | Legacy regression | Ordinary Touch Instrument, MIDI Helper, capture and sequencer retain prior behavior |
 
-Capture actual receiver message counts/timing, stop reason, input evidence and remaining cleanup status. For an injected failure use a controlled test backend, not a destructive change to CoreMIDI. Local API success is not remote audible acknowledgement. Main actor watchdog scheduling is not a real-time cleanup guarantee.
+Capture actual receiver message counts/timing, stop reason, input evidence and remaining cleanup status. Copy the Local MIDI timing evidence after stopping and after any explicit recovery. Its maximum host-entry frame age, identity-query time and send time are separate observations, not additive latency or a DAW receipt. Send attempts include cleanup and failed sends. The host retains only the most recently closed timing record, not the endpoint. Save the report before starting another test. If a native identity collision occurs, both records are quarantined; do not attempt to reuse or dispose ambiguous handles. Reset the receiving DAW and relaunch before further trials. For an injected failure use a controlled test backend, not a destructive change to CoreMIDI. Local API success is not remote audible acknowledgement. Main actor watchdog scheduling is not a real-time cleanup guarantee.
 
 ## Acceptance record
 
 For each case record PASS / FAIL / NOT RUN, candidate SHA, setup, expected vs observed outcome, sanitized log reference and reviewer. A physical test that cannot be performed is NOT RUN. Any stuck note, unexpected onset, unknown state transition, failed cleanup or unresolved exact-head CI keeps release on HOLD.
+
+## Known native playback timing failure (CI, not physical acceptance)
+
+Run 45912476502, first attempt, commit 7ccd744d: `nativePlaybackUsesIsolatedSourceAndClosesIt` faulted with `lateEvent`. Observed maxima: event lateness 557986166 ns, identity query 272071584 ns, native send 59375 ns, wake lateness 357496958 ns. Maxima need not come from the same event. Run 45912524614 (cf64feb8) passed all four platforms, but that does not resolve the first failure. The failed macOS job was explicitly rerun; retain both attempts. Compare receiver timing, scheduler wake and endpoint identity latency before changing production behavior. Do not increase deadline limits or waive the fixture. The Custom Pad timing report is a separate observation tool, not a fix for legacy playback scheduling.
