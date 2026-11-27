@@ -167,4 +167,90 @@ final class SequencerDraftEditorTests: XCTestCase {
         XCTAssertEqual(editor.draft, original)
         XCTAssertFalse(editor.canUndo)
     }
+
+    func testCombinedGridAndOptionsAreOneUndoTransaction() throws {
+        let original = try SequencerPatternArchive(notes: .init(steps: [
+            .init(index: 0, midi: 60), .init(index: 15, midi: nil)
+        ]), groove: GrooveSettings())
+        var editor = try SequencerDraftEditor(draft: original)
+        let frozen = try editor.frozen()
+        XCTAssertTrue(try editor.editNotesAndOptions { notes, options in
+            notes.steps.removeAll { $0.index >= 8 }
+            notes.length = 8
+            notes.stepsPerBeat = 8
+            notes.bpm = 100
+            options.groove = nil
+            options.channel = 5
+            options.loop = true
+        })
+        let next = try editor.frozen()
+        XCTAssertEqual(next.clip.length, 960)
+        XCTAssertEqual(next.clip.bpm, 100)
+        XCTAssertEqual(next.clip.notes.first?.channel, 5)
+        XCTAssertTrue(next.loop)
+        XCTAssertNil(editor.options.groove)
+        XCTAssertEqual(frozen, try original.frozen())
+        XCTAssertTrue(editor.undo())
+        XCTAssertEqual(editor.draft, original)
+        XCTAssertFalse(editor.canUndo)
+    }
+
+    func testCombinedInvalidOrThrowingChangesPreserveHistory() throws {
+        enum Aborted: Error { case edit }
+        let original = try SequencerPatternArchive(notes: .init(steps: [.init(index: 0, midi: 60)]),
+                                                   groove: GrooveSettings())
+        var editor = try SequencerDraftEditor(draft: original)
+        XCTAssertTrue(try editor.editNotesAndOptions { notes, options in
+            notes.bpm = 150
+            options.loop = true
+        })
+        let before = editor.draft
+        XCTAssertThrowsError(try editor.editNotesAndOptions { notes, options in
+            notes.bpm = 90
+            options.channel = nil
+        }) {
+            XCTAssertEqual($0 as? SequencerDraftEditor.EditError, .missingNoteChannel)
+        }
+        XCTAssertThrowsError(try editor.editNotesAndOptions { notes, options in
+            notes.stepsPerBeat = 8
+            options.channel = 3
+        })
+        XCTAssertThrowsError(try editor.editNotesAndOptions { notes, options in
+            notes.bpm = 90
+            options.loop = false
+            throw Aborted.edit
+        })
+        XCTAssertEqual(editor.draft, before)
+        XCTAssertTrue(editor.undo())
+        XCTAssertEqual(editor.draft, original)
+        XCTAssertFalse(editor.canUndo)
+    }
+
+    func testCombinedDrumTransactionRejectsChannelAndWrongKind() throws {
+        let original = try SequencerPatternArchive(drums: .init(hits: [
+            .init(index: 0, voice: .kick), .init(index: 0, voice: .snare)
+        ]))
+        var editor = try SequencerDraftEditor(draft: original)
+        XCTAssertTrue(try editor.editDrumsAndOptions { drums, options in
+            drums.bpm = 200
+            drums.hits[0].velocity = 0
+            options.groove = GrooveSettings()
+            options.loop = true
+        })
+        let before = editor.draft
+        XCTAssertThrowsError(try editor.editDrumsAndOptions { drums, options in
+            drums.hits.removeAll()
+            options.channel = 9
+        }) {
+            XCTAssertEqual($0 as? SequencerDraftEditor.EditError, .drumChannel)
+        }
+        XCTAssertEqual(editor.draft, before)
+        XCTAssertTrue(editor.undo())
+        XCTAssertEqual(editor.draft, original)
+        XCTAssertFalse(try editor.editDrumsAndOptions { _, _ in })
+        XCTAssertFalse(editor.canUndo)
+        XCTAssertThrowsError(try editor.editNotesAndOptions { _, _ in }) {
+            XCTAssertEqual($0 as? SequencerDraftEditor.EditError, .wrongKind)
+        }
+    }
 }

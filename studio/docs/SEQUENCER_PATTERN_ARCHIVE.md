@@ -98,7 +98,13 @@ Shortening a grid with cells outside the new length is rejected until
 the caller explicitly deletes those cells in the same batch. Changing
 away from sixteenth-note subdivision requires clearing incompatible
 groove settings. Drum channel remains fixed; note channel is zero-based.
-Options changes are explicit and undoable. The editor may hold up to
+Options changes are explicit and undoable. Use `editNotesAndOptions` or
+`editDrumsAndOptions` to change grid and dependent options in one transaction
+and one undo entry (for example, change subdivision while clearing groove).
+The original single-argument edit methods and `setOptions` use the same
+transaction path. A note draft requires a channel; a drum draft forbids
+a channel override. An invalid combined change or a thrown callback leaves
+both document and history unchanged. The editor may hold up to
 16 previous validated documents, so keep this work off the real-time path.
 It encodes a changed candidate once to enforce the byte bound; no real-time
 or UI latency acceptance is implied.
@@ -139,3 +145,13 @@ ordering, range, cancellation and cleanup, and never overwrite MPE member
 base bends. A recorded reference is historical data, not fresh authorization
 for a new clutch. A new schema, host integration and actual DAW tests are
 separate future work; no physical or real-time acceptance is claimed.
+
+### Timing verification scope
+
+The regression matrix covers 52 tempo/subdivision combinations (including
+20 and 300 BPM, subdivisions 1 and 960), 18 seeded groove combinations
+with repeat-note nonoverlap, and the maximum tick/step boundaries.
+An exportable long frozen clip is not automatically eligible for bounded
+one-shot playback; the existing scheduler admission remains authoritative.
+These are deterministic offline invariants, not live timing or jitter
+measurements. No runtime timing limits were changed.
