@@ -22,4 +22,25 @@ public struct ScalaKeyboardPreview: Equatable, Sendable {
         guard let pitch = tuning.pitch(step: step) else { return .unavailable }
         return .tuned(pitch)
     }
+
+    /// Receiver-dependent offline projection only. Unlike the legacy
+    /// explicitly unlocked map, imported holes never emit original notes.
+    public enum MemberOutput: Equatable, Sendable {
+        case tuned(OfflineTuningMemberPitch)
+        case unmapped
+        case outsideRange
+        case unavailable
+    }
+    public func memberOutput(_ note: Int, bendRangeSemitones: Int = 2) -> MemberOutput {
+        guard (1...96).contains(bendRangeSemitones) else { return .unavailable }
+        switch output(note) {
+        case .tuned(let pitch):
+            guard let member = OfflineTuningMemberPitch.encode(inputNote: note, pitch: pitch,
+                  bendRangeSemitones: bendRangeSemitones) else { return .unavailable }
+            return .tuned(member)
+        case .unmapped: return .unmapped
+        case .outsideRange: return .outsideRange
+        case .unavailable: return .unavailable
+        }
+    }
 }
