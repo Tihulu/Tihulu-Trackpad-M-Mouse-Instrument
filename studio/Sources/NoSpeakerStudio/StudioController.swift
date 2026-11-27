@@ -1283,6 +1283,203 @@ final class StudioController: ObservableObject {
         keyboardAuditResult = midi?.endKeyboardOutputAudit()
         keyboardAuditRunning = false
     }
+    private final class RelativeHelperRun {
+        let id: UUID
+        let host: NativeHelperRelativeInputHost
+        let midi: MIDIHapticService
+        let inbox: OrderedTouchInbox<QueuedTouchSnapshot>
+        let monitor: UUID
+        let generation: UInt64
+        let midiEpoch: UInt64
+        let surface: TouchSurfaceKind
+        let registration: UUID
+        let orientation: SurfaceOrientation
+
+        init(id: UUID, host: NativeHelperRelativeInputHost, midi: MIDIHapticService,
+             inbox: OrderedTouchInbox<QueuedTouchSnapshot>, monitor: UUID, generation: UInt64,
+             midiEpoch: UInt64, surface: TouchSurfaceKind, registration: UUID, orientation: SurfaceOrientation) {
+            self.id = id; self.host = host; self.midi = midi; self.inbox = inbox
+            self.monitor = monitor; self.generation = generation; self.midiEpoch = midiEpoch
+            self.surface = surface; self.registration = registration; self.orientation = orientation
+        }
+    }
+    private typealias RelativeLifetime = NativeHelperRelativeHostLifetime<RelativeHelperRun>
+    private let relativeHelperLifetime = RelativeLifetime()
+    private var relativeHelperToken: RelativeLifetime.Token?
+    private var relativeHelperRun: RelativeHelperRun? {
+        guard let token = relativeHelperToken else { return nil }
+        return relativeHelperLifetime.activeHost(for: token)
+    }
+    private var relativeHelperWatchdog: Task<Void, Never>?
+    private var relativeHelperArming = false
+    private var relativeHelperClosing = false
+    @Published private(set) var relativeHelperArmed = false
+    @Published private(set) var relativeHelperStatus = "Relative off"
+
+    private func relativeHelperLive(_ run: RelativeHelperRun) -> Bool {
+        relativeHelperRun === run && engineReady && midiRunning && midiHelperRunning &&
+            touchPreviewRunning && engineGeneration == run.generation && midi === run.midi &&
+            surfaceInbox === run.inbox && surfaceMonitorToken == run.monitor &&
+            midiSessionEpoch.accepts(run.midiEpoch) && helperSurfaceSelection != .both &&
+            helperSurfaceSelection.accepts(run.surface) && magicMouseOrientation == run.orientation &&
+            run.midi.outgoingFailureStatus == nil && !run.midi.requiresManualDAWReset &&
+            HapticTrackpadDriver.matchesTouchRegistrations([run.surface: run.registration])
+    }
+
+    /// Explicit experimental transition of an already configured/running Helper.
+    /// No UI caller yet: exact integer binding adoption and native review required.
+    /// Pedal settings stay intact; only the expressive owner is retired.
+    @discardableResult
+    func enableRelativeMIDIHelper(settings: NativeHelperRelativeManualSettings) -> Bool {
+        guard relativeHelperToken == nil, relativeHelperLifetime.phase == .idle,
+              !relativeHelperArming, !relativeHelperClosing,
+              midiHelperRunning, midiRunning, engineReady,
+              allowLivePerformance(), touchPreviewRunning, let touch, let midi,
+              let inbox = surfaceInbox, let monitor = surfaceMonitorToken,
+              let epoch = midiSessionEpoch.token, let driver else { return false }
+        relativeHelperArming = true
+        defer { relativeHelperArming = false }
+        let surface: TouchSurfaceKind
+        switch helperSurfaceSelection {
+        case .trackpad: surface = .trackpad
+        case .magicMouse: surface = .magicMouse
+        case .both:
+            lastError = "Relative requires one selected surface."
+            return false
+        }
+        let source: NativeHelperRelativeClutch.Surface = surface == .trackpad ? .trackpad : .magicMouse
+        var axes: Set<NativeHelperRelativeClutch.Axis> = []
+        if helperAssignments.pitchBend { axes.insert(.x) }
+        if helperAssignments.vibrato { axes.insert(.y) }
+        if helperAssignments.expression { axes.insert(.contactSize) }
+        let resolution = NativeHelperRelativeStartRequest.resolve(selectedSurface: source,
+            orientation: magicMouseOrientation, sendToDAW: helperSendToDAW, enabled: axes,
+            selectedSurfaceUsesSustain: surface == .trackpad ? helperSustainSettings.trackpadEnabled : helperSustainSettings.magicMouseEnabled,
+            sharePedalSurface: helperSharePedalSurface, configureReceiverBendRange: helperConfigureReceiverBendRange,
+            oneBasedChannel: helperTargetChannel + 1, vibratoCC: helperVibratoCC,
+            expressionCC: helperExpressionCC, settings: settings)
+        guard case .success(let request) = resolution else {
+            if case .failure(let reason) = resolution { lastError = "Relative start refused: \(reason.rawValue)" }
+            return false
+        }
+        guard midi.finishClosedRelativeHelperOutput(), midi.outgoingFailureStatus == nil,
+              !midi.requiresManualDAWReset, let registration = driver.registeredSurfaceTokens[surface],
+              HapticTrackpadDriver.matchesTouchRegistrations([surface: registration]) else {
+            lastError = "Relative start requires a current device and clean MIDI handoff."
+            return false
+        }
+        midi.resetHelperControls(assignments: helperAssignments, channel: helperTargetChannel,
+            vibratoCC: helperVibratoCC, expressionCC: helperExpressionCC)
+        // Freeze the source only AFTER old expressive output was retired.
+        guard midi.outgoingFailureStatus == nil, !midi.requiresManualDAWReset,
+              let boundary = touch.relativeConsumerPublicationBoundary(surface: surface, registration: registration, inbox: inbox),
+              boundary.source == request.surface,
+              let host = NativeHelperRelativeInputHost(boundary: boundary, monitor: monitor,
+                configuration: request.output, orientation: request.orientation, midi: midi) else {
+            stopMIDIHelper()
+            lastError = "Relative arm failed after expressive release. Restart Helper explicitly."
+            return false
+        }
+        helperEffectsPublicationFence.begin(after: boundary.afterSequence)
+        helperEffectsRearmGate.invalidate()
+        let run = RelativeHelperRun(id: UUID(), host: host, midi: midi, inbox: inbox, monitor: monitor,
+            generation: engineGeneration, midiEpoch: epoch, surface: surface, registration: registration,
+            orientation: request.orientation)
+        guard let token = relativeHelperLifetime.install(run) else {
+            // Installation is inert; no input was delivered to this host.
+            stopMIDIHelper()
+            lastError = "Relative owner slot unavailable. Restart Helper explicitly."
+            return false
+        }
+        relativeHelperToken = token
+        relativeHelperArmed = true
+        relativeHelperStatus = "Relative · lift fingers to arm"
+        guard relativeHelperLive(run) else {
+            stopMIDIHelper()
+            lastError = "Relative source changed during arm. Restart explicitly."
+            return false
+        }
+        let id = run.id
+        relativeHelperWatchdog?.cancel()
+        relativeHelperWatchdog = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+                guard let self, self.pollRelativeHelper(id: id) else { return }
+            }
+        }
+        return true
+    }
+
+    private func pollRelativeHelper(id: UUID) -> Bool {
+        guard let run = relativeHelperRun, run.id == id else { return false }
+        guard relativeHelperLive(run) else {
+            stopMIDIHelper()
+            lastError = "Relative source or MIDI session lost. Restart explicitly."
+            return false
+        }
+        let result = run.host.poll(live: { self.relativeHelperLive(run) })
+        if result == .retired {
+            // Expired stream or terminal source fault: explicit restart, not
+            // a silent switch back to Absolute or an orphaned closed binding.
+            stopMIDIHelper()
+            lastError = "Relative watchdog retired the input. Restart explicitly."
+            return false
+        }
+        return relativeHelperRun?.id == id
+    }
+
+    private func receiveRelativeHelper(_ sample: QueuedTouchSnapshot, effectsAdmitted: Bool,
+        admit: @escaping () -> Bool) {
+        guard let run = relativeHelperRun, sample.sourceSurface == run.surface, effectsAdmitted else { return }
+        guard relativeHelperLive(run) else {
+            stopMIDIHelper()
+            lastError = "Relative source or MIDI session lost. Restart explicitly."
+            return
+        }
+        let result = run.host.receive(sample, monitor: run.monitor, live: { self.relativeHelperLive(run) && admit() })
+        // Missing/mismatched selected-source evidence closes the binding; do
+        // not present it as an automatically recovering clutch.
+        let expected: NativeHelperRelativeClutch.Surface = run.surface == .trackpad ? .trackpad : .magicMouse
+        guard let frame = sample.relativeFrame, frame.surface == expected, frame.nativeRegistration == run.registration,
+              relativeHelperLive(run) else {
+            stopMIDIHelper()
+            lastError = "Relative source evidence lost. Restart explicitly."
+            return
+        }
+        switch result {
+        case .anchored, .accepted: relativeHelperStatus = "Relative · active"
+        case .waiting, .retired: relativeHelperStatus = "Relative · waiting for clean contact"
+        case .ignored: break
+        }
+    }
+
+    /// Revoke the current owner before callbacks and finish only its service.
+    /// A stale watchdog has no access to a replacement run or its reservation.
+    @discardableResult
+    private func closeRelativeHelperHost() -> Bool {
+        guard !relativeHelperClosing else { return false }
+        relativeHelperClosing = true
+        defer { relativeHelperClosing = false }
+        relativeHelperWatchdog?.cancel()
+        relativeHelperWatchdog = nil
+        guard let token = relativeHelperToken else { return relativeHelperLifetime.phase == .idle }
+        let clean: Bool
+        switch relativeHelperLifetime.phase {
+        case .active:
+            clean = relativeHelperLifetime.close(token, retire: { _ = $0.host.close() },
+                finish: { $0.midi.finishClosedRelativeHelperOutput() })
+        case .closing:
+            // Retry only the captured original service, never send another
+            // cleanup or touch a newly installed service.
+            clean = relativeHelperLifetime.retry(token, finish: { $0.midi.finishClosedRelativeHelperOutput() })
+        case .idle: return false
+        }
+        if clean { relativeHelperToken = nil }
+        relativeHelperArmed = false
+        relativeHelperStatus = clean ? "Relative off" : "Relative · cleanup pending"
+        return clean
+    }
+
     private var helperAssignments = MIDIHelperAssignments.sustainOnly
     private var helperSharePedalSurface = false
     private var helperSendToDAW = true
@@ -3105,6 +3302,7 @@ final class StudioController: ObservableObject {
 
     private func prepareEngine() {
         guard !engineReady, !speakerBusy else { return }
+        _ = closeRelativeHelperHost()
         guard customPadHost.statuses.isEmpty else {
             engineStatus = "Stopped · Custom Pad MIDI recovery pending"
             lastError = "Resolve Custom Pad MIDI recovery before reconnecting."
@@ -3121,6 +3319,11 @@ final class StudioController: ObservableObject {
                     : "MIDI release remains unconfirmed. Keep the receiving DAW available and retry Reconnect."
                 return
             }
+        }
+        guard closeRelativeHelperHost() else {
+            engineStatus = "Stopped · Relative cleanup unresolved"
+            lastError = "Resolve the original Relative MIDI cleanup before reconnecting."
+            return
         }
         // Preserve audit evidence before retiring the measured endpoint.
         finishKeyboardAudit()
@@ -3160,6 +3363,7 @@ final class StudioController: ObservableObject {
     func panicStop() {
         // Free the pointer before potentially slow audio/MIDI cleanup.
         retireCaptureMonitor()
+        _ = closeRelativeHelperHost()
         captureArmed = false
         captureHotkeyArmed = false
         if customPadBlocksOtherStarts {
@@ -3180,6 +3384,7 @@ final class StudioController: ObservableObject {
         enableLiveHinge(false)
         midiSessionEpoch.end()
         midi?.stop()
+        _ = closeRelativeHelperHost()
         finishKeyboardAudit()
         releaseTouchBarNotes()
         touchBarSustainOn = false
@@ -3560,6 +3765,7 @@ final class StudioController: ObservableObject {
 
     func setMagicMouseOrientation(_ newOrientation: SurfaceOrientation) {
         guard magicMouseOrientation != newOrientation else { return }
+        if relativeHelperRun != nil { stopMIDIHelper() }
         // Coordinates are transformed at Helper admission. Do not apply a
         // pre-orientation queued contact to a new expressive mapping.
         if midiHelperRunning && helperSurfaceSelection.accepts(.magicMouse) {
@@ -4240,7 +4446,12 @@ final class StudioController: ObservableObject {
                 if let instrumentStates { handleTouchStates(instrumentStates,pedal:pedal,admitOnset:admit) }
             },helper:{
                 if let helperStates {
-                    handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:effectsAdmitted,admitOnset:admit)
+                    if relativeHelperRun != nil {
+                        handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:false,admitOnset:admit)
+                        receiveRelativeHelper(sample,effectsAdmitted:effectsAdmitted,admit:admit)
+                    } else {
+                        handleMIDIHelperStates(helperStates,pedalAdmitted:pedalAdmitted,effectsAdmitted:effectsAdmitted,admitOnset:admit)
+                    }
                 }
             })
     }
@@ -4551,6 +4762,7 @@ final class StudioController: ObservableObject {
         // MIDI output before individual UI owners can perform a handoff.
         midiSessionEpoch.end()
         midi?.stop()
+        _ = closeRelativeHelperHost()
         if !touchBarProfile.effectiveOutput.sendsHaptics {
             releaseTouchBarNotes()
             touchBarSustainOn = false
@@ -4599,6 +4811,12 @@ final class StudioController: ObservableObject {
     }
 
     func updateMIDIHelperSurface(_ surfaceSelection: TouchSurfaceSelection) {
+        if relativeHelperRun != nil && surfaceSelection != helperSurfaceSelection {
+            stopMIDIHelper()
+            helperSurfaceSelection = surfaceSelection
+            refreshSharedSurfaceMonitoring()
+            return
+        }
         if midiHelperRunning && surfaceSelection != helperSurfaceSelection,
            let message = missingNativeSurfaceMessage(Set(TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) })) {
             stopMIDIHelper()
@@ -4648,6 +4866,16 @@ final class StudioController: ObservableObject {
         configureReceiverBendRange:Bool = false
     ) {
         guard allowLivePerformance() else { return }
+        guard !relativeHelperArming, !relativeHelperClosing else { return }
+        if relativeHelperRun != nil {
+            stopMIDIHelper()
+            lastError = "Relative stopped for configuration change. Restart Helper explicitly."
+            return
+        }
+        guard closeRelativeHelperHost() else {
+            lastError = "Relative cleanup pending. Resolve MIDI recovery before restarting Helper."
+            return
+        }
         if midiHelperRunning,
            let message = missingNativeSurfaceMessage(Set(TouchSurfaceKind.allCases.filter { surfaceSelection.accepts($0) })) {
             stopMIDIHelper()
@@ -4753,6 +4981,10 @@ final class StudioController: ObservableObject {
     }
 
     func stopMIDIHelper() {
+        guard !relativeHelperClosing else { return }
+        let wasRelative = relativeHelperToken != nil
+        let relativeClean = closeRelativeHelperHost()
+        if !relativeClean { lastError = "Relative cleanup pending. Resolve MIDI recovery before restarting Helper." }
         guard midiHelperRunning else { return }
         helperClickFence.end()
         let sequence = touch?.consumerPublicationBoundary().sequence ?? 0
@@ -4766,7 +4998,7 @@ final class StudioController: ObservableObject {
         midiHelperSustainActive = false
         midiHelperTrackpadSustainActive = false
         midiHelperMagicMouseSustainActive = false
-        if helperSendToDAW {
+        if helperSendToDAW && !wasRelative && relativeClean {
             midi?.resetHelperControls(
                 assignments: helperAssignments,
                 channel: helperTargetChannel,
