@@ -85,7 +85,15 @@ public struct LegacyContinuousOwners: Sendable {
 
     private func conflictsWithRelative(_ owner: Owner, values: [SensorDestination:Value]) -> Bool {
         guard let reservation = relativeReservation else { return false }
-        return owner == .helper || !reservation.targets.isDisjoint(with: values.keys)
+        if owner == .helper || !reservation.targets.isDisjoint(with: values.keys) { return true }
+        // Match the direct CC channel-wide range-operation policy, but
+        // only preempt for a real effective RPN update, not ordinary bend
+        // motion with an unchanged range. Include fallback on owner release.
+        let channels = Set(reservation.targets.map(\.channel))
+        var preview = self
+        return preview.replaceRaw(owner, values: values).contains {
+            $0.bendRange != nil && channels.contains($0.target.channel)
+        }
     }
 
     /// Withdraw the entire relative intent before a competing owner enters.
@@ -194,10 +202,12 @@ public struct LegacyContinuousOwners: Sendable {
 
     public mutating func set(_ owner: Owner, target: SensorDestination, value: Value) -> [Update] {
         guard value.valid(for:target) else { return [] }
-        if conflictsWithRelative(owner, values: [target:value]) {
+        if relativeReservation != nil {
             var next = values(for: owner)
             next[target] = value
-            return replace(owner, values: next)
+            if conflictsWithRelative(owner, values: next) {
+                return replace(owner, values: next)
+            }
         }
         guard owners[owner]?[target] != value else { return [] }
         let previous = winner(target)

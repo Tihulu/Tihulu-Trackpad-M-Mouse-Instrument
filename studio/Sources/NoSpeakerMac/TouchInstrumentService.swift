@@ -770,18 +770,21 @@ public final class TouchInstrumentService: @unchecked Sendable {
                 x:Double(contact.x),y:Double(contact.y),pressure:Double(contact.size))
         }
         let receivedAt = ProcessInfo.processInfo.systemUptime
-        // Preserve raw source membership and count. Relative admission must
-        // not treat compactMap dropping an invalid contact as a real lift.
+        // Preserve the original driver envelope and callback clock. A
+        // filtered empty list is never evidence of a genuine release.
         let relativeSurface: NativeHelperRelativeClutch.Surface = frame.surface == .trackpad ? .trackpad : .magicMouse
-        let relativeDown = frame.contacts.filter(\.isDown)
-        let relativeFrame = NativeHelperRelativeClutch.SourceFrame(
-            surface: relativeSurface, rawDownCount: relativeDown.count,
-            sourceConsistent: frame.contacts.allSatisfy { $0.surface == frame.surface },
-            contacts: relativeDown.map { contact in
-                .init(surface: contact.surface == .trackpad ? .trackpad : .magicMouse,
-                      id: contact.id, x: Double(contact.x), y: Double(contact.y),
-                      contactSize: Double(contact.size))
-            }, receipt: receivedAt)
+        let registrationCurrent = frame.nativeRegistration.map {
+            HapticTrackpadDriver.matchesTouchRegistrations([frame.surface: $0])
+        } ?? false
+        let relativeFrame = NativeHelperRelativeEnvelope.project(
+            surface: relativeSurface, registration: frame.nativeRegistration, registrationCurrent: registrationCurrent,
+            acquisitionNS: frame.acquisitionNS, validEnvelope: frame.validNativeEnvelope,
+            rawCount: frame.rawNativeContactCount, rawStates: frame.rawNativeStates,
+            records: frame.contacts.map { contact in
+                .init(state: contact.state, isDown: contact.isDown,
+                      contact: .init(surface: contact.surface == .trackpad ? .trackpad : .magicMouse,
+                          id: contact.id, x: Double(contact.x), y: Double(contact.y), contactSize: Double(contact.size)))
+            }, maximumRecords: NativeTouchFramePolicy.maximumContacts)
         helperContactCache.replace(frame.surface,contacts:physical,
             observation:.init(stamp:stamp,receivedAt:receivedAt))
         let helperContacts = helperContactCache.combined(order:TouchSurfaceKind.allCases)

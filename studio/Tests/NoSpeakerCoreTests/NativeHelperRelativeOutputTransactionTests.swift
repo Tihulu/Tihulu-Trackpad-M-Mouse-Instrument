@@ -167,3 +167,61 @@ private func transaction() throws -> NativeHelperRelativeOutputTransaction {
     #expect(clean)
     #expect(owners.set(.helper, target: transactionBend, value: .init(9000, neutral: 8192)) == [.init(transactionBend, value: 9000)])
 }
+
+@Test func relativeInterlockPreemptsEffectiveRangeChangeButNotOrdinaryBend() throws {
+    let cc = SensorDestination(.controlChange, channel: 2, number: 74)
+    let bend = SensorDestination(.pitchBend, channel: 2)
+    let foreignBend = SensorDestination(.pitchBend, channel: 3)
+    var owners = LegacyContinuousOwners()
+    _ = owners.set(.touch, target: bend, value: .init(8192, neutral: 8192, bendRange: 12))
+    let reserved = owners.reserveRelativeHelper(targets: [cc])
+    let token = try #require(reserved)
+    let accepted = owners.replaceRelativeHelperAdmitted(token, values: [cc: .init(90, neutral: 0)],
+        permits: { true }, send: { _ in true })
+    #expect(accepted)
+    #expect(owners.set(.touch, target: bend, value: .init(9000, neutral: 8192, bendRange: 12)) ==
+        [.init(bend, value: 9000)])
+    #expect(owners.permitsRelativeHelper(token))
+    #expect(owners.set(.touchBar, target: foreignBend, value: .init(9000, neutral: 8192, bendRange: 24)) ==
+        [.init(foreignBend, value: 9000, bendRange: 24)])
+    #expect(owners.permitsRelativeHelper(token))
+    let rangeChange = owners.set(.touch, target: bend, value: .init(9000, neutral: 8192, bendRange: 24))
+    #expect(rangeChange == [.init(cc, value: 0), .init(bend, value: 9000, bendRange: 24)])
+    #expect(!owners.permitsRelativeHelper(token) && owners.values(for: .helper).isEmpty)
+}
+
+@Test func relativeInterlockRangeFallbackOnReleaseAlsoRetires() throws {
+    let cc = SensorDestination(.controlChange, channel: 2, number: 74)
+    let bend = SensorDestination(.pitchBend, channel: 2)
+    var owners = LegacyContinuousOwners()
+    _ = owners.set(.touchBar, target: bend, value: .init(9000, neutral: 8192, bendRange: 24))
+    _ = owners.set(.touch, target: bend, value: .init(8192, neutral: 8192, bendRange: 12))
+    let reserved = owners.reserveRelativeHelper(targets: [cc])
+    let token = try #require(reserved)
+    let accepted = owners.replaceRelativeHelperAdmitted(token, values: [cc: .init(90, neutral: 0)],
+        permits: { true }, send: { _ in true })
+    #expect(accepted)
+    // A hidden range edit does not emit an RPN yet.
+    #expect(owners.set(.touchBar, target: bend, value: .init(9000, neutral: 8192, bendRange: 5)).isEmpty)
+    #expect(owners.permitsRelativeHelper(token))
+    #expect(owners.release(.touch) == [.init(cc, value: 0), .init(bend, value: 9000, bendRange: 5)])
+    #expect(!owners.permitsRelativeHelper(token))
+    #expect(owners.values(for: .helper).isEmpty)
+}
+
+@Test func relativeInterlockAdmittedRangeChangeCannotProceedAfterFailedCleanup() throws {
+    let cc = SensorDestination(.controlChange, channel: 2, number: 74)
+    let bend = SensorDestination(.pitchBend, channel: 2)
+    var owners = LegacyContinuousOwners()
+    let reserved = owners.reserveRelativeHelper(targets: [cc])
+    let token = try #require(reserved)
+    let accepted = owners.replaceRelativeHelperAdmitted(token, values: [cc: .init(90, neutral: 0)],
+        permits: { true }, send: { _ in true })
+    #expect(accepted)
+    var attempts: [LegacyContinuousOwners.Update] = []
+    let changed = owners.replaceAdmitted(.touch, values: [bend: .init(9000, neutral: 8192, bendRange: 12)],
+        permits: { true }, send: { attempts.append($0); return false })
+    #expect(!changed && attempts == [.init(cc, value: 0)])
+    #expect(!owners.permitsRelativeHelper(token))
+    #expect(owners.values(for: .helper).isEmpty && owners.values(for: .touch).isEmpty)
+}
