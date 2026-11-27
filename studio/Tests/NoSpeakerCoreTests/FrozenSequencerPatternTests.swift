@@ -189,4 +189,64 @@ final class FrozenSequencerPatternTests: XCTestCase {
         XCTAssertEqual(undos, 16)
         XCTAssertEqual(current, ["kick:3"])
     }
+
+    func testTempoSubdivisionMatrixPreservesRetriggerAndRestBoundaries() throws {
+        for bpm in [20.0, 87.5, 120, 300] {
+            for subdivision in [1, 2, 3, 4, 5, 8, 16, 32, 60, 120, 240, 480, 960] {
+                let step = MIDIClip.ppq / subdivision
+                let take = try FrozenSequencerPattern(notes: .init(
+                    bpm: bpm, stepsPerBeat: subdivision, length: 4, steps: [
+                        .init(index: 0, midi: 60, gate: 1),
+                        .init(index: 1, midi: 60, gate: 1),
+                        .init(index: 3, midi: nil)
+                    ]))
+                let schedule = try take.schedule()
+                XCTAssertEqual(schedule.events.map(\.tick), [0, step, step, step * 2])
+                XCTAssertEqual(schedule.events.map(\.isNoteOn), [true, false, true, false])
+                XCTAssertEqual(take.duration, 4 * 60 / bpm / Double(subdivision), accuracy: 1e-10)
+                XCTAssertEqual(take.gridStep(atConfirmedTick: step - 1), 0)
+                XCTAssertEqual(take.gridStep(atConfirmedTick: step), 1)
+                XCTAssertNil(take.gridStep(atConfirmedTick: 4 * step))
+                XCTAssertNil(take.gridStep(atConfirmedTick: -1))
+            }
+        }
+    }
+
+    func testGrooveSeedMatrixPreservesDeterminismAndNonoverlap() throws {
+        for seed in [1, 2, 7, 33, 78, 9999] {
+            for swing in [50, 63, 75] {
+                var groove = GrooveSettings()
+                groove.seed = seed
+                groove.swing = swing
+                groove.humanize = 100
+                groove.probability = 25
+                let steps = (0..<16).map { NoteStep(index: $0, midi: 60, gate: 1) }
+                let a = try FrozenSequencerPattern(notes: .init(bpm: 300, steps: steps), groove: groove)
+                let b = try FrozenSequencerPattern(
+                    notes: .init(bpm: 300, steps: Array(steps.reversed())), groove: groove)
+                XCTAssertEqual(a, b)
+                for (x, y) in zip(a.clip.notes, a.clip.notes.dropFirst()) {
+                    XCTAssertLessThanOrEqual(x.start + x.duration, y.start)
+                }
+                XCTAssertTrue(a.clip.notes.allSatisfy {
+                    $0.duration > 0 && $0.start + $0.duration <= a.clip.length
+                })
+            }
+        }
+    }
+
+    func testMaximumTicksAndStepsDoNotChangePlaybackAdmission() throws {
+        let take = try FrozenSequencerPattern(notes: .init(
+            bpm: 20, stepsPerBeat: 1, length: 1024, steps: [.init(index: 1023, midi: 127, gate: 1)]))
+        XCTAssertEqual(take.clip.length, 983040)
+        XCTAssertEqual(take.duration, 3072)
+        XCTAssertEqual(take.gridStep(atConfirmedTick: 983039), 1023)
+        // An exportable frozen clip is not automatically a bounded one-shot
+        // playback candidate. Preserve the existing scheduler's admission.
+        XCTAssertThrowsError(try BoundedMIDIPlayback(clip: take.clip))
+        XCTAssertThrowsError(try FrozenSequencerPattern(notes: .init(
+            bpm: 20, stepsPerBeat: 1, length: 1025, steps: [.init(index: 0, midi: 60)])))
+        XCTAssertThrowsError(try FrozenSequencerPattern(notes: .init(
+            stepsPerBeat: 960, length: 4097, steps: [.init(index: 0, midi: 60)])))
+    }
 }
