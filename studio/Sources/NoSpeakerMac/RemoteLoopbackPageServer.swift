@@ -238,8 +238,8 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
 <p>Enable the mapped control families separately. Existing workload limits still apply.</p>
 <button id="customDrumEnable" type="button" disabled>Enable drum pads</button><button id="customPedalEnable" type="button" disabled>Enable pedalboard</button>
 <button id="customDrumRelease" type="button" disabled>Release all drum pads</button><button id="customPedalRelease" type="button" disabled>Release all pedals</button>
-<div id="customGrid"></div></section><section id="touchSection" hidden><div id="pad" role="button" tabindex="-1" aria-label="XY touch surface" aria-describedby="xyHelp" aria-disabled="true" aria-pressed="false"><span>Touch and move</span><div id="dot" hidden></div></div>
-<p><small id="xyHelp">X and Y control the mapped instrument. Lift to release. Keyboard: hold Space or Enter, use arrow keys to move, release the held key to stop. One contact only.</small></p></section>
+<div id="customGrid"></div></section><section id="touchSection" hidden><div id="pad" role="button" tabindex="-1" aria-label="XY touch surface" aria-describedby="xyHelp xyInputStatus" aria-disabled="true" aria-pressed="false"><span>Touch and move</span><div id="dot" hidden></div></div>
+<p><small id="xyHelp">X and Y control the mapped instrument. Lift to release. Keyboard: hold Space or Enter, use arrow keys to move, release the held key to stop. One contact only.</small></p><button id="xyClutch" type="button" disabled>Release XY / re-arm</button><p id="xyInputStatus" role="status">XY idle.</p></section>
 <section id="drumSection" hidden aria-labelledby="drum-title"><h2 id="drum-title">Drum Pads</h2>
 <p>Only pads mapped for this paired device are available. Pad numbers identify controls, not assumed MIDI notes. Actual destinations are listed in Setup when shared.</p>
 <button id="drumEnable" disabled>Enable drum pads</button><button id="drumRelease" disabled>Release all pads</button>
@@ -513,7 +513,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   const motionStart=get("motionStart"), motionStop=get("motionStop"), meter=get("tiltMeter"), motionStatus=get("motionStatus");
   let mode="idle", sample=null, neutral=null, sampleAt=0, sentAt=-1, permissionEpoch=0, waitingSince=0, pendingKind=null;
   let lastTouchSend=-Infinity,lastTiltSend=-Infinity;
-  let touchQueue=[],touchSent=false,paceTimer=null;
+  let touchQueue=[],touchSent=false,paceTimer=null,xyClutchPending=false;
   function touchBusy(){return pointer!==null||touchQueue.length!==0||touchSent||pendingKind==="touch"||pendingKind==="release";}
   function queueTouch(kind,axes){
     if(touchQueue.length>=8){close("Touch input backlog. Reconnect explicitly.");return;}
@@ -1874,7 +1874,10 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   }
   function syncControls(){
     syncCamera();
-    const xyAvailable=currentView==="play"&&admitted&&caps?.touch&&workloadAllows("touch");
+    if(xyClutchPending&&!touchBusy())xyClutchPending=false;
+    const xyAvailable=currentView==="play"&&admitted&&caps?.touch&&workloadAllows("touch")&&!xyClutchPending;
+    get("xyClutch").disabled=!admitted||currentView!=="play"||!caps?.touch||!modeAllows("touch")||releasingAll||xyClutchPending||!touchBusy();
+    textIfChanged("xyInputStatus",xyClutchPending?"Waiting for XY release acknowledgment.":pointer!==null?"XY source contact active.":touchBusy()?"XY edges awaiting acknowledgment.":"XY idle. A new contact starts a new source gesture.");
     pad.setAttribute("aria-disabled",String(!xyAvailable));pad.setAttribute("tabindex",xyAvailable?"0":"-1");
     pad.setAttribute("aria-pressed",String(pointer!==null));syncSections();syncDrums();syncPiano();syncPedals();syncCustom();syncWorkload();syncNavigation();syncPlayMode();syncLatency();syncLayout();
     releaseAll.disabled=!admitted||!caps||releasingAll;
@@ -1926,7 +1929,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
   function clearDeadline(){if(deadline!==null)clearTimeout(deadline);deadline=null;}
   function close(message){
     cameraReleaseAt=null;stopCamera("Camera off.");
-    const old=ws;ws=null;admitted=false;caps=null;groupReady=null;currentView="connection";ackSamples=[];playMode="all";pendingPlayMode=null;releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;
+    const old=ws;ws=null;admitted=false;caps=null;groupReady=null;currentView="connection";ackSamples=[];playMode="all";pendingPlayMode=null;releasingAll=false;cancelGlobalTimer();clearMapping();renderMapping();experimentalWorkload=false;workloadRefusal="";pending=false;sequence=0;pointer=null;position=null;touchQueue=[];touchSent=false;xyClutchPending=false;
     if(paceTimer!==null)clearTimeout(paceTimer);paceTimer=null;clearDeadline();if(timer!==null)clearInterval(timer);timer=null;pendingKind=null;lastTouchSend=-Infinity;lastTiltSend=-Infinity;resetMotion("Motion off.");for(const s of streams)resetInertial(s,"Off.");resetDrums();resetPiano();resetPedals();syncControls();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
     dot.hidden=true;pad.setAttribute("aria-disabled","true");connect.disabled=false;disconnect.disabled=true;status.textContent=message;
@@ -2084,7 +2087,7 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     position={x,y};dot.hidden=false;dot.style.left=(x*100)+"%";dot.style.top=((1-y)*100)+"%";
   }
   pad.addEventListener("pointerdown",e=>{
-    if(currentView!=="play"||releasingAll||!admitted||!caps?.touch||pointer!==null||e.button!==0)return;
+    if(currentView!=="play"||releasingAll||xyClutchPending||!admitted||!caps?.touch||pointer!==null||e.button!==0)return;
     if(!requestWorkload("touch"))return;
     e.preventDefault();pointer=e.pointerId;try{pad.setPointerCapture(pointer);}catch{close("Pointer capture failed.");return;}
     if(!move(e))return;syncControls();queueTouch("touch",{...position});
@@ -2095,11 +2098,21 @@ input{width:100%}button{margin:8px 8px 8px 0}button:disabled{opacity:.45}
     pointer=null;position=null;dot.hidden=true;syncControls();queueTouch("release");
   }
   pad.addEventListener("pointerup",lift);
+  // Explicit scoped release cancels unsent onsets. A sent contact still needs
+  // the existing host release ACK. This is not a hold-last/recenter command.
+  function releaseXY(){
+    if(!admitted||currentView!=="play"||!caps?.touch||!modeAllows("touch")||releasingAll||xyClutchPending||!touchBusy())return;
+    xyClutchPending=true;pointer=null;position=null;dot.hidden=true;
+    touchQueue=touchSent?[{kind:"release",at:performance.now()}]:[];
+    syncControls();tick();
+  }
+  get("xyClutch").addEventListener("click",releaseXY);
   const xyKeyOwner=key=>"keyboard:"+key;
   const isXYKeyOwner=()=>typeof pointer==="string"&&pointer.startsWith("keyboard:");
   pad.addEventListener("keydown",e=>{
+    if(e.key==="Escape"&&isXYKeyOwner()){e.preventDefault();releaseXY();return;}
     if(e.key===" "||e.key==="Enter"){
-      if(currentView!=="play"||releasingAll||!admitted||!caps?.touch||!workloadAllows("touch"))return;
+      if(currentView!=="play"||releasingAll||xyClutchPending||!admitted||!caps?.touch||!workloadAllows("touch"))return;
       e.preventDefault();
       if(e.repeat||pointer!==null||!requestWorkload("touch"))return;
       pointer=xyKeyOwner(e.key);setXY(.5,.5);syncControls();queueTouch("touch",{...position});return;
