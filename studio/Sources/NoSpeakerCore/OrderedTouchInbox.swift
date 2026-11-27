@@ -65,7 +65,7 @@ public final class OrderedTouchInbox<Payload: Sendable>: @unchecked Sendable {
     public func permits(_ batch: Batch) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return !closed && !overflow && !batch.overflow && !batch.samples.isEmpty &&
-            batch.admissionEpoch == admissionEpoch
+            batch.admissionEpoch == admissionEpoch && batch.drainSerial == drainSerial
     }
 
     /// Only the serialized consumer may acknowledge overflow during its
