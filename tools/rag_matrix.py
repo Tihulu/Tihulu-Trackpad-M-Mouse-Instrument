@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 from types import SimpleNamespace
+from collections import Counter
 
 import rag_benchmark
 import repo_index
@@ -72,7 +73,8 @@ def compare_lexical_profiles(repo, revision, index, scope, args, out, cases_file
                 index=index, scope=scope, mode="lexical", k=args.k,
                 max_per_file=args.max_per_file, model_dir=None, cases_file=cases_file,
                 case_group=group, lexical_profile=profile,
-                compare_cache=compare_cache and group == "development" and profile == "legacy"))
+                compare_cache=compare_cache and group == "development" and profile == "legacy",
+                diagnose_development=group == "development"))
             if (report["commit"] != revision or report["scope"] != scope
                     or report["mode"] != "lexical" or not report["source_verified"]
                     or report["model_sha256"] is not None
@@ -86,6 +88,14 @@ def compare_lexical_profiles(repo, revision, index, scope, args, out, cases_file
                 ("cases", "cases_sha256", "file_hit_rate", "file_mrr",
                  "missing_paths", "median_query_ms")}
             comparison[group][profile]["report"] = name
+            if group == "development":
+                diagnostics = [row["development_diagnostic"] for row in report["results"]]
+                comparison[group][profile]["development_diagnostics"] = {
+                    "statuses": dict(sorted(Counter(row["status"] for row in diagnostics).items())),
+                    "expected_files": sum(row["expected_files"] for row in diagnostics),
+                    "expected_returned": sum(row["expected_returned"] for row in diagnostics),
+                    "returned_chunks": sum(row["returned_chunks"] for row in diagnostics),
+                    "returned_unique_files": sum(row["returned_unique_files"] for row in diagnostics)}
             if group == "development" and profile == "legacy":
                 if compare_cache:
                     comparison[group][profile]["cache_comparison"] = report["cache_comparison"]
