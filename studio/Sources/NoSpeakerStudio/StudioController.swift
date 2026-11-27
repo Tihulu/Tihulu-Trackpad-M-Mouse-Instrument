@@ -52,9 +52,12 @@ final class StudioController: ObservableObject {
     private var customPadEvidencePort: UUID?
     private var customPadEvidenceSurface: CustomSurfacePadLayout.Surface?
     private var customPadInbox: CustomSurfaceNativeInbox?
+    private var customPadGroupInput: CustomSurfaceNativeGroupInput?
+    @Published private(set) var customPadGroupLayouts: [CustomSurfacePadLayout] = []
+    @Published private(set) var customPadGroupChannels: [CustomSurfacePadLayout.Surface: Int] = [:]
     private var customPadTask: Task<Void, Never>?
     private var customPadHost: NativeCustomSurfaceMIDIHost { .shared }
-    private var customPadBlocksOtherStarts: Bool { customPadInbox != nil || customPadRunID != nil || !customPadHost.statuses.isEmpty }
+    private var customPadBlocksOtherStarts: Bool { customPadInbox != nil || customPadGroupInput != nil || customPadRunID != nil || !customPadHost.statuses.isEmpty || customPadHost.groupPhase != .idle }
     @Published private(set) var patchRunning = false
     @Published private(set) var patchInputs: [PatchSimulation.Input] = []
     @Published private(set) var patchMessages: [String] = []
@@ -3159,7 +3162,7 @@ final class StudioController: ObservableObject {
         retireCaptureMonitor()
         captureArmed = false
         captureHotkeyArmed = false
-        if customPadInbox != nil || customPadRunID != nil || !customPadHost.statuses.isEmpty {
+        if customPadBlocksOtherStarts {
             stopCustomPad(reason: "Panic Stop", refresh: false)
         }
         stopGroupGamepads()
@@ -3760,6 +3763,106 @@ final class StudioController: ObservableObject {
             }
         }
     }
+    /// Explicit two-device Standard MIDI arm. No alternate hardware route,
+    /// capture, auto-start or fallback to a partially opened group.
+    func startCustomPadGroup(trackpad: CustomSurfacePadLayout, trackpadChannel: Int,
+                             mouse: CustomSurfacePadLayout, mouseChannel: Int) {
+        guard trackpad.surface == .trackpad, mouse.surface == .magicMouse, customPadCanStart else {
+            customPadStatus = "Stop performances and resolve MIDI recovery before group arm."\n            return
+        }
+        let members: [CustomSurfacePerformanceGroup.Member]
+        do {
+            members = [
+                .init(plan: try .init(layout: trackpad, melodicChannel: trackpadChannel), permitsNeutralSilence: true),
+                .init(plan: try .init(layout: mouse, melodicChannel: mouseChannel), permitsNeutralSilence: true)
+            ]
+        } catch { customPadStatus = "Group layout is incompatible with Standard MIDI: " + String(describing: error); return }
+        cancelStartupGreeting()
+        let required: Set<TouchSurfaceKind> = [.trackpad, .magicMouse]
+        guard requireEngine(), let touch, midi?.hasUnconfirmedOutgoingCleanup != true,
+              let input = CustomSurfaceNativeGroupInput(surfaces: required, orientation: magicMouseOrientation,
+                  notBefore: NativeCustomSurfaceMIDIHost.monotonicNow()) else {
+            customPadStatus = "Native engine unavailable or MIDI cleanup unresolved."\n            return
+        }
+        customPadEvidenceReport = ""; customPadMIDITimingReport = ""\n        customPadEvidencePort = nil; customPadEvidenceSurface = nil
+        let generation = engineGeneration
+        customPadGroupInput = input
+        guard touch.setCustomSurfaceInboxes(input.inboxes) else {
+            stopCustomPad(reason: "Group subscription refused."); return
+        }
+        refreshSharedSurfaceMonitoring()
+        guard touchPreviewRunning, missingNativeSurfaceMessage(required) == nil else {
+            stopCustomPad(reason: "Both native surfaces must be available."); return
+        }
+        startPerformanceEventMonitor()
+        guard captureMonitor?.diagnosticSnapshot().operational == true,
+              captureMonitor?.setCustomPadEmergencyArmed(true) == true else {
+            stopCustomPad(reason: "Escape monitor unavailable. Check input permissions."); return
+        }
+        let started = customPadHost.openGroup(members, admitsLive: { [weak self, weak input] in
+            guard let self, let input else { return false }
+            return self.customPadGroupInput === input && self.engineGeneration == generation &&
+                input.admitsSetup && self.captureMonitor?.customPadEmergencyOperational == true
+        })
+        customPadPorts = customPadHost.statuses
+        guard case .started(let run) = started else {
+            stopCustomPad(reason: "Group port creation refused or rolled back."); return
+        }
+        customPadRunID = run
+        customPadGroupLayouts = [trackpad, mouse]
+        customPadGroupChannels = [.trackpad: trackpadChannel, .magicMouse: mouseChannel]
+        guard input.begin(at: NativeCustomSurfaceMIDIHost.monotonicNow()),
+              captureMonitor?.customPadEmergencyOperational == true else {
+            stopCustomPad(reason: "Group admission changed during arm."); return
+        }
+        customPadStatus = "Group armed · lift fingers on both devices · Esc stops"\n        customPadTask = Task { [weak self, weak input] in
+            var lastEvidenceAt: Int64 = 0
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(12)) } catch { return }
+                guard let self, let input, self.customPadGroupInput === input,
+                      self.customPadRunID == run, self.engineGeneration == generation else { return }
+                guard self.customPadHost.groupRunID == run,
+                      self.captureMonitor?.customPadEmergencyOperational == true else {
+                    self.stopCustomPad(reason: "Group watchdog or emergency monitor stopped performance."); return
+                }
+                let result = input.drain { sample in
+                    self.customPadHost.groupFrame(run: run, surface: sample.surface, contacts: sample.contacts,
+                        sequence: sample.sequence, observedAt: sample.observedAt)?.phase == .live
+                }
+                guard case .delivered = result else {
+                    self.stopCustomPad(reason: "Group input or MIDI delivery fault. Restart explicitly."); return
+                }
+                let ports = self.customPadHost.statuses
+                if self.customPadPorts != ports { self.customPadPorts = ports }
+                guard ports.count == 2, ports.allSatisfy({ $0.phase == .live }) else {
+                    self.stopCustomPad(reason: "Group source unavailable."); return
+                }
+                let ready = ports.filter { $0.hasNeutralHandshake }.count
+                let status = "Group ready: " + String(ready) + "/2 physical lifts · Esc stops"\n                if self.customPadStatus != status { self.customPadStatus = status }
+                let now = NativeCustomSurfaceMIDIHost.monotonicNow()
+                if now - lastEvidenceAt >= 250_000_000 {
+                    self.updateCustomPadGroupEvidence(input)
+                    lastEvidenceAt = now
+                }
+            }
+        }
+    }
+    private func updateCustomPadGroupEvidence(_ input: CustomSurfaceNativeGroupInput) {
+        let report = input.inboxes.map { inbox in
+            let queue = inbox.queueEvidence()
+            return inbox.surface.rawValue + "\n" + inbox.captureEvidence().report +
+                "\nPeak live FIFO depth: \(queue.peak)/64\nInput fault: \(queue.fault?.rawValue ?? "none")"\n        }.joined(separator: "\n\n")
+        if customPadEvidenceReport != report { customPadEvidenceReport = report }
+        let timing = customPadHost.statuses.compactMap { port -> String? in
+            guard let evidence = customPadHost.timingEvidence(port.id) else { return nil }
+            return port.surface.rawValue + "\n" + evidence.report
+        }.joined(separator: "\n\n")
+        if !timing.isEmpty {
+            let report = "Last observed local API timing (not DAW acknowledgement)\n" + timing
+            if customPadMIDITimingReport != report { customPadMIDITimingReport = report }
+        }
+    }
+
     private func customPadStopReason(_ status: NativeCustomSurfaceMIDIHost.Status?, inbox: CustomSurfaceNativeInbox) -> String {
         if let fault = inbox.queueEvidence().fault { return fault.rawValue + ". Restart explicitly." }
         if status?.phase == .identityLost { return "Original MIDI port identity lost. DAW reset and relaunch required." }
@@ -3780,13 +3883,24 @@ final class StudioController: ObservableObject {
             updateCustomPadEvidence(inbox)
         }
         customPadInbox = nil
+        let groupInput = customPadGroupInput
+        if let groupInput {
+            groupInput.close(at: NativeCustomSurfaceMIDIHost.monotonicNow())
+            updateCustomPadGroupEvidence(groupInput)
+        }
+        customPadGroupInput = nil
         customPadDiagnosticRunning = false
         touch?.setCustomSurfaceInbox(nil)
         let id = customPadRunID
         customPadRunID = nil
         customPadFrozenLayout = nil
         customPadFrozenChannel = nil
-        if let id { _ = customPadHost.close(id, retryPending: false) }
+        customPadGroupLayouts = []
+        customPadGroupChannels = [:]
+        if let id {
+            if groupInput != nil { customPadHost.stopGroup(run: id) }
+            else { _ = customPadHost.close(id, retryPending: false) }
+        }
         updateCustomPadMIDITiming()
         customPadPorts = customPadHost.statuses
         customPadStatus = customPadPorts.isEmpty ? reason : reason + " · MIDI recovery pending."
@@ -3796,7 +3910,7 @@ final class StudioController: ObservableObject {
         }
     }
     func retryCustomPadRecovery() {
-        guard customPadInbox == nil, customPadRunID == nil else { return }
+        guard customPadInbox == nil, customPadGroupInput == nil, customPadRunID == nil else { return }
         _ = customPadHost.closeAll()
         updateCustomPadMIDITiming()
         customPadPorts = customPadHost.statuses
@@ -3806,7 +3920,7 @@ final class StudioController: ObservableObject {
 
     private func refreshSharedSurfaceMonitoring() {
         guard !handlingSurfaceInventoryFault,let touch else { return }
-        let needed = customPadInbox != nil || instrumentPreviewRequested || helperPreviewRequested ||
+        let needed = customPadInbox != nil || customPadGroupInput != nil || instrumentPreviewRequested || helperPreviewRequested ||
                      touchRunning || midiHelperRunning || groupSurfaceMailbox != nil ||
                      (patchPhysical && instrumentPatch.routes.contains { $0.source != patchHybridSource && ($0.source == .trackpad || $0.source == .magicMouse) })
         if !needed {
@@ -3928,7 +4042,7 @@ final class StudioController: ObservableObject {
         clearClickAttribution()
         instrumentPreviewRequested = false
         helperPreviewRequested = false
-        if customPadInbox != nil { stopCustomPad(reason: "Native surface inventory lost", refresh: false) }
+        if customPadInbox != nil || customPadGroupInput != nil { stopCustomPad(reason: "Native surface inventory lost", refresh: false) }
         if touchRunning { stopTouch() }
         if midiHelperRunning { stopMIDIHelper() }
         if let run = groupRunToken,groupSurfaceMailbox != nil {
@@ -4022,7 +4136,7 @@ final class StudioController: ObservableObject {
     private func handleTouchInputBacklog() {
         // A missing release is a fault, not permission to replay stale notes.
         let wasPlaying = touchRunning || midiHelperRunning
-        if customPadInbox != nil { stopCustomPad(reason: "Native input backlog") }
+        if customPadInbox != nil || customPadGroupInput != nil { stopCustomPad(reason: "Native input backlog") }
         touch?.invalidatePendingSamples()
         clearClickAttribution()
         if touchRunning { stopTouch() }
@@ -4936,7 +5050,7 @@ final class StudioController: ObservableObject {
         // A user-armed shortcut remains available in Voice, MIDI,
         // Sequencers, Audio File, Speaker and Diagnostics, even before
         // a Touch/Helper performance starts. OFF remains the default.
-        guard captureHotkeyArmed || touchRunning || midiHelperRunning || customPadInbox != nil else { return }
+        guard captureHotkeyArmed || touchRunning || midiHelperRunning || customPadInbox != nil || customPadGroupInput != nil else { return }
         var monitor = ensureCaptureMonitor()
         let before = monitor.diagnosticSnapshot()
         if before.eventTapCreated && (!before.listening || !before.eventTapEnabled) {
