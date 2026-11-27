@@ -1884,3 +1884,20 @@ test("reported stale capture timestamp closes before motion activation",async()=
   await a.elements.webCameraStart.emit("click");a.step(200);a.video(255,1,{captureTime:0});
   assert.equal(a.socket.closed,true);assert.equal(c.track.stops,1);assert.equal(a.socket.frames.filter(f=>f.kind==="pedalboard"&&f.mask).length,0);
 });
+
+test("MUSIC-WEB stale socket callbacks cannot admit a replacement connection",()=>{
+  const a=setup("granted",fullManifest,false,true,false,new Map(),true);
+  a.elements.secret.value="aa".repeat(32);a.elements.connect.emit("click");
+  const old=a.getSocket(),staleMessage=old.onmessage,staleClose=old.onclose;
+  old.onopen();old.onmessage({data:"admitted"});
+  a.elements.disconnect.emit("click");assert.equal(old.closed,true);
+  a.elements.secret.value="bb".repeat(32);a.elements.connect.emit("click");
+  const fresh=a.getSocket();assert.notEqual(fresh,old);
+  staleMessage({data:JSON.stringify(fullManifest)});staleClose();
+  a.elements.pad.emit("pointerdown",xyEvent(1));
+  assert.equal(fresh.frames.length,0);assert.equal(fresh.closed,undefined);
+  assert.equal(a.elements.playView.hidden,true);
+  fresh.onopen();fresh.onmessage({data:"admitted"});
+  assert.deepEqual(fresh.frames,[{version:7,sequence:1,kind:"capabilities"}]);
+  a.elements.disconnect.emit("click");assert.equal(fresh.closed,true);
+});
