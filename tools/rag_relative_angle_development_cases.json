@@ -1,0 +1,56 @@
+[
+  {
+    "id": "rel5-seam",
+    "scope": "engine",
+    "language": "en",
+    "query": "RelativeAngularClutch wrapped angle seam shortest step explicit begin receipt watermark",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/RelativeAngularClutch.swift"
+    ]
+  },
+  {
+    "id": "rel5-return",
+    "scope": "engine",
+    "language": "tr",
+    "query": "Relative angular displacement origin return after saturation bounded unwrapped travel",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/RelativeAngularClutch.swift"
+    ]
+  },
+  {
+    "id": "rel5-owner",
+    "scope": "engine",
+    "language": "de",
+    "query": "NativeHelperRelativeOutputPlan hidden lower priority owners MPE reserved channels permitsAnchor",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/NativeHelperRelativeOutputPlan.swift"
+    ]
+  },
+  {
+    "id": "rel5-sparse",
+    "scope": "engine",
+    "language": "en",
+    "query": "Sparse movement retains helper lanes empty is not release invalid snapshot no neutral write",
+    "expected_paths": [
+      "studio/Sources/NoSpeakerCore/NativeHelperRelativeOutputPlan.swift"
+    ]
+  },
+  {
+    "id": "rel5-cadence",
+    "scope": "docs",
+    "language": "de",
+    "query": "Angular seam physical motion bounds sample cadence no receiver feedback and yaw pitch fence",
+    "expected_paths": [
+      "studio/docs/RELATIVE_CONTINUOUS_CONTROL.md"
+    ]
+  },
+  {
+    "id": "rel5-transaction",
+    "scope": "docs",
+    "language": "tr",
+    "query": "Native output snapshot not atomic lease serialized host cleanup debt actual reference provider",
+    "expected_paths": [
+      "studio/docs/RELATIVE_CONTINUOUS_CONTROL.md"
+    ]
+  }
+]

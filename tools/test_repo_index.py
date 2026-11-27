@@ -760,6 +760,66 @@ class RepositoryIndexTests(unittest.TestCase):
         finally:
             self.git("replace", "-d", old_blob)
 
+    def test_development_diagnostics_classify_coverage_and_rank_cutoff(self):
+        rows = [{"path":"docs/Alpha.md", "blob":"a"*40, "start":1,"end":1,
+                 "text":"sustain sustain"},
+                {"path":"docs/Beta.md", "blob":"b"*40, "start":1,"end":1,
+                 "text":"sustain"},
+                {"path":"docs/Gamma.md", "blob":"c"*40, "start":1,"end":1,
+                 "text":"calibration"}]
+        raw = lexical_ranking(rows, "sustain")
+        raw.sort(key=lambda item: (-item[0], item[1]["path"], item[1]["start"], item[1]["end"]))
+        top, tail = raw[0][1]["path"], raw[-1][1]["path"]
+        self.assertNotEqual(top, tail)
+        response = {"results": [{**raw[0][1], "score": round(raw[0][0], 6)}]}
+        def diagnose(expected):
+            return rag_benchmark.diagnose_lexical(rows, "sustain", set(expected), response,
+                                                   "legacy", 1, 1)
+        for expected, status in (([top], "HIT"), ([tail], "CUTOFF"),
+                                 (["docs/Gamma.md"], "NO_POSITIVE_MATCH"),
+                                 (["docs/Missing.md"], "COVERAGE_FAIL"),
+                                 ([top, "docs/Missing.md"], "COVERAGE_FAIL")):
+            self.assertEqual(diagnose(expected)["status"], status)
+        self.assertEqual(diagnose([top])["returned_first_chunk_rank"], 1)
+        self.assertEqual(diagnose([tail])["raw_first_chunk_rank"], 2)
+        self.assertIsNone(diagnose([tail])["returned_first_chunk_rank"])
+        self.assertEqual(diagnose([top, tail])["expected_returned"], 1)
+        self.assertEqual(diagnose([top, tail])["expected_positive"], 2)
+        response["results"][0]["score"] = -1
+        with self.assertRaisesRegex(ValueError, "ranking differs"):
+            diagnose([top])
+
+    def test_development_diagnostics_matrix_excludes_evaluation_cases(self):
+        (self.repo / "README.md").write_text("# sustain release")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "diagnostic source")
+        revision = self.git("rev-parse", "HEAD").stdout.strip()
+        index = self.root / "diagnostic.json"
+        repo_index.build(SimpleNamespace(repo=self.repo, ref=revision, scope="docs",
+                                         out=index, model_dir=None))
+        case = {"id": "dev", "scope": "docs", "language": "en", "query": "sustain",
+                "expected_paths": ["README.md"]}
+        fixture = self.root / "diagnostic-cases.json"
+        fixture.write_text(json.dumps({"development": [case], "evaluation": [
+            dict(case, id="eval", query="release")]}))
+        out = self.root / "reports"
+        out.mkdir()
+        comparison = rag_matrix.compare_lexical_profiles(self.repo, revision, index, "docs",
+            SimpleNamespace(k=8, max_per_file=3), out, fixture)
+        for profile in ("legacy", "file-first"):
+            dev = comparison["development"][profile]
+            self.assertEqual(dev["development_diagnostics"]["statuses"], {"HIT": 1})
+            self.assertEqual(dev["development_diagnostics"]["expected_returned"], 1)
+            eval_report = comparison["evaluation"][profile]
+            self.assertNotIn("development_diagnostics", eval_report)
+            data = json.loads((out / eval_report["report"]).read_text())
+            self.assertNotIn("development_diagnostic", data["results"][0])
+        args = SimpleNamespace(repo=self.repo, expect_ref=revision, index=index, scope="docs",
+            mode="lexical", model_dir=None, cases_file=fixture, case_group="evaluation",
+            k=8, max_per_file=3, diagnose_development=True)
+        with self.assertRaisesRegex(ValueError, "development cases only"):
+            rag_benchmark.run(args)
+
     def test_malformed_index_metadata_is_rejected(self):
         self.build()
         document = json.loads(self.index.read_text())
