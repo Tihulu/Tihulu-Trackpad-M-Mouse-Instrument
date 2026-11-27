@@ -183,7 +183,9 @@ struct GamepadMappingPanel: View {
                 Slider(value:$axisCalibration.deadZone,in:0...0.45,step:0.01)
             }
             if let target = destinations?.first {
-                ContinuousResponsePanel(response:$axisResponse,target:target)
+                ContinuousResponsePanel(response:$axisResponse,target:target,
+                    permitsRelativeInput: analog && signal.permitsRelativeDisplacement &&
+                        (action == .bend || action == .cc) && destinations?.count == 1 && !complexSelection)
                 HStack {
                     Button("Full range") { axisCalibration = .init(); axisResponse = nil }
                     Button("Release at midpoint") {
