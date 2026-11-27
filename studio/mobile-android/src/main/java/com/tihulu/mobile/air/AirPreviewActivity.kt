@@ -61,6 +61,7 @@ class AirPreviewActivity: ComponentActivity() {
     private var xyzSource:Camera2XYZSource?=null
     private var xyzRetiring:Camera2XYZSource?=null
     private var xyzVolume:XYZVolume?=null
+    private var xyzCaptureSelection:XYZSetupSelection?=null
     private var xyzTracking:MeasuredXYZTracking?=null
     private var xyzStage:XYZStageView?=null
     private var xyzKeys:MeasuredXYZKeys?=null
@@ -240,8 +241,9 @@ class AirPreviewActivity: ComponentActivity() {
             xyzSource?.let { source ->
                 val volume=xyzVolume
                 val tracker=xyzTracking
+                val selected=xyzCaptureSelection
                 val failure=source.fault
-                if(failure!=null || displayDegrees()!=xyzRotation || volume==null || tracker==null){
+                if(failure!=null || displayDegrees()!=xyzRotation || volume==null || tracker==null || selected==null){
                     end(failure?:"Display rotation changed · restart required")
                 } else {
                     for(frame in source.drain()) {
@@ -249,7 +251,7 @@ class AirPreviewActivity: ComponentActivity() {
                         val pitch=xyzKeys?.output(frame.point?.takeIf {axes.xyz!=null}?.let {volume.axes(it,7)})
                         val output=when {
                             pitch==null -> axes
-                            xyzSettings.hybrid -> axes.copy(keys=pitch.keys)
+                            selected.hybrid -> axes.copy(keys=pitch.keys)
                             else -> pitch
                         }
                         if(!submit(output,frame.at,emptyMap(),false))break
@@ -603,7 +605,7 @@ class AirPreviewActivity: ComponentActivity() {
                 if(allowed !in 1 until (1 shl 25)){end("No assigned keys");return}
                 MeasuredXYZKeys(allowed,axis)
             }
-            xyzRotation=displayDegrees();captureRotation=xyzRotation;xyzVolume=volume;xyzLastAt=null
+            xyzRotation=displayDegrees();captureRotation=xyzRotation;xyzVolume=volume;xyzCaptureSelection=selected;xyzLastAt=null
             xyzTracking=MeasuredXYZTracking(volume,mask)
             observationFence=if(wantsPair)PairedObservationFence(SystemClock.elapsedRealtimeNanos()) else null
             val measured=Camera2XYZSource(applicationContext,camera,xyzRotation,volume)
@@ -711,7 +713,7 @@ class AirPreviewActivity: ComponentActivity() {
         // No capture callback can renew the old session after this fence.
         beforeWorkerStop()
         xyzSource?.let {it.stop();xyzRetiring=it};xyzSource=null
-        xyzStage?.close();xyzStage=null;xyzKeys=null;xyzTracking=null;xyzVolume=null;xyzLastAt=null
+        xyzStage?.close();xyzStage=null;xyzKeys=null;xyzTracking=null;xyzVolume=null;xyzCaptureSelection=null;xyzLastAt=null
         source?.let {it.stop();retiring=it};source=null;projection=null
         depthSource?.let {it.stop();depthRetiring=it};depthSource=null
         showOutput(AirOutput())

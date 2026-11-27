@@ -81,7 +81,7 @@ internal class XYZSettings(context:Context, private val cameraID:()->String?) : 
     fun describeEligibility(reason:String?) {
         eligibility.text=reason ?: "Calibration and role valid."
         val selected=selection
-        val controls=selected?.pitchAxis==null || selected.hybrid
+        val controls=selected?.let { it.pitchAxis==null || it.hybrid } == true
         val enabled=(0..2).filter {mask and (1 shl it)!=0}.map {listOf("X","Y","Z")[it]}
         response.text=when {
             selected==null -> "Select a valid role and enable required helper axes."
@@ -203,10 +203,12 @@ internal class XYZStageView(context:Context, mask:Int, pitchAxis:Int?, hybrid:Bo
     }
     fun update(p:MeasuredXYZ?,volume:XYZVolume,keys:Int=0){
         val normalized=p?.let {volume.axes(it,7)}
-        point=if(p!=null && normalized!=null)p.copy(x=normalized[0]!!,y=normalized[1]!!) else null;area.invalidate()
-        depth.progress=p?.let {((it.metres-volume.near)/(volume.far-volume.near)*100).toInt()}?:0
-        indicator.text=if(p==null)"Tracking lost or acquiring · released" else
-            "X %.0f%% · Y %.0f%% · Z %.2f m · confidence %.0f%%".format((point?.x?:0.0)*100,(point?.y?:0.0)*100,p.metres,p.confidence*100) +
+        val validPoint=p?.takeIf {normalized!=null}
+        point=if(validPoint!=null && normalized!=null)validPoint.copy(x=normalized[0]!!,y=normalized[1]!!) else null
+        area.invalidate()
+        depth.progress=normalized?.getOrNull(2)?.let {(it*100).toInt()}?:0
+        indicator.text=if(validPoint==null)"Tracking lost or acquiring · released" else
+            "X %.0f%% · Y %.0f%% · Z %.2f m · confidence %.0f%%".format((point?.x?:0.0)*100,(point?.y?:0.0)*100,validPoint.metres,validPoint.confidence*100) +
                 (if(keys>0)" · logical key "+(Integer.numberOfTrailingZeros(keys)+1) else "")
     }
     fun close(){dialog.setOnCancelListener(null);dialog.dismiss()}
