@@ -878,23 +878,14 @@ public final class MIDIHapticService: @unchecked Sendable {
         _ = state.retire()
         let targets = continuousOwners.relativeReservedTargets
         if !targets.isEmpty { sendContinuousUpdates(continuousOwners.release(.helper)) }
-        let clean = NativeHelperRelativeHostPolicy.permitsCleanupConfirmation(plannedTargets: state.cleanupTargets,
-            reservedTargets: targets, debt: controllerDebt, transportReady: relativeTransportReady,
-            recoveryRequired: controllerRecoveryRequired)
         var staged = continuousOwners
-        let finished = state.confirmCleanup(owners:&staged,genuineNeutral:genuineNeutral,transportClean:clean)
+        let result = NativeHelperRelativeHostPolicy.finishRetirement(transaction: &state,
+            owners: &staged, reservedTargets: targets, genuineNeutral: genuineNeutral,
+            currentPlanTargets: initialPlan?.targetDestinations, debt: controllerDebt,
+            transportReady: relativeTransportReady, recoveryRequired: controllerRecoveryRequired)
         continuousOwners = staged
-        relativeHelperOutput = finished ? nil : state
-        // Retiring the previous transaction and authorizing a replacement
-        // plan are separate decisions. Never let old clean targets prove
-        // that a newly selected target is clean.
-        guard finished else { return false }
-        if let initialPlan {
-            return NativeHelperRelativeHostPolicy.permitsInitialNeutral(genuineNeutral: genuineNeutral,
-                plannedTargets: initialPlan.targetDestinations, owners: continuousOwners, debt: controllerDebt,
-                transportReady: relativeTransportReady, recoveryRequired: controllerRecoveryRequired)
-        }
-        return true
+        relativeHelperOutput = result.finished ? nil : state
+        return result.neutralPermitted
     }
 
     public func sendHelperControls(
