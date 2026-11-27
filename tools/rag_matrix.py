@@ -56,11 +56,14 @@ def validate_reuse_matrix(repo, previous, identity):
 
 def compare_lexical_profiles(repo, revision, index, scope, args, out, cases_file,
                              candidate="file-first", prefix="", compare_cache=True,
-                             baseline="legacy"):
+                             baseline="legacy", expected_digests=None):
     """Same corpus/cutoff for paired, explicitly separate development/evaluation."""
     if baseline == candidate or any(p not in repo_index.LEXICAL_PROFILES for p in (baseline, candidate)):
         raise ValueError("Invalid comparison profiles")
-    expected_digests = rag_benchmark.validate_case_groups(cases_file)
+    actual_digests = rag_benchmark.validate_case_groups(cases_file)
+    if expected_digests is not None and actual_digests != expected_digests:
+        raise ValueError("Matrix-wide ranking dataset changed")
+    expected_digests = actual_digests
     comparison = {}
     for group in ("development", "evaluation"):
         comparison[group] = {}
@@ -116,6 +119,13 @@ def run(args):
     ranking_cases = getattr(args, "ranking_cases", None)
     multilingual_cases = getattr(args, "multilingual_cases", None)
     contextual_cases = getattr(args, "contextual_cases", None)
+    # Freeze all input digests before building any scope; pairwise checks alone
+    # cannot detect a replaced fixture between otherwise consistent scopes.
+    curated_digest = rag_benchmark.load_cases(rag_benchmark.CASES)[1]
+    heldout_digest = rag_benchmark.load_cases(heldout_cases)[1] if heldout_cases else None
+    ranking_digests = rag_benchmark.validate_case_groups(ranking_cases) if ranking_cases else None
+    multilingual_digests = rag_benchmark.validate_case_groups(multilingual_cases) if multilingual_cases else None
+    contextual_digests = rag_benchmark.validate_case_groups(contextual_cases) if contextual_cases else None
     out = Path(args.out_dir).resolve()
     # A matrix contains source text and possibly vectors. Never overwrite
     # previous evidence or create a public/shared directory by default.
@@ -147,6 +157,7 @@ def run(args):
                 model_dir=args.model_dir if mode != "lexical" else None))
             if (report["commit"] != revision or report["scope"] != scope
                     or report["mode"] != mode or not report["source_verified"]
+                    or report["cases_sha256"] != curated_digest
                     or report["model_sha256"] != (identity if mode != "lexical" else None)):
                 raise ValueError("Benchmark identity mismatch")
             name = scope + "-" + mode + "-report.json"
@@ -167,8 +178,8 @@ def run(args):
                     index=index, scope=scope, mode=mode, k=args.k,
                     max_per_file=args.max_per_file, cases_file=heldout_cases,
                     model_dir=args.model_dir if mode != "lexical" else None))
-                if any(heldout[key] != report[key] for key in
-                       ("commit", "scope", "mode", "source_verified", "model_sha256")):
+                if (heldout["cases_sha256"] != heldout_digest or any(heldout[key] != report[key] for key in
+                       ("commit", "scope", "mode", "source_verified", "model_sha256"))):
                     raise ValueError("Held-out benchmark identity mismatch")
                 heldout_name = scope + "-" + mode + "-heldout-report.json"
                 with (out / heldout_name).open("x", encoding="utf-8") as stream:
@@ -181,14 +192,16 @@ def run(args):
                     cell["status"] = "COVERAGE_FAIL"
             if ranking_cases and mode == "lexical":
                 cell["ranking_comparison"] = compare_lexical_profiles(
-                    repo, revision, index, scope, args, out, ranking_cases)
+                    repo, revision, index, scope, args, out, ranking_cases,
+                    expected_digests=ranking_digests)
                 if any(result["missing_paths"] for group in cell["ranking_comparison"].values()
                        for result in group.values()):
                     cell["status"] = "COVERAGE_FAIL"
             if multilingual_cases and mode == "lexical":
                 cell["multilingual_comparison"] = compare_lexical_profiles(
                     repo, revision, index, scope, args, out, multilingual_cases,
-                    candidate="multilingual", prefix="multilingual-", compare_cache=False)
+                    candidate="multilingual", prefix="multilingual-", compare_cache=False,
+                    expected_digests=multilingual_digests)
                 if any(result["missing_paths"] for group in cell["multilingual_comparison"].values()
                        for result in group.values()):
                     cell["status"] = "COVERAGE_FAIL"
@@ -196,7 +209,8 @@ def run(args):
                 cell["contextual_comparison"] = compare_lexical_profiles(
                     repo, revision, index, scope, args, out, contextual_cases,
                     baseline="multilingual", candidate="multilingual-context",
-                    prefix="contextual-", compare_cache=False)
+                    prefix="contextual-", compare_cache=False,
+                    expected_digests=contextual_digests)
                 if any(result["missing_paths"] for group in cell["contextual_comparison"].values()
                        for result in group.values()):
                     cell["status"] = "COVERAGE_FAIL"
