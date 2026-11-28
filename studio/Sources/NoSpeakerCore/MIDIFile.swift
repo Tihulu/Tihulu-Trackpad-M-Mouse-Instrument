@@ -69,11 +69,21 @@ public enum MIDIFileParser {
         var eventOrder = 0
         var lastTrackTick = 0
 
-        for _ in 0..<trackCount {
-            guard String(bytes: try read(4), encoding: .ascii) == "MTrk" else { throw MIDIFileError.malformed("Missing MTrk chunk") }
+        var tracksRead = 0
+        while tracksRead < trackCount {
+            guard let chunkType = String(bytes: try read(4), encoding: .ascii), chunkType != "MThd" else {
+                throw MIDIFileError.malformed("Missing MTrk chunk")
+            }
             let length = u32(try read(4))
+            guard length <= bytes.count - cursor else { throw MIDIFileError.truncated }
             let trackEnd = cursor + length
-            guard trackEnd <= bytes.count else { throw MIDIFileError.truncated }
+            // SMF extensions may insert unknown chunks between declared tracks.
+            // Skip only their bounded payload; they are not MTrk chunks.
+            if chunkType != "MTrk" {
+                cursor = trackEnd
+                continue
+            }
+            tracksRead += 1
             var tick = 0
             var runningStatus: UInt8?
 
