@@ -61,11 +61,13 @@ public enum MIDIFileParser {
         let division = u16(try read(2))
         if headerLength > 6 { _ = try read(headerLength - 6) }
         guard format == 0 || format == 1 else { throw MIDIFileError.malformed("Only MIDI formats 0 and 1 are supported") }
-        guard division & 0x8000 == 0 else { throw MIDIFileError.unsupportedTiming }
-        let ticksPerQuarter = max(1, division)
+        guard trackCount > 0, format != 0 || trackCount == 1 else { throw MIDIFileError.invalidHeader }
+        guard division > 0, division & 0x8000 == 0 else { throw MIDIFileError.unsupportedTiming }
+        let ticksPerQuarter = division
 
         var allEvents: [MIDITrackEvent] = []
         var eventOrder = 0
+        var lastTrackTick = 0
 
         for _ in 0..<trackCount {
             guard String(bytes: try read(4), encoding: .ascii) == "MTrk" else { throw MIDIFileError.malformed("Missing MTrk chunk") }
@@ -96,6 +98,7 @@ public enum MIDIFileParser {
                 } else {
                     cursor += 1
                     if status < 0xF0 { runningStatus = status }
+                    else { runningStatus = nil }
                 }
 
                 if status == 0xFF {
@@ -103,8 +106,17 @@ public enum MIDIFileParser {
                     let type = bytes[cursor]; cursor += 1
                     let metaLength = try readVariableLength()
                     guard cursor + metaLength <= trackEnd else { throw MIDIFileError.truncated }
+                    if type == 0x2F {
+                        guard metaLength == 0 else {
+                            throw MIDIFileError.malformed("End of Track must have zero length")
+                        }
+                        guard cursor == trackEnd else {
+                            throw MIDIFileError.malformed("Events after End of Track")
+                        }
+                    }
                     if type == 0x51, metaLength == 3 {
                         let tempo = (Int(bytes[cursor]) << 16) | (Int(bytes[cursor + 1]) << 8) | Int(bytes[cursor + 2])
+                        guard tempo > 0 else { throw MIDIFileError.malformed("Tempo must be positive") }
                         allEvents.append(.init(tick: tick, order: eventOrder, kind: .tempo(microsecondsPerQuarter: tempo)))
                         eventOrder += 1
                     }
@@ -118,10 +130,16 @@ public enum MIDIFileParser {
                     continue
                 }
 
+                guard (0x80...0xEF).contains(status) else {
+                    throw MIDIFileError.malformed("Unsupported MIDI status byte")
+                }
                 let command = status & 0xF0
                 let channel = Int(status & 0x0F)
                 let dataLength = (command == 0xC0 || command == 0xD0) ? 1 : 2
                 guard cursor + dataLength <= trackEnd else { throw MIDIFileError.truncated }
+                guard bytes[cursor..<(cursor + dataLength)].allSatisfy({ $0 < 0x80 }) else {
+                    throw MIDIFileError.malformed("Invalid MIDI channel data byte")
+                }
                 let d1 = Int(bytes[cursor]); cursor += 1
                 let d2 = dataLength == 2 ? Int(bytes[cursor]) : 0
                 if dataLength == 2 { cursor += 1 }
@@ -140,6 +158,7 @@ public enum MIDIFileParser {
                     break
                 }
             }
+            lastTrackTick = max(lastTrackTick, tick)
             cursor = trackEnd
         }
 
@@ -178,7 +197,9 @@ public enum MIDIFileParser {
         }
 
         notes.sort { $0.startSeconds < $1.startSeconds }
-        let duration = notes.map { $0.startSeconds + $0.durationSeconds }.max() ?? currentSeconds
+        // The last track event (including End of Track) can follow the final note.
+        advance(to: lastTrackTick)
+        let duration = max(currentSeconds, notes.map { $0.startSeconds + $0.durationSeconds }.max() ?? 0)
         return ParsedMIDIFile(notes: notes, durationSeconds: duration)
     }
 
