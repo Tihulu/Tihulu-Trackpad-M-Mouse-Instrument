@@ -69,11 +69,21 @@ public enum MIDIFileParser {
         var eventOrder = 0
         var lastTrackTick = 0
 
-        for _ in 0..<trackCount {
-            guard String(bytes: try read(4), encoding: .ascii) == "MTrk" else { throw MIDIFileError.malformed("Missing MTrk chunk") }
+        var tracksRead = 0
+        while tracksRead < trackCount {
+            guard let chunkType = String(bytes: try read(4), encoding: .ascii), chunkType != "MThd" else {
+                throw MIDIFileError.malformed("Missing MTrk chunk")
+            }
             let length = u32(try read(4))
+            guard length <= bytes.count - cursor else { throw MIDIFileError.truncated }
             let trackEnd = cursor + length
-            guard trackEnd <= bytes.count else { throw MIDIFileError.truncated }
+            // SMF extensions may insert unknown chunks between declared tracks.
+            // Skip only their bounded payload; they are not MTrk chunks.
+            if chunkType != "MTrk" {
+                cursor = trackEnd
+                continue
+            }
+            tracksRead += 1
             var tick = 0
             var runningStatus: UInt8?
 
@@ -166,7 +176,7 @@ public enum MIDIFileParser {
         var tempo = 500_000
         var lastTick = 0
         var currentSeconds = 0.0
-        var active: [String: (start: Double, velocity: Int)] = [:]
+        var active: [Int: ArraySlice<(start: Double, velocity: Int)>] = [:]
         var notes: [MIDIFileNote] = []
 
         func advance(to tick: Int) {
@@ -181,10 +191,12 @@ public enum MIDIFileParser {
             case .tempo(let value):
                 tempo = max(1, value)
             case .noteOn(let channel, let note, let velocity):
-                active["\(channel):\(note)"] = (currentSeconds, velocity)
+                // Preserve overlapping onsets; pair note-offs in FIFO order.
+                active[channel * 128 + note, default: []].append((currentSeconds, velocity))
             case .noteOff(let channel, let note):
-                let key = "\(channel):\(note)"
-                if let start = active.removeValue(forKey: key) {
+                let key = channel * 128 + note
+                if let start = active[key]?.popFirst() {
+                    if active[key]?.isEmpty == true { active.removeValue(forKey: key) }
                     notes.append(MIDIFileNote(
                         startSeconds: start.start,
                         durationSeconds: max(0.01, currentSeconds - start.start),
@@ -206,9 +218,17 @@ public enum MIDIFileParser {
     public static func hapticEvents(from midi: ParsedMIDIFile, safety: HapticSafetyPolicy = .init()) -> [ScheduledHapticEvent] {
         var events: [ScheduledHapticEvent] = []
         for note in midi.notes {
-            let level = min(1, max(0, Double(note.velocity) / 127.0))
-            if note.channel == 9, let voice = MIDIDrumMap.voice(for: note.note) {
-                events.append(.init(time: note.startSeconds, frame: safety.clamp(HapticPatternRenderer.drumFrame(voice, velocity: level))))
+            // Parsed notes are public mutable values; reject invalid projection input.
+            guard note.startSeconds.isFinite, note.startSeconds >= 0,
+                  note.durationSeconds.isFinite, note.durationSeconds > 0,
+                  (0...15).contains(note.channel), (0...127).contains(note.note),
+                  (1...127).contains(note.velocity) else { continue }
+            let level = Double(note.velocity) / 127.0
+            if note.channel == 9 {
+                // Use the same GM pad profiles as live Touch drums. Unsupported
+                // percussion stays in parsed MIDI but has no local haptic voice.
+                guard let frame = HapticPatternRenderer.drumFrame(midiNote: note.note, velocity: level) else { continue }
+                events.append(.init(time: note.startSeconds, frame: safety.clamp(frame)))
             } else if let frequency = try? MusicTheory.frequency(midi: note.note) {
                 let durationMS = min(120, max(4, note.durationSeconds * 1_000))
                 events.append(.init(
