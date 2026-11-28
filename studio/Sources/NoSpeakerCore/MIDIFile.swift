@@ -176,7 +176,7 @@ public enum MIDIFileParser {
         var tempo = 500_000
         var lastTick = 0
         var currentSeconds = 0.0
-        var active: [String: (start: Double, velocity: Int)] = [:]
+        var active: [Int: ArraySlice<(start: Double, velocity: Int)>] = [:]
         var notes: [MIDIFileNote] = []
 
         func advance(to tick: Int) {
@@ -191,10 +191,12 @@ public enum MIDIFileParser {
             case .tempo(let value):
                 tempo = max(1, value)
             case .noteOn(let channel, let note, let velocity):
-                active["\(channel):\(note)"] = (currentSeconds, velocity)
+                // Preserve overlapping onsets; pair note-offs in FIFO order.
+                active[channel * 128 + note, default: []].append((currentSeconds, velocity))
             case .noteOff(let channel, let note):
-                let key = "\(channel):\(note)"
-                if let start = active.removeValue(forKey: key) {
+                let key = channel * 128 + note
+                if let start = active[key]?.popFirst() {
+                    if active[key]?.isEmpty == true { active.removeValue(forKey: key) }
                     notes.append(MIDIFileNote(
                         startSeconds: start.start,
                         durationSeconds: max(0.01, currentSeconds - start.start),
