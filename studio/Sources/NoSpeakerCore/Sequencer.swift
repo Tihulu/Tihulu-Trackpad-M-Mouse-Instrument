@@ -108,6 +108,7 @@ public enum HapticPatternRenderer {
     /// GM pads have distinct, conservative haptic profiles rather than
     /// treating a percussion note number as an equal-tempered pitch.
     public static func drumFrame(midiNote: Int, velocity: Double) -> HapticFrame? {
+        guard velocity.isFinite else { return nil }
         let level = min(max(velocity, 0), 1)
         switch midiNote {
         case 36: return drumFrame(.kick, velocity: level)
@@ -133,7 +134,8 @@ public enum HapticPatternRenderer {
     }
 
     public static func drumFrame(_ voice: DrumVoice, velocity: Double) -> HapticFrame {
-        let level = min(max(velocity, 0), 1)
+        // The nonoptional legacy API returns a silent frame for invalid input.
+        let level = velocity.isFinite ? min(max(velocity, 0), 1) : 0
         switch voice {
         case .kick:
             return HapticFrame(tones: [HapticTone(frequencyHz: 120)], durationMS: 70, level: level)
