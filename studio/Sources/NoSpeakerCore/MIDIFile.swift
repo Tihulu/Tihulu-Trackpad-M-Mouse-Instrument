@@ -218,9 +218,17 @@ public enum MIDIFileParser {
     public static func hapticEvents(from midi: ParsedMIDIFile, safety: HapticSafetyPolicy = .init()) -> [ScheduledHapticEvent] {
         var events: [ScheduledHapticEvent] = []
         for note in midi.notes {
-            let level = min(1, max(0, Double(note.velocity) / 127.0))
-            if note.channel == 9, let voice = MIDIDrumMap.voice(for: note.note) {
-                events.append(.init(time: note.startSeconds, frame: safety.clamp(HapticPatternRenderer.drumFrame(voice, velocity: level))))
+            // Parsed notes are public mutable values; reject invalid projection input.
+            guard note.startSeconds.isFinite, note.startSeconds >= 0,
+                  note.durationSeconds.isFinite, note.durationSeconds > 0,
+                  (0...15).contains(note.channel), (0...127).contains(note.note),
+                  (1...127).contains(note.velocity) else { continue }
+            let level = Double(note.velocity) / 127.0
+            if note.channel == 9 {
+                // Use the same GM pad profiles as live Touch drums. Unsupported
+                // percussion stays in parsed MIDI but has no local haptic voice.
+                guard let frame = HapticPatternRenderer.drumFrame(midiNote: note.note, velocity: level) else { continue }
+                events.append(.init(time: note.startSeconds, frame: safety.clamp(frame)))
             } else if let frequency = try? MusicTheory.frequency(midi: note.note) {
                 let durationMS = min(120, max(4, note.durationSeconds * 1_000))
                 events.append(.init(
